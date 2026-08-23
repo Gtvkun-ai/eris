@@ -85,6 +85,7 @@ MATERIAL_MOTIVE_TO_LEGACY = {
     "continue_concern": "want_to_revisit",
     "revisit_memory": "want_to_revisit",
     "continue_private_thought": "want_to_express",
+    "notice_environment_change": "want_to_share",
     "react_to_self_outcome": "want_to_express",
     "share_internal_material": "want_to_share",
 }
@@ -289,7 +290,7 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
     small talk, vẫn cần một user event/memory/thought cụ thể để nói *về cái gì*.
     """
 
-    _ = float(now or time.time())
+    current = float(now if now is not None else time.time())
     motives: list[CausalMotive] = []
     relationship = context.get("relationship") if isinstance(context.get("relationship"), Mapping) else {}
     connection = _clamp01(relationship.get("connection_pressure", relationship.get("outreach_drive", 0.0)))
@@ -376,6 +377,89 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
                 development_required=True,
                 allowed_development_modes=("deepen", "connect", "reinterpret", "test", "personalize"),
             ))
+
+    # Unified Environment Awareness: a *changed*, fresh structured situation may
+    # become a private causal motive. This lets the seed worker associate with
+    # what is actually happening on the computer instead of producing context-
+    # free thoughts. Static focus is not enough: no semantic edge => no new motive.
+    environment = (
+        context.get("environment_awareness")
+        if isinstance(context.get("environment_awareness"), Mapping)
+        else {}
+    )
+    if environment:
+        env_conf = _clamp01(environment.get("confidence", 0.0))
+        env_age = max(0.0, float(environment.get("age_seconds", 9999.0) or 9999.0))
+        env_fresh = bool(environment.get("fresh", env_age <= 120.0)) and env_age <= 120.0
+        semantic_delta = bool(environment.get("semantic_delta", False))
+        recent_environment_events = [
+            item for item in _seq(environment.get("recent_events")) if isinstance(item, Mapping)
+        ]
+        recent_semantic = []
+        for item in recent_environment_events[-8:]:
+            event_age = max(0.0, current - float(item.get("timestamp", 0.0) or 0.0))
+            event_conf = _clamp01(item.get("confidence", 0.0))
+            if (bool(item.get("semantic", True)) or int(item.get("attention_level", 0) or 0) >= 1) and event_age <= 45.0 and event_conf >= 0.45:
+                recent_semantic.append(item)
+        if env_fresh and env_conf >= 0.55 and (semantic_delta or recent_semantic):
+            latest_event = recent_semantic[-1] if recent_semantic else {}
+            app = _compact(environment.get("focused_app", environment.get("focused_process", "")), 120)
+            process = _compact(environment.get("focused_process", ""), 120)
+            focused_object = _compact(environment.get("focused_object", ""), 240)
+            activity = _compact(environment.get("activity", ""), 180)
+            task_hint = _compact(environment.get("task_hint", ""), 240)
+            phase = _compact(environment.get("phase", ""), 120)
+            action = _compact(environment.get("last_action", ""), 180)
+            outcome = _compact(environment.get("last_outcome", ""), 180)
+            event_kind = _compact(latest_event.get("kind", ""), 72)
+            event_detail = _compact(latest_event.get("detail", ""), 280)
+            parts = []
+            if app: parts.append(f"app={app}")
+            if process and process.casefold() != app.casefold(): parts.append(f"process={process}")
+            if focused_object: parts.append(f"focus={focused_object}")
+            if activity and activity.casefold() not in {"unknown", "none"}: parts.append(f"activity={activity}")
+            if task_hint and task_hint.casefold() not in {"unknown", "none"}: parts.append(f"task={task_hint}")
+            if phase and phase.casefold() not in {"unknown", "none"}: parts.append(f"phase={phase}")
+            if action and action.casefold() not in {"unknown", "none"}: parts.append(f"last_action={action}")
+            if outcome and outcome.casefold() not in {"unknown", "none"}: parts.append(f"last_outcome={outcome}")
+            if event_kind: parts.append(f"recent_change={event_kind}")
+            if event_detail: parts.append(f"change_detail={event_detail}")
+            if parts:
+                revision = max(0, int(environment.get("revision", 0) or 0))
+                event_key = _compact(latest_event.get("event_key", ""), 120)
+                cause_token = event_key or f"r{revision}"
+                refs = [
+                    str(item).strip()
+                    for item in _seq(environment.get("evidence_refs"))
+                    if str(item or "").strip()
+                ]
+                refs.extend(
+                    str(item).strip()
+                    for item in _seq(latest_event.get("evidence_refs"))
+                    if str(item or "").strip()
+                )
+                importance = _clamp01(latest_event.get("importance", 0.0)) if latest_event else 0.0
+                attention = max(0, min(4, int(latest_event.get("attention_level", environment.get("max_attention_level", 0)) or 0)))
+                strength = _clamp01(0.44 + 0.26 * env_conf + 0.12 * importance + 0.05 * attention + 0.06 * connection)
+                motives.append(CausalMotive(
+                    cause_id=f"environment:r{revision}:{cause_token}",
+                    cause_kind="environment_event",
+                    motive_kind="notice_environment_change",
+                    semantic_focus=_compact(
+                        "Structured current environment changed: " + "; ".join(parts) + ". "
+                        "Use only these structured facts; this is not screenshot/VLM evidence.",
+                        1200,
+                    ),
+                    why_now=f"environment_semantic_change:revision={revision}:age={env_age:.1f}:confidence={env_conf:.2f}",
+                    strength=strength,
+                    source_refs=tuple(dict.fromkeys(refs))[:10] or (f"environment:r{revision}",),
+                    allowed_material_kinds=(
+                        "observation", "reaction", "association", "small_contact",
+                        "hunch", "playful_impulse", "question",
+                    ),
+                    generation_budget=1,
+                    relationship_modulation=connection,
+                ))
 
     self_memory = context.get("eris_self_memory") if isinstance(context.get("eris_self_memory"), Mapping) else {}
     concerns = [item for item in _seq(self_memory.get("active_concerns")) if isinstance(item, Mapping)]

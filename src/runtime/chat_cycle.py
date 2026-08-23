@@ -345,6 +345,7 @@ class ChatCycleMixin:
                 "xem được tui làm gì", "xem được tôi làm gì", "thấy được tui làm gì", "thấy được tôi làm gì",
                 "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
                 "biết tui làm gì", "biết tôi làm gì",
+                "biết tui đang làm gì", "biết tôi đang làm gì",
                 "đoạn đang mở", "file đang mở", "đang hiện gì", "lỗi này trên màn hình",
                 # Yêu cầu model tự nhìn vào ảnh — không tìm chữ qua OCR.
                 "tự xem", "tự nhìn", "tự phân tích", "xem thử đi", "nhìn thử đi",
@@ -367,6 +368,109 @@ class ChatCycleMixin:
             explicit_reference=False,
         )
         return bool(resolution.references_screen)
+
+    def _looks_like_deep_environment_request(self, user_text: str) -> bool:
+        """Nhận diện câu hỏi có thể trả lời bằng Deep Environment structured state.
+
+        Đây KHÔNG phải classifier vision. Nó chỉ bắt các câu hỏi về trạng thái máy
+        có cấu trúc như app/process/window/task hiện tại. Những câu hỏi pixel-level
+        (màu sắc, vị trí nút, code đang hiển thị chính xác...) vẫn phải đi OCR/vision.
+        """
+
+        normalized = normalize_vi(user_text)
+        if not normalized:
+            return False
+        markers = tuple(
+            normalize_vi(item)
+            for item in (
+                "biết tôi đang làm gì", "biết tui đang làm gì",
+                "biết tôi làm gì", "biết tui làm gì",
+                "tôi đang làm gì", "tui đang làm gì",
+                "đang ở app nào", "đang dùng app nào", "đang mở app gì",
+                "ứng dụng nào", "app nào", "process nào", "tiến trình nào",
+                "cửa sổ nào", "window nào", "đang ở cửa sổ nào",
+                "đang mở gì", "đang làm việc gì", "đang thao tác gì",
+                "đang code gì", "tôi đang code gì", "tui đang code gì",
+                "what am i doing", "what app am i using", "which app am i using",
+                "what window am i on", "what am i working on",
+            )
+        )
+        return any(marker and marker in normalized for marker in markers)
+
+    @staticmethod
+    def _chat_snapshot_machine_context(snapshot) -> dict[str, object]:
+        payload: dict[str, object] = {}
+        to_context = getattr(snapshot, "to_machine_context", None)
+        if callable(to_context):
+            try:
+                raw = to_context() or {}
+                if isinstance(raw, dict):
+                    payload.update(raw)
+            except Exception:
+                pass
+        if isinstance(snapshot, dict):
+            payload.update(snapshot)
+        return payload
+
+    def _chat_deep_environment_grounding_facts(
+        self,
+        snapshot,
+        user_text: str = "",
+    ) -> tuple[dict[str, object], ...]:
+        """Use the canonical EnvironmentAwarenessHub for direct-chat grounding.
+
+        Chat no longer rebuilds its own interpretation of Deep Environment. The
+        same snapshot is shared with autonomous cognition and the seed reservoir.
+        VLM/screenshot evidence remains a separate ladder and is not touched here.
+        """
+        try:
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            awareness = ensure_environment_awareness_hub(self).refresh(
+                machine_snapshot=snapshot,
+                now=time.time(),
+                source="direct_chat",
+            )
+            facts = awareness.grounding_facts(now=time.time())
+        except Exception as exc:
+            self.logger.debug("[deep environment chat] awareness unavailable: %s", exc)
+            return ()
+
+        if facts and self._looks_like_deep_environment_request(user_text):
+            try:
+                self.logger.info(
+                    "[deep environment chat] revision=%d facts=%d app=%s process=%s task=%s phase=%s age=%.1fs",
+                    int(getattr(awareness, "revision", 0) or 0),
+                    len(facts),
+                    str(getattr(awareness, "focused_app", "") or "unknown"),
+                    str(getattr(awareness, "focused_process", "") or "unknown"),
+                    str(getattr(awareness, "task_hint", "") or getattr(awareness, "activity", "") or "unknown"),
+                    str(getattr(awareness, "phase", "") or "unknown"),
+                    float(awareness.age_seconds()),
+                )
+            except Exception:
+                pass
+        return tuple(facts)
+
+    def _deep_environment_can_answer(self, user_text: str, snapshot=None) -> bool:
+        if not self._looks_like_deep_environment_request(user_text):
+            return False
+        facts = self._chat_deep_environment_grounding_facts(snapshot, user_text)
+        if not facts:
+            return False
+        normalized = normalize_vi(user_text)
+        # "đang code gì" cần ít nhất task hint/activity hoặc focused object;
+        # app identity đơn thuần chưa đủ để tự bịa nội dung code.
+        asks_exact_work = any(
+            normalize_vi(marker) in normalized
+            for marker in ("đang code gì", "tôi đang code gì", "tui đang code gì", "what am i working on")
+        )
+        if asks_exact_work:
+            return any(
+                str(item.get("kind", "")) == "deep_environment_task"
+                and not bool(item.get("stale", False))
+                for item in facts
+            )
+        return True
 
     def _chat_ambient_screen_blocks(self) -> tuple[object, ...]:
         """Lấy OCR/UIA cache cho mọi lượt chat, không cưỡng bức OCR lại."""
@@ -513,17 +617,7 @@ class ChatCycleMixin:
             "tags": ["runtime_state", "system_clock", "local_sensor"],
         }]
 
-        payload: dict[str, object] = {}
-        to_context = getattr(snapshot, "to_machine_context", None)
-        if callable(to_context):
-            try:
-                raw = to_context() or {}
-                if isinstance(raw, dict):
-                    payload.update(raw)
-            except Exception:
-                pass
-        if isinstance(snapshot, dict):
-            payload.update(snapshot)
+        payload = self._chat_snapshot_machine_context(snapshot)
         for key in ("weather", "weather_condition", "temperature", "temperature_c", "weather_summary"):
             value = getattr(snapshot, key, None)
             if value not in (None, ""):
@@ -543,6 +637,11 @@ class ChatCycleMixin:
                 "captured_at": now.timestamp(),
                 "tags": ["runtime_state", "weather", "telemetry"],
             })
+
+        # Deep Environment là sensor semantic local có cấu trúc. Nó luôn được
+        # đưa vào chat như ambient runtime evidence; SourceGroundingEngine sẽ chỉ
+        # nâng nó thành primary khi user hỏi trạng thái máy/task hiện tại.
+        facts.extend(self._chat_deep_environment_grounding_facts(snapshot, user_text))
 
         preference = str(getattr(self, "_expression_boundary_preference_context", "") or "").strip()
         if preference:
@@ -755,6 +854,19 @@ class ChatCycleMixin:
         _screen_latency_mark("pending")
         previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
         _screen_latency_mark("previous_turn")
+
+        # Structured Deep Environment thắng OCR/vision cho câu hỏi về app/window/
+        # task hiện tại. Đây chính là lớp event-driven đã chạy sẵn; không cần ép
+        # OCR (đang có thể unavailable) hay xếp screenshot sang lượt kế tiếp.
+        snapshot_for_environment = getattr(self, "_chat_snapshot_for_vision", None)
+        if self._deep_environment_can_answer(user_text, snapshot_for_environment):
+            pending = getattr(self, "_chat_pending_vision_escalation", None)
+            clear = getattr(pending, "clear", None)
+            if callable(clear):
+                clear()
+            self.logger.info("[deep environment route] structured environment selected; OCR/vision skipped")
+            return _screen_latency_finish("deep_environment_structured")
+
         explicit_or_inherited_request = self._looks_like_screen_vision_request(
             user_text,
             previous_assistant_text=previous_assistant_text,

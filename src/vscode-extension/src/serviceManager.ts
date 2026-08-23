@@ -11,11 +11,6 @@ export interface DiscoveryRecord {
   pid?: number;
 }
 
-interface DiscoveryMatch {
-  path: string;
-  record: DiscoveryRecord;
-}
-
 /**
  * Quản lý lifecycle Eris Service ở extension host.
  *
@@ -31,29 +26,41 @@ export class ErisServiceManager implements vscode.Disposable {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   async discoveryPath(): Promise<string> {
-    const override = process.env.ERIS_AGENT_SERVICE_DISCOVERY?.trim();
-    if (override) {
-      return path.resolve(override);
-    }
-    try {
-      const launch = await this.resolveLaunch();
-      return path.join(launch.cwd, '.eris_state', 'agent_service.json');
-    } catch {
-      return path.join(os.homedir(), '.eris', 'agent_service.json');
-    }
+    const candidates = await this.discoveryCandidates();
+    return candidates[0] ?? path.join(os.homedir(), '.eris', 'agent_service.json');
   }
 
   private async discoveryCandidates(): Promise<string[]> {
     const override = process.env.ERIS_AGENT_SERVICE_DISCOVERY?.trim();
+    const config = vscode.workspace.getConfiguration('eris.service');
+    const configuredRoot = (process.env.ERIS_HOME ?? config.get<string>('installRoot', '') ?? '').trim();
+    const firstWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     const candidates: string[] = [];
     if (override) {
       candidates.push(path.resolve(override));
     }
-    for (const root of await this.erisRootCandidates()) {
-      candidates.push(path.join(root, '.eris_state', 'agent_service.json'));
+    try {
+      const launch = await this.resolveLaunch();
+      candidates.push(path.join(launch.cwd, '.eris_state', 'agent_service.json'));
+    } catch {
+      // Discovery lookup is best-effort. A missing launcher should not prevent
+      // attaching to an already-running service that wrote discovery elsewhere.
+    }
+    if (configuredRoot) {
+      candidates.push(path.join(configuredRoot, '.eris_state', 'agent_service.json'));
+    }
+    if (firstWorkspace) {
+      let current = path.resolve(firstWorkspace);
+      for (let depth = 0; depth < 6; depth += 1) {
+        candidates.push(path.join(current, '.eris_state', 'agent_service.json'));
+        const parent = path.dirname(current);
+        if (parent === current) {
+          break;
+        }
+        current = parent;
+      }
     }
     candidates.push(
-      path.join(os.homedir(), 'Documents', 'GitHub', 'eris', '.eris_state', 'agent_service.json'),
       path.join(os.homedir(), 'Documents', 'eris', '.eris_state', 'agent_service.json'),
       path.join(os.homedir(), '.eris', 'agent_service.json'),
     );
@@ -61,10 +68,6 @@ export class ErisServiceManager implements vscode.Disposable {
   }
 
   async readDiscovery(): Promise<DiscoveryRecord> {
-    return (await this.readDiscoveryMatch()).record;
-  }
-
-  private async readDiscoveryMatch(): Promise<DiscoveryMatch> {
     const candidates = await this.discoveryCandidates();
     let lastError: unknown;
     for (const discoveryPath of candidates) {
@@ -74,12 +77,7 @@ export class ErisServiceManager implements vscode.Disposable {
         if (payload.protocol !== 'eris.ide.v2' || !payload.endpoint || !payload.token) {
           throw new Error('Eris Service discovery file không hợp lệ.');
         }
-        if (payload.pid && !processExists(payload.pid)) {
-          await fs.unlink(discoveryPath).catch(() => undefined);
-          lastError = new Error(`Stale Eris Service discovery file: ${discoveryPath}`);
-          continue;
-        }
-        return { path: discoveryPath, record: payload };
+        return payload;
       } catch (error) {
         lastError = error;
       }
@@ -89,7 +87,13 @@ export class ErisServiceManager implements vscode.Disposable {
 
   async ensureStarted(options: { allowLaunch?: boolean } = {}): Promise<DiscoveryRecord> {
     try {
-      return (await this.readDiscoveryMatch()).record;
+      const existing = await this.readDiscovery();
+      if (!existing.pid || processExists(existing.pid)) {
+        return existing;
+      }
+      // PID chết nhưng file còn nằm lại sau crash. Giữ file này chỉ khiến client
+      // reconnect vào một cánh cửa đã bị xây tường kín.
+      await fs.unlink(await this.discoveryPath()).catch(() => undefined);
     } catch {
       // Không có discovery thì rơi xuống auto-start.
     }
@@ -221,8 +225,25 @@ export class ErisServiceManager implements vscode.Disposable {
     }
 
     const launcherName = process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh';
+    // Workspace khi code Eris thường có thể đang mở ở src/, body/ hoặc một folder
+    // con sâu hơn. Quét vài ancestor để user không phải tự chạy run_eris.bat chỉ
+    // vì VS Code đang mở không đúng root một cấp.
+    const workspaceRoots: string[] = [];
+    if (firstWorkspace) {
+      let current = path.resolve(firstWorkspace);
+      for (let depth = 0; depth < 6; depth += 1) {
+        workspaceRoots.push(current);
+        const parent = path.dirname(current);
+        if (parent === current) {
+          break;
+        }
+        current = parent;
+      }
+    }
     const candidates = unique([
-      ...(await this.erisRootCandidates()).map((root) => path.join(root, launcherName)),
+      configuredRoot ? path.join(configuredRoot, launcherName) : '',
+      ...workspaceRoots.map((root) => path.join(root, launcherName)),
+      process.platform === 'win32' ? path.join(os.homedir(), 'Documents', 'eris', launcherName) : path.join(os.homedir(), 'eris', launcherName),
     ]);
     for (const candidate of candidates) {
       if (await exists(candidate)) {
@@ -245,31 +266,6 @@ export class ErisServiceManager implements vscode.Disposable {
       }
     }
     throw new Error('Không tìm thấy launcher Eris. Đặt eris.service.installRoot hoặc eris.service.launchCommand một lần.');
-  }
-
-  private async erisRootCandidates(): Promise<string[]> {
-    const config = vscode.workspace.getConfiguration('eris.service');
-    const configuredRoot = (process.env.ERIS_HOME ?? config.get<string>('installRoot', '') ?? '').trim();
-    const firstWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-    const workspaceRoots: string[] = [];
-    if (firstWorkspace) {
-      let current = path.resolve(firstWorkspace);
-      for (let depth = 0; depth < 6; depth += 1) {
-        workspaceRoots.push(current);
-        const parent = path.dirname(current);
-        if (parent === current) {
-          break;
-        }
-        current = parent;
-      }
-    }
-    return unique([
-      ...workspaceRoots,
-      configuredRoot,
-      path.join(os.homedir(), 'Documents', 'GitHub', 'eris'),
-      path.join(os.homedir(), 'Documents', 'eris'),
-      path.join(os.homedir(), 'eris'),
-    ].filter(Boolean).map((item) => path.resolve(item)));
   }
 
   dispose(): void {

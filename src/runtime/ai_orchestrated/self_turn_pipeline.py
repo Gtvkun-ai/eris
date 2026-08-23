@@ -1450,6 +1450,19 @@ class SelfTurnPipeline:
                 now=now,
             )
         setattr(host, "last_user_situation", user_situation)
+        # Publish the same structured environment projection used by direct chat
+        # and the seed worker.  This refresh is cheap and never invokes VLM.
+        try:
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            ensure_environment_awareness_hub(host).refresh(
+                machine_snapshot=snapshot,
+                situation=user_situation,
+                environment_events=environment_events,
+                now=now,
+                source="self_turn_perception",
+            )
+        except Exception as exc:
+            host.logger.debug("[environment awareness] self-turn publish failed: %s", exc)
 
         # Semantic Tutor nhận cùng screen contract + structured chess state. Nó
         # tự quyết định có scene invalidation hay không; tick không đổi chỉ cập
@@ -1673,12 +1686,25 @@ class SelfTurnPipeline:
                 recent_initiative = initiative.panel_view(now=perception.now).get("recent_events", [])[:8]
             except Exception:
                 recent_initiative = []
+        try:
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            environment_awareness = ensure_environment_awareness_hub(self.host).refresh(
+                machine_snapshot=perception.snapshot,
+                situation=perception.user_situation,
+                environment_events=perception.environment_events,
+                now=perception.now,
+                source="autonomous_planner",
+            )
+        except Exception:
+            environment_awareness = None
         snapshot = {
             "time": perception.now,
             "event_kind": "self_initiated_turn",
             "telemetry": dict(perception.telemetry),
             "screen_context": perception.screen.to_dict(),
             "user_situation": perception.user_situation.to_dict() if perception.user_situation is not None else {},
+            "environment_awareness": environment_awareness.to_dict(now=perception.now) if environment_awareness is not None else {},
+            "environment_awareness_context": environment_awareness.prompt_context(now=perception.now) if environment_awareness is not None else "",
             "environment_events": [item.to_dict() for item in perception.environment_events[-16:]],
             "task_graph": self.task_graph.to_dict(),
             "conversation_baton": context.discourse.to_dict(),

@@ -233,36 +233,16 @@ export class ErisClient implements vscode.Disposable {
       throw new Error('Direct API mode is enabled but no direct API config was found.');
     }
     if (mode === 'auto') {
-      let serviceError: unknown;
       try {
         await this.connectExisting();
         this.send(payload);
         return;
       } catch (error) {
-        serviceError = error;
-      }
-      if (this.serviceAutoStartEnabled()) {
-        try {
-          await this.connect();
-          this.send(payload);
+        const direct = await this.sendDirectApiMessage(content, args, error);
+        if (direct.status === 'sent') {
           return;
-        } catch (error) {
-          serviceError = error;
         }
       }
-      const direct = await this.sendDirectApiMessage(content, args, serviceError);
-      if (direct.status === 'sent') {
-        return;
-      }
-      if (direct.status === 'failed') {
-        throw direct.error;
-      }
-      throw serviceError instanceof Error ? serviceError : new Error(String(serviceError));
-    }
-    if (mode === 'service') {
-      await this.connect();
-      this.send(payload);
-      return;
     }
     try {
       await this.connect();
@@ -368,10 +348,6 @@ export class ErisClient implements vscode.Disposable {
       return raw;
     }
     return 'auto';
-  }
-
-  private serviceAutoStartEnabled(): boolean {
-    return vscode.workspace.getConfiguration('eris.service').get<boolean>('autoStart', true);
   }
 
   private async sendDirectApiMessage(

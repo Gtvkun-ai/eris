@@ -426,6 +426,7 @@ class SourceGroundingEngine:
         "xem được tui làm gì", "xem được tôi làm gì", "thấy được tui làm gì", "thấy được tôi làm gì",
         "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
         "biết tui làm gì", "biết tôi làm gì",
+        "biết tui đang làm gì", "biết tôi đang làm gì",
         "what is on my screen", "this screen", "look at this", "look at my screen",
         "tôi đang code gì", "đang code gì", "đoạn đang mở",
         "bài tôi đang nghe", "bài đang nghe", "đang nghe bài", "bài hát", "bài gì", "nhạc gì", "đang nghe nhạc", "bài đang phát", "đang phát bài", "đang nghe", "bài hát tên",
@@ -579,8 +580,10 @@ class SourceGroundingEngine:
         has_relevant_chess = bool(structured_evidence["present"] and structured_evidence["relevant"])
         asks_system_clock = self._asks_system_clock(normalized)
         asks_weather = self._asks_weather(normalized)
+        asks_environment_awareness = self._asks_environment_awareness(normalized)
         has_clock = bool(runtime_evidence.get("clock_present"))
         has_weather = bool(runtime_evidence.get("weather_present"))
+        has_deep_environment = bool(runtime_evidence.get("deep_environment_present"))
         memory_profile = self._derive_memory_answer_profile(
             normalized=normalized,
             user_text=text,
@@ -701,6 +704,17 @@ class SourceGroundingEngine:
         if asks_weather and not has_weather:
             notes.append("weather_runtime_evidence_missing_do_not_invent")
 
+        if asks_environment_awareness and has_deep_environment:
+            candidates.append(SourceCandidate(
+                kind="runtime_state",
+                confidence=max(0.82, float(runtime_evidence.get("deep_environment_confidence", 0.0) or 0.0)),
+                reason="Deep Environment có structured local state tươi về app/window/task hiện tại.",
+                evidence_ids=list(runtime_evidence.get("deep_environment_ids", ()) or ()),
+                evidence_preview=list(runtime_evidence.get("deep_environment_preview", ()) or ()),
+            ))
+        elif asks_environment_awareness:
+            notes.append("deep_environment_evidence_missing")
+
         if internal_capability_ref:
             candidates.append(
                 SourceCandidate(
@@ -753,6 +767,14 @@ class SourceGroundingEngine:
         primary = self._choose_primary_source(candidates)
         missing_evidence = self._derive_missing_evidence(primary, candidates)
 
+        # Câu hỏi "tôi đang làm gì/app nào/cửa sổ nào" không cần pixel evidence
+        # khi Deep Environment đã có structured desktop state. Giữ screen_evidence
+        # là missing ở đây sẽ vô tình đẩy toàn turn sang epistemic_mode=probe và
+        # làm writer nói như thể nó vẫn mù dù runtime đã biết app/task.
+        if asks_environment_awareness and has_deep_environment and "screen_evidence" in missing_evidence:
+            missing_evidence = [item for item in missing_evidence if item != "screen_evidence"]
+            notes.append("deep_environment_satisfies_environment_awareness_without_pixel_screen")
+
         # QUAN TRỌNG:
         # Nếu user đã paste code trực tiếp, nội dung code trong chat chính là evidence.
         # Không được để marker kiểu "file này" kéo hệ thống về missing=file_evidence nữa.
@@ -786,6 +808,18 @@ class SourceGroundingEngine:
             grounding_source = "runtime_state"
             confidence_cap_override = 0.95
             notes.append("weather_runtime_primary")
+        elif asks_environment_awareness and has_deep_environment and not user_code and not asks_about_file:
+            # Deep Environment là structured desktop evidence, không phải pixel
+            # vision. Nó đủ quyền trả lời "tôi đang ở app/cửa sổ/task nào" mà
+            # không ép screenshot/OCR hoặc tự nhận mù màn hình.
+            primary_source = "runtime_state"
+            grounding_source = "runtime_state"
+            deep_conf = float(runtime_evidence.get("deep_environment_confidence", 0.0) or 0.0)
+            confidence_cap_override = max(0.78, min(0.92, deep_conf or 0.86))
+            memory_surface_allowed = False
+            memory_answer_allowed = False
+            memory_allowed_layers = ("procedural",)
+            notes.append("deep_environment_runtime_primary")
         elif has_relevant_chess and not user_code and not asks_about_file:
             primary_source = "chess_bridge"
             grounding_source = "chess_bridge"
@@ -856,6 +890,7 @@ class SourceGroundingEngine:
             code_detected=bool(code_info["detected"]),
             file_evidence_present=bool(file_evidence["present"]),
             screen_evidence_present=bool(screen_evidence["present"]),
+            deep_environment_evidence_present=has_deep_environment,
             memory_evidence_present=bool(memory_evidence["present"]),
             allow_web=allow_web,
             web_ref=web_ref,
@@ -1300,6 +1335,12 @@ class SourceGroundingEngine:
             for fact in runtime_previews[:6]:
                 lines.append(f"  {fact[:240]}")
             lines.append("runtime_rule: use the exact system clock when asked; never invent weather when no weather fact is present.")
+            if any("Deep Environment" in fact for fact in runtime_previews):
+                lines.append("deep_environment_rules:")
+                lines.append("- Deep Environment is structured local desktop/task evidence. Use it directly for questions about the current app, process, window, task, phase or recent computer activity.")
+                lines.append("- If Deep Environment answers the user's current-activity question, do not claim that ERIS cannot observe the computer or require a screenshot just to name the app/task state.")
+                lines.append("- Deep Environment is not pixel evidence: never infer exact colors, geometry, code text, image contents or cursor position unless OCR/vision facts separately support them.")
+                lines.append("- Keep it contextual: do not volunteer telemetry details on unrelated turns.")
 
         # Luôn render vision/screen facts vào grounding context — dù user không hỏi
         # màn hình. Đây là tóm tắt văn bản từ vision model/OCR, KHÔNG
@@ -1836,6 +1877,7 @@ class SourceGroundingEngine:
         code_detected: bool,
         file_evidence_present: bool,
         screen_evidence_present: bool,
+        deep_environment_evidence_present: bool = False,
         memory_evidence_present: bool,
         allow_web: bool,
         web_ref: bool,
@@ -1852,13 +1894,21 @@ class SourceGroundingEngine:
             )
 
         if refers_to_screen and not screen_evidence_present:
-            forbidden.extend(
-                [
-                    "Không được nói 'tôi thấy trên màn hình'.",
-                    "Không được chỉ nút/cửa sổ/vị trí UI cụ thể nếu không có screen evidence.",
-                    "Không được kết luận lỗi hiện trên màn hình chỉ từ câu trỏ mơ hồ.",
-                ]
-            )
+            forbidden.append("Không được nói 'tôi thấy trên màn hình' nếu chỉ có structured environment state.")
+            if deep_environment_evidence_present and primary_source == "runtime_state":
+                forbidden.extend(
+                    [
+                        "Deep Environment được phép xác nhận app/process/window/task identity, nhưng không được suy ra pixel, màu sắc, tọa độ, cursor hay nội dung UI chính xác.",
+                        "Không được kết luận lỗi/code đang hiển thị nếu Deep Environment không có semantic task evidence tương ứng.",
+                    ]
+                )
+            else:
+                forbidden.extend(
+                    [
+                        "Không được chỉ nút/cửa sổ/vị trí UI cụ thể nếu không có screen evidence.",
+                        "Không được kết luận lỗi hiện trên màn hình chỉ từ câu trỏ mơ hồ.",
+                    ]
+                )
 
         # Always-on vision: có screen evidence nhưng user KHÔNG hỏi về màn hình.
         # Screen facts chỉ là context nền — cấm tự khoe/đổi chủ đề sang màn hình.
@@ -2237,10 +2287,41 @@ class SourceGroundingEngine:
             "troi nang", "trời nắng", "weather", "temperature",
         ))
 
+    @staticmethod
+    def _asks_environment_awareness(normalized: str) -> bool:
+        """Câu hỏi về state desktop/task có thể trả bằng Deep Environment.
+
+        Cố ý không gồm câu hỏi pixel-level như màu nút, vị trí UI hay nội dung
+        code chính xác; các trường hợp đó vẫn cần OCR/vision evidence.
+        """
+
+        text = str(normalized or "")
+        return any(marker in text for marker in (
+            "biet toi dang lam gi", "biết tôi đang làm gì",
+            "biet tui dang lam gi", "biết tui đang làm gì",
+            "biet toi lam gi", "biết tôi làm gì",
+            "biet tui lam gi", "biết tui làm gì",
+            "toi dang lam gi", "tôi đang làm gì",
+            "tui dang lam gi", "tui đang làm gì",
+            "dang o app nao", "đang ở app nào",
+            "dang dung app nao", "đang dùng app nào",
+            "dang mo app gi", "đang mở app gì",
+            "ung dung nao", "ứng dụng nào", "app nao", "app nào",
+            "process nao", "process nào", "tien trinh nao", "tiến trình nào",
+            "cua so nao", "cửa sổ nào", "window nao", "window nào",
+            "dang o cua so nao", "đang ở cửa sổ nào",
+            "dang mo gi", "đang mở gì", "dang lam viec gi", "đang làm việc gì",
+            "dang thao tac gi", "đang thao tác gì",
+            "dang code gi", "đang code gì", "toi dang code gi", "tôi đang code gì",
+            "what am i doing", "what app am i using", "which app am i using",
+            "what window am i on", "what am i working on",
+        ))
+
     def _collect_runtime_evidence(self, *, runtime_facts: Sequence[Any] | None = None) -> dict[str, Any]:
         items: list[Any] = []
         clock_items: list[Any] = []
         weather_items: list[Any] = []
+        deep_environment_items: list[Any] = []
         for item in self._as_list(runtime_facts):
             grounded = item.get("grounded") if isinstance(item, Mapping) else getattr(item, "grounded", None)
             if grounded is False or str(grounded).strip().lower() == "false":
@@ -2261,13 +2342,23 @@ class SourceGroundingEngine:
                 clock_items.append(item)
             if kind == "weather" or "weather" in tags:
                 weather_items.append(item)
+            if kind.startswith("deep_environment") or "deep_environment" in tags:
+                deep_environment_items.append(item)
         ids, previews, confidence = self._summarize_evidence_items(items, default_confidence=0.95)
         clock_ids, clock_preview, _ = self._summarize_evidence_items(clock_items, default_confidence=1.0)
         weather_ids, weather_preview, _ = self._summarize_evidence_items(weather_items, default_confidence=0.95)
+        deep_ids, deep_preview, deep_confidence = self._summarize_evidence_items(
+            deep_environment_items,
+            default_confidence=0.86,
+        )
         return {
             "present": bool(items), "ids": ids, "preview": previews, "confidence": confidence,
             "clock_present": bool(clock_items), "clock_ids": clock_ids, "clock_preview": clock_preview,
             "weather_present": bool(weather_items), "weather_ids": weather_ids, "weather_preview": weather_preview,
+            "deep_environment_present": bool(deep_environment_items),
+            "deep_environment_ids": deep_ids,
+            "deep_environment_preview": deep_preview,
+            "deep_environment_confidence": deep_confidence,
         }
 
     def _collect_structured_evidence(

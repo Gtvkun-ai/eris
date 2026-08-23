@@ -411,6 +411,22 @@ class SemanticEnvironmentWorker:
                 self._revision += 1
                 self._processed.append((self._revision, item.event))
 
+        # Unified Environment Awareness: publish ngay trên semantic critical path
+        # sau khi UserSituation đã commit. Chat/self-turn/seed đọc cùng projection
+        # này; không lane nào phải tự dựng một phiên bản môi trường khác. VLM vẫn
+        # nằm ngoài hub và không bị gọi ở đây.
+        try:
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            ensure_environment_awareness_hub(self.host).refresh(
+                machine_snapshot=telemetry,
+                situation=situation,
+                environment_events=tuple(getattr(situation, "recent_events", ()) or ()),
+                now=semantic_wall_done,
+                source="deep_environment_event",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._debug("publish environment awareness lỗi: %s", exc)
+
         # Worker chỉ đánh thức vòng autonomous. Quyền deliberation/speech vẫn nằm
         # trong TemporalMind + initiative governor của self-turn.
         if situation.semantic_delta and int(situation.max_attention_level or 0) >= 2:

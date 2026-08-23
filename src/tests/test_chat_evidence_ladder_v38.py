@@ -193,3 +193,109 @@ def test_chess_bridge_stays_ambient_on_unrelated_turn() -> None:
 
     assert report.primary_source == "user_text"
     assert any(item.source == "chess_bridge" and item.role == "ambient" for item in report.evidence_items)
+
+
+def test_deep_environment_is_primary_for_current_activity_question() -> None:
+    now = time.time()
+    situation = SimpleNamespace(
+        timestamp=now,
+        activity="debugging",
+        task_hint="debug shader in Godot",
+        phase="diagnosis",
+        focused_app="Godot Engine",
+        focused_process="Godot_v4.5.exe",
+        focused_object="main.tscn - Godot Engine",
+        last_action="focus_changed",
+        last_outcome="unknown",
+        attention_state="focused",
+        confidence=0.91,
+    )
+    worker = SimpleNamespace(
+        latest_situation=situation,
+        update_telemetry=lambda _payload: None,
+    )
+    host = _Host()
+    host.logger = _Logger()
+    host.semantic_environment_worker = worker
+    host.last_user_situation = situation
+    host.screen_evidence_store = _store_with_blocks()
+    host.screen_relevance_router = ScreenRelevanceRouter(host.screen_evidence_store)
+    host.screen_text_worker = None
+    host.chess_bridge_service = None
+
+    snapshot = SimpleNamespace(
+        to_machine_context=lambda: {
+            "active_app": "Godot Engine",
+            "active_process": "Godot_v4.5.exe",
+            "active_window_title": "main.tscn - Godot Engine",
+        }
+    )
+    report = host._build_chat_source_grounding_report(
+        user_text="ehm. hiện tại em biết tôi đang làm gì không",
+        frame=None,
+        snapshot=snapshot,
+        memory_resonance=None,
+        screen_image_data_uri="",
+    )
+
+    assert report.primary_source == "runtime_state"
+    assert report.grounding_source == "runtime_state"
+    assert report.preempt_recommended is False
+    assert report.confidence_cap >= 0.78
+    assert any("Deep Environment current focus" in item for item in report.runtime_facts_preview)
+    assert any("debug shader in Godot" in item for item in report.runtime_facts_preview)
+    assert "deep_environment_runtime_primary" in report.notes
+
+
+def test_deep_environment_route_skips_ocr_and_screenshot_for_activity_question() -> None:
+    now = time.time()
+    situation = SimpleNamespace(
+        timestamp=now,
+        activity="editing",
+        task_hint="editing Eris runtime",
+        phase="implementation",
+        focused_app="Visual Studio Code",
+        focused_process="Code.exe",
+        focused_object="runtime/chat_cycle.py",
+        last_action="focus_changed",
+        last_outcome="unknown",
+        attention_state="focused",
+        confidence=0.94,
+    )
+
+    class _Worker:
+        latest_situation = situation
+
+        def update_telemetry(self, _payload):
+            return None
+
+    class _FailOCR:
+        def start(self):
+            raise AssertionError("Deep Environment request must not start OCR")
+
+        def refresh_now(self, *_args, **_kwargs):
+            raise AssertionError("Deep Environment request must not refresh OCR")
+
+    host = _Host()
+    host.logger = _Logger()
+    host.semantic_environment_worker = _Worker()
+    host.last_user_situation = situation
+    host.screen_evidence_store = _store_with_blocks()
+    host.screen_relevance_router = ScreenRelevanceRouter(host.screen_evidence_store)
+    host.screen_text_worker = _FailOCR()
+    host.chess_bridge_service = None
+    host.reply_context = SimpleNamespace(previous_public_turn=None)
+    host._chat_snapshot_for_vision = SimpleNamespace(
+        to_machine_context=lambda: {
+            "active_app": "Visual Studio Code",
+            "active_process": "Code.exe",
+            "active_window_title": "runtime/chat_cycle.py - Eris",
+        }
+    )
+    host.telemetry_service = SimpleNamespace(
+        capture_screen_frame_data_uri=lambda: (_ for _ in ()).throw(
+            AssertionError("Deep Environment request must not capture screenshot")
+        )
+    )
+
+    assert host._capture_screen_frame_for_chat("em biết tôi đang làm gì không") == ""

@@ -1140,6 +1140,16 @@ class AIChatOrchestrator:
             if discovery_runtime is not None
             else {}
         )
+        try:
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            _environment_awareness = ensure_environment_awareness_hub(host).refresh(
+                machine_snapshot=snapshot,
+                now=cycle_start,
+                source="chat_planning",
+            )
+        except Exception as exc:
+            host.logger.debug("[environment awareness] chat planning refresh failed: %s", exc)
+            _environment_awareness = None
         planning_snapshot = {
             "event_kind": "chat",
             "user_text": user_text,
@@ -1151,6 +1161,8 @@ class AIChatOrchestrator:
             "identity_summary": mind_state.identity_prompt_context(),
             "relationship_summary": relationship_context,
             "grounding_context": grounding_context,
+            "environment_awareness": _environment_awareness.to_dict(now=cycle_start) if _environment_awareness is not None else {},
+            "environment_awareness_context": _environment_awareness.prompt_context(now=cycle_start) if _environment_awareness is not None else "",
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,

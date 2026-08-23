@@ -234,6 +234,16 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     # hợp nhất. Structured telemetry được ưu tiên; OCR-only không có quyền tạo
     # public claim. Đây là cầu "thấy -> hiểu ý nghĩa", không phải sensor mới.
     environment_situation = getattr(host, "last_user_situation", None)
+    try:
+        from runtime.environment_awareness import ensure_environment_awareness_hub
+        environment_awareness_snapshot = ensure_environment_awareness_hub(host).refresh(
+            situation=environment_situation,
+            now=current,
+            source="initiative_context",
+        )
+        environment_awareness = environment_awareness_snapshot.to_dict(now=current)
+    except Exception:
+        environment_awareness = {}
     environment_meanings = EnvironmentMeaningDeriver().derive(
         environment_situation,
         active_goal_text=active_goal_text,
@@ -365,6 +375,7 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         # V60 / Perception -> Meaning. Report giữ cả meaning để trace được vì
         # sao một tab/browser sequence tạo concern; Surface chỉ được dùng refs
         # public-safe ở các field riêng bên dưới.
+        "environment_awareness": environment_awareness,
         "environment_meanings": environment_payload,
         "environment_meaning_kind": str(getattr(getattr(top_meaning, "kind", None), "value", "") or ""),
         "environment_meaning_actionability": environment_actionability,

@@ -357,6 +357,7 @@ class RandomChatSeed:
             "active_concern": "endogenous_curiosity",
             "private_thought": "private_life_workspace",
             "memory_context": "user_memory",
+            "environment_event": "current_environment",
             "self_outcome": "eris_self_memory",
         }.get(cause_kind, "weak_association")
         # Provenance chỉ lấy từ causal state runtime-owned. Model không được tự

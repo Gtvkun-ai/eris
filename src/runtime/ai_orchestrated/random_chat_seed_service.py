@@ -286,7 +286,10 @@ class RandomChatSeedGenerator:
             "V75: nếu causal_motive.cause_kind=conversation_trajectory, premise PHẢI phát triển semantic_focus của đúng topic_id; "
             "ưu tiên deepen/connect/branch có nội dung, không mở một câu hỏi xã giao hay chủ đề ngẫu nhiên chỉ vì novelty. "
             "Public wording trước đó của ERIS không phải evidence. Không tự thêm source_refs; provenance thuộc causal_motive runtime-owned. "
-            "Không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh, ánh sáng hay hoạt động nếu causal focus không chứng minh. "
+            "environment_awareness là structured Deep Environment dùng chung với chat/self-turn. Nếu causal_motive.cause_kind=environment_event, "
+            "bạn ĐƯỢC dùng các field tươi/confident trong environment_awareness để tạo observation/reaction/association liên quan đúng app/task/phase; "
+            "nhưng đây KHÔNG phải VLM/pixel vision, nên không được bịa màu sắc, vị trí nút, code text hay layout hình ảnh. "
+            "Ngoài trường hợp causal focus có evidence môi trường, không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh hay ánh sáng. "
             "epistemic_mode phải đúng với material: opinion là stance, hunch/speculation giữ modal, grounded_fact cần evidence thật từ runtime. "
             "generation_temporal_context chỉ chứng minh clock/calendar. ttl_seconds thường 180-900 giây. Return exactly one JSON object."
         )
@@ -816,6 +819,58 @@ class RandomChatSeedReservoir:
                     120,
                 )
                 recent_user_events.append({"role": "user", "text": text, "event_ref": event_ref})
+        raw_environment = (
+            snapshot.get("environment_awareness")
+            if isinstance(snapshot.get("environment_awareness"), Mapping)
+            else {}
+        )
+        environment_awareness = {
+            "schema": _compact(raw_environment.get("schema", "environment_awareness.v1"), 64),
+            "revision": int(raw_environment.get("revision", 0) or 0),
+            "captured_at": float(raw_environment.get("captured_at", 0.0) or 0.0),
+            "situation_timestamp": float(raw_environment.get("situation_timestamp", 0.0) or 0.0),
+            "age_seconds": round(float(raw_environment.get("age_seconds", 9999.0) or 9999.0), 2),
+            "fresh": bool(raw_environment.get("fresh", False)),
+            "source": _compact(raw_environment.get("source", ""), 64),
+            "focused_app": _compact(raw_environment.get("focused_app", ""), 120),
+            "focused_process": _compact(raw_environment.get("focused_process", ""), 120),
+            "focused_object": _compact(raw_environment.get("focused_object", ""), 240),
+            "activity": _compact(raw_environment.get("activity", "unknown"), 180),
+            "task_hint": _compact(raw_environment.get("task_hint", "unknown"), 240),
+            "phase": _compact(raw_environment.get("phase", "unknown"), 120),
+            "last_action": _compact(raw_environment.get("last_action", "none"), 180),
+            "last_outcome": _compact(raw_environment.get("last_outcome", "unknown"), 180),
+            "attention_state": _compact(raw_environment.get("attention_state", "unknown"), 120),
+            "confidence": round(float(raw_environment.get("confidence", 0.0) or 0.0), 3),
+            "semantic_delta": bool(raw_environment.get("semantic_delta", False)),
+            "wake_recommended": bool(raw_environment.get("wake_recommended", False)),
+            "max_attention_level": int(raw_environment.get("max_attention_level", 0) or 0),
+            "evidence_refs": [
+                _compact(item, 140) for item in _sequence(raw_environment.get("evidence_refs"))[:12] if _compact(item, 140)
+            ],
+            "recent_events": [
+                {
+                    "timestamp": float(item.get("timestamp", 0.0) or 0.0),
+                    "kind": _compact(item.get("kind", ""), 72),
+                    "attention_level": int(item.get("attention_level", 0) or 0),
+                    "confidence": round(float(item.get("confidence", 0.0) or 0.0), 3),
+                    "importance": round(float(item.get("importance", 0.0) or 0.0), 3),
+                    "source": _compact(item.get("source", ""), 72),
+                    "app": _compact(item.get("app", ""), 120),
+                    "detail": _compact(item.get("detail", ""), 320),
+                    "event_key": _compact(item.get("event_key", ""), 140),
+                    "evidence_refs": [
+                        _compact(ref, 140) for ref in _sequence(item.get("evidence_refs"))[:8] if _compact(ref, 140)
+                    ],
+                }
+                for item in _sequence(raw_environment.get("recent_events"))[-8:]
+                if isinstance(item, Mapping)
+            ],
+            "epistemic_contract": (
+                "Structured environment only; may ground app/window/task/activity when fresh/confident; "
+                "never use as VLM/pixel evidence."
+            ),
+        }
         return {
             "user_memory": _compact(snapshot.get("memory_context", ""), 2800),
             "recent_user_events": recent_user_events[-8:],
@@ -823,6 +878,7 @@ class RandomChatSeedReservoir:
             "personality_summary": _compact(snapshot.get("personality_summary", ""), 1000),
             "identity_summary": _compact(snapshot.get("identity_summary", ""), 1000),
             "relationship": snapshot.get("relationship", {}) if isinstance(snapshot.get("relationship"), Mapping) else {},
+            "environment_awareness": environment_awareness,
             "shared_semantic_context": (
                 snapshot.get("shared_semantic_context", {})
                 if isinstance(snapshot.get("shared_semantic_context"), Mapping)
@@ -899,6 +955,29 @@ class RandomChatSeedReservoir:
             "personality_summary": request.get("personality_summary", ""),
             "identity_summary": request.get("identity_summary", ""),
             "relationship": request.get("relationship", {}),
+            "environment_awareness": {
+                "revision": int((request.get("environment_awareness") or {}).get("revision", 0) or 0)
+                if isinstance(request.get("environment_awareness"), Mapping) else 0,
+                "focused_app": _compact((request.get("environment_awareness") or {}).get("focused_app", ""), 120)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "focused_process": _compact((request.get("environment_awareness") or {}).get("focused_process", ""), 120)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "focused_object": _compact((request.get("environment_awareness") or {}).get("focused_object", ""), 220)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "activity": _compact((request.get("environment_awareness") or {}).get("activity", ""), 180)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "task_hint": _compact((request.get("environment_awareness") or {}).get("task_hint", ""), 220)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "phase": _compact((request.get("environment_awareness") or {}).get("phase", ""), 120)
+                if isinstance(request.get("environment_awareness"), Mapping) else "",
+                "semantic_delta": bool((request.get("environment_awareness") or {}).get("semantic_delta", False))
+                if isinstance(request.get("environment_awareness"), Mapping) else False,
+                "recent_event_keys": [
+                    _compact(item.get("event_key", item.get("kind", "")), 140)
+                    for item in _sequence((request.get("environment_awareness") or {}).get("recent_events"))[-4:]
+                    if isinstance(item, Mapping)
+                ] if isinstance(request.get("environment_awareness"), Mapping) else [],
+            },
             "conversation_trajectory": {
                 "topic_id": _compact((request.get("conversation_trajectory") or {}).get("topic_id", ""), 80)
                 if isinstance(request.get("conversation_trajectory"), Mapping) else "",
@@ -1044,6 +1123,10 @@ class RandomChatSeedReservoir:
                     "generation_temporal_context proves clock/calendar only; it never grounds weather, lighting, sound, "
                     "user activity, emotion, or fatigue."
                 ),
+                "environment_rule": (
+                    "environment_awareness is grounded structured local state shared with chat/self-turn. Only an environment_event "
+                    "causal motive may use it as current-world activity/task evidence. It is never pixel/VLM evidence."
+                ),
             },
         }
 
@@ -1173,6 +1256,11 @@ class RandomChatSeedReservoir:
     def _entry_compatible_locked(self, entry: _SeedEntry) -> bool:
         drift = max(0, self._context_revision - entry.context_revision)
         if entry.seed.source_kind == "recent_shared_context":
+            return entry.user_epoch == self._user_epoch and drift <= 2
+        if entry.seed.source_kind == "current_environment":
+            # Environment material is intentionally short-lived. A couple of
+            # harmless context revisions are tolerated, but app/task drift or a
+            # new user turn retires it quickly.
             return entry.user_epoch == self._user_epoch and drift <= 2
         if entry.seed.source_kind == "weak_association":
             return entry.user_epoch == self._user_epoch and drift <= 3

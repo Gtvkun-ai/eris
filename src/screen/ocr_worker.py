@@ -133,11 +133,76 @@ class _PytesseractBackend(_OCRBackend):
         return tuple(blocks)
 
 
-def _auto_install_rapidocr(*, logger=None) -> bool:
-    """Cài OCR đúng vào Python đang chạy, tối đa một lần mỗi process.
+def _eris_managed_python_kind() -> str:
+    """Return the Eris-owned Python runtime kind, or an empty string.
 
-    Chỉ chạy trong venv và có thể tắt bằng ERIS_SCREEN_OCR_AUTO_INSTALL=0.
-    Worker thực hiện lazy ở lần thật sự cần OCR, không chặn boot vô cớ.
+    Eris ships with two supported layouts on Windows:
+    - ``.venv/Scripts/python.exe`` for developer installs;
+    - ``python/python.exe`` for the portable release.
+
+    The old OCR healer accepted only the first layout, while the launcher prefers
+    the portable runtime when no venv exists.  That made OCR permanently disable
+    itself on the normal packaged build.
+    """
+
+    if getattr(sys, "prefix", "") != getattr(sys, "base_prefix", ""):
+        return "venv"
+
+    try:
+        executable = Path(sys.executable).resolve()
+        if executable.parent.name.lower() != "python":
+            return ""
+        eris_root = executable.parent.parent
+        # Be conservative: only mutate a portable interpreter that visibly lives
+        # inside an Eris tree.  Never pip-install into an arbitrary system Python.
+        markers = (
+            eris_root / "Eris.exe",
+            eris_root / "src" / "vision.py",
+            eris_root / "vision.py",
+        )
+        if any(marker.exists() for marker in markers):
+            return "portable"
+    except Exception:
+        return ""
+    return ""
+
+
+def _ensure_pip_available(*, logger=None) -> bool:
+    """Ensure the current Eris-managed interpreter can execute ``pip``."""
+
+    probe = [sys.executable, "-m", "pip", "--version"]
+    try:
+        result = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    # Some portable Python bundles omit pip but still ship ensurepip.  Bootstrap it
+    # locally into that same runtime; if ensurepip is absent we simply fall through
+    # to the explicit warning instead of touching a global Python installation.
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ensurepip", "--upgrade"],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        if result.returncode == 0:
+            verify = subprocess.run(probe, capture_output=True, text=True, timeout=30, check=False)
+            if verify.returncode == 0:
+                if logger:
+                    logger.info("[screen text] pip bootstrapped into the Eris Python runtime.")
+                return True
+    except Exception as exc:
+        if logger:
+            logger.debug("[screen text] ensurepip bootstrap unavailable: %s", exc)
+    return False
+
+
+def _auto_install_rapidocr(*, logger=None) -> bool:
+    """Self-heal RapidOCR inside the Python runtime owned by Eris.
+
+    Works for both the developer venv and the packaged ``python/python.exe``
+    runtime.  It deliberately refuses an unrelated system interpreter.
     """
 
     enabled = os.getenv("ERIS_SCREEN_OCR_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "off", "no"}
@@ -146,30 +211,49 @@ def _auto_install_rapidocr(*, logger=None) -> bool:
     if getattr(_auto_install_rapidocr, "attempted", False):
         return False
     _auto_install_rapidocr.attempted = True
-    # Không tự ý cài vào Python hệ thống. Eris luôn có venv; nếu không có thì log
-    # hướng dẫn rõ còn hơn biến máy user thành bãi thử pip toàn cục.
-    if getattr(sys, "prefix", "") == getattr(sys, "base_prefix", ""):
+
+    runtime_kind = _eris_managed_python_kind()
+    if not runtime_kind:
         if logger:
-            logger.warning("[screen text] OCR auto-install skipped: runtime is not inside a virtualenv.")
+            logger.warning(
+                "[screen text] OCR auto-install skipped: Python runtime is not owned by Eris "
+                "(expected .venv or <eris>/python/python.exe)."
+            )
         return False
+
     if sys.version_info >= (3, 13):
         if logger:
             logger.warning(
                 "[screen text] OCR auto-install skipped: rapidocr-onnxruntime is not available for Python %s.%s. "
-                "Use a Python 3.12 venv or install Tesseract + pytesseract for OCR.",
+                "Use the bundled Python 3.12 runtime or install Tesseract + pytesseract for OCR.",
                 sys.version_info.major,
                 sys.version_info.minor,
             )
         return False
+
+    if not _ensure_pip_available(logger=logger):
+        if logger:
+            logger.warning(
+                "[screen text] OCR self-heal could not find/bootstrap pip in Eris %s Python runtime.",
+                runtime_kind,
+            )
+        return False
+
     requirements = Path(__file__).resolve().parents[1] / "requirements-screen-ocr.txt"
-    command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"]
+    command = [
+        sys.executable, "-m", "pip", "install",
+        "--disable-pip-version-check", "--no-warn-script-location",
+    ]
     if requirements.exists():
         command.extend(["-r", str(requirements)])
     else:
         command.append("rapidocr-onnxruntime>=1.3.24,<2")
+
+    if logger:
+        logger.info("[screen text] OCR self-heal starting runtime=%s python=%s", runtime_kind, sys.executable)
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, timeout=240, check=False,
+            command, capture_output=True, text=True, timeout=300, check=False,
         )
     except Exception as exc:
         if logger:
@@ -177,11 +261,20 @@ def _auto_install_rapidocr(*, logger=None) -> bool:
         return False
     if result.returncode != 0:
         if logger:
-            detail = (result.stderr or result.stdout or "pip returned non-zero")[-800:]
+            detail = (result.stderr or result.stdout or "pip returned non-zero")[-1200:]
             logger.warning("[screen text] OCR auto-install failed rc=%s detail=%s", result.returncode, detail)
         return False
+
+    try:
+        import importlib
+        importlib.invalidate_caches()
+    except Exception:
+        pass
     if logger:
-        logger.info("[screen text] OCR dependency installed into current venv; resolving backend again.")
+        logger.info(
+            "[screen text] OCR dependency installed into Eris %s runtime; resolving backend again.",
+            runtime_kind,
+        )
     return True
 
 
@@ -338,7 +431,7 @@ class IncrementalScreenTextWorker:
             self._backend_warning_emitted = True
             self.logger.warning(
                 "[screen text] OCR backend unavailable; running UIA + vision fallback. "
-                "Auto-install failed or was disabled; install requirements-screen-ocr.txt in this venv."
+                "Self-heal failed or was disabled; install requirements-screen-ocr.txt with the same Eris Python runtime."
             )
 
     def refresh_now(self, *, force_ocr: bool = True) -> ScreenTextSnapshot | None:
