@@ -1,9 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
+root = Path.cwd()
 
 
 a = Analysis(
-    ['C:/Users/Gtvkun/Documents/GitHub/eris/src/manager_gui.py'],
-    pathex=[],
+    [str(root / 'src' / 'manager_gui.py')],
+    pathex=[str(root)],
     binaries=[],
     datas=[],
     hiddenimports=[],

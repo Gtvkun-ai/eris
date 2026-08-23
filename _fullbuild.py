@@ -12,14 +12,17 @@ Bai hoc ghi nho:
 """
 
 import compileall
+import argparse
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO    = os.path.dirname(os.path.abspath(__file__))
-OUT     = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris"))
+DEV_OUT = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris"))
+RELEASE_OUT = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris_release"))
 VENV_PY = os.path.join(REPO, ".venv", "Scripts", "python.exe")
 
 # .py duoc giu lai trong build (Godot launch truc tiep file nay)
@@ -28,6 +31,26 @@ KEEP_PY = {"vision.py"}
 # Thu muc qua nang / khong can ship
 SKIP_HEAVY = {
     ".pytest_cache",
+}
+
+PRIVATE_FILE_NAMES = {
+    ".env",
+    "secrets.json",
+    "elevenlabs_pool.db",
+}
+
+PRIVATE_SUFFIXES = (
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+)
+
+PRIVATE_DIR_NAMES = {
+    ".cache",
+    ".eris_home",
+    ".eris_state",
+    "__pycache__",
+    "logs",
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,6 +73,188 @@ def count_ext(root, ext):
                 total += 1
     return total
 
+def ensure_portable_python_can_import_src(python_dir):
+    pth_path = os.path.join(python_dir, "python312._pth")
+    if not os.path.isfile(pth_path):
+        print("  [WARN] python312._pth not found; portable Python may not see src/")
+        return
+
+    with open(pth_path, "r", encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+
+    normalized = {line.strip().replace("/", "\\").lower() for line in lines}
+    if "..\\src" not in normalized:
+        insert_at = 0
+        for i, line in enumerate(lines):
+            if line.strip().lower() == "import site":
+                insert_at = i
+                break
+        lines.insert(insert_at, "..\\src")
+        with open(pth_path, "w", encoding="utf-8", newline="\r\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print("  [OK] Patched python312._pth with ..\\src")
+    else:
+        print("  [OK] python312._pth already includes ..\\src")
+
+def ensure_live2d_dependencies(python_dir):
+    python_exe = os.path.join(python_dir, "python.exe")
+    requirements = os.path.join(REPO, "requirements-live2d.txt")
+    if not os.path.isfile(python_exe):
+        print("  [WARN] portable python.exe not found; cannot verify Live2D deps")
+        return
+    if not os.path.isfile(requirements):
+        print("  [WARN] requirements-live2d.txt not found; cannot install Live2D deps")
+        return
+
+    probe = "import glfw, live2d.v3"
+    check = subprocess.run(
+        [python_exe, "-c", probe],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode == 0:
+        print("  [OK] Live2D deps available (glfw + live2d-py)")
+        return
+
+    print("  [INFO] Live2D deps missing; installing requirements-live2d.txt ...")
+    install = subprocess.run(
+        [python_exe, "-m", "pip", "install", "-r", requirements],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if install.returncode != 0:
+        print("  [FAIL] Could not install Live2D deps:")
+        print("  " + (install.stderr or install.stdout)[-1200:])
+        sys.exit(1)
+
+    recheck = subprocess.run(
+        [python_exe, "-c", probe],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if recheck.returncode != 0:
+        print("  [FAIL] Live2D deps installed but import still fails:")
+        print("  " + (recheck.stderr or recheck.stdout)[-1200:])
+        sys.exit(1)
+    print("  [OK] Live2D deps installed and verified")
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build Eris dev/release outputs without mixing private runtime data.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("dev", "release"),
+        default="dev",
+        help="dev = fast local build with private config; release = clean user staging.",
+    )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Override output directory. Defaults: Documents\\eris for dev, Documents\\eris_release for release.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Keep .py sources and skip .pyc stripping.",
+    )
+    parser.add_argument(
+        "--release-compiled",
+        action="store_true",
+        help="Compatibility flag; release builds compile by default.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Run non-interactively.",
+    )
+    parser.add_argument(
+        "--skip-installer",
+        action="store_true",
+        help="Skip Inno Setup packaging.",
+    )
+    return parser.parse_args()
+
+ARGS = parse_args()
+PROFILE = ARGS.profile
+IS_RELEASE = PROFILE == "release"
+OUT = os.path.normpath(ARGS.output or (RELEASE_OUT if IS_RELEASE else DEV_OUT))
+BUILD_INSTALLER = IS_RELEASE and not ARGS.skip_installer
+
+def clean_release_output():
+    if not IS_RELEASE or not os.path.exists(OUT):
+        return
+    out_abs = os.path.abspath(OUT)
+    release_abs = os.path.abspath(RELEASE_OUT)
+    if out_abs in {
+        os.path.abspath(REPO),
+        os.path.abspath(DEV_OUT),
+        os.path.dirname(os.path.abspath(REPO)),
+        os.path.abspath(os.sep),
+    }:
+        print("[!] Refuse to clean unsafe release output: " + OUT)
+        sys.exit(1)
+    if not (os.path.basename(out_abs).lower().startswith("eris_release") or out_abs == release_abs):
+        print("[!] Refuse to auto-clean custom release output without eris_release name: " + OUT)
+        sys.exit(1)
+    print("  Clean release staging: " + OUT)
+    shutil.rmtree(OUT, onerror=remove_readonly)
+
+def sanitize_release_output():
+    if not IS_RELEASE:
+        return
+    removed_files = 0
+    removed_dirs = 0
+    for dp, dirs, fns in os.walk(OUT, topdown=True):
+        for d in list(dirs):
+            if d.lower() in PRIVATE_DIR_NAMES:
+                shutil.rmtree(os.path.join(dp, d), onerror=remove_readonly)
+                dirs.remove(d)
+                removed_dirs += 1
+        for fn in fns:
+            lower = fn.lower()
+            if lower in PRIVATE_FILE_NAMES or lower.endswith(PRIVATE_SUFFIXES) or lower.endswith(".bak"):
+                try:
+                    os.remove(os.path.join(dp, fn))
+                    removed_files += 1
+                except OSError:
+                    pass
+    print(f"  [OK] Release sanitized: removed_private_files={removed_files} removed_private_dirs={removed_dirs}")
+
+def build_manager_exe():
+    spec_path = os.path.join(REPO, "ErisManager.spec")
+    manager_src = os.path.join(REPO, "src", "manager_gui.py")
+    if not os.path.isfile(manager_src):
+        print("  [WARN] manager_gui.py not found; skipping ErisManager.exe")
+        return
+    if not os.path.isfile(spec_path):
+        print("  [WARN] ErisManager.spec not found; skipping ErisManager.exe")
+        return
+
+    print("  Building ErisManager.exe...")
+    res = subprocess.run(
+        [VENV_PY, "-m", "PyInstaller", "--noconfirm", "--clean", spec_path],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        print("  [FAIL] ErisManager.exe build failed:")
+        print("  " + (res.stderr or res.stdout)[-1200:])
+        sys.exit(1)
+    built_exe = os.path.join(REPO, "dist", "ErisManager.exe")
+    root_exe = os.path.join(REPO, "ErisManager.exe")
+    root_setup_exe = os.path.join(REPO, "ErisSetup.exe")
+    if os.path.isfile(built_exe):
+        shutil.copy2(built_exe, root_exe)
+        shutil.copy2(built_exe, root_setup_exe)
+        print("  [OK] ErisManager.exe copied to repo root")
+        print("  [OK] ErisSetup.exe copied to repo root")
+    print("  [OK] ErisManager.exe built")
+
 # ── Guard: phai chay bang dung venv ──────────────────────────────────────────
 banner("Guard  --  kiem tra Python interpreter")
 
@@ -70,13 +275,26 @@ if cur != exp:
     sys.exit(1)
 
 print("[OK] Python " + sys.version.split()[0] + "  --  " + sys.executable)
+print("[OK] Profile: " + PROFILE + "  ->  " + OUT)
 
-ch = input("\nBat dau build? [y/n]: ").strip().lower()
-if ch != 'y':
-    print("Huy build.")
-    sys.exit(0)
+if not ARGS.yes:
+    ch = input("\nBat dau build profile '" + PROFILE + "'? [y/n]: ").strip().lower()
+    if ch != 'y':
+        print("Huy build.")
+        sys.exit(0)
 
-is_debug = input("Build ban Debug (Giu nguyen ma nguon .py)? [y/n]: ").strip().lower() == 'y'
+if ARGS.debug:
+    is_debug = True
+elif IS_RELEASE:
+    # Release mac dinh la ban dong goi cho user: compile .pyc va strip source.
+    # Dung --debug neu can mot release staging de trace loi.
+    is_debug = False
+else:
+    if ARGS.yes:
+        is_debug = True
+    else:
+        raw_debug = input("Build ban Debug/fast (giu nguyen ma nguon .py)? [Y/n]: ").strip().lower()
+        is_debug = (raw_debug or "y") == "y"
 
 # ── 1. Xoa src/ cu, copy moi tu repo ─────────────────────────────────────────
 banner("1 / 5  --  Copy src/ tu repo")
@@ -91,6 +309,8 @@ def remove_readonly(func, path, _):
         func(path)
     except Exception:
         pass
+
+clean_release_output()
 
 if os.path.exists(src_build):
     print("  Xoa src/ cu trong build...")
@@ -177,18 +397,43 @@ for dp, dirs, _ in os.walk(src_build, topdown=False):
 print("  Xoa " + str(cleaned) + " thu muc __pycache__/")
 
 # ── 4. Ep copy .env + secrets.json + Eris.exe + tao run_eris.bat dung ──────────
-banner("4 / 5  --  Deploy .env + config/secrets.json + run_eris.bat")
+banner("4 / 5  --  Deploy runtime files + run_eris.bat")
+
+build_manager_exe()
 
 deploy_pairs = [
-    (os.path.join(REPO, ".env"),
-     os.path.join(OUT,  ".env")),
+    (os.path.join(REPO, "HUONG_DAN_NGUOI_DUNG.md"),
+     os.path.join(OUT,  "HUONG_DAN_NGUOI_DUNG.md")),
+    (os.path.join(REPO, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
+     os.path.join(OUT,  "VIDEO_GUIDE_POOL_SETUP_VI.md")),
     (os.path.join(REPO, "run_elevenlabs_pool_ui.bat"),
      os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
+    (os.path.join(REPO, "run_deepseek_pool_ui.bat"),
+     os.path.join(OUT,  "run_deepseek_pool_ui.bat")),
     (os.path.join(REPO, "setup_gemini_login.bat"),
      os.path.join(OUT,  "setup_gemini_login.bat")),
+    (os.path.join(REPO, "config", "SECRETS_SETUP.md"),
+     os.path.join(OUT,  "config", "SECRETS_SETUP.md")),
     (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
+
+if IS_RELEASE:
+    deploy_pairs.extend([
+        (os.path.join(REPO, ".env.example"),
+         os.path.join(OUT,  ".env.example")),
+        (os.path.join(REPO, "config", "secrets.example.json"),
+         os.path.join(OUT,  "config", "secrets.example.json")),
+    ])
+else:
+    deploy_pairs.extend([
+        (os.path.join(REPO, ".env"),
+         os.path.join(OUT,  ".env")),
+        (os.path.join(REPO, "config", "secrets.json"),
+         os.path.join(OUT,  "config", "secrets.json")),
+        (os.path.join(REPO, "config", "elevenlabs_pool.db"),
+         os.path.join(OUT,  "config", "elevenlabs_pool.db")),
+    ])
 
 # Copy optional root config files if present in REPO
 for mem_fn in ["goal_profiles.json"]:
@@ -202,6 +447,11 @@ for binary_fn in ["Eris.exe", "Eris.pck"]:
     if os.path.isfile(src_bin):
         deploy_pairs.append((src_bin, os.path.join(OUT, binary_fn)))
 
+manager_exe = os.path.join(REPO, "dist", "ErisManager.exe")
+if os.path.isfile(manager_exe):
+    deploy_pairs.append((manager_exe, os.path.join(OUT, "ErisManager.exe")))
+    deploy_pairs.append((manager_exe, os.path.join(OUT, "ErisSetup.exe")))
+
 all_deploy_ok = True
 for src, dst in deploy_pairs:
     if not os.path.isfile(src):
@@ -212,34 +462,7 @@ for src, dst in deploy_pairs:
     shutil.copy2(src, dst)
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
 
-# Tao _start_webai.bat -- helper khoi dong WebAI-to-API (co buoc sync cookie tu gemini.json)
-webai_src = os.path.join(REPO, "tools", "WebAI-to-API")
-webai_dst = os.path.join(OUT, "tools", "WebAI-to-API")
-if os.path.exists(webai_src):
-    print("  Deploying WebAI-to-API to build...")
-    shutil.copytree(webai_src, webai_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv"))
 
-start_webai_path = os.path.join(OUT, "_start_webai.bat")
-start_webai_content = (
-    "@echo off\r\n"
-    "cd /d \"%~dp0tools\\WebAI-to-API\"\r\n"
-    "set PYTHONUTF8=1\r\n"
-    "set PYTHONIOENCODING=utf-8\r\n"
-    "set \"HF_HOME=%~dp0.cache\\huggingface\"\r\n"
-    "set \"XDG_CACHE_HOME=%~dp0.cache\"\r\n"
-    "set \"ERIS_AGENT_SERVICE_DISCOVERY=%~dp0.eris_state\\agent_service.json\"\r\n"
-    "set \"ERIS_HOME=%~dp0.eris_home\"\r\n"
-    "set \"ERIS_STATE_DIR=%~dp0.eris_state\"\r\n"
-    "\r\n"
-    "echo [WebAI] Syncing cookies from gemini.json...\r\n"
-    "\"%~dp0python\\python.exe\" _sync_webai_cookies.py\r\n"
-    "\r\n"
-    "echo [WebAI] Starting server on port 8081...\r\n"
-    "\"%~dp0python\\python.exe\" src\\run.py --host 0.0.0.0 --port 8081\r\n"
-)
-with open(start_webai_path, "wb") as fh:
-    fh.write(start_webai_content.encode("ascii"))
-print("  [OK] _start_webai.bat  (WebAI launcher helper + cookie sync + portable env)")
 
 # Deploy embedding_model directory to build directory if present
 embed_src = os.path.join(REPO, "embedding_model")
@@ -291,12 +514,28 @@ if os.path.exists(ds2api_src):
             except (PermissionError, OSError):
                 print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
 
+tool_helper_src = os.path.join(REPO, "tools", "open_url_when_ready.ps1")
+tool_helper_dst = os.path.join(OUT, "tools", "open_url_when_ready.ps1")
+if os.path.exists(tool_helper_src):
+    os.makedirs(os.path.dirname(tool_helper_dst), exist_ok=True)
+    shutil.copy2(tool_helper_src, tool_helper_dst)
+    print("  [OK] tools\\open_url_when_ready.ps1")
+
+ds_pool_apply_src = os.path.join(REPO, "tools", "apply_deepseek_pool_to_secrets.py")
+ds_pool_apply_dst = os.path.join(OUT, "tools", "apply_deepseek_pool_to_secrets.py")
+if os.path.exists(ds_pool_apply_src):
+    os.makedirs(os.path.dirname(ds_pool_apply_dst), exist_ok=True)
+    shutil.copy2(ds_pool_apply_src, ds_pool_apply_dst)
+    print("  [OK] tools\\apply_deepseek_pool_to_secrets.py")
+
 # Copy portable_python to build output
 portable_src = os.path.join(REPO, "portable_python")
 portable_dst = os.path.join(OUT, "python")
 if os.path.exists(portable_src):
     print("  Deploying Portable Python Runtime to build... This may take a while.")
     shutil.copytree(portable_src, portable_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
+    ensure_portable_python_can_import_src(portable_dst)
+    ensure_live2d_dependencies(portable_dst)
     print("  [OK] Portable Python deployed")
 else:
     print("  [ERROR] portable_python not found. Please run 'eris_setup.py' -> 'Create Portable Python' first!")
@@ -336,6 +575,7 @@ def _copy_heavy_dir(dirname: str) -> None:
 
 _copy_heavy_dir("asset")
 _copy_heavy_dir("voice_presets")
+_copy_heavy_dir("gemini_manager")
 
 if os.path.exists(cline_src):
     # Buoc 1: build TypeScript -> dist/ (phai co node trong PATH)
@@ -404,6 +644,10 @@ banner("4d/5  --  Deploy setup wizard & pool scripts")
 
 ROOT_COPY = [
     "eris_setup.py",
+    "run_manager.bat",
+    "open_user_guide.bat",
+    "setup_secrets.bat",
+    "apply_deepseek_pool_to_secrets.bat",
     "_setup_gemini_pool_auth.bat",
     "_start_gemini_pool.bat",
     "run_gemini_web2api.bat",
@@ -413,6 +657,7 @@ ROOT_COPY = [
     "tutor_login.bat",
     "tutor_login.py",
     "run_elevenlabs_pool_ui.bat",
+    "run_deepseek_pool_ui.bat",
     "run_doctor.bat",
     "run_smoke_test.bat",
     "run_runtime.bat",
@@ -449,6 +694,14 @@ bat_lines = [
     "set \"ERIS_HOME=%~dp0.eris_home\"",
     "set \"ERIS_STATE_DIR=%~dp0.eris_state\"",
     "",
+    "if not exist \"%~dp0config\\secrets.json\" (",
+    "    echo [SETUP] Missing config\\secrets.json.",
+    "    echo [SETUP] Opening secrets setup now. Fill keys, save, then run this launcher again.",
+    "    if exist \"%~dp0setup_secrets.bat\" call \"%~dp0setup_secrets.bat\"",
+    "    pause",
+    "    exit /b 1",
+    ")",
+    "",
     "echo.",
     "echo  ===============================================",
     "echo    ERIS - AUTO LAUNCHER",
@@ -460,23 +713,6 @@ bat_lines = [
     "if not exist \"%PYTHON%\" set \"PYTHON=python\"",
     "echo [INFO] Python: %PYTHON%",
     "",
-    ":: Step 1: Check / Start WebAI-to-API :8081",
-    "echo.",
-    "echo [STEP 1/3] Checking port 8081...",
-    "netstat -ano | findstr \":8081\" | findstr \"LISTENING\" >nul 2>nul",
-    "if %ERRORLEVEL% == 0 (",
-    "    echo [OK]   WebAI-to-API already running on :8081",
-    "    goto START_ERIS",
-    ")",
-    "",
-    "echo [INFO]  Port 8081 free -- starting WebAI-to-API...",
-    "if not exist \"%~dp0_start_webai.bat\" (",
-    "    echo [ERROR] _start_webai.bat not found!",
-    "    pause",
-    "    exit /b 1",
-    ")",
-    "start \"WebAI-to-API\" cmd /k \"%~dp0_start_webai.bat\"",
-    "",
     ":: Step 1b: Start cline-bridge sidecar",
     "if exist \"%~dp0cline-bridge\\dist\\bridge.js\" (",
     "    echo [INFO]  Starting cline-bridge sidecar...",
@@ -487,25 +723,6 @@ bat_lines = [
     ")",
     "",
     "",
-    ":: Step 2: Wait for server (max 50s)",
-    "echo [STEP 2/3] Waiting for server (max 50s)...",
-    "set /a R=0",
-    ":WAIT_LOOP",
-    "    timeout /t 2 /nobreak >nul",
-    "    netstat -ano | findstr \":8081\" | findstr \"LISTENING\" >nul 2>nul",
-    "    if %ERRORLEVEL% == 0 goto SERVER_READY",
-    "    set /a R+=1",
-    "    if !R! geq 25 (",
-    "        echo [WARN]  Timeout -- proceeding anyway.",
-    "        goto START_ERIS",
-    "    )",
-    "    echo [INFO]  Waiting !R!/25...",
-    "    goto WAIT_LOOP",
-    "",
-    ":SERVER_READY",
-    "echo [OK]   WebAI-to-API UP at http://localhost:8081",
-    "",
-    ":: Step 3: Start Eris",
     ":START_ERIS",
     "echo.",
     "echo [STEP 3/3] Starting Eris...",
@@ -519,7 +736,7 @@ bat_lines = [
     "",
     "echo.",
     "echo  [DONE] Tat ca da khoi dong!",
-    "echo  WebAI UI: http://localhost:8081/ui",
+    
     "echo.",
     "start \"\" \"http://localhost:8081/ui\"",
     "pause",
@@ -528,6 +745,8 @@ bat_content_crlf = "\r\n".join(bat_lines) + "\r\n"
 with open(bat_path, "wb") as fh:
     fh.write(bat_content_crlf.encode("ascii"))
 print("  [OK] run_eris.bat  (generated CRLF, venv " + sys.version.split()[0] + ")")
+
+sanitize_release_output()
 
 if not all_deploy_ok:
     print("[!] Mot so file deploy bi thieu.")
@@ -543,10 +762,36 @@ must_exist = [
     os.path.join(OUT, "src",          "llm",      "key_pool.pyc"),
     os.path.join(OUT, "src",          "llm",      "process_manager.pyc"),
     os.path.join(OUT, "src",          "runtime",  "coordinator.pyc"),
-    os.path.join(OUT, ".env"),
-    os.path.join(OUT, "config",       "secrets.json"),
+    os.path.join(OUT, "ErisManager.exe"),
+    os.path.join(OUT, "ErisSetup.exe"),
     os.path.join(OUT, "cline-bridge", "dist",     "bridge.js"),
 ]
+if is_debug:
+    must_exist = [p for p in must_exist if not p.endswith(".pyc")]
+if IS_RELEASE:
+    must_exist.extend([
+        os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
+        os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
+        os.path.join(OUT, "open_user_guide.bat"),
+        os.path.join(OUT, ".env.example"),
+        os.path.join(OUT, "setup_secrets.bat"),
+        os.path.join(OUT, "apply_deepseek_pool_to_secrets.bat"),
+        os.path.join(OUT, "tools", "apply_deepseek_pool_to_secrets.py"),
+        os.path.join(OUT, "config", "SECRETS_SETUP.md"),
+        os.path.join(OUT, "config", "secrets.example.json"),
+    ])
+else:
+    must_exist.extend([
+        os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
+        os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
+        os.path.join(OUT, "open_user_guide.bat"),
+        os.path.join(OUT, ".env"),
+        os.path.join(OUT, "setup_secrets.bat"),
+        os.path.join(OUT, "apply_deepseek_pool_to_secrets.bat"),
+        os.path.join(OUT, "tools", "apply_deepseek_pool_to_secrets.py"),
+        os.path.join(OUT, "config", "SECRETS_SETUP.md"),
+        os.path.join(OUT, "config", "secrets.json"),
+    ])
 
 all_ok = True
 for p in must_exist:
@@ -591,13 +836,27 @@ for p in possible_iscc:
         break
 
 if not iscc_path:
-    print("  [WARN] Khong tim thay Inno Setup (ISCC.exe). Bo qua buoc dong goi (chua cai Inno Setup).")
+    if BUILD_INSTALLER:
+        print("  [WARN] Khong tim thay Inno Setup (ISCC.exe). Bo qua buoc dong goi (chua cai Inno Setup).")
+    else:
+        print("  [SKIP] Installer disabled for profile=" + PROFILE)
 else:
     iss_file = os.path.join(REPO, "installer", "Eris.iss")
-    if os.path.exists(iss_file):
+    if not BUILD_INSTALLER:
+        print("  [SKIP] Installer disabled for profile=" + PROFILE)
+    elif os.path.exists(iss_file):
         print("  Dang tien hanh nen thanh file cai dat (co the mat 1-2 phut)...")
         import subprocess
-        res = subprocess.run([iscc_path, iss_file], capture_output=True, text=True)
+        res = subprocess.run(
+            [
+                iscc_path,
+                "/DSourceDir=" + OUT,
+                "/DSetupOutputBaseFilename=ErisSetup",
+                iss_file,
+            ],
+            capture_output=True,
+            text=True,
+        )
         if res.returncode == 0:
             print("  [OK] Dong goi Inno Setup thanh cong!")
             print("  File cai dat: C:\\Users\\Gtvkun\\Documents\\eris_dist\\ErisSetup.exe")
@@ -613,6 +872,7 @@ if all_ok:
     sep = "=" * 58
     print(sep)
     print("  BUILD THANH CONG")
+    print("  Profile: " + PROFILE)
     print("  Output : " + OUT)
     print("  Python : " + sys.version.split()[0])
     print("  Chay   : " + os.path.join(OUT, "run_eris.bat"))

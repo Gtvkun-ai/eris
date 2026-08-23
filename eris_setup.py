@@ -232,7 +232,6 @@ def setup_deepseek() -> None:
         print(warn("whale2api.exe khong tim thay tai: " + str(whale_dir)))
         print(info("Download tu: https://github.com/your-fork/whale2api/releases"))
         pause()
-        return
 
     if accounts_file.exists():
         lines = [l.strip() for l in accounts_file.read_text().splitlines() if l.strip() and not l.startswith("#")]
@@ -263,9 +262,45 @@ def setup_deepseek() -> None:
 
     # Cap nhat pool endpoints file
     _write_pool_endpoints()
-    update_state("gemini_pool", {"ts": time.time()})
+    update_state("deepseek", {"ts": time.time()})
     print()
-    print(ok("Gemini pool setup done"))
+    print(ok("DeepSeek pool setup done"))
+
+
+def setup_secrets() -> None:
+    banner("Secrets Setup")
+    script = ROOT / "setup_secrets.bat"
+    if not script.exists():
+        print(err("setup_secrets.bat khong tim thay"))
+        print(info(r"Can tao config\secrets.json tu config\secrets.example.json."))
+        return
+    print(info(r"Mo config\SECRETS_SETUP.md va config\secrets.json de dien key."))
+    result = subprocess.run(["cmd", "/c", str(script)], cwd=ROOT)
+    if result.returncode == 0:
+        update_state("secrets", {"ts": time.time()})
+        print(ok("Secrets setup ready"))
+    else:
+        print(err("Secrets setup that bai."))
+
+
+def open_user_guide() -> None:
+    banner("User Guide")
+    script = ROOT / "open_user_guide.bat"
+    if not script.exists():
+        print(err("open_user_guide.bat khong tim thay"))
+        return
+    subprocess.run(["cmd", "/c", str(script)], cwd=ROOT)
+    print(ok("Da mo huong dan nguoi dung"))
+
+
+def apply_deepseek_pool_keys() -> None:
+    banner("Apply DeepSeek Pool Keys")
+    script = ROOT / "apply_deepseek_pool_to_secrets.bat"
+    if not script.exists():
+        print(err("apply_deepseek_pool_to_secrets.bat khong tim thay"))
+        return
+    subprocess.run(["cmd", "/c", str(script)], cwd=ROOT)
+    update_state("deepseek_keys", {"ts": time.time()})
 
 
 def _write_pool_endpoints() -> None:
@@ -576,15 +611,18 @@ def main_menu() -> None:
         print(f"  {BOLD}SETUP{RESET}")
         print(f"  [1] Check requirements          {_status_tag('requirements')}")
         print(f"  [2] Install dependencies        {_status_tag('dependencies')}")
-        print(f"  [3] Setup DeepSeek accounts     {_status_tag('deepseek')}")
-        print(f"  [4] Setup TTS (ElevenLabs)      {_status_tag('tts')}")
-        print(f"  [5] Setup Tutor Auth            {_status_tag('tutor_auth')}")
-        print(f"  [6] Create Portable Python      {_status_tag('portable_python')}")
-        print(f"  [7] Full build -> {str(BUILD_OUT)[:25]}")
+        print(f"  [3] Open user guide")
+        print(f"  [4] Setup secrets.json          {_status_tag('secrets')}")
+        print(f"  [5] Setup DeepSeek accounts     {_status_tag('deepseek')}")
+        print(f"  [6] Apply DeepSeek pool keys    {_status_tag('deepseek_keys')}")
+        print(f"  [7] Setup TTS (ElevenLabs)      {_status_tag('tts')}")
+        print(f"  [8] Setup Tutor Auth            {_status_tag('tutor_auth')}")
+        print(f"  [9] Create Portable Python      {_status_tag('portable_python')}")
+        print(f"  [b] Full build -> {str(BUILD_OUT)[:25]}")
         print()
         print(f"  {BOLD}SERVICES{RESET}")
-        print(f"  [8] Start all services")
-        print(f"  [9] Health dashboard (live)")
+        print(f"  [r] Start all services")
+        print(f"  [h] Health dashboard (live)")
         print(f"  [s] Stop all")
         print()
         print(f"  [0] Exit")
@@ -593,13 +631,16 @@ def main_menu() -> None:
         ch = input("Chon: ").strip().lower()
         if ch == "1":   check_requirements()
         elif ch == "2": install_dependencies()
-        elif ch == "3": setup_deepseek()
-        elif ch == "4": setup_tts()
-        elif ch == "5": setup_tutor()
-        elif ch == "6": create_portable_python()
-        elif ch == "7": full_build()
-        elif ch == "8": start_all()
-        elif ch == "9": health_dashboard()
+        elif ch == "3": open_user_guide()
+        elif ch == "4": setup_secrets()
+        elif ch == "5": setup_deepseek()
+        elif ch == "6": apply_deepseek_pool_keys()
+        elif ch == "7": setup_tts()
+        elif ch == "8": setup_tutor()
+        elif ch == "9": create_portable_python()
+        elif ch == "b": full_build()
+        elif ch == "r": start_all()
+        elif ch == "h": health_dashboard()
         elif ch == "s": stop_all()
         elif ch == "0": break
         else:

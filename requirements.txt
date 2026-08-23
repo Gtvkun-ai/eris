@@ -2,10 +2,13 @@ mss
 Pillow
 psutil
 requests
+fastapi
+uvicorn
 uiautomation
 numpy>=2.0.0
 playwright>=1.56.0
 pytest>=9.1.1
+pyinstaller>=6.0
 # sentence-transformers==3.4.1  # optional — dùng transformers+torch đã có thay thế
 
 # TTS — Emotional voice (Gemini TTS API)

@@ -1,5 +1,6 @@
 python312.zip
 .
+..\src
 
 # Uncomment to run site.main() automatically
 import site

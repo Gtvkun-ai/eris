@@ -9,6 +9,7 @@ The Python runtime is the main brain. Godot 4 .NET is the optional body UI that 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\setup_secrets.bat
 .\run_doctor.bat
 .\run_smoke_test.bat
 ```
@@ -21,9 +22,34 @@ Then run:
 
 Open `project.godot` in Godot 4 .NET only when you want the body UI.
 
+## Non-Dev User Guide
+
+For a release/new machine, start here:
+
+```powershell
+.\ErisSetup.exe
+.\open_user_guide.bat
+```
+
+This opens the Vietnamese quick guide and the video-recording script. The important account tools are:
+
+```powershell
+.\run_deepseek_pool_ui.bat
+.\apply_deepseek_pool_to_secrets.bat
+.\run_elevenlabs_pool_ui.bat
+```
+
 ## Local Config
 
 Runtime config lives in `.env` or `config\secrets.json`.
+
+For a new machine or release build, run:
+
+```powershell
+.\setup_secrets.bat
+```
+
+It creates `config\secrets.json` from `config\secrets.example.json` if missing, then opens the guide and the file to edit. More detail: [config/SECRETS_SETUP.md](config/SECRETS_SETUP.md).
 
 Do not commit real keys. These files are intentionally ignored:
 
@@ -66,8 +92,12 @@ ERIS_DS2API_ENABLED=0
 .\run_doctor.bat
 .\run_smoke_test.bat
 .\run_runtime.bat
+.\open_user_guide.bat
+.\setup_secrets.bat
+.\apply_deepseek_pool_to_secrets.bat
 .\setup_tutor_browser.bat
 .\run_elevenlabs_pool_ui.bat
+.\run_deepseek_pool_ui.bat
 ```
 
 More detail: [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md).

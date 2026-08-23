@@ -4,19 +4,25 @@ AppVersion=0.14.0
 DefaultDirName={localappdata}\Programs\Eris
 PrivilegesRequired=lowest
 OutputDir=C:\Users\Gtvkun\Documents\eris_dist
-OutputBaseFilename=ErisSetup
+#ifndef SourceDir
+#define SourceDir "C:\Users\Gtvkun\Documents\eris_release"
+#endif
+#ifndef SetupOutputBaseFilename
+#define SetupOutputBaseFilename "ErisSetup"
+#endif
+OutputBaseFilename={#SetupOutputBaseFilename}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 
 [Files]
-Source: "C:\Users\Gtvkun\Documents\eris\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".env,config\secrets.json,config\*.db,*.db,*.sqlite,*.sqlite3,logs\*,.cache\*,.eris_home\*,.eris_state\*,*.bak"
 
 [Icons]
 Name: "{autoprograms}\Eris Launcher"; Filename: "{app}\run_eris.bat"
 Name: "{autodesktop}\Eris Launcher"; Filename: "{app}\run_eris.bat"
-Name: "{autoprograms}\Eris Manager"; Filename: "{app}\python\python.exe"; Parameters: """{app}\eris_setup.py"""
-Name: "{autodesktop}\Eris Manager"; Filename: "{app}\python\python.exe"; Parameters: """{app}\eris_setup.py"""
+Name: "{autoprograms}\Eris Manager"; Filename: "{app}\ErisManager.exe"
+Name: "{autodesktop}\Eris Manager"; Filename: "{app}\ErisManager.exe"
 
 [Run]
-Filename: "{app}\python\python.exe"; Parameters: """{app}\eris_setup.py"""; Description: "Mo bang quan ly tai khoan (Eris Manager)"; Flags: postinstall runascurrentuser
+Filename: "{app}\ErisManager.exe"; Description: "Mo bang quan ly tai khoan (Eris Manager)"; Flags: postinstall runascurrentuser skipifsilent

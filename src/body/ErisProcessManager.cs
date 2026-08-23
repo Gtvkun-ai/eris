@@ -440,6 +440,13 @@ public sealed class ErisProcessManager
 			return venvInBase;
 		}
 
+		string portableInBase = Path.Combine(baseDir, "python", "python.exe");
+		if (File.Exists(portableInBase))
+		{
+			RunLogger.Log($"[Vision] Python (portable baseDir): {portableInBase}");
+			return portableInBase;
+		}
+
 		// 3. .venv trong project root (khi editor chạy từ sub-dir)
 		string projectRoot = GetProjectRoot();
 		if (!string.Equals(projectRoot, baseDir, StringComparison.OrdinalIgnoreCase))

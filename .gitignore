@@ -17,6 +17,8 @@ venv/
 build/
 dist/
 *.egg-info/
+/ErisManager.exe
+/ErisSetup.exe
 
 # Local configuration and secrets
 .env
@@ -51,6 +53,9 @@ Thumbs.db
 # Third-party tools
 tools/WebAI-to-API/
 tools/WebAI-to-API-2/
+tools/whale2api/*.exe
+tools/whale2api/accounts.csv
+tools/whale2api/data/
 
 # cline-bridge build artifacts (node_modules + compiled dist)
 cline-bridge/node_modules/

@@ -226,6 +226,9 @@ public sealed class Live2DBodyManager
 		string venv = Path.Combine(root, ".venv", "Scripts", "python.exe");
 		if (File.Exists(venv))
 			return venv;
+		string portable = Path.Combine(root, "python", "python.exe");
+		if (File.Exists(portable))
+			return portable;
 		return string.IsNullOrWhiteSpace(configured) ? "python" : configured;
 	}
 
