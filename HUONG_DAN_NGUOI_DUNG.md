@@ -60,7 +60,6 @@ curator
 observer
 critic
 inner
-style
 ```
 
 3. Bấm `Tạo mới`.
@@ -74,8 +73,17 @@ email1@example.com,password1
 email2@example.com,password2
 ```
 
+Khi chay `DeepSeek pool UI`, Eris se tao san file mau:
+
+```text
+tools\whale2api\accounts.template.csv
+```
+
+Mo file nay, thay bang email/password DeepSeek that, luu lai, roi bam `Nhap CSV` trong Pool UI va chon file do.
+
 7. Bấm `Check nick sống`.
 8. Bấm `Vô hiệu nick lỗi` nếu có nick lỗi.
+9. Pool UI se tu tao Gateway Key cho pool.
 
 Sau khi tạo xong các pool, quay lại Setup/Manager và bấm:
 

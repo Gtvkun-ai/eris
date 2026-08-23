@@ -83,5 +83,5 @@ def test_tutor_does_not_self_search_by_default() -> None:
     from runtime.runtime_settings_store import RuntimeSettingsStore
 
     defaults = RuntimeSettingsStore.defaults()
-    assert defaults["tutor"]["enabled"] is True
+    assert defaults["tutor"]["enabled"] is False
     assert defaults["tutor"]["self_search_enabled"] is False

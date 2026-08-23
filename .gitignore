@@ -25,6 +25,10 @@ dist/
 .env.*
 !.env.example
 config/
+!/config/
+/config/*
+!/config/SECRETS_SETUP.md
+!/config/secrets.example.json
 memory_core/
 
 # Runtime state and generated output
@@ -56,6 +60,7 @@ tools/WebAI-to-API-2/
 tools/reference-repos/
 tools/whale2api/*.exe
 tools/whale2api/accounts.csv
+tools/whale2api/accounts.template.csv
 tools/whale2api/data/
 
 # cline-bridge build artifacts (node_modules + compiled dist)

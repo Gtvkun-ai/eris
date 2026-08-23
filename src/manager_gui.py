@@ -25,7 +25,6 @@ DEEPSEEK_ROLE_KEYS = {
     "observer": "ERIS_DS_OBSERVER_API_KEY",
     "critic": "ERIS_DS_CRITIC_API_KEY",
     "inner": "ERIS_DS_INNER_API_KEY",
-    "style": "ERIS_DS_STYLE_API_KEY",
 }
 
 
@@ -222,7 +221,7 @@ class ErisManager(tk.Tk):
         ttk.Button(deepseek, text="Open Pool UI", command=lambda: self.run_action(self._action_by_name("DeepSeek pool UI"))).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
         ttk.Button(deepseek, text="Apply role keys", command=lambda: self.run_action(self._action_by_name("Apply DeepSeek pool keys")), style="Accent.TButton").grid(row=0, column=1, sticky=tk.W, padx=(0, 8))
         ttk.Button(deepseek, text="Role status", command=self.refresh_setup_status).grid(row=0, column=2, sticky=tk.W)
-        ttk.Label(deepseek, text="Pool names: companion, surface, seed, executive, curator, observer, critic, inner, style", style="Status.TLabel").grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(8, 0))
+        ttk.Label(deepseek, text="Pool names: companion, surface, seed, executive, curator, observer, critic, inner", style="Status.TLabel").grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(8, 0))
 
         eleven = self._setup_card(parent, "ElevenLabs pool")
         ttk.Button(eleven, text="Open ElevenLabs Pool", command=lambda: self.run_action(self._action_by_name("ElevenLabs pool UI"))).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))

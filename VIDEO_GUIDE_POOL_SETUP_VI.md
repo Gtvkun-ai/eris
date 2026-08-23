@@ -38,17 +38,18 @@ Cảnh quay:
 4. Đặt tên pool `companion`.
 5. Bấm `Tạo mới`.
 6. Bấm `Nhập CSV`.
-7. Chọn CSV có cột `email,password`.
-8. Bấm `Check nick sống`.
-9. Lặp nhanh/nhảy cảnh cho `surface`, `seed`, `executive`, `curator`.
-10. Quay lại Setup, bấm `Apply role keys`.
-11. Mở `config\secrets.json` cho thấy các dòng key đã được điền, nhưng che key khi quay video.
+7. Mo file `tools\whale2api\accounts.template.csv`, thay bang email/password that, luu lai.
+8. Chọn CSV có cột `email,password`.
+9. Bấm `Check nick sống`.
+10. Lặp nhanh/nhảy cảnh cho `surface`, `seed`, `executive`, `curator`.
+11. Quay lại Setup, bấm `Apply role keys`.
+12. Mở `config\secrets.json` cho thấy các dòng key đã được điền, nhưng che key khi quay video.
 
 Nhắc trên màn hình:
 
 ```text
 Tên pool phải đúng:
-companion, surface, seed, executive, curator, observer, critic, inner, style
+companion, surface, seed, executive, curator, observer, critic, inner
 ```
 
 ## Video 3 - ElevenLabs Pool

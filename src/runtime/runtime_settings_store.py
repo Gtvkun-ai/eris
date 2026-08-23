@@ -252,8 +252,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "tutor": {
         # Các preference tutor vẫn được giữ để UI/config cũ không vỡ; startup
         # thực tế bị khóa bởi architecture.background_tutor_enabled=false.
-        "enabled": True,
-        "quick_search_enabled": True,
+        "enabled": False,
+        "quick_search_enabled": False,
         "research_enabled": False,
         "self_search_enabled": False,
         "low_confidence_clarify_threshold": 0.55,

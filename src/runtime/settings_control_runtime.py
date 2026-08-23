@@ -106,7 +106,6 @@ class SettingsControlRuntimeMixin:
             "surface": "surface_client",
             "style": "style_client",
             "research": "research_client",
-            "tutor": "tutor_client",
         }
         try:
             from llm.deepseek_workers import WORKER_ROLES, load_worker_spec

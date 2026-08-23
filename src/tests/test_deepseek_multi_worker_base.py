@@ -12,6 +12,7 @@ from llm.deepseek_workers import (
     RoleWorkerBusyError,
     canonical_json_line,
     load_worker_spec,
+    normalize_worker_role,
 )
 from llm.process_manager import RemoteModelProcessManager
 from llm.service import LlmService
@@ -193,7 +194,7 @@ def test_jsonl_worker_repairs_valid_json_with_wrong_schema_shape():
 
 def test_jsonl_worker_does_not_touch_free_text():
     raw = _FakeClient(["plain style text"])
-    worker = JsonlWorkerClient(raw, role="style", jsonl_enabled=False)
+    worker = JsonlWorkerClient(raw, role="companion", jsonl_enabled=False)
 
     payload = _call(worker, response_format=None)
 
@@ -246,6 +247,25 @@ def test_process_manager_builds_and_caches_role_worker(monkeypatch, tmp_path):
     assert first is second
     assert first.worker_role == "research"
     assert first.api_key == "research-gateway-key"
+
+
+def test_style_client_routes_to_critic_worker(monkeypatch, tmp_path):
+    monkeypatch.setenv("ERIS_DS2API_ENABLED", "1")
+    monkeypatch.setenv("ERIS_DS_CRITIC_API_KEY", "critic-gateway-key")
+    monkeypatch.setenv("ERIS_DS_CRITIC_BASE_URL", "http://127.0.0.1:6014/v1")
+    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
+    manager = RemoteModelProcessManager(logger=logging.getLogger("test"), project_root=str(tmp_path))
+
+    client = manager.build_style_client()
+
+    assert client is not None
+    assert client.worker_role == "critic"
+    assert client.api_key == "critic-gateway-key"
+
+
+def test_style_is_not_a_deepseek_pool_role():
+    with pytest.raises(ValueError):
+        normalize_worker_role("style")
 
 
 def test_llm_service_exposes_named_workers():

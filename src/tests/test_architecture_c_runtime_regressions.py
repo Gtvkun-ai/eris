@@ -494,13 +494,13 @@ def test_tts_worker_fails_closed_on_japanese_localizer_breaks_by_default(monkeyp
     assert language == "vi"
 
 
-def test_tts_worker_uses_style_key_rescue_when_primary_returns_non_japanese(monkeypatch) -> None:
+def test_tts_worker_uses_critic_key_rescue_when_primary_returns_non_japanese(monkeypatch) -> None:
     import runtime.speech_localizer as speech_localizer
 
     monkeypatch.setenv("ERIS_TTS_LOCALIZER_PROVIDER", "deepseek")
     monkeypatch.setenv("ERIS_TTS_LOCALIZER_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "primary-key")
-    monkeypatch.setenv("ERIS_DS_STYLE_API_KEY", "style-key")
+    monkeypatch.setenv("ERIS_DS_CRITIC_API_KEY", "critic-key")
     monkeypatch.setenv("ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR", "0")
 
     monkeypatch.setattr(
@@ -527,7 +527,7 @@ def test_tts_worker_uses_style_key_rescue_when_primary_returns_non_japanese(monk
     out = speech_localizer.SpeechLocalizer()._translate_to_japanese("Tôi đây.", prosody_style="")
 
     assert out == "こんにちは"
-    assert calls == ["primary-key", "style-key"]
+    assert calls == ["primary-key", "critic-key"]
 
 
 def test_tts_attempts_default_is_bounded(monkeypatch) -> None:

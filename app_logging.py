@@ -74,7 +74,7 @@ class RuntimeNoiseFilter(logging.Filter):
         "Đang dùng remote API làm cognition chính.",
         "Dung OpenAI-compatible API tai",
         "Dung Gemini speech API tai",
-        "Speech/style client đã sẵn sàng",
+        "Speech/critic client đã sẵn sàng",
         "Dung vision API tai",
         "Vision facts client đã sẵn sàng",
         "Chat fallback chain:",

@@ -4,7 +4,9 @@ import json
 import time
 from types import SimpleNamespace
 
-from llm.deepseek_workers import load_worker_spec, normalize_worker_role
+import pytest
+
+from llm.deepseek_workers import normalize_worker_role
 from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
 from runtime.semantic_tutor_runtime import EventDrivenSemanticTutor, SceneChangeDetector, SceneIdentity
 
@@ -232,14 +234,6 @@ def test_semantic_scene_does_not_gain_public_speech_without_social_plan_candidat
     assert decision.action is InitiativeAction.NO_OP
     assert decision.reason == "no_speech_candidate"
 
-def test_tutor_is_a_real_dedicated_worker_role(monkeypatch) -> None:
-    monkeypatch.setenv("ERIS_DS_TUTOR_API_KEY", "dedicated-tutor-key")
-    monkeypatch.setenv("ERIS_DS_TUTOR_BASE_URL", "http://127.0.0.1:6014/v1")
-    monkeypatch.setenv("ERIS_DS_MODEL", "deepseek-v4-flash")
-
-    assert normalize_worker_role("tutor") == "tutor"
-    spec = load_worker_spec("tutor")
-    assert spec.role == "tutor"
-    assert spec.api_key == "dedicated-tutor-key"
-    assert spec.base_url == "http://127.0.0.1:6014/v1"
-    assert spec.jsonl_enabled is True
+def test_tutor_worker_role_is_retired() -> None:
+    with pytest.raises(ValueError):
+        normalize_worker_role("tutor")

@@ -605,12 +605,8 @@ class RemoteModelProcessManager:
         return None
 
     def build_tutor_client(self):
-        """Worker DeepSeek riêng để phân rã ngữ nghĩa scene theo sự kiện.
-
-        Không alias sang research: user có thể cấp ERIS_DS_TUTOR_API_KEY riêng,
-        nhờ vậy lane semantic nền không tranh quota với search/research.
-        """
-        return self.build_deepseek_worker_client("tutor")
+        """Retired lane: semantic tutor no longer owns a DeepSeek account pool."""
+        return None
 
     def build_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         if not self._env_flag("ERIS_REMOTE_API_ENABLED", "1"):
@@ -618,7 +614,10 @@ class RemoteModelProcessManager:
         return self._build_remote_client()
 
     def build_style_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
-        worker = self.build_deepseek_worker_client("style")
+        # "style" is a runtime surface/repair capability, not a separate
+        # account owner. Route it through critic so users only manage one
+        # correction/format/style pool.
+        worker = self.build_deepseek_worker_client("critic")
         if worker is not None:
             return worker
         if self._speech_api_requested():

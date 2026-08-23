@@ -58,8 +58,8 @@ def private_residue_curator_enabled() -> bool:
 
 
 def background_tutor_enabled() -> bool:
-    """Khởi động tutor/research nền (mặc định tắt)."""
-    return _flag("background_tutor_enabled", "ERIS_BACKGROUND_TUTOR_ENABLED", False)
+    """Retired: tutor/research background runtime is no longer started."""
+    return False
 
 
 def event_trace_enabled() -> bool:

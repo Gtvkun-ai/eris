@@ -54,6 +54,25 @@ PRIVATE_DIR_NAMES = {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+RELEASE_SRC_PRUNE_DIR_NAMES = {
+    "docs",
+    "test",
+    "tests",
+}
+
+RELEASE_NOISE_DIR_NAMES = {
+    ".pytest_cache",
+    "__pycache__",
+    "test",
+    "tests",
+}
+
+RELEASE_NOISE_FILE_SUFFIXES = (
+    ".bak",
+    ".log",
+    ".tmp",
+)
+
 def banner(msg):
     sep = "=" * 58
     print("\n" + sep + "\n  " + msg + "\n" + sep)
@@ -140,6 +159,103 @@ def ensure_live2d_dependencies(python_dir):
         print("  " + (recheck.stderr or recheck.stdout)[-1200:])
         sys.exit(1)
     print("  [OK] Live2D deps installed and verified")
+
+def assert_live2d_source_contract(root):
+    manager = os.path.join(root, "src", "body", "Live2DBodyManager.cs")
+    if not os.path.isfile(manager):
+        print("  [FAIL] Missing Live2DBodyManager.cs; cannot validate Live2D runtime launcher")
+        sys.exit(1)
+    with open(manager, "r", encoding="utf-8", errors="ignore") as fh:
+        text = fh.read()
+    required = [
+        'Path.Combine(root, "python", "python.exe")',
+        'Python (portable runtime)',
+        'Renderer launcher',
+    ]
+    missing = [item for item in required if item not in text]
+    if missing:
+        print("  [FAIL] Live2D runtime launcher is missing portable-Python guard:")
+        for item in missing:
+            print("    - " + item)
+        sys.exit(1)
+    print("  [OK] Live2D source contract: portable Python is preferred in exported runtime")
+
+def newest_mtime(paths):
+    newest = 0.0
+    newest_path = ""
+    for path in paths:
+        if os.path.isfile(path):
+            mt = os.path.getmtime(path)
+            if mt > newest:
+                newest = mt
+                newest_path = path
+        elif os.path.isdir(path):
+            for dp, dirs, fns in os.walk(path):
+                dirs[:] = [
+                    d for d in dirs
+                    if d not in {".git", ".pytest_cache", "__pycache__", "node_modules"}
+                ]
+                for fn in fns:
+                    if not fn.endswith((".cs", ".tscn", ".tres", ".gd", ".godot")):
+                        continue
+                    fp = os.path.join(dp, fn)
+                    try:
+                        mt = os.path.getmtime(fp)
+                    except OSError:
+                        continue
+                    if mt > newest:
+                        newest = mt
+                        newest_path = fp
+    return newest, newest_path
+
+def assert_godot_pack_fresh(pack_path):
+    if not os.path.isfile(pack_path):
+        return
+    source_mtime, source_path = newest_mtime([
+        os.path.join(REPO, "Eris.csproj"),
+        os.path.join(REPO, "project.godot"),
+        os.path.join(REPO, "src", "body"),
+        os.path.join(REPO, "src", "scenes"),
+    ])
+    if not source_mtime:
+        return
+    pack_mtime = os.path.getmtime(pack_path)
+    if pack_mtime + 2 < source_mtime:
+        print("  [FAIL] Eris.pck is older than runtime source:")
+        print("    pck   : " + pack_path)
+        print("    source: " + source_path)
+        print("  Re-export the Godot C# runtime before running _fullbuild.py.")
+        sys.exit(1)
+    print("  [OK] Eris.pck freshness check")
+
+def prune_named_dirs(root, names):
+    removed = 0
+    if not os.path.isdir(root):
+        return removed
+    wanted = {name.lower() for name in names}
+    for dp, dirs, _ in os.walk(root, topdown=True):
+        for d in list(dirs):
+            if d.lower() in wanted:
+                shutil.rmtree(os.path.join(dp, d), onerror=remove_readonly)
+                dirs.remove(d)
+                removed += 1
+    return removed
+
+def strip_release_noise(root):
+    if not IS_RELEASE or not os.path.isdir(root):
+        return
+    removed_files = 0
+    removed_dirs = prune_named_dirs(root, RELEASE_NOISE_DIR_NAMES)
+    for dp, _, fns in os.walk(root):
+        for fn in fns:
+            lower = fn.lower()
+            if lower.endswith(RELEASE_NOISE_FILE_SUFFIXES):
+                try:
+                    os.remove(os.path.join(dp, fn))
+                    removed_files += 1
+                except OSError:
+                    pass
+    print(f"  [OK] Release noise stripped: removed_files={removed_files} removed_dirs={removed_dirs}")
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -246,14 +362,10 @@ def build_manager_exe():
         print("  " + (res.stderr or res.stdout)[-1200:])
         sys.exit(1)
     built_exe = os.path.join(REPO, "dist", "ErisManager.exe")
-    root_exe = os.path.join(REPO, "ErisManager.exe")
-    root_setup_exe = os.path.join(REPO, "ErisSetup.exe")
-    if os.path.isfile(built_exe):
-        shutil.copy2(built_exe, root_exe)
-        shutil.copy2(built_exe, root_setup_exe)
-        print("  [OK] ErisManager.exe copied to repo root")
-        print("  [OK] ErisSetup.exe copied to repo root")
-    print("  [OK] ErisManager.exe built")
+    if not os.path.isfile(built_exe):
+        print("  [FAIL] PyInstaller finished but dist\\ErisManager.exe is missing")
+        sys.exit(1)
+    print("  [OK] ErisManager.exe built in dist\\")
 
 # ── Guard: phai chay bang dung venv ──────────────────────────────────────────
 banner("Guard  --  kiem tra Python interpreter")
@@ -318,6 +430,10 @@ if os.path.exists(src_build):
 
 print("  Copy: " + src_repo + "  ->  " + src_build)
 shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
+assert_live2d_source_contract(OUT)
+if IS_RELEASE:
+    pruned_src_dirs = prune_named_dirs(src_build, RELEASE_SRC_PRUNE_DIR_NAMES)
+    print("  [OK] Release src pruned dirs: " + str(pruned_src_dirs))
 
 for skip in SKIP_HEAVY:
     p = os.path.join(src_build, skip)
@@ -445,6 +561,8 @@ for mem_fn in ["goal_profiles.json"]:
 for binary_fn in ["Eris.exe", "Eris.pck"]:
     src_bin = os.path.join(REPO, binary_fn)
     if os.path.isfile(src_bin):
+        if binary_fn == "Eris.pck":
+            assert_godot_pack_fresh(src_bin)
         deploy_pairs.append((src_bin, os.path.join(OUT, binary_fn)))
 
 manager_exe = os.path.join(REPO, "dist", "ErisManager.exe")
@@ -478,7 +596,12 @@ if os.path.exists(embed_src):
 # Deploy memory_core directory to build directory if present
 mem_core_src = os.path.join(REPO, "memory_core")
 mem_core_dst = os.path.join(OUT, "memory_core")
-if os.path.exists(mem_core_src):
+if IS_RELEASE:
+    os.makedirs(mem_core_dst, exist_ok=True)
+    with open(os.path.join(mem_core_dst, ".gdignore"), "w", encoding="utf-8") as fh:
+        fh.write("")
+    print("  [OK] memory_core scaffold created (release excludes local memory)")
+elif os.path.exists(mem_core_src):
     print("  Deploying memory_core directory to build...")
     try:
         shutil.copytree(mem_core_src, mem_core_dst, dirs_exist_ok=True)
@@ -505,7 +628,7 @@ if os.path.exists(ds2api_src):
     print("  Deploying whale2api binary and config to build...")
     os.makedirs(ds2api_dst, exist_ok=True)
     # KHONG COPY accounts.csv, .env, *.db de tranh ranh ri key cua dev
-    for fn in ["whale2api.exe", "poolui.exe"]:
+    for fn in ["whale2api.exe", "poolui.exe", "accounts.example.csv"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
             try:
@@ -747,6 +870,7 @@ with open(bat_path, "wb") as fh:
 print("  [OK] run_eris.bat  (generated CRLF, venv " + sys.version.split()[0] + ")")
 
 sanitize_release_output()
+strip_release_noise(OUT)
 
 if not all_deploy_ok:
     print("[!] Mot so file deploy bi thieu.")
@@ -770,6 +894,8 @@ if is_debug:
     must_exist = [p for p in must_exist if not p.endswith(".pyc")]
 if IS_RELEASE:
     must_exist.extend([
+        os.path.join(OUT, "Eris.exe"),
+        os.path.join(OUT, "Eris.pck"),
         os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
         os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
         os.path.join(OUT, "open_user_guide.bat"),
@@ -805,6 +931,9 @@ for p in must_exist:
 eris_exe_path = os.path.join(OUT, "Eris.exe")
 if os.path.isfile(eris_exe_path):
     print("  [OK ] Eris.exe")
+elif IS_RELEASE:
+    print("  [MISSING] Eris.exe (release requires exported Godot GUI runtime)")
+    all_ok = False
 else:
     print("  [NOTICE] Eris.exe (Godot GUI executable missing; run_eris.bat will launch Python runtime directly)")
 

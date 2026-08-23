@@ -93,7 +93,7 @@ def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[in
     if provider == "deepseek":
         for env_name in (
             "ERIS_TTS_LOCALIZER_API_KEY",
-            "ERIS_DS_STYLE_API_KEY",
+            "ERIS_DS_CRITIC_API_KEY",
             "ERIS_STYLE_API_KEY",
             "DEEPSEEK_API_KEY",
             "ERIS_REMOTE_API_KEY",
@@ -130,7 +130,7 @@ def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[in
 
 
 def _style_rescue_api_key() -> str:
-    key = get_secret("ERIS_DS_STYLE_API_KEY", "ERIS_STYLE_API_KEY").strip()
+    key = get_secret("ERIS_DS_CRITIC_API_KEY", "ERIS_STYLE_API_KEY").strip()
     if key and not key.startswith("PASTE_"):
         return key
     return ""
@@ -404,13 +404,13 @@ class SpeechLocalizer:
                 except Exception as exc:
                     safe_log(logger, "debug", "TTS localizer rescue telemetry failed: %s", exc)
                 logger.warning(
-                    "[TTS.Localizer] style key rescue succeeded model=%s",
+                    "[TTS.Localizer] critic key rescue succeeded model=%s",
                     localizer_model_name(),
                 )
                 return rescue_out
             except Exception as rescue_exc:
                 logger.warning(
-                    "[TTS.Localizer] style key rescue failed model=%s: %s",
+                    "[TTS.Localizer] critic key rescue failed model=%s: %s",
                     localizer_model_name(),
                     rescue_exc,
                 )

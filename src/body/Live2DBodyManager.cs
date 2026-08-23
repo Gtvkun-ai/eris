@@ -67,6 +67,7 @@ public sealed class Live2DBodyManager
 		string bundled = Path.Combine(root, "runtime", BundledLive2DFileName());
 		bool useBundled = File.Exists(bundled);
 		string fileName = useBundled ? bundled : ResolvePythonExecutable(configuredPython, root);
+		RunLogger.Log($"[Live2D] Renderer launcher: {(useBundled ? "bundled" : "python")} -> {fileName}");
 		int safePort = Math.Clamp(port, 1, 65535);
 		int safeWidth = Math.Clamp(windowWidth, 320, 2400);
 		int safeHeight = Math.Clamp(windowHeight, 480, 2400);
@@ -222,14 +223,30 @@ public sealed class Live2DBodyManager
 	private static string ResolvePythonExecutable(string configured, string root)
 	{
 		if (!string.IsNullOrWhiteSpace(configured) && Path.IsPathRooted(configured) && File.Exists(configured))
+		{
+			RunLogger.Log($"[Live2D] Python (absolute): {configured}");
 			return configured;
+		}
+		string portable = Path.Combine(root, "python", "python.exe");
+		if (!OS.HasFeature("editor") && File.Exists(portable))
+		{
+			RunLogger.Log($"[Live2D] Python (portable runtime): {portable}");
+			return portable;
+		}
 		string venv = Path.Combine(root, ".venv", "Scripts", "python.exe");
 		if (File.Exists(venv))
+		{
+			RunLogger.Log($"[Live2D] Python (venv): {venv}");
 			return venv;
-		string portable = Path.Combine(root, "python", "python.exe");
+		}
 		if (File.Exists(portable))
+		{
+			RunLogger.Log($"[Live2D] Python (portable): {portable}");
 			return portable;
-		return string.IsNullOrWhiteSpace(configured) ? "python" : configured;
+		}
+		string fallback = string.IsNullOrWhiteSpace(configured) ? "python" : configured;
+		RunLogger.Log($"[Live2D] Python (fallback PATH): {fallback}");
+		return fallback;
 	}
 
 	private static string BundledLive2DFileName()
