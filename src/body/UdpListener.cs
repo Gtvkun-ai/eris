@@ -492,6 +492,19 @@ public partial class UdpListener : Node2D
 
 	private bool _passthroughFullCapture = true;
 	private Rect2 _passthroughLastRect = new(Vector2.Zero, Vector2.Zero);
+	private string _shutdownReason = "unknown tree exit";
+
+	private void MarkShutdownReason(string reason)
+	{
+		if (!string.IsNullOrWhiteSpace(reason))
+			_shutdownReason = reason;
+	}
+
+	public override void _Notification(int what)
+	{
+		if (what == NotificationWMCloseRequest)
+			MarkShutdownReason("window close request");
+	}
 
 	private void UpdateMousePassthrough()
 	{
@@ -564,6 +577,7 @@ public partial class UdpListener : Node2D
 
 	public override void _ExitTree()
 	{
+		RunLogger.Log($"[Lifecycle] _ExitTree: reason={_shutdownReason}");
 		ShutdownLive2DMode();
 		StopVisionProcess();
 		_udp.Close();
@@ -1226,6 +1240,7 @@ public partial class UdpListener : Node2D
 
 	private void OnContextExitPressed()
 	{
+		MarkShutdownReason("context menu exit");
 		// Thoát hẳn ERIS: đóng menu, dừng tiến trình con (vision...) rồi tắt app.
 		CloseCharacterContextMenu();
 		GD.Print("[Exit] Người dùng yêu cầu thoát ERIS qua context menu.");

@@ -319,6 +319,7 @@ public partial class UdpListener : Node2D
 
 		_settingsRuntimeStartButton = CreateSettingsButton("▶  Khởi động Brain", () =>
 		{
+			RunLogger.Log("[Settings] User requested Brain start.");
 			SyncSettingsInputsToFields();
 			StartVisionProcess();
 			SetSettingsStatus("Đang khởi động Brain...");
@@ -330,6 +331,7 @@ public partial class UdpListener : Node2D
 
 		_settingsRuntimeStopButton = CreateSettingsButton("■  Dừng", () =>
 		{
+			RunLogger.Log("[Settings] User requested Brain stop.");
 			StopVisionProcess();
 			SetSettingsStatus("Đã yêu cầu dừng Brain.");
 			RefreshSettingsRuntimeStatus();
@@ -340,6 +342,7 @@ public partial class UdpListener : Node2D
 
 		_settingsRuntimeRestartButton = CreateSettingsButton("↻  Khởi động lại", () =>
 		{
+			RunLogger.Log("[Settings] User requested Brain restart.");
 			SyncSettingsInputsToFields();
 			RestartVisionProcess();
 			SetSettingsStatus("Đang khởi động lại Brain với cấu hình hiện tại...");

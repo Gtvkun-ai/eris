@@ -14,8 +14,10 @@ Bai hoc ghi nho:
 import compileall
 import argparse
 import hashlib
+import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 
@@ -83,6 +85,93 @@ def md5_short(path):
         for chunk in iter(lambda: fh.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()[:8]
+
+def find_whale2api_db(root):
+    candidates = [
+        os.path.join(root, "tools", "whale2api", "docker-data", "whale2api", "whale2api.db"),
+        os.path.join(root, "tools", "whale2api", "whale2api.db"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+def copy_sqlite_db(src, dst):
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as source:
+            with sqlite3.connect(dst) as target:
+                source.backup(target)
+        return
+    except sqlite3.Error as exc:
+        print("  [WARN] SQLite backup failed; falling back to file copy: " + str(exc))
+    shutil.copy2(src, dst)
+
+def load_build_api_keys(secrets_path):
+    if not os.path.isfile(secrets_path):
+        return {}
+    try:
+        with open(secrets_path, "r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    api_keys = payload.get("api_keys") if isinstance(payload, dict) else {}
+    return api_keys if isinstance(api_keys, dict) else {}
+
+def verify_deepseek_pool_db(db_path, secrets_path):
+    required = {
+        "companion": "ERIS_DS_COMPANION_API_KEY",
+        "surface": "ERIS_DS_SURFACE_API_KEY",
+        "seed": "ERIS_DS_SEED_API_KEY",
+        "critic": "ERIS_DS_CRITIC_API_KEY",
+        "inner": "ERIS_DS_INNER_API_KEY",
+        "observer": "ERIS_DS_OBSERVER_API_KEY",
+        "curator": "ERIS_DS_CURATOR_API_KEY",
+    }
+    api_keys = load_build_api_keys(secrets_path)
+    if not api_keys:
+        print("  [FAIL] Cannot read DeepSeek api_keys from " + secrets_path)
+        sys.exit(1)
+    if not os.path.isfile(db_path):
+        print("  [FAIL] Missing Whale2API pool DB for dev build: " + db_path)
+        sys.exit(1)
+
+    failures = []
+    with sqlite3.connect(db_path) as conn:
+        for role, secret_name in required.items():
+            key = str(api_keys.get(secret_name) or "").strip()
+            if not key:
+                failures.append(f"{role}: missing {secret_name}")
+                continue
+            row = conn.execute(
+                "SELECT enabled FROM gateway_api_keys WHERE api_key = ?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                failures.append(f"{role}: key not registered in gateway pool")
+                continue
+            if not int(row[0] or 0):
+                failures.append(f"{role}: gateway key disabled")
+                continue
+            active = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM pool_bindings pb
+                JOIN pool_accounts pa ON pa.id = pb.account_id
+                WHERE pb.api_key = ? AND COALESCE(pa.discarded, 0) = 0
+                """,
+                (key,),
+            ).fetchone()[0]
+            if int(active or 0) <= 0:
+                failures.append(f"{role}: no active account bound to gateway key")
+
+    if failures:
+        print("  [FAIL] DeepSeek pool DB does not match config\\secrets.json:")
+        for item in failures:
+            print("    - " + item)
+        print("  Run run_deepseek_pool_ui.bat, then apply_deepseek_pool_to_secrets.bat.")
+        sys.exit(1)
+    print("  [OK] DeepSeek pool DB matches config\\secrets.json")
 
 def count_ext(root, ext):
     total = 0
@@ -627,7 +716,7 @@ ds2api_dst = os.path.join(OUT, "tools", "whale2api")
 if os.path.exists(ds2api_src):
     print("  Deploying whale2api binary and config to build...")
     os.makedirs(ds2api_dst, exist_ok=True)
-    # KHONG COPY accounts.csv, .env, *.db de tranh ranh ri key cua dev
+    # Release khong ship accounts.csv/.env/*.db. Dev build sync DB rieng va verify ben duoi.
     for fn in ["whale2api.exe", "poolui.exe", "accounts.example.csv"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
@@ -636,6 +725,19 @@ if os.path.exists(ds2api_src):
                 print("  [OK] whale2api " + fn)
             except (PermissionError, OSError):
                 print("  [SKIP] whale2api " + fn + "  (file dang bi lock boi process dang chay -- skip)")
+    if not IS_RELEASE:
+        ds2api_db_src = find_whale2api_db(REPO)
+        ds2api_db_dst = os.path.join(ds2api_dst, "docker-data", "whale2api", "whale2api.db")
+        if not ds2api_db_src:
+            print("  [FAIL] Dev build needs Whale2API pool DB but none was found in repo tools\\whale2api.")
+            print("  Run run_deepseek_pool_ui.bat and apply_deepseek_pool_to_secrets.bat first.")
+            sys.exit(1)
+        copy_sqlite_db(ds2api_db_src, ds2api_db_dst)
+        print("  [OK] whale2api pool DB synced  md5=" + md5_short(ds2api_db_dst))
+        verify_deepseek_pool_db(
+            ds2api_db_dst,
+            os.path.join(OUT, "config", "secrets.json"),
+        )
 
 tool_helper_src = os.path.join(REPO, "tools", "open_url_when_ready.ps1")
 tool_helper_dst = os.path.join(OUT, "tools", "open_url_when_ready.ps1")
@@ -861,7 +963,6 @@ bat_lines = [
     "echo  [DONE] Tat ca da khoi dong!",
     
     "echo.",
-    "start \"\" \"http://localhost:8081/ui\"",
     "pause",
 ]
 bat_content_crlf = "\r\n".join(bat_lines) + "\r\n"
