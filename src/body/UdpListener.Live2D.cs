@@ -443,24 +443,7 @@ public partial class UdpListener
 		if (!hasInteractiveRect)
 			interactiveRect = new Rect2(new Vector2(-8f, -8f), Vector2.One);
 
-		bool unchanged =
-			!_passthroughFullCapture
-			&& _passthroughLastRect.Position.DistanceTo(interactiveRect.Position) < 2f
-			&& _passthroughLastRect.Size.DistanceTo(interactiveRect.Size) < 2f;
-		if (unchanged)
-			return true;
-
-		var region = new[]
-		{
-			interactiveRect.Position,
-			interactiveRect.Position + new Vector2(interactiveRect.Size.X, 0f),
-			interactiveRect.Position + interactiveRect.Size,
-			interactiveRect.Position + new Vector2(0f, interactiveRect.Size.Y),
-		};
-		DisplayServer.WindowSetMousePassthrough(region);
-		_passthroughFullCapture = false;
-		_passthroughLastRect = interactiveRect;
-		return true;
+		return ApplyMouseCaptureRect(interactiveRect);
 	}
 
 	private void ShutdownLive2DMode()

@@ -245,13 +245,20 @@ class RuntimeCoordinator(
                     )
                     if service.start():
                         self.agent_ws_service = service
+                    else:
+                        warn = getattr(logger, "warning", None)
+                        if callable(warn):
+                            warn(
+                                "[agent-ws] failed to start; VS Code extension will fall back to direct API. discovery=%s",
+                                getattr(service, "discovery_path", ""),
+                            )
             except Exception as exc:
                 self.agent_harness = None
                 self.agent_ide_rpc = None
                 self.agent_capability_self_model = None
-                debug = getattr(logger, "debug", None)
-                if callable(debug):
-                    debug("[agent-harness] unavailable: %s", exc)
+                warn = getattr(logger, "warning", None)
+                if callable(warn):
+                    warn("[agent-harness] unavailable; VS Code bridge disabled: %s", exc, exc_info=True)
 
         # Self-model tồn tại ngay cả khi Gemini CLI/LangGraph đang unavailable.
         # Eris vẫn phải biết các native capability nhanh của chính mình thay vì
@@ -775,6 +782,7 @@ class RuntimeCoordinator(
                         goal=clarified_goal or goal,
                         workspace_path=workspace_path,
                         steering_context=steering,
+                        model=model or None,
                         on_event=_relay_cline_event,
                     )
 

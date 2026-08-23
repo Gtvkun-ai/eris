@@ -173,7 +173,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(vscode.commands.registerCommand('eris.serviceStart', async () => {
     try {
-      await serviceManager.ensureStarted();
+      await serviceManager.ensureStarted({ allowLaunch: true });
       await client.connect(true);
       await client.requestTasks();
       void vscode.window.showInformationMessage('Eris Service đã sẵn sàng.');

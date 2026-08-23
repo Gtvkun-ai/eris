@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent cho VS Code với webview gọn hơn, cuộn message dài ổn định hơn, activity semantic rõ ràng và backend khởi động on-demand.",
-  "version": "0.13.2",
+  "description": "Eris coding agent cho VS Code với giao diện chat-first gọn, context-aware và DeepSeek model picker.",
+  "version": "0.15.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -92,7 +92,22 @@
         "eris.service.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Cho phép Eris tự khởi động backend khi bạn thực sự gửi task. Mở VS Code, mở Sidebar hoặc save file sẽ không tự bật Eris."
+          "description": "Cho phép extension tự khởi động Eris Service khi connectionMode=service hoặc khi auto không có Direct API khả dụng. Lệnh Eris: Start Service vẫn khởi động thủ công."
+        },
+        "eris.service.connectionMode": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "service",
+            "directApi"
+          ],
+          "enumDescriptions": [
+            "Attach vào Eris Service nếu đang chạy; nếu không có service và đã cấu hình API key thì dùng Direct API, không tự bật Eris.",
+            "Luôn dùng Eris Service/IDE bridge và tự khởi động backend khi cần.",
+            "Luôn dùng Direct API; không đọc discovery, không khởi động Eris Service."
+          ],
+          "description": "Chọn cách Eris VS Code gửi tin nhắn. Direct API phù hợp khi chỉ muốn chat bằng official/external API mà không bật runtime Eris."
         },
         "eris.service.installRoot": {
           "type": "string",

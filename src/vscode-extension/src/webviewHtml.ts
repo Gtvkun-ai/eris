@@ -28,7 +28,7 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
         <span class="brand-mark" aria-hidden="true">✦</span>
         <div class="brand-copy">
           <strong>Eris</strong>
-          <span id="sessionHeaderTitle">Phiên mới</span>
+          <span id="sessionHeaderTitle">AI coding agent</span>
         </div>
       </div>
       <div class="top-actions">
@@ -100,11 +100,11 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
           </div>
 
           <div class="select-wrap model-wrap">
-            <button id="modelButton" class="composer-select" type="button" title="Mô hình WebAI" aria-haspopup="listbox" aria-expanded="false">Flash</button>
-            <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình WebAI">
-              <button class="select-option" type="button" data-model-option="gemini-3-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>Flash</strong><small>Nhanh</small></span><span class="select-check">✓</span></button>
-              <button class="select-option" type="button" data-model-option="gemini-3-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>Pro</strong><small>Chất lượng cao</small></span><span class="select-check">✓</span></button>
-              <button class="select-option" type="button" data-model-option="gemini-3-flash-thinking"><span class="select-icon">✦</span><span class="select-copy"><strong>Suy luận</strong><small>Task khó</small></span><span class="select-check">✓</span></button>
+            <button id="modelButton" class="composer-select" type="button" title="Mô hình DeepSeek" aria-haspopup="listbox" aria-expanded="false">DS Flash</button>
+            <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình DeepSeek">
+              <button class="select-option" type="button" data-model-option="deepseek-v4-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>DS Flash</strong><small>Nhanh, mặc định</small></span><span class="select-check">✓</span></button>
+              <button class="select-option" type="button" data-model-option="deepseek-v4-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>DS Pro</strong><small>Task khó hơn</small></span><span class="select-check">✓</span></button>
+              <button class="select-option" type="button" data-model-option="auto"><span class="select-icon">⌁</span><span class="select-copy"><strong>Auto</strong><small>Theo cấu hình backend</small></span><span class="select-check">✓</span></button>
             </div>
           </div>
 

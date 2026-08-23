@@ -28,7 +28,7 @@ let sessions=[];
 let catalogTasks=[];
 let catalogSkills=[];
 let selectedMode='execute';
-let selectedModel=(vscode.getState()&&vscode.getState().model)||'gemini-3-flash';
+let selectedModel=(vscode.getState()&&vscode.getState().model)||'deepseek-v4-flash';
 const rendered=new Set();
 const pendingInterrupts=new Set();
 const pendingInterruptNodes=new Map();
@@ -42,10 +42,14 @@ let deferredEvents=[];
 let stickToBottom=true;
 
 const MODEL_LABELS={
-  'gemini-3-flash':'Flash',
-  'gemini-3-pro':'Pro',
-  'gemini-3-flash-thinking':'Suy luận'
+  'deepseek-v4-flash':'DS Flash',
+  'deepseek-v4-pro':'DS Pro',
+  'auto':'Auto'
 };
+if(!MODEL_LABELS[selectedModel]||String(selectedModel).indexOf('gemini-')===0){
+  selectedModel='deepseek-v4-flash';
+  vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));
+}
 const MODE_LABELS={execute:'Tác vụ',inspect:'Chỉ xem'};
 function syncModeUi(){
   modeButton.textContent=MODE_LABELS[selectedMode]||'Tác vụ';
@@ -242,16 +246,27 @@ function renderSessions(){
     var label=active?active.title||NEW_SESSION_LABEL:'Eris';
     var status=active?String(active.status||'idle'):'idle';
     // Header chỉ giữ tên session. Trạng thái task đã có Activity/Plan bên dưới.
-    headerTitle.textContent=label;
-    headerTitle.title=label;
+    headerTitle.textContent=(label===NEW_SESSION_LABEL||!label)?'AI coding agent':label;
+    headerTitle.title=label||'Eris';
   }
   updateComposerState();
 }
 
-function emptyHtml(){return '<div class="empty" id="chatEmpty"><div class="empty-inner"><div class="spark">✦</div><h2>Bắt đầu với code của bạn</h2><p>Eris có thể đọc context trong VS Code, phân tích repository và thực thi thay đổi khi bạn giao việc.</p><div class="mode-cards"><button class="mode-card selected" data-empty-mode="execute"><strong>Tác vụ</strong><span>Sửa code, chạy kiểm chứng và theo dõi thay đổi.</span></button><button class="mode-card" data-empty-mode="inspect"><strong>Chỉ xem</strong><span>Điều tra và giải thích mà không sửa file.</span></button></div></div></div>';}
+function emptyHtml(){return '<div class="empty compact-empty" id="chatEmpty">'+
+  '<div class="welcome-hero"><div class="welcome-orb" aria-hidden="true">✦</div><div><div class="welcome-kicker">Eris coding agent</div><h2>Mình có thể giúp gì?</h2><p>Giao một việc cụ thể, hỏi về code, hoặc để Eris đọc ngữ cảnh trong workspace hiện tại.</p></div></div>'+
+  '<div class="quick-actions">'+
+    '<button class="quick-action" type="button" data-prompt="Tìm nguyên nhân lỗi trong code hiện tại và đề xuất cách sửa."><span class="quick-icon">⌕</span><span class="quick-copy"><strong>Debug vấn đề</strong><span>Tìm root cause trước khi sửa</span></span><span class="quick-arrow">›</span></button>'+
+    '<button class="quick-action" type="button" data-prompt="Giải thích file hiện tại, cấu trúc chính và luồng xử lý quan trọng."><span class="quick-icon">◫</span><span class="quick-copy"><strong>Hiểu code hiện tại</strong><span>Tóm tắt cấu trúc và luồng xử lý</span></span><span class="quick-arrow">›</span></button>'+
+    '<button class="quick-action" type="button" data-prompt="Refactor phần code hiện tại cho gọn, dễ bảo trì và giữ nguyên hành vi."><span class="quick-icon">⌁</span><span class="quick-copy"><strong>Refactor sạch hơn</strong><span>Cải thiện code mà không đổi hành vi</span></span><span class="quick-arrow">›</span></button>'+
+  '</div>'+
+  '<div class="mode-cards compact"><button class="mode-chip selected" type="button" data-empty-mode="execute">Tác vụ · có thể sửa code</button><button class="mode-chip" type="button" data-empty-mode="inspect">Chỉ xem · không sửa file</button></div>'+
+'</div>';}
 function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
 function removeEmpty(){var e=document.getElementById('chatEmpty');if(e)e.remove();}
-function bindEmptyModes(){for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';syncModeUi();for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);}
+function bindEmptyModes(){
+  for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';syncModeUi();for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);
+  for(var action of timeline.querySelectorAll('[data-prompt]'))(function(a){a.onclick=function(){input.value=String(a.dataset.prompt||'');resizeInput();input.focus();};})(action);
+}
 function clearTimeline(showEmpty){if(showEmpty===undefined)showEmpty=true;timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();pendingInterruptNodes.clear();taskGroups.clear();activeTaskId='';if(showEmpty)ensureEmpty();}
 function animateTimelineIn(direction){
   direction=direction||0;
@@ -679,7 +694,7 @@ for(var ctxBox of contextPopover.querySelectorAll('input'))ctxBox.addEventListen
 modeButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');modePopover.classList.toggle('visible');syncModeUi();syncModelUi();requestAnimationFrame(placeOpenSelectPopovers);};
 modelButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.toggle('visible');syncModeUi();syncModelUi();requestAnimationFrame(placeOpenSelectPopovers);};
 for(var modeOpt of document.querySelectorAll('[data-mode-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedMode=btn.dataset.modeOption||'execute';for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);hidePopovers();input.focus();};})(modeOpt);
-for(var modelOpt of document.querySelectorAll('[data-model-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedModel=btn.dataset.modelOption||'gemini-3-flash';vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));hidePopovers();input.focus();};})(modelOpt);
+for(var modelOpt of document.querySelectorAll('[data-model-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedModel=btn.dataset.modelOption||'deepseek-v4-flash';vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));hidePopovers();input.focus();};})(modelOpt);
 document.getElementById('send').onclick=send;
 document.getElementById('drawerBack').onclick=function(){drawer.classList.remove('visible');};
 for(var dmrow of document.querySelectorAll('[data-menu]'))(function(row){row.onclick=function(){var a=row.dataset.menu;hidePopovers();if(a==='new')vscode.postMessage({type:'newChat'});else if(a==='history'||a==='tasks'||a==='skills')renderDrawer(a);else if(a==='source')vscode.postMessage({type:'showSourceControl'});else if(a==='test')vscode.postMessage({type:'selfTest'});else if(a==='reconnect')vscode.postMessage({type:'reconnect'});else if(a==='settings')vscode.postMessage({type:'settings'});};})(dmrow);

@@ -50,7 +50,7 @@ export async function runErisSelfTest(
   });
 
   await check('Service discovery / auto-start', async () => {
-    const record = await serviceManager.ensureStarted();
+    const record = await serviceManager.ensureStarted({ allowLaunch: true });
     // Không log token. Token tồn tại là đủ, đừng tự leak chìa khóa rồi gọi đó là diagnostics.
     return `${record.endpoint} pid=${String(record.pid ?? 'unknown')}`;
   });

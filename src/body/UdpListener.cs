@@ -511,57 +511,54 @@ public partial class UdpListener : Node2D
 		if (!EnableDesktopOverlayWindow || !EnableMousePassthrough)
 			return;
 
-		// Đang mở panel/menu/chat hoặc đang kéo nhân vật → để cả cửa sổ nhận chuột,
-		// nếu không các nút trên panel sẽ bị click xuyên mất.
-		bool uiActive =
-			(_chatPanel?.Visible ?? false)
-			|| (_characterContextMenu?.Visible ?? false)
-			|| (_emotionPanel?.Visible ?? false)
-			|| (_privateMindPanel?.Visible ?? false)
-			|| (_settingsPanel?.Visible ?? false)
-			|| (_memoryPanel?.Visible ?? false)
-			|| (_conversationHistoryPanel?.Visible ?? false)
-			|| _grabModeArmed
-			|| _isDraggingCharacter;
-
-		if (uiActive)
+		// During drag, keep the transparent HWND fully interactive so motion/release
+		// events are not lost when the cursor leaves the original hit region.
+		if (_draggingPanel != null || _isDraggingCharacter)
 		{
-			if (!_passthroughFullCapture)
-			{
-				// Mảng rỗng = tắt passthrough = cả cửa sổ chặn chuột (UI bấm được).
-				DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
-				_passthroughFullCapture = true;
-			}
+			ApplyFullMouseCapture();
 			return;
 		}
 
-		if (ApplyLive2DMousePassthrough(uiActive))
+		Rect2 panelRect = default;
+		bool hasPanelRect = false;
+		MergeInteractivePanelRects(ref panelRect, ref hasPanelRect);
+		if (hasPanelRect)
+		{
+			ApplyMouseCaptureRect(panelRect);
+			return;
+		}
+
+		if (ApplyLive2DMousePassthrough(false))
 			return;
 
-		if (_body == null)
+		if (!TryBuildCharacterMouseCaptureRect(out Rect2 rect))
 			return;
 
-		// Vùng quanh nhân vật (nới thêm cho dễ click).
-		float pad = 12f;
-		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
-		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
-		var rect = new Rect2(tl, size);
+		ApplyMouseCaptureRect(rect);
+	}
 
-		// Các overlay tạm phải nằm trong hit-test region ngay cả khi chúng MouseFilter.Ignore.
-		// Đây cũng là workaround ổn định cho transparent HWND trên Windows: nếu region
-		// bị thu lại khi context menu đóng, thinking pill/bubble có thể ngừng được composite.
-		bool hasRect = true;
-		MergeVisibleControlRect(ref rect, ref hasRect, ActiveSpeechBubble(), 2f);
-		MergeVisibleControlRect(ref rect, ref hasRect, _runtimePresenceIndicator, 2f);
-		MergeVisibleControlRect(ref rect, ref hasRect, _tutorPanel, 2f);
+	private void ApplyFullMouseCapture()
+	{
+		if (_passthroughFullCapture)
+			return;
 
-		// Tránh gọi mỗi frame khi nhân vật đứng yên và bong bóng không đổi.
+		// Empty region disables passthrough, so the whole window receives mouse input.
+		DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
+		_passthroughFullCapture = true;
+	}
+
+	private bool ApplyMouseCaptureRect(Rect2 rect)
+	{
+		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
+			return false;
+
+		// Avoid calling the platform API every frame when the hit region is stable.
 		bool unchanged =
 			!_passthroughFullCapture
 			&& _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f
 			&& _passthroughLastRect.Size.DistanceTo(rect.Size) < 2f;
 		if (unchanged)
-			return;
+			return true;
 
 		var region = new[]
 		{
@@ -573,6 +570,40 @@ public partial class UdpListener : Node2D
 		DisplayServer.WindowSetMousePassthrough(region);
 		_passthroughFullCapture = false;
 		_passthroughLastRect = rect;
+		return true;
+	}
+
+	private bool TryBuildCharacterMouseCaptureRect(out Rect2 rect)
+	{
+		rect = default;
+		if (_body == null)
+			return false;
+
+		// Vùng quanh nhân vật (nới thêm cho dễ click).
+		float pad = 12f;
+		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
+		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
+		rect = new Rect2(tl, size);
+
+		// Các overlay tạm phải nằm trong hit-test region ngay cả khi chúng MouseFilter.Ignore.
+		// Đây cũng là workaround ổn định cho transparent HWND trên Windows: nếu region
+		// bị thu lại khi context menu đóng, thinking pill/bubble có thể ngừng được composite.
+		bool hasRect = true;
+		MergeVisibleControlRect(ref rect, ref hasRect, ActiveSpeechBubble(), 2f);
+		MergeVisibleControlRect(ref rect, ref hasRect, _runtimePresenceIndicator, 2f);
+		MergeVisibleControlRect(ref rect, ref hasRect, _tutorPanel, 2f);
+		return hasRect;
+	}
+
+	private void MergeInteractivePanelRects(ref Rect2 aggregate, ref bool hasRect)
+	{
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _chatPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _characterContextMenu, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _emotionPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _privateMindPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _settingsPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
 	}
 
 	public override void _ExitTree()
@@ -654,6 +685,7 @@ public partial class UdpListener : Node2D
 				&& !panelRelease.Pressed)
 			{
 				_draggingPanel = null;
+				UpdateMousePassthrough();
 				GetViewport().SetInputAsHandled();
 				return;
 			}
@@ -3492,6 +3524,7 @@ public partial class UdpListener : Node2D
 		_lastDragMousePos = mousePosition;
 		_previousDragSampleAt = GetRuntimeSeconds();
 		_lastDragSampleAt = GetRuntimeSeconds();
+		UpdateMousePassthrough();
 		int facing = mousePosition.X >= _body.GlobalPosition.X ? 1 : -1;
 		string touchPose = facing >= 0 ? "air_swing_r" : "air_swing_l";
 		_motion.ApplyCommand(
@@ -3527,6 +3560,7 @@ public partial class UdpListener : Node2D
 
 		UpdateDrag(mousePosition);
 		_isDraggingCharacter = false;
+		UpdateMousePassthrough();
 		_bodyAutonomy?.RecordRoughHandling();
 
 		double dt = Math.Max(0.016, _lastDragSampleAt - _previousDragSampleAt);
@@ -3681,6 +3715,7 @@ public partial class UdpListener : Node2D
 			_panelDragOffset = panel.GetGlobalMousePosition() - panel.GlobalPosition;
 			if (panel == _conversationHistoryPanel)
 				_conversationHistoryUserPositioned = true;
+			UpdateMousePassthrough();
 			panel.AcceptEvent();
 		}
 	}

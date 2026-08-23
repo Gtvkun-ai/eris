@@ -1,5 +1,6 @@
 {
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "eris.service.installRoot": "C:\\Users\\Gtvkun\\Documents\\eris",
+    "eris.service.connectionMode": "service",
     "eris.service.autoStart": false
 }

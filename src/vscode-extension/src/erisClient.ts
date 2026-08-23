@@ -1,9 +1,25 @@
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ErisServiceManager } from './serviceManager';
+import { DiscoveryRecord, ErisServiceManager } from './serviceManager';
 
 type JsonRecord = Record<string, any>;
 
+type DirectApiConfig = {
+  provider: 'deepseek' | 'gemini';
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+};
+
+type DirectApiResult =
+  | { status: 'sent' }
+  | { status: 'unconfigured' }
+  | { status: 'failed'; error: Error };
+
+type ConnectionMode = 'auto' | 'service' | 'directApi';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
@@ -69,14 +85,25 @@ export class ErisClient implements vscode.Disposable {
     return this.connectPromise;
   }
 
-  private async doConnect(): Promise<void> {
+  private async connectExisting(force = false): Promise<void> {
+    if (this.ready && this.socket?.readyState === WebSocket.OPEN && !force) {
+      return;
+    }
+    if (force) {
+      this.closeSocket();
+    }
+    const discovery = await this.serviceManager.readDiscovery();
+    return this.doConnect(discovery, false);
+  }
+
+  private async doConnect(discovery?: DiscoveryRecord, allowReconnect = true): Promise<void> {
     this.setState('connecting');
-    const discovery = await this.serviceManager.ensureStarted();
+    const resolvedDiscovery = discovery ?? await this.serviceManager.ensureStarted();
     await new Promise<void>((resolve, reject) => {
       // VS Code 1.100+ chạy extension host trên Node hiện đại; dùng WebSocket
       // chuẩn của runtime để extension không phải kéo thêm package `ws` chỉ cho
       // một kết nối localhost. Ít dependency hơn = đóng gói/test đỡ khổ hơn.
-      const socket = new WebSocket(discovery.endpoint);
+      const socket = new WebSocket(resolvedDiscovery.endpoint);
       this.socket = socket;
       let settled = false;
       const fail = (error: Error) => {
@@ -93,7 +120,7 @@ export class ErisClient implements vscode.Disposable {
         socket.send(JSON.stringify({
           type: 'session.hello',
           protocol: 'eris.ide.v2',
-          token: discovery.token,
+          token: resolvedDiscovery.token,
           sessionId: this.sessionId,
           client: 'eris-vscode',
           lastEventSeq,
@@ -152,7 +179,7 @@ export class ErisClient implements vscode.Disposable {
         if (!settled) {
           fail(new Error('eris_service_disconnected_before_ready'));
         }
-        if (!this.intentionalClose) {
+        if (allowReconnect && !this.intentionalClose) {
           this.scheduleReconnect();
         }
       });
@@ -185,8 +212,7 @@ export class ErisClient implements vscode.Disposable {
     workspaceRef?: string;
     context?: Record<string, unknown>;
   }): Promise<void> {
-    await this.connect();
-    this.send({
+    const payload = {
       type: 'message.user',
       protocol: 'eris.ide.v2',
       content,
@@ -194,7 +220,63 @@ export class ErisClient implements vscode.Disposable {
       taskMode: args.taskMode ?? 'execute',
       workspaceRef: args.workspaceRef ?? '',
       context: args.context ?? {},
-    });
+    };
+    const mode = this.connectionMode();
+    if (mode === 'directApi') {
+      const direct = await this.sendDirectApiMessage(content, args, 'direct_api_mode');
+      if (direct.status === 'sent') {
+        return;
+      }
+      if (direct.status === 'failed') {
+        throw direct.error;
+      }
+      throw new Error('Direct API mode is enabled but no direct API config was found.');
+    }
+    if (mode === 'auto') {
+      let serviceError: unknown;
+      try {
+        await this.connectExisting();
+        this.send(payload);
+        return;
+      } catch (error) {
+        serviceError = error;
+      }
+      if (this.serviceAutoStartEnabled()) {
+        try {
+          await this.connect();
+          this.send(payload);
+          return;
+        } catch (error) {
+          serviceError = error;
+        }
+      }
+      const direct = await this.sendDirectApiMessage(content, args, serviceError);
+      if (direct.status === 'sent') {
+        return;
+      }
+      if (direct.status === 'failed') {
+        throw direct.error;
+      }
+      throw serviceError instanceof Error ? serviceError : new Error(String(serviceError));
+    }
+    if (mode === 'service') {
+      await this.connect();
+      this.send(payload);
+      return;
+    }
+    try {
+      await this.connect();
+      this.send(payload);
+    } catch (error) {
+      const direct = await this.sendDirectApiMessage(content, args, error);
+      if (direct.status === 'sent') {
+        return;
+      }
+      if (direct.status === 'failed') {
+        throw direct.error;
+      }
+      throw error;
+    }
   }
 
   async resolveInterrupt(taskId: string, response: unknown): Promise<void> {
@@ -280,6 +362,231 @@ export class ErisClient implements vscode.Disposable {
     this.socket.send(JSON.stringify(payload));
   }
 
+  private connectionMode(): ConnectionMode {
+    const raw = String(vscode.workspace.getConfiguration('eris.service').get<string>('connectionMode', 'auto') ?? 'auto').trim();
+    if (raw === 'service' || raw === 'directApi') {
+      return raw;
+    }
+    return 'auto';
+  }
+
+  private serviceAutoStartEnabled(): boolean {
+    return vscode.workspace.getConfiguration('eris.service').get<boolean>('autoStart', true);
+  }
+
+  private async sendDirectApiMessage(
+    content: string,
+    args: {
+      threadId: string;
+      taskMode?: 'execute' | 'inspect';
+      workspaceRef?: string;
+      context?: Record<string, unknown>;
+    },
+    serviceError: unknown,
+  ): Promise<DirectApiResult> {
+    const config = await this.resolveDirectApiConfig(args.context ?? {});
+    if (!config) {
+      return { status: 'unconfigured' };
+    }
+    const taskId = `direct_${crypto.randomUUID().slice(0, 12)}`;
+    this.setState('connected');
+    this.eventEmitter.fire({
+      type: 'message.accepted',
+      protocol: 'eris.ide.v2',
+      threadId: args.threadId,
+      taskId,
+      status: 'direct_api',
+      reason: 'service_unavailable_direct_api_fallback',
+      continued: false,
+    });
+    this.eventEmitter.fire({
+      type: 'message.user',
+      taskId,
+      threadId: args.threadId,
+      payload: { content, attachments: [] },
+    });
+    this.eventEmitter.fire({
+      type: 'activity.start',
+      taskId,
+      payload: {
+        summary: `Direct API: ${config.provider} / ${config.model}`,
+        detail: directApiDetail(serviceError),
+        status: 'running',
+      },
+    });
+
+    try {
+      const answer = await this.callDirectApi(config, content, args);
+      this.eventEmitter.fire({
+        type: 'message.assistant',
+        taskId,
+        threadId: args.threadId,
+        payload: { content: answer },
+      });
+      this.eventEmitter.fire({
+        type: 'activity.update',
+        taskId,
+        payload: { summary: 'Direct API complete', detail: 'Không dùng Eris Service/IDE bridge trong lượt này.', status: 'completed' },
+      });
+      return { status: 'sent' };
+    } catch (error) {
+      const directError = enrichDirectApiError(error, config);
+      this.eventEmitter.fire({
+        type: 'activity.update',
+        taskId,
+        payload: { summary: 'Direct API failed', detail: directError.message, status: 'failed' },
+      });
+      this.eventEmitter.fire({ type: 'client.error', message: `Direct API failed: ${directError.message}` });
+      return { status: 'failed', error: directError };
+    } finally {
+      this.setState('disconnected');
+    }
+  }
+
+  private async resolveDirectApiConfig(context: Record<string, unknown>): Promise<DirectApiConfig | null> {
+    const values = await this.loadRuntimeConfig();
+    const requestedModel = String(context.webaiModel ?? context.model ?? '').trim();
+    const remoteProvider = (values.ERIS_REMOTE_PROVIDER || 'deepseek').toLowerCase();
+    const wantsDeepSeekWeb = remoteProvider.includes('deepseek_web') || remoteProvider.includes('ds2api') || remoteProvider.includes('whale');
+    const officialDeepSeekKey = values.DEEPSEEK_API_KEY || values.ERIS_REMOTE_API_KEY;
+    const localDeepSeekKey = values.ERIS_DS_COMPANION_API_KEY || values.ERIS_DS2API_API_KEY || values.ERIS_DS_API_KEY;
+    const geminiKey = values.GEMINI_API_KEY || values.ERIS_SPEECH_API_KEY;
+
+    if ((remoteProvider.includes('gemini') || requestedModel.startsWith('gemini-')) && geminiKey) {
+      return {
+        provider: 'gemini',
+        baseUrl: values.ERIS_SPEECH_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: geminiKey,
+        model: requestedModel && requestedModel !== 'auto' ? requestedModel : (values.ERIS_SPEECH_MODEL || 'gemini-2.5-flash'),
+      };
+    }
+    if (officialDeepSeekKey) {
+      const rawModel = requestedModel && requestedModel !== 'auto' ? requestedModel : (values.ERIS_REMOTE_MODEL || values.ERIS_DS_MODEL || 'deepseek-v4-flash');
+      const baseUrl = normalizeOpenAiBaseUrl(hostedDeepSeekBaseUrl(values));
+      return {
+        provider: 'deepseek',
+        baseUrl,
+        apiKey: officialDeepSeekKey,
+        model: normalizeDeepSeekModelForBase(rawModel, baseUrl),
+      };
+    }
+    if (localDeepSeekKey) {
+      const rawModel = requestedModel && requestedModel !== 'auto' ? requestedModel : (values.ERIS_REMOTE_MODEL || values.ERIS_DS_MODEL || 'deepseek-v4-flash');
+      const configuredBaseUrl = wantsDeepSeekWeb
+        ? (values.ERIS_DS_COMPANION_BASE_URL || values.ERIS_DS2API_BASE_URL || values.ERIS_DS_BASE_URL)
+        : values.ERIS_REMOTE_BASE_URL;
+      const baseUrl = normalizeOpenAiBaseUrl(configuredBaseUrl || 'https://api.deepseek.com/v1');
+      return {
+        provider: 'deepseek',
+        baseUrl,
+        apiKey: localDeepSeekKey,
+        model: normalizeDeepSeekModelForBase(rawModel, baseUrl),
+      };
+    }
+    if (geminiKey) {
+      return {
+        provider: 'gemini',
+        baseUrl: values.ERIS_SPEECH_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: geminiKey,
+        model: values.ERIS_SPEECH_MODEL || 'gemini-2.5-flash',
+      };
+    }
+    return null;
+  }
+
+  private async callDirectApi(
+    config: DirectApiConfig,
+    content: string,
+    args: { taskMode?: 'execute' | 'inspect'; context?: Record<string, unknown> },
+  ): Promise<string> {
+    const mode = args.taskMode === 'inspect' ? 'inspect-only' : 'chat/direct-api';
+    const contextSummary = compactContext(args.context ?? {});
+    const system = [
+      'You are Eris inside a VS Code sidebar.',
+      'Answer in Vietnamese by default.',
+      'You are running in direct external API mode because the local Eris Service/IDE bridge is unavailable.',
+      'Do not claim you edited files, ran commands, opened diffs, or inspected live IDE state unless the user provided that content directly.',
+      `Mode: ${mode}.`,
+      contextSummary ? `Available lightweight IDE context:\n${contextSummary}` : '',
+    ].filter(Boolean).join('\n');
+
+    if (config.provider === 'gemini') {
+      return this.callGeminiDirect(config, system, content);
+    }
+    return this.callOpenAiCompatibleDirect(config, system, content);
+  }
+
+  private async callOpenAiCompatibleDirect(config: DirectApiConfig, system: string, content: string): Promise<string> {
+    const base = config.baseUrl.replace(/\/+$/, '');
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content },
+        ],
+        temperature: 0.35,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(data).slice(0, 900)}`);
+    }
+    return extractOpenAiCompatibleText(data);
+  }
+
+  private async callGeminiDirect(config: DirectApiConfig, system: string, content: string): Promise<string> {
+    const base = config.baseUrl.replace(/\/+$/, '');
+    const url = `${base}/models/${encodeURIComponent(config.model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: content }] }],
+        generationConfig: { temperature: 0.35 },
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(data).slice(0, 900)}`);
+    }
+    const parts = data?.candidates?.[0]?.content?.parts;
+    if (Array.isArray(parts)) {
+      const text = parts.map((part) => String(part?.text ?? '')).join('').trim();
+      if (text) {
+        return text;
+      }
+    }
+    const finishReason = String(data?.candidates?.[0]?.finishReason ?? '').trim();
+    const blockReason = String(data?.promptFeedback?.blockReason ?? '').trim();
+    const detail = [finishReason ? `finishReason=${finishReason}` : '', blockReason ? `blockReason=${blockReason}` : '']
+      .filter(Boolean)
+      .join(', ');
+    throw new Error(`Direct API returned empty Gemini content${detail ? ` (${detail})` : ''}: ${JSON.stringify(summarizeResponseShape(data)).slice(0, 500)}`);
+  }
+
+  private async loadRuntimeConfig(): Promise<Record<string, string>> {
+    const roots = unique([
+      ...(vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+      path.join(os.homedir(), 'Documents', 'eris'),
+    ]);
+    const output: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (typeof value === 'string') output[key] = value;
+    }
+    for (const root of roots) {
+      Object.assign(output, await readEnvFile(path.join(root, '.env')));
+      Object.assign(output, await readSecretsFile(path.join(root, 'config', 'secrets.json')));
+    }
+    return output;
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= 3) {
       return;
@@ -332,4 +639,198 @@ export class ErisClient implements vscode.Disposable {
     this.eventEmitter.dispose();
     this.stateEmitter.dispose();
   }
+}
+
+async function readEnvFile(filePath: string): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    const result: Record<string, string> = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const index = trimmed.indexOf('=');
+      if (index <= 0) continue;
+      const key = trimmed.slice(0, index).trim();
+      let value = trimmed.slice(index + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (key && value && !value.startsWith('PASTE_')) {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+async function readSecretsFile(filePath: string): Promise<Record<string, string>> {
+  try {
+    const payload = JSON.parse(await fs.readFile(filePath, 'utf8')) as unknown;
+    if (!payload || typeof payload !== 'object') return {};
+    const root = payload as Record<string, unknown>;
+    const result: Record<string, string> = {};
+    collectStringMap(result, root.env);
+    collectStringMap(result, root.api_keys);
+    collectProviders(result, root.providers);
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function collectStringMap(target: Record<string, string>, value: unknown): void {
+  if (!value || typeof value !== 'object') return;
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === 'string' && raw.trim() && !raw.trim().startsWith('PASTE_')) {
+      target[key] = raw.trim();
+    }
+  }
+}
+
+function collectProviders(target: Record<string, string>, providers: unknown): void {
+  if (!providers || typeof providers !== 'object') return;
+  const root = providers as Record<string, unknown>;
+  const deepseek = nestedRecord(root.deepseek, 'remote_main') ?? nestedRecord(root.deepseek, 'default');
+  if (deepseek) {
+    if (typeof deepseek.base_url === 'string') target.ERIS_REMOTE_BASE_URL = deepseek.base_url;
+    if (typeof deepseek.model === 'string') target.ERIS_REMOTE_MODEL = deepseek.model;
+    if (typeof deepseek.api_key === 'string' && deepseek.api_key.trim()) target.ERIS_REMOTE_API_KEY = deepseek.api_key.trim();
+  }
+  const gemini = nestedRecord(root.gemini, 'speech') ?? nestedRecord(root.gemini, 'default');
+  if (gemini) {
+    if (typeof gemini.base_url === 'string') target.ERIS_SPEECH_BASE_URL = gemini.base_url;
+    if (typeof gemini.model === 'string') target.ERIS_SPEECH_MODEL = gemini.model;
+  }
+}
+
+function nestedRecord(value: unknown, key: string): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null;
+  const child = (value as Record<string, unknown>)[key];
+  return child && typeof child === 'object' ? child as Record<string, unknown> : null;
+}
+
+function normalizeOpenAiBaseUrl(value: string): string {
+  const clean = String(value || '').trim().replace(/\/+$/, '');
+  if (!clean) return 'https://api.deepseek.com/v1';
+  if (/api\.deepseek\.com$/i.test(clean)) return `${clean}/v1`;
+  return clean;
+}
+
+function hostedDeepSeekBaseUrl(values: Record<string, string>): string {
+  const candidates = [
+    values.ERIS_EXTENSION_DEEPSEEK_BASE_URL,
+    values.ERIS_REMOTE_BASE_URL,
+  ];
+  for (const candidate of candidates) {
+    const clean = String(candidate || '').trim();
+    if (clean && !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(clean)) {
+      return clean;
+    }
+  }
+  return 'https://api.deepseek.com/v1';
+}
+
+function enrichDirectApiError(error: unknown, config: DirectApiConfig): Error {
+  const raw = error instanceof Error ? error : new Error(String(error));
+  const endpoint = config.provider === 'gemini'
+    ? `${config.baseUrl.replace(/\/+$/, '')}/models/${config.model}:generateContent`
+    : `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const localHint = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(config.baseUrl)
+    ? ' Local endpoint is not reachable; start the matching local pool/service or switch Eris to the hosted API/provider.'
+    : '';
+  return new Error(`${raw.message || String(raw)} while calling ${endpoint}.${localHint}`);
+}
+
+function directApiDetail(reason: unknown): string {
+  if (String(reason) === 'direct_api_mode') {
+    return 'Direct API mode; local Eris Service/IDE bridge is not required for this turn.';
+  }
+  return `Local Eris Service/IDE bridge unavailable; using external API only. ${String(reason).slice(0, 220)}`;
+}
+
+function normalizeDeepSeekModelForBase(model: string, baseUrl: string): string {
+  const clean = String(model || '').trim();
+  if (!/api\.deepseek\.com/i.test(baseUrl)) return clean || 'deepseek-v4-flash';
+  if (/^deepseek-v4-flash$/i.test(clean)) return 'deepseek-chat';
+  if (/^deepseek-v4-pro$/i.test(clean)) return 'deepseek-reasoner';
+  return clean || 'deepseek-chat';
+}
+
+function extractOpenAiCompatibleText(data: any): string {
+  const choice = data?.choices?.[0];
+  const message = choice?.message;
+  const content = message?.content;
+  if (typeof content === 'string' && content.trim()) {
+    return content.trim();
+  }
+  if (Array.isArray(content)) {
+    const text = content.map((part) => {
+      if (typeof part === 'string') return part;
+      return String(part?.text ?? part?.content ?? '');
+    }).join('').trim();
+    if (text) {
+      return text;
+    }
+  }
+  const fallback = String(data?.output_text ?? data?.text ?? '').trim();
+  if (fallback) {
+    return fallback;
+  }
+  const finishReason = String(choice?.finish_reason ?? choice?.finishReason ?? '').trim();
+  throw new Error(`Direct API returned empty chat content${finishReason ? ` (finish_reason=${finishReason})` : ''}: ${JSON.stringify(summarizeResponseShape(data)).slice(0, 500)}`);
+}
+
+function summarizeResponseShape(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.slice(0, 3).map(summarizeResponseShape);
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (key.toLowerCase().includes('key') || key.toLowerCase().includes('token')) continue;
+    if (typeof raw === 'string') {
+      output[key] = raw.slice(0, 120);
+    } else if (Array.isArray(raw)) {
+      output[key] = raw.slice(0, 2).map(summarizeResponseShape);
+    } else if (raw && typeof raw === 'object') {
+      output[key] = summarizeResponseShape(raw);
+    } else {
+      output[key] = raw;
+    }
+  }
+  return output;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function compactContext(context: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const workspace = context.workspace;
+  const current = context.current;
+  const selection = context.selection;
+  const git = context.git;
+  if (workspace && typeof workspace === 'object') {
+    const value = workspace as Record<string, unknown>;
+    parts.push(`workspace=${String(value.name ?? value.path ?? '').slice(0, 180)}`);
+  }
+  if (current && typeof current === 'object') {
+    const value = current as Record<string, unknown>;
+    parts.push(`current_file=${String(value.path ?? value.file ?? '').slice(0, 240)}`);
+  }
+  if (selection && typeof selection === 'object') {
+    const value = selection as Record<string, unknown>;
+    const text = String(value.text ?? '').trim();
+    if (text) parts.push(`selection=${text.slice(0, 1200)}`);
+  }
+  if (git && typeof git === 'object') {
+    const value = git as Record<string, unknown>;
+    parts.push(`git_changes=${String(value.changeCount ?? value.changes ?? '').slice(0, 120)}`);
+  }
+  return parts.filter(Boolean).join('\n').slice(0, 2400);
 }

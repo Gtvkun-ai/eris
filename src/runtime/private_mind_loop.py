@@ -22,10 +22,11 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from cortex.private_mind import (
     USER_MODEL_EVALUATOR_NAME,
@@ -59,6 +60,20 @@ def _env_flag(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw not in {"0", "false", "no", "off", "none"}
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float = 300.0) -> float:
+    raw = str(os.getenv(name, "") or "").strip()
+    try:
+        value = float(raw) if raw else float(default)
+    except (TypeError, ValueError):
+        value = float(default)
+    return max(float(minimum), min(float(maximum), value))
+
+
+def _gemini_background_timeout_seconds() -> float:
+    default = _env_float("ERIS_PRIVATE_MIND_TIMEOUT", 60.0, minimum=5.0, maximum=300.0)
+    return _env_float("ERIS_PRIVATE_MIND_GEMINI_TIMEOUT", default, minimum=5.0, maximum=300.0)
 
 
 @dataclass(slots=True)
@@ -149,6 +164,8 @@ class PrivateMindLoop:
             state_store=self.thought_shards,
             logger=logger,
         )
+        self._gemini_background_lock = threading.Lock()
+        self._gemini_background_active: set[str] = set()
 
     def _boundary_note(self, operation: str, exc: Exception) -> None:
         method = getattr(self.logger, "debug", None)
@@ -411,16 +428,22 @@ class PrivateMindLoop:
             filtered_candidate=candidate,
             now=now,
         )
-        self._maybe_consolidate_residue(now=now)
+        self._run_gemini_background(
+            "private_residue_curator",
+            lambda: self._maybe_consolidate_residue(now=now),
+        )
         # V80: sau khi raw cognition/state đã ổn định, Gemma cập nhật 5 shard ngắn.
         # Đây là private-only state; không enqueue public candidate.
-        self._maybe_refresh_thought_shards(
-            dossier=dossier,
-            fragments=fragments,
-            judgment=judgment,
-            filtered_candidate=candidate,
-            runtime_owner=runtime_owner,
-            now=now,
+        self._run_gemini_background(
+            "private_thought_shards",
+            lambda: self._maybe_refresh_thought_shards(
+                dossier=dossier,
+                fragments=fragments,
+                judgment=judgment,
+                filtered_candidate=candidate,
+                runtime_owner=runtime_owner,
+                now=now,
+            ),
         )
 
         result = PrivateMindTickResult(
@@ -580,6 +603,27 @@ class PrivateMindLoop:
                         now=now,
                     )
 
+    def _run_gemini_background(self, name: str, work: Callable[[], None]) -> None:
+        if not _env_flag("ERIS_PRIVATE_MIND_GEMINI_BACKGROUND", True):
+            work()
+            return
+
+        with self._gemini_background_lock:
+            if name in self._gemini_background_active:
+                return
+            self._gemini_background_active.add(name)
+
+        def _runner() -> None:
+            try:
+                work()
+            except Exception as exc:
+                self._boundary_note(f"{name}.background", exc)
+            finally:
+                with self._gemini_background_lock:
+                    self._gemini_background_active.discard(name)
+
+        threading.Thread(target=_runner, name=f"eris-{name}", daemon=True).start()
+
     def _maybe_consolidate_residue(self, *, now: float) -> None:
         if not self.residue_store.should_curate(now=now):
             return
@@ -596,7 +640,7 @@ class PrivateMindLoop:
                 with inference_context(
                     "private_residue_curator",
                     optional=True,
-                    timeout_seconds=45.0,
+                    timeout_seconds=_gemini_background_timeout_seconds(),
                     cancel_scope="background:private_residue",
                     coalesce_key="private_residue:latest_batch",
                     metadata={"items": len(packet.get("items", []))},
@@ -661,7 +705,7 @@ class PrivateMindLoop:
             with inference_context(
                 "private_thought_shards",
                 optional=True,
-                timeout_seconds=40.0,
+                timeout_seconds=_gemini_background_timeout_seconds(),
                 cancel_scope="background:private_thought_shards",
                 coalesce_key="private_thought_shards:latest_state",
                 metadata={"atoms": len(atoms), "urgent": urgent},

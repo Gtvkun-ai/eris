@@ -355,6 +355,7 @@ class AgentWebSocketService:
                 session_id=client.session_id,
                 task_mode=str(message.get("taskMode", "execute") or "execute"),
                 workspace_ref=str(message.get("workspaceRef", "") or ""),
+                model=str(context.get("webaiModel", "") or context.get("model", "") or ""),
                 ide_context=context,
                 source="vscode",
             )
