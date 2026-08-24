@@ -834,11 +834,42 @@ class CoordinatorBootstrapMixin:
             self.logger.warning("[screen text] không khởi tạo được index: %s", exc)
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
+        self._chat_screen_capture_present = False
+        self._chat_screen_capture_interpreted = False
+
+        # Unified perception coordinator: ChatCycle no longer owns a second copy
+        # of OCR/router/pending-vision state.  Legacy helper methods delegate to
+        # this object for compatibility.  VLM policy itself is unchanged.
         try:
-            from screen.evidence_models import PendingVisionEscalation
-            self._chat_pending_vision_escalation = PendingVisionEscalation()
-        except Exception:
-            self._chat_pending_vision_escalation = None
+            from runtime.chat_perception import ChatPerceptionCoordinator
+            self.chat_perception_coordinator = ChatPerceptionCoordinator(
+                screen_evidence_store=self.screen_evidence_store,
+                screen_text_worker=self.screen_text_worker,
+                screen_relevance_router=self.screen_relevance_router,
+                logger=self.logger,
+            )
+            self._chat_pending_vision_escalation = self.chat_perception_coordinator.pending_vision
+        except Exception as exc:
+            self.chat_perception_coordinator = None
+            try:
+                from screen.evidence_models import PendingVisionEscalation
+                self._chat_pending_vision_escalation = PendingVisionEscalation()
+            except Exception:
+                self._chat_pending_vision_escalation = None
+            self.logger.warning("[chat perception] coordinator unavailable: %s", exc)
+
+        # WorldState + proposal bus are process-local shared services.  They are
+        # deliberately initialized before the AI lanes so chat/self-turn/seed
+        # all receive the same world projection from their first turn.
+        try:
+            from runtime.behavior_proposals import ensure_proposal_bus
+            from runtime.world_state import ensure_world_state_service
+            ensure_proposal_bus(self)
+            self.world_state_service = ensure_world_state_service(self)
+        except Exception as exc:
+            self.world_state_service = None
+            self.logger.warning("[world state] bootstrap degraded: %s", exc)
+
         self.environment_capabilities = None
         try:
             from runtime.environment_capabilities import (

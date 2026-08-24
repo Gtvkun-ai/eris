@@ -1150,6 +1150,22 @@ class AIChatOrchestrator:
         except Exception as exc:
             host.logger.debug("[environment awareness] chat planning refresh failed: %s", exc)
             _environment_awareness = None
+
+        _world_state = None
+        _world_projection = {}
+        _world_context = ""
+        try:
+            from runtime.world_state import ensure_world_state_service
+            _world_state = ensure_world_state_service(host).refresh_from_host(now=cycle_start)
+            _world_projection = _world_state.projection("chat", now=cycle_start)
+            _world_context = _world_state.prompt_context("chat", now=cycle_start)
+            if _world_context:
+                grounding_context = "\n\n".join(
+                    part for part in (grounding_context, _world_context) if str(part).strip()
+                )
+        except Exception as exc:
+            host.logger.debug("[world state] chat planning projection failed: %s", exc)
+
         planning_snapshot = {
             "event_kind": "chat",
             "user_text": user_text,
@@ -1163,6 +1179,8 @@ class AIChatOrchestrator:
             "grounding_context": grounding_context,
             "environment_awareness": _environment_awareness.to_dict(now=cycle_start) if _environment_awareness is not None else {},
             "environment_awareness_context": _environment_awareness.prompt_context(now=cycle_start) if _environment_awareness is not None else "",
+            "world_state": _world_projection,
+            "world_state_context": _world_context,
             "memory_available": bool(str(memory_context or "").strip()),
             "interrupt_context": speech_interrupt_context,
             "discovery": discovery_context,
@@ -1746,6 +1764,7 @@ class AIChatOrchestrator:
                 recent_history = tuple(host._chat_history_for_llm(limit=8))
                 observer_state = mind_state.to_dict()
                 observer_state["semantic_frame"] = semantic_frame
+                observer_state = attach_world_state_projection(host, observer_state, lane="observer")
                 host.ai_post_turn_observer.submit(
                     turn_id=turn_id,
                     turn_seq=turn_seq,
@@ -2391,6 +2410,7 @@ class AIChatOrchestrator:
         # same validated semantic authority frame instead of rebuilding meaning
         # through the retired discourse/social regex stack.
         observer_state["semantic_frame"] = dict(user_meta.get("semantic_frame", {}) or {})
+        observer_state = attach_world_state_projection(host, observer_state, lane="observer")
         host.ai_post_turn_observer.submit(
             turn_id=turn_id,
             turn_seq=turn_seq,
@@ -2579,6 +2599,23 @@ class AIChatOrchestrator:
         if public_text or str(getattr(decision, "system_action", "") or "").strip():
             host._send_decision_to_body(decision, channel="chat")
         if public_text:
+            # Explicit public authority boundary: only the executive/public commit
+            # path may register a speak proposal. Observer/seed/environment lanes
+            # are restricted to non-public proposals by ProposalBus.
+            try:
+                from runtime.behavior_proposals import ensure_proposal_bus
+                ensure_proposal_bus(host).submit(
+                    source="executive_governor", kind="speak", subject="chat_reply",
+                    payload={"channel": "chat", "text": public_text[:600]},
+                    confidence=1.0, public=True,
+                )
+            except Exception as exc:
+                host.logger.debug("[proposal bus] executive chat receipt failed: %s", exc)
+            try:
+                from runtime.world_state import ensure_world_state_service
+                ensure_world_state_service(host).observe_assistant_commit(public_text, now=time.time())
+            except Exception as exc:
+                host.logger.debug("[world state] assistant commit failed: %s", exc)
             host.logger.info("ERIS: %s", public_text)
         else:
             host.logger.info("[cortex v2 gate] public surface suppressed without canned fallback")
@@ -2767,6 +2804,20 @@ class AIAutonomousOrchestrator:
             )
         except Exception as exc:
             host.logger.debug("[conversation handoff v71] autonomous commit receipt degraded: %s", exc)
+        try:
+            from runtime.behavior_proposals import ensure_proposal_bus
+            ensure_proposal_bus(host).submit(
+                source="executive_governor", kind="speak", subject="autonomous_reply",
+                payload={"channel": str(channel or "autonomous"), "text": public_text[:600]},
+                confidence=1.0, public=True,
+            )
+        except Exception as exc:
+            host.logger.debug("[proposal bus] executive autonomous receipt failed: %s", exc)
+        try:
+            from runtime.world_state import ensure_world_state_service
+            ensure_world_state_service(host).observe_assistant_commit(public_text, now=time.time())
+        except Exception as exc:
+            host.logger.debug("[world state] autonomous assistant commit failed: %s", exc)
         host._apply_position_update(decision)
         host._send_decision_to_body(decision, channel=channel)
         return public_text, meta
@@ -3078,7 +3129,7 @@ class AIAutonomousOrchestrator:
             mechanical_outcomes=(dict(decision.action_result_meta),)
                 if isinstance(getattr(decision, "action_result_meta", None), Mapping)
                 else (),
-            state_summary=state.to_dict(),
+            state_summary=attach_world_state_projection(host, state.to_dict(), lane="observer"),
             assistant_meta=assistant_meta,
             event_kind="force_speak",
         )

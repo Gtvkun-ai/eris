@@ -427,17 +427,20 @@ class SemanticEnvironmentWorker:
         except Exception as exc:  # noqa: BLE001
             self._debug("publish environment awareness lỗi: %s", exc)
 
-        # Worker chỉ đánh thức vòng autonomous. Quyền deliberation/speech vẫn nằm
-        # trong TemporalMind + initiative governor của self-turn.
-        if situation.semantic_delta and int(situation.max_attention_level or 0) >= 2:
+        # AttentionRouter is the one salience policy.  The semantic worker only
+        # performs a non-public wake when WorldState says ``wake_cognition``; it
+        # never decides to speak on its own.
+        attention_actions: tuple[str, ...] = ()
+        try:
+            from runtime.world_state import ensure_world_state_service
+            _world = ensure_world_state_service(self.host).snapshot(now=semantic_wall_done)
+            attention_actions = tuple(str(item) for item in tuple(_world.attention.get("actions", ()) or ()))
+        except Exception:
+            attention_actions = ()
+        if "wake_cognition" in attention_actions:
             wake = getattr(self.host, "_wake_autonomous_loop", None)
             if callable(wake):
                 kinds = ",".join(dict.fromkeys(event.event_type for event in events))[:120]
-                # V68: wake theo *semantic state edge*, không theo loại event vừa tới.
-                # UIA có thể luân phiên focus_changed/dialog_candidate/foreground_changed
-                # cho đúng một màn hình đứng yên; nếu cho event kind vào signature thì
-                # autonomous sẽ bị đánh thức vô hạn và cuối cùng lặp cùng một observation.
-                # Snapshot/evidence vẫn cập nhật đầy đủ phía trên, chỉ wake bị coalesce.
                 now_mono = time.monotonic()
                 wake_signature = self._semantic_wake_signature(situation)
                 duplicate_wake = wake_signature == self._last_semantic_wake_signature

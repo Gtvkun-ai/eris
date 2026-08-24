@@ -406,6 +406,24 @@ class EnvironmentAwarenessHub:
             setattr(self.host, "last_environment_awareness", snap)
         except Exception:
             pass
+
+        # WorldState v1 is the canonical consumer of environment state.  Keep
+        # EnvironmentAwarenessSnapshot as the compatibility/sensor projection,
+        # then publish it once into the shared world model.  No VLM call occurs
+        # here.
+        try:
+            from runtime.world_state import ensure_world_state_service
+            ensure_world_state_service(self.host).ingest_environment(
+                snap.to_dict(now=current),
+                now=current,
+                source=snap.source or source,
+            )
+        except Exception as exc:
+            if self.logger is not None:
+                try:
+                    self.logger.debug("[world state] environment ingest failed: %s", exc)
+                except Exception:
+                    pass
         return snap
 
     def snapshot(self, *, now: float | None = None, max_age_seconds: float = 180.0) -> EnvironmentAwarenessSnapshot:

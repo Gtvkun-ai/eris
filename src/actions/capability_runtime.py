@@ -323,6 +323,64 @@ def _observational_statuses(owner: Any | None) -> dict[str, CapabilityRuntimeSta
     }
 
 
+def runtime_sensor_health_snapshot(*, owner: Any | None = None) -> dict[str, str]:
+    """Unified health view for perception/runtime sensors.
+
+    This complements action capability availability: a capability may exist while
+    one of its sensor backends is degraded.  WorldState and public wording read
+    this same snapshot instead of inventing per-lane health heuristics.
+    """
+    if owner is None:
+        with _LOCK:
+            owner = _OWNER_REF() if _OWNER_REF is not None else None
+    if owner is None:
+        return {
+            "deep_environment": "unavailable", "uia": "unavailable", "ocr": "unavailable",
+            "browser_bridge": "disabled", "vlm": "unavailable", "workspace": "unknown",
+        }
+
+    deep_worker = getattr(owner, "semantic_environment_worker", None)
+    deep_status = "healthy" if deep_worker is not None else "unavailable"
+
+    screen_worker = getattr(owner, "screen_text_worker", None)
+    uia_status = "healthy" if screen_worker is not None else "unavailable"
+    backend = ""
+    store = getattr(owner, "screen_evidence_store", None)
+    snapshot_fn = getattr(store, "snapshot", None)
+    if callable(snapshot_fn):
+        try:
+            backend = str(getattr(snapshot_fn(), "backend", "") or "").strip().lower()
+        except Exception:
+            backend = ""
+    if any(name in backend for name in ("rapidocr", "tesseract")):
+        ocr_status = "healthy"
+    elif "uia_only" in backend or screen_worker is not None:
+        ocr_status = "degraded"
+    else:
+        ocr_status = "unavailable"
+
+    browser_status = "healthy" if getattr(owner, "browser_bridge_server", None) is not None else "disabled"
+
+    compressor = getattr(owner, "vision_semantic_compressor", None)
+    config = getattr(compressor, "config", None) if compressor is not None else None
+    compressor_ready = bool(
+        compressor is not None
+        and callable(getattr(compressor, "compress", None))
+        and bool(getattr(config, "enabled", True))
+    )
+    vlm_status = "available" if compressor_ready else "unavailable"
+
+    workspace_status = "healthy" if getattr(owner, "project_operations", None) is not None else "unknown"
+    return {
+        "deep_environment": deep_status,
+        "uia": uia_status,
+        "ocr": ocr_status,
+        "browser_bridge": browser_status,
+        "vlm": vlm_status,
+        "workspace": workspace_status,
+    }
+
+
 def _remote_tool_credential_available(capability_id: str) -> tuple[bool, str]:
     try:
         from eris_secrets import get_agent_profile, get_secret
@@ -346,6 +404,7 @@ __all__ = [
     "refresh_runtime_capabilities",
     "runtime_capability_snapshot",
     "runtime_capability_flags",
+    "runtime_sensor_health_snapshot",
     "capability_runtime_reason",
     "capability_runtime_revision",
 ]

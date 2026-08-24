@@ -317,6 +317,16 @@ def assert_godot_pack_fresh(pack_path):
         sys.exit(1)
     print("  [OK] Eris.pck freshness check")
 
+def find_godot_export_file(filename):
+    candidates = [
+        os.path.join(REPO, filename),
+        os.path.join(DEV_OUT, filename),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
+
 def prune_named_dirs(root, names):
     removed = 0
     if not os.path.isdir(root):
@@ -428,6 +438,50 @@ def sanitize_release_output():
                 except OSError:
                     pass
     print(f"  [OK] Release sanitized: removed_private_files={removed_files} removed_private_dirs={removed_dirs}")
+
+def ensure_release_env_template():
+    if not IS_RELEASE:
+        return
+    src = os.path.join(REPO, ".env")
+    source_name = ".env"
+    if not os.path.isfile(src):
+        src = os.path.join(OUT, ".env.example")
+        source_name = ".env.example"
+    dst = os.path.join(OUT, ".env")
+    if not os.path.isfile(src):
+        print("  [WARN] Cannot create release .env; missing repo .env and .env.example")
+        return
+    secret_name_markers = (
+        "api_key",
+        "apikey",
+        "secret",
+        "password",
+        "bearer",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+    )
+    suspicious = []
+    with open(src, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            name_l = name.strip().lower()
+            value = value.strip().strip("\"'")
+            if not value:
+                continue
+            if any(marker in name_l for marker in secret_name_markers):
+                suspicious.append(name.strip())
+    if suspicious:
+        print("  [FAIL] Refusing to ship release .env with non-empty secret-like values:")
+        for name in suspicious:
+            print("    - " + name)
+        print("  Move secrets to config\\secrets.json or leave these .env values blank before release.")
+        sys.exit(1)
+    shutil.copy2(src, dst)
+    print("  [OK] Release .env copied from " + source_name)
 
 def build_manager_exe():
     spec_path = os.path.join(REPO, "ErisManager.spec")
@@ -648,11 +702,13 @@ for mem_fn in ["goal_profiles.json"]:
 
 # Copy Eris.exe / Eris.pck if built in REPO
 for binary_fn in ["Eris.exe", "Eris.pck"]:
-    src_bin = os.path.join(REPO, binary_fn)
+    src_bin = find_godot_export_file(binary_fn)
     if os.path.isfile(src_bin):
         if binary_fn == "Eris.pck":
             assert_godot_pack_fresh(src_bin)
         deploy_pairs.append((src_bin, os.path.join(OUT, binary_fn)))
+    else:
+        print("  [MISSING] " + binary_fn + " (looked in repo root and " + DEV_OUT + ")")
 
 manager_exe = os.path.join(REPO, "dist", "ErisManager.exe")
 if os.path.isfile(manager_exe):
@@ -971,6 +1027,7 @@ with open(bat_path, "wb") as fh:
 print("  [OK] run_eris.bat  (generated CRLF, venv " + sys.version.split()[0] + ")")
 
 sanitize_release_output()
+ensure_release_env_template()
 strip_release_noise(OUT)
 
 if not all_deploy_ok:
@@ -1000,6 +1057,7 @@ if IS_RELEASE:
         os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
         os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
         os.path.join(OUT, "open_user_guide.bat"),
+        os.path.join(OUT, ".env"),
         os.path.join(OUT, ".env.example"),
         os.path.join(OUT, "setup_secrets.bat"),
         os.path.join(OUT, "apply_deepseek_pool_to_secrets.bat"),

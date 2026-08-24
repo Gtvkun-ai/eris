@@ -522,6 +522,16 @@ class SourceGroundingEngine:
 
         code_info = self._detect_pasted_code(text)
         explicit_screen_request = self._detect_explicit_screen_request(normalized)
+        try:
+            from runtime.intent_model import normalize_intent
+            typed_intent = normalize_intent(text)
+            # Current app/window/task awareness is structured-environment intent,
+            # not an implicit screenshot request merely because legacy markers
+            # contain words like "xem/thấy/đang".
+            if typed_intent.environment_sufficient:
+                explicit_screen_request = False
+        except Exception:
+            typed_intent = None
         has_deictic_reference = self._has_deictic_reference(normalized)
 
         memory_ref = self._has_any(normalized, self.MEMORY_REFERENCE_MARKERS)
@@ -2289,33 +2299,14 @@ class SourceGroundingEngine:
 
     @staticmethod
     def _asks_environment_awareness(normalized: str) -> bool:
-        """Câu hỏi về state desktop/task có thể trả bằng Deep Environment.
+        """Use the shared typed intent normalizer instead of a second keyword soup."""
 
-        Cố ý không gồm câu hỏi pixel-level như màu nút, vị trí UI hay nội dung
-        code chính xác; các trường hợp đó vẫn cần OCR/vision evidence.
-        """
-
-        text = str(normalized or "")
-        return any(marker in text for marker in (
-            "biet toi dang lam gi", "biết tôi đang làm gì",
-            "biet tui dang lam gi", "biết tui đang làm gì",
-            "biet toi lam gi", "biết tôi làm gì",
-            "biet tui lam gi", "biết tui làm gì",
-            "toi dang lam gi", "tôi đang làm gì",
-            "tui dang lam gi", "tui đang làm gì",
-            "dang o app nao", "đang ở app nào",
-            "dang dung app nao", "đang dùng app nào",
-            "dang mo app gi", "đang mở app gì",
-            "ung dung nao", "ứng dụng nào", "app nao", "app nào",
-            "process nao", "process nào", "tien trinh nao", "tiến trình nào",
-            "cua so nao", "cửa sổ nào", "window nao", "window nào",
-            "dang o cua so nao", "đang ở cửa sổ nào",
-            "dang mo gi", "đang mở gì", "dang lam viec gi", "đang làm việc gì",
-            "dang thao tac gi", "đang thao tác gì",
-            "dang code gi", "đang code gì", "toi dang code gi", "tôi đang code gì",
-            "what am i doing", "what app am i using", "which app am i using",
-            "what window am i on", "what am i working on",
-        ))
+        try:
+            from runtime.intent_model import normalize_intent
+            intent = normalize_intent(str(normalized or ""))
+            return bool(intent.environment_sufficient and intent.operation == "inspect_current_state")
+        except Exception:
+            return False
 
     def _collect_runtime_evidence(self, *, runtime_facts: Sequence[Any] | None = None) -> dict[str, Any]:
         items: list[Any] = []

@@ -286,8 +286,9 @@ class RandomChatSeedGenerator:
             "V75: nếu causal_motive.cause_kind=conversation_trajectory, premise PHẢI phát triển semantic_focus của đúng topic_id; "
             "ưu tiên deepen/connect/branch có nội dung, không mở một câu hỏi xã giao hay chủ đề ngẫu nhiên chỉ vì novelty. "
             "Public wording trước đó của ERIS không phải evidence. Không tự thêm source_refs; provenance thuộc causal_motive runtime-owned. "
-            "environment_awareness là structured Deep Environment dùng chung với chat/self-turn. Nếu causal_motive.cause_kind=environment_event, "
-            "bạn ĐƯỢC dùng các field tươi/confident trong environment_awareness để tạo observation/reaction/association liên quan đúng app/task/phase; "
+            "seed_context là projection môi trường/cognition nhỏ nhất dành riêng cho seed; nếu có thì ưu tiên nó hơn raw environment_awareness. "
+            "environment_awareness chỉ là compatibility context. Nếu causal_motive.cause_kind=environment_event, "
+            "bạn ĐƯỢC dùng seed_context.current_activity/current_task/phase/meaningful_change và các field tươi/confident tương ứng để tạo observation/reaction/association liên quan đúng app/task/phase; "
             "nhưng đây KHÔNG phải VLM/pixel vision, nên không được bịa màu sắc, vị trí nút, code text hay layout hình ảnh. "
             "Ngoài trường hợp causal focus có evidence môi trường, không suy diễn current-world facts, cảm xúc/kế hoạch user, thời tiết, âm thanh hay ánh sáng. "
             "epistemic_mode phải đúng với material: opinion là stance, hunch/speculation giữ modal, grounded_fact cần evidence thật từ runtime. "
@@ -819,9 +820,17 @@ class RandomChatSeedReservoir:
                     120,
                 )
                 recent_user_events.append({"role": "user", "text": text, "event_ref": event_ref})
+        raw_world_state = snapshot.get("world_state") if isinstance(snapshot.get("world_state"), Mapping) else {}
+        raw_seed_context = (
+            snapshot.get("seed_context") if isinstance(snapshot.get("seed_context"), Mapping)
+            else raw_world_state.get("seed_context", {}) if isinstance(raw_world_state.get("seed_context"), Mapping)
+            else {}
+        )
         raw_environment = (
             snapshot.get("environment_awareness")
             if isinstance(snapshot.get("environment_awareness"), Mapping)
+            else raw_world_state.get("environment_awareness", {})
+            if isinstance(raw_world_state.get("environment_awareness"), Mapping)
             else {}
         )
         environment_awareness = {
@@ -879,6 +888,8 @@ class RandomChatSeedReservoir:
             "identity_summary": _compact(snapshot.get("identity_summary", ""), 1000),
             "relationship": snapshot.get("relationship", {}) if isinstance(snapshot.get("relationship"), Mapping) else {},
             "environment_awareness": environment_awareness,
+            "world_state": dict(raw_world_state),
+            "seed_context": dict(raw_seed_context),
             "shared_semantic_context": (
                 snapshot.get("shared_semantic_context", {})
                 if isinstance(snapshot.get("shared_semantic_context"), Mapping)
@@ -977,6 +988,22 @@ class RandomChatSeedReservoir:
                     for item in _sequence((request.get("environment_awareness") or {}).get("recent_events"))[-4:]
                     if isinstance(item, Mapping)
                 ] if isinstance(request.get("environment_awareness"), Mapping) else [],
+            },
+            "seed_context": {
+                "world_revision": int((request.get("seed_context") or {}).get("world_revision", 0) or 0)
+                if isinstance(request.get("seed_context"), Mapping) else 0,
+                "environment_revision": int((request.get("seed_context") or {}).get("environment_revision", 0) or 0)
+                if isinstance(request.get("seed_context"), Mapping) else 0,
+                "current_activity": _compact((request.get("seed_context") or {}).get("current_activity", ""), 180)
+                if isinstance(request.get("seed_context"), Mapping) else "",
+                "current_task": _compact((request.get("seed_context") or {}).get("current_task", ""), 220)
+                if isinstance(request.get("seed_context"), Mapping) else "",
+                "phase": _compact((request.get("seed_context") or {}).get("phase", ""), 120)
+                if isinstance(request.get("seed_context"), Mapping) else "",
+                "event_key": _compact(((request.get("seed_context") or {}).get("meaningful_change") or {}).get("event_key", ""), 140)
+                if isinstance(request.get("seed_context"), Mapping) and isinstance((request.get("seed_context") or {}).get("meaningful_change"), Mapping) else "",
+                "semantic_delta": bool(((request.get("seed_context") or {}).get("meaningful_change") or {}).get("semantic_delta", False))
+                if isinstance(request.get("seed_context"), Mapping) and isinstance((request.get("seed_context") or {}).get("meaningful_change"), Mapping) else False,
             },
             "conversation_trajectory": {
                 "topic_id": _compact((request.get("conversation_trajectory") or {}).get("topic_id", ""), 80)

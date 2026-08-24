@@ -83,38 +83,17 @@ class ChatPerceptionCoordinator:
             self.structured_provider = structured_provider
 
     def looks_like_screen_request(self, user_text: str, *, previous_assistant_text: str = "") -> bool:
-        normalized = normalize_vi(user_text)
-        if not normalized:
-            return False
-        direct_terms = tuple(
-            normalize_vi(item)
-            for item in (
-                "màn hình", "trên màn hình", "screenshot", "screen", "vision",
-                "nhìn màn hình", "xem màn hình",
-                "nhìn màn hình tui", "nhìn màn hình tôi",
-                "em nhìn màn hình", "em xem màn hình",
-                "look at this", "this screen",
-                "xem đi", "bạn xem đi", "tôi đang code gì", "đang code gì",
-                "xem được tui làm gì", "xem được tôi làm gì",
-                "thấy được tui làm gì", "thấy được tôi làm gì",
-                "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
-                "biết tui làm gì", "biết tôi làm gì",
-                "đoạn đang mở", "file đang mở", "đang hiện gì", "lỗi này trên màn hình",
-                "tự xem", "tự nhìn", "tự phân tích", "xem thử đi", "nhìn thử đi",
-                "xem giúp", "nhìn giúp", "em xem đi", "em nhìn đi",
-                "phân tích màn hình", "look at", "take a look", "check the screen",
-                "mù vision", "còn mù vision", "em còn mù vision",
-                "không nhìn được", "không thấy được", "không thấy gì",
-                # Music / Media screen requests
-                "bài tôi đang nghe", "bài đang nghe", "đang nghe bài", "đang nghe",
-                "biết bài", "biết bài hát", "bài hát tên", "bài gì", "nhạc gì",
-                "đang nghe nhạc", "bài đang phát", "đang phát bài", "bài hát",
-            )
-        )
-        if any(term and term in normalized for term in direct_terms):
-            return True
-        # Không dùng token trần “bàn”. “Bàn chuyện”, “cái bàn”, “bàn làm việc”
-        # không phải lệnh mở camera. Domain bridge tự nhận “bàn cờ” khi phù hợp.
+        # Typed intent is shared with ChatCycle/WorldState.  Keep only anaphora
+        # rescue here because it depends on the previous assistant utterance.
+        try:
+            from runtime.intent_model import normalize_intent
+            intent = normalize_intent(user_text)
+            if intent.environment_sufficient:
+                return False
+            if intent.domain == "screen":
+                return True
+        except Exception:
+            pass
         resolution = ScreenAnaphoraRescue().resolve(
             user_text,
             previous_assistant_text=previous_assistant_text,

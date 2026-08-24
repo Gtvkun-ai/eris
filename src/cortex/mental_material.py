@@ -378,6 +378,65 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
                 allowed_development_modes=("deepen", "connect", "reinterpret", "test", "personalize"),
             ))
 
+    # WorldState v1: SeedContext is the preferred compact environmental cause.
+    # The seed worker no longer needs to inspect the full raw environment packet
+    # just to decide what the current computer activity means for association.
+    seed_environment_motive_added = False
+    seed_context = context.get("seed_context") if isinstance(context.get("seed_context"), Mapping) else {}
+    if seed_context:
+        change = seed_context.get("meaningful_change") if isinstance(seed_context.get("meaningful_change"), Mapping) else {}
+        attention = seed_context.get("attention") if isinstance(seed_context.get("attention"), Mapping) else {}
+        semantic_delta = bool(change.get("semantic_delta", False))
+        actions = tuple(str(item) for item in _seq(attention.get("actions")) if str(item or "").strip())
+        event_conf = _clamp01(change.get("confidence", 0.0))
+        event_key = _compact(change.get("event_key", change.get("kind", "")), 140)
+        if (semantic_delta or "generate_seed" in actions) and event_conf >= 0.42:
+            app = _compact(seed_context.get("focused_app", ""), 120)
+            focus = _compact(seed_context.get("focused_object", ""), 240)
+            activity = _compact(seed_context.get("current_activity", ""), 180)
+            task = _compact(seed_context.get("current_task", ""), 240)
+            phase = _compact(seed_context.get("phase", ""), 120)
+            detail = _compact(change.get("detail", ""), 320)
+            parts = []
+            if app: parts.append(f"app={app}")
+            if focus: parts.append(f"focus={focus}")
+            if activity and activity.casefold() not in {"unknown", "none"}: parts.append(f"activity={activity}")
+            if task and task.casefold() not in {"unknown", "none"}: parts.append(f"task={task}")
+            if phase and phase.casefold() not in {"unknown", "none"}: parts.append(f"phase={phase}")
+            if change.get("kind"): parts.append(f"recent_change={_compact(change.get('kind'), 72)}")
+            if detail: parts.append(f"change_detail={detail}")
+            if parts:
+                world_revision = max(0, int(seed_context.get("world_revision", 0) or 0))
+                env_revision = max(0, int(seed_context.get("environment_revision", 0) or 0))
+                refs = tuple(
+                    dict.fromkeys(str(item).strip() for item in _seq(seed_context.get("evidence_refs")) if str(item or "").strip())
+                )[:10]
+                salience = _clamp01(attention.get("salience", 0.0))
+                novelty = _clamp01(change.get("novelty", 0.0))
+                importance = _clamp01(change.get("importance", 0.0))
+                strength = _clamp01(0.42 + 0.20 * event_conf + 0.18 * salience + 0.10 * novelty + 0.08 * importance + 0.05 * connection)
+                cause_token = event_key or f"w{world_revision}:e{env_revision}"
+                motives.append(CausalMotive(
+                    cause_id=f"world_environment:{cause_token}",
+                    cause_kind="environment_event",
+                    motive_kind="notice_environment_change",
+                    semantic_focus=_compact(
+                        "WorldState SeedContext changed: " + "; ".join(parts) + ". "
+                        "Use only this compact structured context; facts and interpretations are distinct and this is not VLM/pixel evidence.",
+                        1200,
+                    ),
+                    why_now=f"world_state_environment_change:world={world_revision}:environment={env_revision}:confidence={event_conf:.2f}:salience={salience:.2f}",
+                    strength=strength,
+                    source_refs=refs or (f"world_state:r{world_revision}",),
+                    allowed_material_kinds=(
+                        "observation", "reaction", "association", "small_contact",
+                        "hunch", "playful_impulse", "question",
+                    ),
+                    generation_budget=1,
+                    relationship_modulation=connection,
+                ))
+                seed_environment_motive_added = True
+
     # Unified Environment Awareness: a *changed*, fresh structured situation may
     # become a private causal motive. This lets the seed worker associate with
     # what is actually happening on the computer instead of producing context-
@@ -387,7 +446,7 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
         if isinstance(context.get("environment_awareness"), Mapping)
         else {}
     )
-    if environment:
+    if environment and not seed_environment_motive_added:
         env_conf = _clamp01(environment.get("confidence", 0.0))
         env_age = max(0.0, float(environment.get("age_seconds", 9999.0) or 9999.0))
         env_fresh = bool(environment.get("fresh", env_age <= 120.0)) and env_age <= 120.0

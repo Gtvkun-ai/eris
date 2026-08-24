@@ -17,6 +17,7 @@ ArchitecturesInstallIn64BitMode=x64
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".env,config\secrets.json,config\*.db,*.db,*.sqlite,*.sqlite3,logs\*,.cache\*,.eris_home\*,.eris_state\*,*.bak"
+Source: "{#SourceDir}\.env"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\Eris Launcher"; Filename: "{app}\run_eris.bat"

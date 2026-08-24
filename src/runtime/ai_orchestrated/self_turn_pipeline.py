@@ -48,6 +48,7 @@ from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
 from runtime.runtime_status import emit_runtime_status
+from runtime.world_state import attach_world_state_projection
 from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
     build_subject_initiative_affordances,
@@ -1697,6 +1698,20 @@ class SelfTurnPipeline:
             )
         except Exception:
             environment_awareness = None
+        world_projection = {}
+        seed_context = {}
+        world_context = ""
+        try:
+            from runtime.world_state import ensure_world_state_service
+            world_state = ensure_world_state_service(self.host).refresh_from_host(now=perception.now)
+            world_projection = world_state.projection("self_turn", now=perception.now)
+            seed_context = world_state.seed_context(now=perception.now)
+            world_context = world_state.prompt_context("self_turn", now=perception.now)
+        except Exception as exc:
+            try:
+                self.host.logger.debug("[world state] self-turn projection failed: %s", exc)
+            except Exception:
+                pass
         snapshot = {
             "time": perception.now,
             "event_kind": "self_initiated_turn",
@@ -1705,6 +1720,9 @@ class SelfTurnPipeline:
             "user_situation": perception.user_situation.to_dict() if perception.user_situation is not None else {},
             "environment_awareness": environment_awareness.to_dict(now=perception.now) if environment_awareness is not None else {},
             "environment_awareness_context": environment_awareness.prompt_context(now=perception.now) if environment_awareness is not None else "",
+            "world_state": world_projection,
+            "world_state_context": world_context,
+            "seed_context": seed_context,
             "environment_events": [item.to_dict() for item in perception.environment_events[-16:]],
             "task_graph": self.task_graph.to_dict(),
             "conversation_baton": context.discourse.to_dict(),
@@ -2731,7 +2749,9 @@ class SelfTurnPipeline:
             mechanical_outcomes=(dict(decision.action_result_meta),)
                 if isinstance(getattr(decision, "action_result_meta", None), Mapping)
                 else (),
-            state_summary=context.state.to_dict(),
+            state_summary=attach_world_state_projection(
+                host, context.state.to_dict(), lane="observer", now=context.now
+            ),
             assistant_meta=observer_meta,
             event_kind="autonomous",
         )

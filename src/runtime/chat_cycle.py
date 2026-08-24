@@ -232,6 +232,15 @@ class ChatCycleMixin:
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
             self.logger.error("[architecture C] chat unavailable: runtime bootstrap failed; legacy path removed")
             return
+        # WorldState owns the normalized user intent and conversation edge.
+        # Downstream chat/subject/observer/seed lanes read projections from this
+        # same state instead of reclassifying the utterance independently.
+        try:
+            from runtime.world_state import ensure_world_state_service
+            ensure_world_state_service(self).observe_user_turn(user_text, now=cycle_start)
+        except Exception as exc:
+            self.logger.debug("[world state] user-turn ingest failed: %s", exc)
+
         orchestrator.run(
             user_text,
             cycle_start=cycle_start,
@@ -321,47 +330,93 @@ class ChatCycleMixin:
                     public_turn = None
         return " ".join(str(getattr(public_turn, "text", "") or "").split()).strip()
 
+    def _ensure_chat_perception_coordinator(self):
+        """Return the single chat perception coordinator used by every chat path.
+
+        Bootstrap normally creates it, but tests/legacy launchers can construct the
+        runtime out of order.  Lazily recovering here keeps one perception state
+        instead of silently falling back to the old duplicated routing logic.
+        Structured bridge sources are registered idempotently on every access so
+        sources created after bootstrap (for example chess/browser/IDE bridges)
+        immediately join the same evidence ladder.
+        """
+        coordinator = getattr(self, "chat_perception_coordinator", None)
+        if coordinator is None:
+            try:
+                from runtime.chat_perception import ChatPerceptionCoordinator
+                coordinator = ChatPerceptionCoordinator(
+                    screen_evidence_store=getattr(self, "screen_evidence_store", None),
+                    screen_text_worker=getattr(self, "screen_text_worker", None),
+                    screen_relevance_router=getattr(self, "screen_relevance_router", None),
+                    logger=getattr(self, "logger", None),
+                )
+                self.chat_perception_coordinator = coordinator
+                self._chat_pending_vision_escalation = coordinator.pending_vision
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                if logger is not None:
+                    logger.debug("[chat perception] lazy coordinator init failed: %s", exc)
+                return None
+        try:
+            coordinator.update_dependencies(
+                screen_evidence_store=getattr(self, "screen_evidence_store", None),
+                screen_text_worker=getattr(self, "screen_text_worker", None),
+                screen_relevance_router=getattr(self, "screen_relevance_router", None),
+            )
+        except Exception:
+            pass
+
+        provider = getattr(coordinator, "structured_provider", None)
+        register = getattr(provider, "register", None)
+        if callable(register):
+            # Keep this domain-agnostic at the contract boundary.  These are the
+            # currently known late-bound bridges; any future source can also
+            # expose itself through ``structured_evidence_sources``.
+            sources = [
+                getattr(self, "chess_bridge_service", None),
+                getattr(self, "semantic_tutor_runtime", None),
+                getattr(self, "ide_bridge_service", None),
+                getattr(self, "browser_bridge_service", None),
+            ]
+            extra = getattr(self, "structured_evidence_sources", ())
+            if isinstance(extra, dict):
+                sources.extend(extra.values())
+            elif isinstance(extra, (tuple, list, set)):
+                sources.extend(extra)
+            for source in sources:
+                if source is None or not str(getattr(source, "structured_source_id", "") or "").strip():
+                    continue
+                try:
+                    register(source)
+                except Exception:
+                    continue
+        return coordinator
+
     def _looks_like_screen_vision_request(
         self,
         user_text: str,
         *,
         previous_assistant_text: str = "",
     ) -> bool:
-        normalized = normalize_vi(user_text)
-        if not normalized:
-            return False
-        raw_lower = str(user_text or "").lower()
-        if re.search(r"(?<!\w)bàn(?!\w)", raw_lower):
-            return True
-        direct_terms = tuple(
-            normalize_vi(item)
-            for item in (
-                "màn hình", "trên màn hình", "screenshot", "screen", "vision",
-                "nhìn màn hình", "xem màn hình",
-                "nhìn màn hình tui", "nhìn màn hình tôi",
-                "em nhìn màn hình", "em xem màn hình",
-                "look at this", "this screen",
-                "xem đi", "bạn xem đi", "tôi đang code gì", "đang code gì",
-                "xem được tui làm gì", "xem được tôi làm gì", "thấy được tui làm gì", "thấy được tôi làm gì",
-                "em không xem được", "không xem được tui làm gì", "không xem được tôi làm gì",
-                "biết tui làm gì", "biết tôi làm gì",
-                "biết tui đang làm gì", "biết tôi đang làm gì",
-                "đoạn đang mở", "file đang mở", "đang hiện gì", "lỗi này trên màn hình",
-                # Yêu cầu model tự nhìn vào ảnh — không tìm chữ qua OCR.
-                "tự xem", "tự nhìn", "tự phân tích", "xem thử đi", "nhìn thử đi",
-                "xem giúp", "nhìn giúp", "em xem đi", "em nhìn đi",
-                "phân tích màn hình", "look at", "take a look", "check the screen",
-                # PATCH: follow-up/phàn nàn về vision phải giữ mode màn hình.
-                "mù vision", "còn mù vision", "em còn mù vision",
-                "không nhìn được", "không thấy được", "không thấy gì",
-                # Music / Media screen requests
-                "bài tôi đang nghe", "bài đang nghe", "đang nghe bài", "đang nghe",
-                "biết bài", "biết bài hát", "bài hát tên", "bài gì", "nhạc gì",
-                "đang nghe nhạc", "bài đang phát", "đang phát bài", "bài hát",
-            )
-        )
-        if any(term and term in normalized for term in direct_terms):
-            return True
+        # Typed intent is authoritative for environment-vs-screen routing.  The
+        # perception coordinator remains a compatibility/anaphora fallback.
+        try:
+            from runtime.intent_model import normalize_intent
+            intent = normalize_intent(user_text)
+            self.current_world_intent = intent
+            if intent.environment_sufficient:
+                return False
+            if intent.domain == "screen":
+                return True
+        except Exception:
+            intent = None
+        coordinator = self._ensure_chat_perception_coordinator()
+        looks = getattr(coordinator, "looks_like_screen_request", None)
+        if callable(looks):
+            try:
+                return bool(looks(user_text, previous_assistant_text=previous_assistant_text))
+            except Exception:
+                pass
         resolution = ScreenAnaphoraRescue().resolve(
             user_text,
             previous_assistant_text=previous_assistant_text,
@@ -370,32 +425,14 @@ class ChatCycleMixin:
         return bool(resolution.references_screen)
 
     def _looks_like_deep_environment_request(self, user_text: str) -> bool:
-        """Nhận diện câu hỏi có thể trả lời bằng Deep Environment structured state.
-
-        Đây KHÔNG phải classifier vision. Nó chỉ bắt các câu hỏi về trạng thái máy
-        có cấu trúc như app/process/window/task hiện tại. Những câu hỏi pixel-level
-        (màu sắc, vị trí nút, code đang hiển thị chính xác...) vẫn phải đi OCR/vision.
-        """
-
-        normalized = normalize_vi(user_text)
-        if not normalized:
+        """Typed current-environment intent; no per-caller keyword list."""
+        try:
+            from runtime.intent_model import normalize_intent
+            intent = normalize_intent(user_text)
+            self.current_world_intent = intent
+            return bool(intent.environment_sufficient and intent.operation == "inspect_current_state")
+        except Exception:
             return False
-        markers = tuple(
-            normalize_vi(item)
-            for item in (
-                "biết tôi đang làm gì", "biết tui đang làm gì",
-                "biết tôi làm gì", "biết tui làm gì",
-                "tôi đang làm gì", "tui đang làm gì",
-                "đang ở app nào", "đang dùng app nào", "đang mở app gì",
-                "ứng dụng nào", "app nào", "process nào", "tiến trình nào",
-                "cửa sổ nào", "window nào", "đang ở cửa sổ nào",
-                "đang mở gì", "đang làm việc gì", "đang thao tác gì",
-                "đang code gì", "tôi đang code gì", "tui đang code gì",
-                "what am i doing", "what app am i using", "which app am i using",
-                "what window am i on", "what am i working on",
-            )
-        )
-        return any(marker and marker in normalized for marker in markers)
 
     @staticmethod
     def _chat_snapshot_machine_context(snapshot) -> dict[str, object]:
@@ -417,38 +454,64 @@ class ChatCycleMixin:
         snapshot,
         user_text: str = "",
     ) -> tuple[dict[str, object], ...]:
-        """Use the canonical EnvironmentAwarenessHub for direct-chat grounding.
-
-        Chat no longer rebuilds its own interpretation of Deep Environment. The
-        same snapshot is shared with autonomous cognition and the seed reservoir.
-        VLM/screenshot evidence remains a separate ladder and is not touched here.
-        """
+        """Ground direct chat from the canonical WorldState projection."""
         try:
+            # Refresh the sensor compatibility projection first, then read the
+            # shared world model. EnvironmentAwarenessHub publishes into
+            # WorldState; chat never rebuilds task/activity semantics itself.
             from runtime.environment_awareness import ensure_environment_awareness_hub
-            awareness = ensure_environment_awareness_hub(self).refresh(
-                machine_snapshot=snapshot,
-                now=time.time(),
-                source="direct_chat",
+            from runtime.world_state import ensure_world_state_service
+            ensure_environment_awareness_hub(self).refresh(
+                machine_snapshot=snapshot, now=time.time(), source="direct_chat"
             )
-            facts = awareness.grounding_facts(now=time.time())
+            world = ensure_world_state_service(self).refresh_from_host(now=time.time())
+            env = world.environment_compatibility_view(now=time.time())
         except Exception as exc:
-            self.logger.debug("[deep environment chat] awareness unavailable: %s", exc)
+            self.logger.debug("[deep environment chat] world state unavailable: %s", exc)
             return ()
 
+        facts: list[dict[str, object]] = []
+        focus_parts: list[str] = []
+        if env.get("focused_app"):
+            focus_parts.append(f"app={str(env.get('focused_app'))[:120]}")
+        if env.get("focused_process"):
+            focus_parts.append(f"process={str(env.get('focused_process'))[:120]}")
+        if env.get("focused_object"):
+            focus_parts.append(f"window_or_object={str(env.get('focused_object'))[:220]}")
+        if focus_parts:
+            facts.append({
+                "id": f"world_state:focus:r{int(env.get('revision', 0) or 0)}",
+                "source": "runtime_state",
+                "claim": "Deep Environment current focus: " + "; ".join(focus_parts) + ".",
+                "confidence": min(0.98, max(0.72, float(env.get("confidence", 0.0) or 0.0))),
+                "grounded": True,
+                "stale": not bool(env.get("fresh", False)),
+                "kind": "deep_environment_focus",
+                "tags": ["runtime_state", "deep_environment", "world_state", "fact"],
+            })
+        semantic = []
+        for key, label in (("activity", "activity"), ("task_hint", "task"), ("phase", "phase"), ("last_action", "last_action"), ("last_outcome", "last_outcome")):
+            value = str(env.get(key, "") or "").strip()
+            if value and value.casefold() not in {"unknown", "none"}:
+                semantic.append(f"{label}={value[:220]}")
+        if semantic:
+            facts.append({
+                "id": f"world_state:task:r{int(env.get('revision', 0) or 0)}",
+                "source": "runtime_state",
+                "claim": "Deep Environment semantic interpretation: " + "; ".join(semantic) + ".",
+                "confidence": min(0.92, max(0.55, float(env.get("confidence", 0.0) or 0.0))),
+                "grounded": True,
+                "stale": not bool(env.get("fresh", False)),
+                "kind": "deep_environment_task",
+                "tags": ["runtime_state", "deep_environment", "world_state", "interpretation", "task_state"],
+            })
         if facts and self._looks_like_deep_environment_request(user_text):
-            try:
-                self.logger.info(
-                    "[deep environment chat] revision=%d facts=%d app=%s process=%s task=%s phase=%s age=%.1fs",
-                    int(getattr(awareness, "revision", 0) or 0),
-                    len(facts),
-                    str(getattr(awareness, "focused_app", "") or "unknown"),
-                    str(getattr(awareness, "focused_process", "") or "unknown"),
-                    str(getattr(awareness, "task_hint", "") or getattr(awareness, "activity", "") or "unknown"),
-                    str(getattr(awareness, "phase", "") or "unknown"),
-                    float(awareness.age_seconds()),
-                )
-            except Exception:
-                pass
+            self.logger.info(
+                "[deep environment chat] world_revision=%d env_revision=%d facts=%d app=%s task=%s phase=%s age=%.1fs",
+                int(getattr(world, "revision", 0) or 0), int(env.get("revision", 0) or 0), len(facts),
+                str(env.get("focused_app") or "unknown"), str(env.get("task_hint") or env.get("activity") or "unknown"),
+                str(env.get("phase") or "unknown"), float(env.get("age_seconds", 9999.0) or 9999.0),
+            )
         return tuple(facts)
 
     def _deep_environment_can_answer(self, user_text: str, snapshot=None) -> bool:
@@ -473,57 +536,29 @@ class ChatCycleMixin:
         return True
 
     def _chat_ambient_screen_blocks(self) -> tuple[object, ...]:
-        """Lấy OCR/UIA cache cho mọi lượt chat, không cưỡng bức OCR lại."""
-
-        store = getattr(self, "screen_evidence_store", None)
-        ambient = getattr(store, "ambient_blocks", None)
-        if callable(ambient):
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "ambient_screen_blocks", None)
+        if callable(fn):
             try:
-                return tuple(ambient(max_age_seconds=8.0, max_items=8) or ())
-            except Exception as exc:
-                self.logger.debug("[screen text] ambient cache read failed: %s", exc)
-        snapshot_fn = getattr(store, "snapshot", None)
-        if not callable(snapshot_fn):
-            return ()
-        try:
-            snapshot = snapshot_fn()
-        except Exception:
-            return ()
-        if bool(getattr(snapshot, "privacy_blocked", False)):
-            return ()
-        now = time.time()
-        blocks = [
-            block
-            for block in tuple(getattr(snapshot, "blocks", ()) or ())
-            if now - float(getattr(block, "captured_at", 0.0) or 0.0) <= 8.0
-            and str(getattr(block, "text", "") or "").strip()
-        ]
-        blocks.sort(
-            key=lambda block: (
-                float(getattr(block, "confidence", 0.0) or 0.0),
-                float(getattr(block, "captured_at", 0.0) or 0.0),
-            ),
-            reverse=True,
-        )
-        return tuple(blocks[:8])
+                return tuple(fn(max_age_seconds=8.0, max_items=8) or ())
+            except Exception:
+                pass
+        return ()
 
     @staticmethod
     def _merge_chat_screen_blocks(*groups) -> tuple[object, ...]:
-        merged: list[object] = []
-        seen: set[str] = set()
-        for group in groups:
-            for block in tuple(group or ()):
-                key = str(
-                    getattr(block, "block_id", "")
-                    or getattr(block, "content_hash", "")
-                    or getattr(block, "text", "")
-                    or id(block)
-                ).strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                merged.append(block)
-        return tuple(merged)
+        try:
+            from runtime.chat_perception import ChatPerceptionCoordinator
+            return ChatPerceptionCoordinator.merge_screen_blocks(*groups)
+        except Exception:
+            merged, seen = [], set()
+            for group in groups:
+                for block in tuple(group or ()):
+                    key = str(getattr(block, "block_id", "") or getattr(block, "text", "") or id(block))
+                    if key in seen:
+                        continue
+                    seen.add(key); merged.append(block)
+            return tuple(merged)
 
     def _looks_like_chess_context_request(self, user_text: str) -> bool:
         """Bind chat vào state cờ typed thay vì săn vài word marker cứng."""
@@ -667,402 +702,101 @@ class ChatCycleMixin:
         return str(getattr(item, "engagement_id", "") or "")
 
     def _queue_next_turn_vision(self, *, reason: str, user_text: str) -> None:
-        try:
-            from screen.evidence_models import PendingVisionEscalation
-        except Exception:
-            return
-        now = time.time()
-        try:
-            ttl = max(8.0, min(90.0, float(os.environ.get("ERIS_CHAT_VISION_PENDING_TTL_SEC", "30") or 30.0)))
-        except (TypeError, ValueError):
-            ttl = 30.0
-        window_key, revision = self._chat_window_identity()
-        pending = PendingVisionEscalation(
-            pending=True,
-            reason=str(reason or "ocr_ambiguous")[:160],
-            requested_at=now,
-            expires_at=now + ttl,
-            window_key=window_key,
-            screen_revision=revision,
-            engagement_id=self._chat_active_chess_engagement_id(),
-            query_hint=" ".join(str(user_text or "").split())[:240],
-        )
-        self._chat_pending_vision_escalation = pending
-        self.logger.info(
-            "[vision pending] queued reason=%s ttl=%.0fs revision=%d",
-            pending.reason,
-            ttl,
-            revision,
-        )
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "queue_next_turn_vision", None)
+        if callable(fn):
+            fn(reason=reason, user_text=user_text)
+            self._chat_pending_vision_escalation = coordinator.pending_vision
 
     def _consume_next_turn_vision(self, *, user_text: str) -> bool:
-        pending = getattr(self, "_chat_pending_vision_escalation", None)
-        active = getattr(pending, "active", None)
-        now = time.time()
-        if not callable(active) or not active(now=now):
-            clear = getattr(pending, "clear", None)
-            if callable(clear):
-                clear()
-            return False
-
-        # Structured chess state supersedes a queued screenshot. Nếu extension
-        # vừa gửi FEN đủ dùng thì vision không còn lý do để nhìn lại bàn.
-        if self._looks_like_chess_context_request(user_text):
-            pending.clear()
-            self.logger.info("[vision pending] cancelled reason=fresh_chess_bridge")
-            return False
-
-        current_window, _revision = self._chat_window_identity()
-        current_engagement = self._chat_active_chess_engagement_id()
-        same_window = bool(not pending.window_key or pending.window_key == current_window)
-        same_engagement = bool(
-            pending.engagement_id
-            and current_engagement
-            and pending.engagement_id == current_engagement
-        )
-        if not same_window and not same_engagement:
-            pending.clear()
-            self.logger.info("[vision pending] dropped reason=context_changed")
-            return False
-
-        reason = pending.reason
-        pending.clear()
-        self.logger.info("[vision pending] consumed reason=%s", reason or "ocr_ambiguous")
-        return True
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "consume_next_turn_vision", None)
+        return bool(fn(user_text=user_text)) if callable(fn) else False
 
     def _ocr_needs_next_turn_vision(self, route) -> bool:
-        if route is None or not bool(getattr(route, "references_screen", False)):
-            return False
-        if bool(getattr(route, "needs_visual", False)):
-            return False
-        mode = str(getattr(route, "mode", "none") or "none")
-        evidence = tuple(getattr(route, "evidence", ()) or ())
-        confidence = float(getattr(route, "confidence", 0.0) or 0.0)
-        useful_chars = sum(
-            len("".join(str(getattr(block, "text", "") or "").split()))
-            for block in evidence[:6]
-        )
-        try:
-            threshold = max(
-                0.48,
-                min(0.78, float(os.environ.get("ERIS_CHAT_OCR_VISION_ESCALATION_CONFIDENCE", "0.62") or 0.62)),
-            )
-        except (TypeError, ValueError):
-            threshold = 0.62
-        return bool(
-            mode == "vision"
-            or not evidence
-            or (mode == "text_evidence_soft" and confidence < threshold)
-            or useful_chars < 16
-        )
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "ocr_needs_next_turn_vision", None)
+        return bool(fn(route)) if callable(fn) else False
 
     def _ensure_screen_text_worker_for_request(self) -> None:
-        worker = getattr(self, "screen_text_worker", None)
-        if worker is None:
-            return
-        try:
-            worker.start()
-        except Exception as exc:
-            self.logger.warning("[screen text] lazy start error: %s", exc)
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "ensure_screen_text_worker", None)
+        if callable(fn):
+            fn()
 
     def _refresh_screen_text_for_chat_request(self) -> bool:
-        """Cưỡng bức một lượt UIA/OCR trước khi bỏ cuộc sang vision.
-
-        Chỉ gọi khi router đã xác nhận câu hiện tại hoặc câu trước đang trỏ màn
-        hình. Chat thường không bị OCR chặn; riêng lệnh ``xem đi`` thì việc thử
-        đọc thật đáng giá hơn một câu hỏi lại rất máy.
-        """
-
-        worker = getattr(self, "screen_text_worker", None)
-        refresh = getattr(worker, "refresh_now", None)
-        if not callable(refresh):
-            return False
-        try:
-            snapshot = refresh(force_ocr=True)
-        except TypeError:
-            snapshot = refresh()
-        except Exception as exc:
-            self.logger.warning("[screen text] chat refresh error: %s", exc)
-            return False
-        if snapshot is None:
-            return False
-        self.logger.info(
-            "[screen text] chat refresh revision=%s backend=%s blocks=%d privacy=%s",
-            int(getattr(snapshot, "revision", 0) or 0),
-            str(getattr(snapshot, "backend", "unknown") or "unknown"),
-            len(tuple(getattr(snapshot, "blocks", ()) or ())),
-            int(bool(getattr(snapshot, "privacy_blocked", False))),
-        )
-        return True
+        coordinator = self._ensure_chat_perception_coordinator()
+        fn = getattr(coordinator, "refresh_screen_text", None)
+        return bool(fn()) if callable(fn) else False
 
 
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
-        screen_latency_started = time.perf_counter()
-        screen_latency_last = screen_latency_started
-        screen_latency_spans: list[tuple[str, float]] = []
-
-        def _screen_latency_mark(name: str) -> None:
-            nonlocal screen_latency_last
-            now = time.perf_counter()
-            screen_latency_spans.append((name, max(0.0, (now - screen_latency_last) * 1000.0)))
-            screen_latency_last = now
-
-        def _screen_latency_finish(outcome: str, result: str = "") -> str:
-            total_ms = max(0.0, (time.perf_counter() - screen_latency_started) * 1000.0)
-            collapsed: dict[str, float] = {}
-            for name, value in screen_latency_spans:
-                collapsed[name] = collapsed.get(name, 0.0) + value
-            ordered = " ".join(
-                f"{name}={value:.0f}ms"
-                for name, value in collapsed.items()
-                if value >= 0.5
-            )
-            try:
-                self.logger.info(
-                    "[chat screen latency] outcome=%s %s total=%.0fms bytes=%d",
-                    str(outcome or "unknown"),
-                    ordered,
-                    total_ms,
-                    len(str(result or "")),
-                )
-            except Exception:
-                pass
-            try:
-                from runtime.observability import GLOBAL_OBSERVABILITY
-
-                GLOBAL_OBSERVABILITY.observe(
-                    "chat_screen_latency_ms",
-                    total_ms,
-                    tags={"outcome": str(outcome or "unknown")},
-                    fields={
-                        "spans": {name: round(value, 2) for name, value in collapsed.items()},
-                        "bytes": len(str(result or "")),
-                    },
-                )
-            except Exception:
-                pass
-            return result
-
+        started = time.perf_counter()
         self._chat_screen_route_decision = None
-        ambient_blocks = self._chat_ambient_screen_blocks()
-        _screen_latency_mark("ambient")
-        self._chat_screen_text_evidence = ambient_blocks
+        self._chat_screen_text_evidence = ()
         self._chat_screen_capture_present = False
         self._chat_screen_capture_interpreted = False
 
-        pending_force_vision = self._consume_next_turn_vision(user_text=user_text)
-        _screen_latency_mark("pending")
-        previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
-        _screen_latency_mark("previous_turn")
-
-        # Structured Deep Environment thắng OCR/vision cho câu hỏi về app/window/
-        # task hiện tại. Đây chính là lớp event-driven đã chạy sẵn; không cần ép
-        # OCR (đang có thể unavailable) hay xếp screenshot sang lượt kế tiếp.
         snapshot_for_environment = getattr(self, "_chat_snapshot_for_vision", None)
         if self._deep_environment_can_answer(user_text, snapshot_for_environment):
-            pending = getattr(self, "_chat_pending_vision_escalation", None)
+            coordinator = self._ensure_chat_perception_coordinator()
+            pending = getattr(coordinator, "pending_vision", None)
             clear = getattr(pending, "clear", None)
             if callable(clear):
                 clear()
-            self.logger.info("[deep environment route] structured environment selected; OCR/vision skipped")
-            return _screen_latency_finish("deep_environment_structured")
+            self.logger.info("[deep environment route] WorldState structured environment selected; OCR/vision skipped")
+            return ""
 
-        explicit_or_inherited_request = self._looks_like_screen_vision_request(
-            user_text,
-            previous_assistant_text=previous_assistant_text,
-        )
-        _screen_latency_mark("explicit_request")
-        chess_relevant = self._looks_like_chess_context_request(user_text)
-        _screen_latency_mark("chess")
-
-        if explicit_or_inherited_request and not chess_relevant:
-            self._ensure_screen_text_worker_for_request()
-        _screen_latency_mark("ensure_ocr")
-
-        router = getattr(self, "screen_relevance_router", None)
-        route = None
-        if router is not None:
-            try:
-                route = router.route(
-                    user_text,
-                    previous_assistant_text=previous_assistant_text,
-                )
-            except TypeError:
-                # Adapter/router cũ trong test vẫn dùng chữ ký một tham số.
-                route = router.route(user_text)
-            except Exception as exc:
-                self.logger.warning("[screen route] router lỗi: %s", exc)
-
-        # OCR nền có thể vừa đổi frame nhưng chưa đến poll. Chỉ refresh cưỡng bức
-        # khi user thật sự hỏi màn hình và structured chess state không đủ trả lời.
-        _screen_latency_mark("route")
-        if (
-            not chess_relevant
-            and route is not None
-            and bool(getattr(route, "references_screen", False))
-            and (not tuple(getattr(route, "evidence", ()) or ()) or bool(getattr(route, "stale", False)))
-            and self._refresh_screen_text_for_chat_request()
-            and router is not None
-        ):
-            try:
-                route = router.route(
-                    user_text,
-                    previous_assistant_text=previous_assistant_text,
-                )
-            except TypeError:
-                route = router.route(user_text)
-            except Exception as exc:
-                self.logger.warning("[screen route] reroute sau OCR lỗi: %s", exc)
-
-        # Hai classifier từng bất đồng: request detector nhận ra “xem giúp”, router
-        # lại trả mode=none. Explicit request thắng để evidence ladder còn hoạt động.
-        _screen_latency_mark("reroute")
-        route_mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
-        if route is None or (route_mode == "none" and explicit_or_inherited_request):
-            if route is None and not explicit_or_inherited_request and not pending_force_vision:
-                self.logger.debug("[screen route] mode=none reason=no_screen_reference")
-                # Không return sớm khỏi grounding: ambient OCR vẫn được đọc trực
-                # tiếp từ ScreenEvidenceStore trong _chat_source_grounding_screen_facts.
-                return _screen_latency_finish("no_screen_reference")
-            try:
-                from screen.evidence_models import ScreenRouteDecision
-                route = ScreenRouteDecision(
-                    mode="vision",
-                    references_screen=True,
-                    needs_visual=bool(pending_force_vision),
-                    reason=(
-                        "pending_vision_escalation"
-                        if pending_force_vision
-                        else "explicit_request_overrode_none_route"
-                    ),
-                    evidence=tuple(getattr(route, "evidence", ()) or ()) if route is not None else (),
-                    confidence=float(getattr(route, "confidence", 0.0) or 0.0) if route is not None else 0.0,
-                    stale=bool(getattr(route, "stale", False)) if route is not None else False,
-                    debug=dict(getattr(route, "debug", {}) or {}) if route is not None else {},
-                )
-            except Exception:
-                from types import SimpleNamespace
-                route = SimpleNamespace(
-                    mode="vision",
-                    references_screen=True,
-                    needs_visual=bool(pending_force_vision),
-                    evidence=(),
-                    confidence=0.70,
-                    stale=False,
-                    reason="pending_vision_escalation" if pending_force_vision else "explicit_request_overrode_none_route",
-                    debug={},
-                )
-
-        # Pending escalation luôn force vision ở lượt N+1, kể cả router lượt mới
-        # chỉ thấy text evidence. Nó là một lần consume, không phải always-on vision.
-        if pending_force_vision and str(getattr(route, "mode", "none") or "none") != "vision":
-            try:
-                from screen.evidence_models import ScreenRouteDecision
-                route = ScreenRouteDecision(
-                    mode="vision",
-                    references_screen=True,
-                    needs_visual=True,
-                    requires_strong_evidence=bool(getattr(route, "requires_strong_evidence", False)),
-                    reason="pending_vision_escalation",
-                    evidence=tuple(getattr(route, "evidence", ()) or ()),
-                    confidence=float(getattr(route, "confidence", 0.0) or 0.0),
-                    stale=bool(getattr(route, "stale", False)),
-                    debug=dict(getattr(route, "debug", {}) or {}),
-                )
-            except Exception:
-                pass
-
-        route_blocks = tuple(getattr(route, "evidence", ()) or ())
-        self._chat_screen_route_decision = route
-        self._chat_screen_text_evidence = self._merge_chat_screen_blocks(
-            ambient_blocks,
-            route_blocks,
-        )
-        debug = dict(getattr(route, "debug", {}) or {})
-        self.logger.info(
-            "[screen route] mode=%s refs=%s visual=%s evidence=%d ambient=%d confidence=%.2f stale=%s reason=%s anaphora=%s",
-            str(getattr(route, "mode", "none") or "none"),
-            int(bool(getattr(route, "references_screen", False))),
-            int(bool(getattr(route, "needs_visual", False))),
-            len(route_blocks),
-            len(ambient_blocks),
-            float(getattr(route, "confidence", 0.0) or 0.0),
-            int(bool(getattr(route, "stale", False))),
-            str(getattr(route, "reason", "") or "none"),
-            int(bool(debug.get("anaphora_inherited", False))),
-        )
-
-        # FEN tươi từ extension là direct structured evidence. Không chụp vision
-        # lại bàn cờ và cũng không queue một escalation vô ích.
-        _screen_latency_mark("route_log")
-        if chess_relevant:
-            self.logger.info("[chess route] structured bridge selected; vision skipped")
-            pending = getattr(self, "_chat_pending_vision_escalation", None)
-            clear = getattr(pending, "clear", None)
-            if callable(clear):
-                clear()
-            return _screen_latency_finish("chess_structured")
-
-        mode = str(getattr(route, "mode", "none") or "none")
-        should_capture_now = bool(
-            pending_force_vision
-            or (mode == "vision" and bool(getattr(route, "needs_visual", False)))
-        )
-
-        # OCR mơ hồ ở lượt N chỉ đặt cờ. Vision được nhét vào lượt N+1 nếu vẫn
-        # cùng window/engagement, thay vì gọi model ảnh ngay trong mọi request.
-        if not should_capture_now and self._ocr_needs_next_turn_vision(route):
-            self._queue_next_turn_vision(
-                reason=str(getattr(route, "reason", "ocr_ambiguous") or "ocr_ambiguous"),
-                user_text=user_text,
-            )
-            return _screen_latency_finish("queued_next_turn_vision")
-
-        if not should_capture_now:
-            return _screen_latency_finish("no_capture")
-
-        capture_fn = getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
-        if not callable(capture_fn):
-            self.logger.info("[vision chat] telemetry service không hỗ trợ chụp màn hình.")
-            if pending_force_vision:
-                self._queue_next_turn_vision(reason="pending_capture_unavailable", user_text=user_text)
-            return _screen_latency_finish("capture_unavailable")
+        coordinator = self._ensure_chat_perception_coordinator()
+        if coordinator is None:
+            self.logger.warning("[chat perception] coordinator unavailable; screen perception degraded")
+            return ""
         try:
-            data_uri = capture_fn()
-            _screen_latency_mark("capture")
-        except Exception as exc:
-            self.logger.warning("[vision chat] không chụp được màn hình: %s", exc)
-            if pending_force_vision:
-                self._queue_next_turn_vision(reason="pending_capture_failed", user_text=user_text)
-            return _screen_latency_finish("capture_failed")
-        if not str(data_uri or "").strip():
-            self.logger.warning("[vision chat] screen capture trả dữ liệu rỗng")
-            if pending_force_vision:
-                self._queue_next_turn_vision(reason="pending_capture_empty", user_text=user_text)
-            return _screen_latency_finish("capture_empty")
-        self._chat_screen_capture_present = True
-        self.logger.info("[vision chat] captured=1 bytes=%d", len(str(data_uri)))
+            coordinator.update_dependencies(
+                screen_evidence_store=getattr(self, "screen_evidence_store", None),
+                screen_text_worker=getattr(self, "screen_text_worker", None),
+                screen_relevance_router=getattr(self, "screen_relevance_router", None),
+            )
+        except Exception:
+            pass
+        previous_assistant_text = self._previous_assistant_text_for_screen_route(previous_public_turn)
+        capture_fn = getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
-        if snapshot is not None:
-            try:
-                self._refresh_screen_facts_from_data_uri(
-                    data_uri=data_uri, snapshot=snapshot, channel="chat",
-                    user_text=user_text, force_refresh=True,
-                )
-                report = getattr(self, "last_vision_grounding_report", None)
-                grounded_count = len(tuple(getattr(report, "grounded_claims", ()) or ())) if report is not None else 0
-                self._chat_screen_capture_interpreted = grounded_count > 0
-                self.logger.info(
-                    "[vision chat] interpreted=%s grounded_claims=%d recommendation=%s source=%s",
-                    int(self._chat_screen_capture_interpreted),
-                    grounded_count,
-                    str(getattr(report, "recommendation", "none") or "none"),
-                    str(getattr(report, "source", "unknown") or "unknown"),
-                )
-            except Exception as exc:
-                self.logger.warning("[vision chat] không nén được screenshot: %s", exc)
-        _screen_latency_mark("interpret")
-        return _screen_latency_finish("captured", data_uri)
+
+        def _interpret(data_uri: str):
+            if snapshot is None:
+                return getattr(self, "last_vision_grounding_report", None)
+            self._refresh_screen_facts_from_data_uri(
+                data_uri=data_uri, snapshot=snapshot, channel="chat",
+                user_text=user_text, force_refresh=True,
+            )
+            return getattr(self, "last_vision_grounding_report", None)
+
+        try:
+            result = coordinator.prepare_turn(
+                user_text,
+                previous_assistant_text=previous_assistant_text,
+                force_chat_vision=False,
+                capture_fn=capture_fn,
+                interpret_fn=_interpret,
+            )
+        except Exception as exc:
+            self.logger.warning("[chat perception] prepare turn failed: %s", exc)
+            return ""
+
+        self._chat_screen_route_decision = result.route
+        self._chat_screen_text_evidence = tuple(result.screen_blocks or ())
+        self._chat_screen_capture_present = bool(result.capture_present)
+        self._chat_screen_capture_interpreted = bool(result.capture_interpreted)
+        self._chat_pending_vision_escalation = coordinator.pending_vision
+        elapsed = max(0.0, (time.perf_counter() - started) * 1000.0)
+        self.logger.info(
+            "[chat perception] unified elapsed=%.0fms mode=%s blocks=%d structured=%s captured=%s interpreted=%s",
+            elapsed, str(getattr(result.route, "mode", "none") or "none"),
+            len(tuple(result.screen_blocks or ())), int(bool(result.structured_relevant)),
+            int(bool(result.capture_present)), int(bool(result.capture_interpreted)),
+        )
+        return str(result.data_uri or "")
 
     def _chat_vision_status_prompt_context(self, *, screen_image_data_uri: str = "") -> str:
         """Prompt guard cho stance khi có frame nhưng chưa có grounded vision claim.
@@ -1100,97 +834,25 @@ class ChatCycleMixin:
 
 
     def _chat_source_grounding_screen_facts(self, snapshot, *, screen_image_data_uri: str = "") -> tuple[object, ...]:
-        """Gộp ambient OCR + route OCR + grounded vision cho mọi lượt chat."""
-
-        route = getattr(self, "_chat_screen_route_decision", None)
-        now = time.time()
-        blocks = self._merge_chat_screen_blocks(
-            self._chat_ambient_screen_blocks(),
-            tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()),
-            tuple(getattr(route, "evidence", ()) or ()) if route is not None else (),
-        )
-        items: list[object] = []
-        seen: set[str] = set()
-
-        for block in blocks:
-            to_item = getattr(block, "to_grounding_item", None)
-            item = None
-            if callable(to_item):
-                try:
-                    item = dict(to_item(now=now, stale_after=8.0))
-                except Exception:
-                    item = None
-            if item is None:
-                text = str(getattr(block, "text", "") or "").strip()
-                if not text:
-                    continue
-                captured_at = float(getattr(block, "captured_at", 0.0) or 0.0)
-                item = {
-                    "id": str(getattr(block, "block_id", "screen_text") or "screen_text"),
-                    "source": str(getattr(block, "source", "screen_text_index") or "screen_text_index"),
-                    "claim": text,
-                    "confidence": float(getattr(block, "confidence", 0.65) or 0.65),
-                    "grounded": True,
-                    "stale": bool(captured_at and now - captured_at > 8.0),
-                    "captured_at": captured_at,
-                    "tags": ["screen", "screen_text", "ocr_ambient"],
-                }
-            item.setdefault("role", "ambient")
-            tags = list(item.get("tags", ()) or ())
-            if "ocr_ambient" not in tags:
-                tags.append("ocr_ambient")
-            item["tags"] = tags
-            item_id = str(item.get("id", "") or item.get("claim", ""))
-            if item_id in seen:
-                continue
-            seen.add(item_id)
-            items.append(item)
-
-        report = getattr(self, "last_vision_grounding_report", None)
-        if report is not None and screen_image_data_uri and not bool(getattr(report, "stale", False)):
-            to_items = getattr(report, "to_evidence_items", None)
-            if callable(to_items):
-                try:
-                    for raw in tuple(to_items(grounded_only=True) or ()):
-                        item = dict(raw) if isinstance(raw, dict) else raw
-                        item_id = str(
-                            item.get("id", "") if isinstance(item, dict)
-                            else getattr(item, "id", "")
-                        )
-                        if item_id and item_id in seen:
-                            continue
-                        if item_id:
-                            seen.add(item_id)
-                        items.append(item)
-                except Exception:
-                    pass
-
-        if screen_image_data_uri and not self._chat_screen_capture_interpreted:
-            items.append({
-                "id": "chat_screen_frame_unresolved",
-                "source": "screen_capture",
-                "claim": "fresh screenshot captured but no grounded semantic claim",
-                "confidence": 0.25,
-                "grounded": False,
-                "stale": False,
-                "tags": ["vision", "screen", "chat", "ungrounded"],
-            })
-        return tuple(items)
+        coordinator = self._ensure_chat_perception_coordinator()
+        build = getattr(coordinator, "build_screen_grounding_items", None)
+        if not callable(build):
+            return ()
+        return tuple(build(
+            screen_blocks=tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()),
+            route=getattr(self, "_chat_screen_route_decision", None),
+            vision_report=getattr(self, "last_vision_grounding_report", None),
+            screen_image_data_uri=screen_image_data_uri,
+            capture_interpreted=bool(getattr(self, "_chat_screen_capture_interpreted", False)),
+        ) or ())
 
     @staticmethod
     def _chat_screen_grounding_items_stale(items: tuple[object, ...]) -> bool:
-        grounded: list[object] = []
-        for item in tuple(items or ()):
-            marker = item.get("grounded") if isinstance(item, dict) else getattr(item, "grounded", None)
-            if marker is False or str(marker).strip().lower() == "false":
-                continue
-            grounded.append(item)
-        if not grounded:
+        try:
+            from runtime.chat_perception import ChatPerceptionCoordinator
+            return ChatPerceptionCoordinator.grounding_items_stale(items)
+        except Exception:
             return False
-        return all(
-            bool(item.get("stale", False)) if isinstance(item, dict) else bool(getattr(item, "stale", False))
-            for item in grounded
-        )
 
     def _build_chat_source_grounding_report(
         self, *, user_text: str, frame, snapshot, memory_resonance=None,
