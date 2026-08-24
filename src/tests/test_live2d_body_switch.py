@@ -274,3 +274,67 @@ def test_duplicate_stage_event_reports_rejected():
     }
     assert state.handle_payload(payload) is True
     assert state.handle_payload(dict(payload)) is False
+
+
+def test_live2d_model_hit_test_uses_precise_parts() -> None:
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeModel:
+        def HitPart(self, x: float, y: float):
+            assert (x, y) == (120.0, 240.0)
+            return ["PartHair"]
+
+        def HitTest(self, name: str, x: float, y: float) -> bool:
+            raise AssertionError("HitTest fallback should not run when HitPart succeeds")
+
+    assert Live2DRenderer._model_hit_test(FakeModel(), 120.0, 240.0) is True
+
+
+def test_live2d_model_hit_test_passes_through_empty_alpha_area() -> None:
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeModel:
+        def HitPart(self, _x: float, _y: float):
+            return []
+
+        def HitTest(self, _name: str, _x: float, _y: float) -> bool:
+            return False
+
+    assert Live2DRenderer._model_hit_test(FakeModel(), 15.0, 20.0) is False
+
+
+def test_live2d_glfw_passthrough_toggles_only_on_state_change() -> None:
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeGlfw:
+        MOUSE_PASSTHROUGH = 0x0002000D
+        TRUE = 1
+        FALSE = 0
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        def set_window_attrib(self, window, attrib, value) -> None:
+            self.calls.append((window, attrib, value))
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer._mouse_passthrough_active = False
+    renderer._mouse_passthrough_supported = True
+    glfw = FakeGlfw()
+
+    assert renderer._set_mouse_passthrough(glfw, "window", True) is True
+    assert renderer._set_mouse_passthrough(glfw, "window", True) is True
+    assert renderer._set_mouse_passthrough(glfw, "window", False) is True
+    assert glfw.calls == [
+        ("window", glfw.MOUSE_PASSTHROUGH, glfw.TRUE),
+        ("window", glfw.MOUSE_PASSTHROUGH, glfw.FALSE),
+    ]
+
+
+def test_godot_overlay_uses_dynamic_window_passthrough_not_merged_hitbox() -> None:
+    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    assert "DisplayServer.WindowFlags.MousePassthrough" in source
+    assert "DisplayServer.MouseGetPosition()" in source
+    assert "IsMouseOverInteractiveOverlay" in source
+    assert "MergeInteractivePanelRects" not in source
+    assert "TryBuildCharacterMouseCaptureRect" not in source

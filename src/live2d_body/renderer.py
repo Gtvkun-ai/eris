@@ -57,6 +57,8 @@ class Live2DRenderer:
         self._drag_origin_cursor_screen = (0.0, 0.0)
         self._drag_origin_window = (0, 0)
         self._runtime_scale = float(config.scale)
+        self._mouse_passthrough_active = False
+        self._mouse_passthrough_supported = True
         self._bridge = DesktopWindowBridge(godot_pid=config.godot_pid)
         self._gaze = GazeController(
             strength_x=config.eye_strength_x,
@@ -120,6 +122,10 @@ class Live2DRenderer:
             canvas_pixel_size = self._safe_model_call(model, "GetCanvasSizePixel")
 
             self._install_callbacks(glfw, window, model)
+            # Cửa sổ Live2D là 520x900 nhưng phần model thật chỉ chiếm một phần.
+            # Bật click-through mặc định; vòng render sẽ chỉ tắt nó khi con trỏ
+            # thực sự nằm trên drawable/hit-part của model.
+            self._set_mouse_passthrough(glfw, window, True)
             self._report_geometry(glfw, window, force=True)
             if self.config.z_order_sync:
                 self._bridge.keep_live2d_below_godot(glfw, window)
@@ -249,6 +255,11 @@ class Live2DRenderer:
                     left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale,
                     right_scale=snapshot.eye_open_right * gaze.right_eye_open_scale,
                 )
+
+                # Đừng để cả rectangle Live2D ăn chuột. Khi cursor ở vùng alpha rỗng,
+                # click đi xuyên xuống Godot/app phía dưới; chỉ model thật mới nhận
+                # right-click context menu và middle-drag.
+                self._update_mouse_passthrough(glfw, window, model, geometry)
 
                 if self.config.transparent:
                     live2d.clearBuffer(0.0, 0.0, 0.0, 0.0)
@@ -456,6 +467,81 @@ class Live2DRenderer:
             pass
         # Không focus cưỡng bức. Việc giật focus vừa khó chịu vừa đẩy Live2D lên
         # trên bubble/context menu Godot trong topmost band.
+
+    def _set_mouse_passthrough(self, glfw: Any, window: Any, enabled: bool) -> bool:
+        """Toggle GLFW mouse passthrough without changing transparency/rendering."""
+        if not self._mouse_passthrough_supported:
+            return False
+        if self._mouse_passthrough_active == bool(enabled):
+            return True
+
+        attrib = getattr(glfw, "MOUSE_PASSTHROUGH", None)
+        setter = getattr(glfw, "set_window_attrib", None)
+        if attrib is None or setter is None:
+            self._mouse_passthrough_supported = False
+            print(
+                "[Live2D][WARN] GLFW build không có MOUSE_PASSTHROUGH; "
+                "vùng trong suốt của cửa sổ có thể vẫn chặn chuột.",
+                flush=True,
+            )
+            return False
+        try:
+            setter(window, attrib, glfw.TRUE if enabled else glfw.FALSE)
+            self._mouse_passthrough_active = bool(enabled)
+            return True
+        except Exception as exc:
+            self._mouse_passthrough_supported = False
+            print(f"[Live2D][WARN] Không đổi được mouse passthrough: {exc}", flush=True)
+            return False
+
+    def _update_mouse_passthrough(
+        self,
+        glfw: Any,
+        window: Any,
+        model: Any,
+        geometry: WindowGeometry,
+    ) -> None:
+        if not self.config.transparent or not self._mouse_passthrough_supported:
+            return
+
+        # Đang middle-drag phải giữ capture đến mouse-up, kể cả cursor rời model.
+        if self._dragging_window:
+            self._set_mouse_passthrough(glfw, window, False)
+            return
+
+        cursor = self._bridge.cursor_screen()
+        if cursor is None:
+            self._set_mouse_passthrough(glfw, window, False)
+            return
+
+        local_x = float(cursor[0] - geometry.x)
+        local_y = float(cursor[1] - geometry.y)
+        if local_x < 0.0 or local_y < 0.0 or local_x >= geometry.width or local_y >= geometry.height:
+            self._set_mouse_passthrough(glfw, window, True)
+            return
+
+        hit = self._model_hit_test(model, local_x, local_y)
+        self._set_mouse_passthrough(glfw, window, not hit)
+
+    @staticmethod
+    def _model_hit_test(model: Any, x: float, y: float) -> bool:
+        """Prefer precise drawable hit testing; degrade safely on older live2d-py."""
+        try:
+            parts = model.HitPart(float(x), float(y))
+            if parts:
+                return True
+        except Exception:
+            pass
+
+        # HitArea names commonly used by Cubism samples. This is only a fallback;
+        # HitPart above is the normal path and supports precise part-level testing.
+        for name in ("Head", "Body"):
+            try:
+                if model.HitTest(name, float(x), float(y)):
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _update_window_drag(self, glfw: Any, window: Any) -> None:
         if not self._dragging_window:

@@ -482,16 +482,18 @@ public partial class UdpListener : Node2D
 			DisplayServer.WindowSetPosition(screenPos);
 		}
 
-		// Mặc định cho chuột xuyên qua toàn bộ cửa sổ; mỗi frame sẽ chỉ "mở khoá"
-		// vùng quanh Eris (xem UpdateMousePassthrough) để desktop phía sau vẫn bấm được.
-		if (EnableMousePassthrough)
-			UpdateMousePassthrough();
-		else
-			DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
+		// Không dùng mouse_passthrough_polygon làm hitbox tổng nữa. Trên Windows,
+		// vùng ngoài polygon có thể không được vẽ, nên việc Merge bubble/indicator với
+		// nhân vật từng tạo ra một hình chữ nhật rất lớn và chặn click ở khoảng trống.
+		// Giữ polygon rỗng để toàn overlay luôn được render, rồi đổi cờ
+		// MousePassthrough theo vị trí con trỏ ở UpdateMousePassthrough().
+		DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false);
+		_overlayMousePassthroughActive = false;
+		UpdateMousePassthrough();
 	}
 
-	private bool _passthroughFullCapture = true;
-	private Rect2 _passthroughLastRect = new(Vector2.Zero, Vector2.Zero);
+	private bool _overlayMousePassthroughActive = false;
 	private string _shutdownReason = "unknown tree exit";
 
 	private void MarkShutdownReason(string reason)
@@ -508,102 +510,93 @@ public partial class UdpListener : Node2D
 
 	private void UpdateMousePassthrough()
 	{
-		if (!EnableDesktopOverlayWindow || !EnableMousePassthrough)
+		if (!EnableDesktopOverlayWindow)
 			return;
 
-		// During drag, keep the transparent HWND fully interactive so motion/release
-		// events are not lost when the cursor leaves the original hit region.
+		if (!EnableMousePassthrough)
+		{
+			SetOverlayMousePassthrough(false);
+			return;
+		}
+
+		// Khi đang kéo, phải giữ capture đến lúc nhận được mouse release.
 		if (_draggingPanel != null || _isDraggingCharacter)
 		{
-			ApplyFullMouseCapture();
+			SetOverlayMousePassthrough(false);
 			return;
 		}
 
-		Rect2 panelRect = default;
-		bool hasPanelRect = false;
-		MergeInteractivePanelRects(ref panelRect, ref hasPanelRect);
-		if (hasPanelRect)
+		Vector2I windowPos = DisplayServer.WindowGetPosition();
+		Vector2I screenMouse = DisplayServer.MouseGetPosition();
+		Vector2 mouse = new(screenMouse.X - windowPos.X, screenMouse.Y - windowPos.Y);
+
+		bool shouldCapture = IsMouseOverInteractiveOverlay(mouse);
+
+		// Nếu một control Eris đã nhận mouse-down, đừng bật xuyên chuột giữa chừng
+		// khi user kéo con trỏ ra ngoài control; nếu không mouse-up có thể rơi xuống app dưới.
+		if (!shouldCapture && !_overlayMousePassthroughActive
+			&& (Input.IsMouseButtonPressed(MouseButton.Left)
+				|| Input.IsMouseButtonPressed(MouseButton.Right)
+				|| Input.IsMouseButtonPressed(MouseButton.Middle)))
 		{
-			ApplyMouseCaptureRect(panelRect);
-			return;
+			shouldCapture = true;
 		}
 
-		if (ApplyLive2DMousePassthrough(false))
-			return;
-
-		if (!TryBuildCharacterMouseCaptureRect(out Rect2 rect))
-			return;
-
-		ApplyMouseCaptureRect(rect);
+		SetOverlayMousePassthrough(!shouldCapture);
 	}
 
-	private void ApplyFullMouseCapture()
+	private void SetOverlayMousePassthrough(bool passthrough)
 	{
-		if (_passthroughFullCapture)
+		if (_overlayMousePassthroughActive == passthrough)
 			return;
 
-		// Empty region disables passthrough, so the whole window receives mouse input.
+		// Polygon để rỗng: khi passthrough=false, cửa sổ nhận chuột bình thường;
+		// khi passthrough=true, cờ WindowFlags.MousePassthrough cho chuột xuyên toàn bộ
+		// nhưng không cắt mất phần render trong suốt của overlay.
 		DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
-		_passthroughFullCapture = true;
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, passthrough);
+		_overlayMousePassthroughActive = passthrough;
 	}
 
-	private bool ApplyMouseCaptureRect(Rect2 rect)
+	private bool IsMouseOverInteractiveOverlay(Vector2 mouse)
 	{
-		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
-			return false;
+		// Các panel thật sự tương tác. Kiểm tra từng rect riêng, tuyệt đối không Merge
+		// thành bounding box vì khoảng trống giữa hai panel phải click xuyên.
+		if (IsVisibleControlUnderMouse(_chatPanel, mouse)
+			|| IsVisibleControlUnderMouse(_characterContextMenu, mouse)
+			|| IsVisibleControlUnderMouse(_emotionPanel, mouse)
+			|| IsVisibleControlUnderMouse(_privateMindPanel, mouse)
+			|| IsVisibleControlUnderMouse(_settingsPanel, mouse)
+			|| IsVisibleControlUnderMouse(_memoryPanel, mouse)
+			|| IsVisibleControlUnderMouse(_conversationHistoryPanel, mouse))
+		{
+			return true;
+		}
 
-		// Avoid calling the platform API every frame when the hit region is stable.
-		bool unchanged =
-			!_passthroughFullCapture
-			&& _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f
-			&& _passthroughLastRect.Size.DistanceTo(rect.Size) < 2f;
-		if (unchanged)
+		// Tutor panel là decoration (MouseFilter.Ignore); chỉ nút Ẩn cần nhận click.
+		if (IsVisibleControlUnderMouse(_tutorHideButton, mouse))
 			return true;
 
-		var region = new[]
-		{
-			rect.Position,
-			rect.Position + new Vector2(rect.Size.X, 0f),
-			rect.Position + rect.Size,
-			rect.Position + new Vector2(0f, rect.Size.Y),
-		};
-		DisplayServer.WindowSetMousePassthrough(region);
-		_passthroughFullCapture = false;
-		_passthroughLastRect = rect;
-		return true;
-	}
+		// Live2D chạy trong cửa sổ renderer riêng và tự nhận input. Godot overlay
+		// không được chặn vùng Live2D ở phía trên nó.
+		if (_isLive2DMode)
+			return false;
 
-	private bool TryBuildCharacterMouseCaptureRect(out Rect2 rect)
-	{
-		rect = default;
 		if (_body == null)
 			return false;
 
-		// Vùng quanh nhân vật (nới thêm cho dễ click).
 		float pad = 12f;
-		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
-		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
-		rect = new Rect2(tl, size);
-
-		// Các overlay tạm phải nằm trong hit-test region ngay cả khi chúng MouseFilter.Ignore.
-		// Đây cũng là workaround ổn định cho transparent HWND trên Windows: nếu region
-		// bị thu lại khi context menu đóng, thinking pill/bubble có thể ngừng được composite.
-		bool hasRect = true;
-		MergeVisibleControlRect(ref rect, ref hasRect, ActiveSpeechBubble(), 2f);
-		MergeVisibleControlRect(ref rect, ref hasRect, _runtimePresenceIndicator, 2f);
-		MergeVisibleControlRect(ref rect, ref hasRect, _tutorPanel, 2f);
-		return hasRect;
+		Rect2 characterRect = new(
+			_body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad),
+			_spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f));
+		return characterRect.HasPoint(mouse);
 	}
 
-	private void MergeInteractivePanelRects(ref Rect2 aggregate, ref bool hasRect)
+	private static bool IsVisibleControlUnderMouse(Control control, Vector2 mouse)
 	{
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _chatPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _characterContextMenu, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _emotionPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _privateMindPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _settingsPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
+		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
+			return false;
+		return IsMouseOverControl(control, mouse);
 	}
 
 	public override void _ExitTree()
@@ -1109,26 +1102,6 @@ public partial class UdpListener : Node2D
 		root.MoveChild(control, root.GetChildCount() - 1);
 	}
 
-	private static void MergeVisibleControlRect(ref Rect2 aggregate, ref bool hasRect, Control control, float grow = 0f)
-	{
-		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
-			return;
-
-		Rect2 rect = control.GetGlobalRect();
-		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
-			return;
-		if (grow > 0f)
-			rect = rect.Grow(grow);
-
-		if (hasRect)
-			aggregate = aggregate.Merge(rect);
-		else
-		{
-			aggregate = rect;
-			hasRect = true;
-		}
-	}
-
 	private void ScheduleTransientOverlayRefresh()
 	{
 		Control root = UiOverlayRoot();
@@ -1137,8 +1110,8 @@ public partial class UdpListener : Node2D
 		_live2DSpeechBubble?.QueueRedraw();
 		_bubble?.QueueRedraw();
 
-		// Cập nhật ngay vùng HWND nhận chuột. Trên overlay trong suốt của Windows,
-		// region cũ có thể khiến control vừa hiện trông như biến mất khi context menu đóng.
+		// Cập nhật ngay trạng thái click-through theo control vừa hiện/ẩn.
+		// Việc này không còn thay đổi polygon nên bubble/indicator không bị cắt render.
 		UpdateMousePassthrough();
 
 		if (_transientOverlayRefreshQueued || !IsInsideTree())

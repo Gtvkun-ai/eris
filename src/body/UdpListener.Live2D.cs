@@ -429,23 +429,6 @@ public partial class UdpListener
 		}
 	}
 
-	private bool ApplyLive2DMousePassthrough(bool uiActive)
-	{
-		if (!_isLive2DMode || uiActive)
-			return false;
-
-		Rect2 interactiveRect = new(new Vector2(-8f, -8f), Vector2.One);
-		bool hasInteractiveRect = false;
-		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, Live2DSpeechBubbleControl(), 2f);
-		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, _runtimePresenceIndicator, 2f);
-		MergeVisibleControlRect(ref interactiveRect, ref hasInteractiveRect, _tutorPanel, 2f);
-
-		if (!hasInteractiveRect)
-			interactiveRect = new Rect2(new Vector2(-8f, -8f), Vector2.One);
-
-		return ApplyMouseCaptureRect(interactiveRect);
-	}
-
 	private void ShutdownLive2DMode()
 	{
 		_isLive2DMode = false;

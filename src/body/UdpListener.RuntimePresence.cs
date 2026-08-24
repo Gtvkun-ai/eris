@@ -493,7 +493,7 @@ public partial class UdpListener : Node2D
 			EnsureControlOnCanvasLayer(_runtimePresenceIndicator, 1000);
 
 		// Visibility của indicator thuộc lifecycle backend, tuyệt đối không phụ thuộc
-		// CharacterContextMenu. Refresh cả CanvasLayer và Windows hit-test region ngay.
+		// CharacterContextMenu. Refresh cả CanvasLayer và trạng thái click-through ngay.
 		if (wasVisible != visible || visible)
 			ScheduleTransientOverlayRefresh();
 	}
