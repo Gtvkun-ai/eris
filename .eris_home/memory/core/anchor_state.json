@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "updated_at": 1787728785.020703,
+  "state": {
+    "attachment_longarc": 0.0394,
+    "beat_ema": 0.0,
+    "recognition_ema": 0.19699,
+    "total_beats": 0,
+    "shadow_locked_out": false,
+    "updated_at": 1787728785.020703
+  }
+}

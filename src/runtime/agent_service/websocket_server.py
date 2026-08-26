@@ -272,6 +272,7 @@ class AgentWebSocketService:
                 return
             thread_id = str(message.get("threadId", "") or "").strip() or client.session_id
             context = self._with_client_context(client, message.get("context"))
+            autopilot = bool(message.get("autopilot", True))
             raw_attachments = context.get("attachments") if isinstance(context.get("attachments"), list) else []
             public_attachments = [
                 {
@@ -354,6 +355,7 @@ class AgentWebSocketService:
                 thread_id=thread_id,
                 session_id=client.session_id,
                 task_mode=str(message.get("taskMode", "execute") or "execute"),
+                autopilot=autopilot,
                 workspace_ref=str(message.get("workspaceRef", "") or ""),
                 model=str(context.get("webaiModel", "") or context.get("model", "") or ""),
                 ide_context=context,

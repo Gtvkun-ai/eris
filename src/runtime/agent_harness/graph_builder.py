@@ -359,6 +359,7 @@ class AgentHarness:
         repository_context = state.get("repository_context") if isinstance(state.get("repository_context"), dict) else {}
         repository_context_text = str(repository_context.get("context_pack", "") or "")
         task_mode = str(state.get("task_mode", "execute") or "execute").strip().lower()
+        autopilot = bool(state.get("autopilot", True))
         step = int(state.get("step_count", 0) or 0) + 1
 
         if task_id:
@@ -372,13 +373,43 @@ class AgentHarness:
                 importance=0.34,
             )
 
+        if task_mode == "plan":
+            mode_guidance = (
+                "PLAN MODE: investigate deeply with read-only tools, but do not modify files, run mutating/control tools, "
+                "or claim that changes were applied. Produce a concrete implementation plan grounded in the current repository. "
+                "The final answer should identify relevant files/symbols, ordered steps, verification, and meaningful risks or open decisions. "
+                "Stop after the plan; the next normal user turn can execute it.\n"
+            )
+        elif task_mode == "inspect":
+            mode_guidance = (
+                "INSPECT MODE: investigate and explain with read-only tools only. Do not modify files or claim edits.\n"
+            )
+        else:
+            mode_guidance = (
+                "AUTO-INTENT MODE: infer whether the user's request requires code changes. "
+                "For explanation, review, or questions, inspect and answer without editing. "
+                "For explicit fix/create/refactor/implementation requests, modify, test, and verify as needed. "
+                "Never ask the user to choose between 'view' and 'code' modes; infer the appropriate behavior yourself.\n"
+            )
+
+        if autopilot:
+            autopilot_guidance = (
+                "AUTOPILOT: continue through routine, reversible implementation decisions without pausing for preferences. "
+                "Choose the safest reasonable default, keep the inspect -> edit -> test -> verify loop moving, and summarize what you chose. "
+                "Do not claim that Autopilot overrides runtime permission or destructive-action boundaries.\n"
+            )
+        else:
+            autopilot_guidance = (
+                "INTERACTIVE: when the task genuinely needs a user decision, call ask_user_choice with 2-5 concise options instead of inventing a preference. "
+                "Do not ask for confirmation for routine reversible work.\n"
+            )
+
         sys_msg = SystemMessage(content=(
             "You are the execution specialist inside Eris' unified agent harness.\n"
             "Do not roleplay Eris' social persona. Work on the task, use available tools, "
             "verify results, and expose concise action summaries rather than private reasoning.\n"
-            "When the task genuinely needs a user decision, call ask_user_choice with 2-5 concise options instead of inventing a preference. "
-            "Do not ask for confirmation for routine reversible work.\n"
-            "EXECUTION MODE: you may use disclosed tools to inspect, modify, test, and verify within permission policy.\n"
+            + autopilot_guidance +
+            mode_guidance +
             f"Current Goal: {state.get('goal', '')}\n"
             f"Current Task ID: {task_id or '(none)'}\n"
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
@@ -397,6 +428,7 @@ class AgentHarness:
         disclosed_tools = self._disclosed_tool_specs(
             state.get("active_skills", []) or [],
             task_mode=task_mode,
+            autopilot=autopilot,
             ide_context=ide_context,
         )
         invoke_with_tools = getattr(self.llm, "invoke_with_tools", None)
@@ -466,7 +498,7 @@ class AgentHarness:
                     # invariant máy móc, không còn phụ thuộc model nhớ câu "verify before final".
                     task_snapshot = self.task_store.get_task(task_id, event_limit=0) or {}
                     changed_files = [str(item) for item in (task_snapshot.get("changed_files") or []) if str(item or "").strip()]
-                    if task_mode == "execute" and requires_verified_change(str(state.get("goal", "") or "")) and not changed_files:
+                    if task_mode in {"execute", "auto"} and requires_verified_change(str(state.get("goal", "") or "")) and not changed_files:
                         attempts = int(state.get("completion_gate_attempts", 0) or 0) + 1
                         self.event_bus.emit(
                             task_id,
@@ -528,6 +560,7 @@ class AgentHarness:
         active_skills: list[str] | tuple[str, ...],
         *,
         task_mode: str = "execute",
+        autopilot: bool = False,
         ide_context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = [
@@ -587,6 +620,10 @@ class AgentHarness:
                 "risk_level": "low",
             },
         ]
+        if autopilot:
+            # Tự động resolves minor reversible choices internally. High-risk
+            # permission boundaries are still enforced by _tools_node.
+            specs = [spec for spec in specs if str(spec.get("name", "")) != "ask_user_choice"]
         client_caps = _ide_client_capabilities(ide_context)
         if "editor.openFile" in client_caps:
             specs.append(dict(self.tool_specs["editor_open_file"]))
@@ -614,6 +651,17 @@ class AgentHarness:
             if not isinstance(spec, dict):
                 continue
             specs.append(dict(spec))
+
+        normalized_mode = str(task_mode or "execute").strip().lower()
+        if normalized_mode in {"inspect", "plan"}:
+            # Read-only modes are enforced mechanically, not merely by prompting.
+            # Capability discovery is still available, but any activated write/control
+            # tools are hidden from the model for this turn.
+            readonly_effects = {"inspect", "read"}
+            specs = [
+                spec for spec in specs
+                if str(spec.get("effect", "inspect") or "inspect").strip().lower() in readonly_effects
+            ]
         return specs
 
     def _tool_spec(self, name: str, active_skills: list[str] | tuple[str, ...]) -> dict[str, Any]:
@@ -1319,6 +1367,7 @@ class AgentHarness:
         task_id: str = "",
         clarified_goal: str = "",
         task_mode: str = "execute",
+        autopilot: bool = True,
         source: str = "eris_chat",
         session_id: str = "",
         workspace_id: str = "",
@@ -1331,7 +1380,8 @@ class AgentHarness:
         Khi gặp ``interrupt()`` hàm trả về ngay với status ``waiting_user``;
         worker được giải phóng hoàn toàn. Client sẽ gọi ``resume_task`` sau.
         """
-        normalized_mode = "inspect" if str(task_mode or "execute").strip().lower() == "inspect" else "execute"
+        requested_mode = str(task_mode or "auto").strip().lower()
+        normalized_mode = requested_mode if requested_mode in {"auto", "plan", "inspect", "execute"} else "auto"
         normalized_source = str(source or "eris_chat").strip() or "eris_chat"
         normalized_session = str(session_id or "").strip()
         normalized_workspace_id = str(workspace_id or "").strip()
@@ -1349,6 +1399,7 @@ class AgentHarness:
                 "original_goal": goal,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
+                "autopilot": bool(autopilot),
                 "workspace_id": normalized_workspace_id,
                 "workspace_path": normalized_workspace_path,
                 "workspace_name": normalized_workspace_name,
@@ -1360,6 +1411,7 @@ class AgentHarness:
             "original_goal": goal,
             "source": normalized_source,
             "task_mode": normalized_mode,
+            "autopilot": bool(autopilot),
             "workspace_id": normalized_workspace_id,
             "workspace_path": normalized_workspace_path,
             "workspace_name": normalized_workspace_name,
@@ -1384,6 +1436,7 @@ class AgentHarness:
                 "model": self.model_name,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
+                "autopilot": bool(autopilot),
                 "session_id": normalized_session,
                 "workspace_id": normalized_workspace_id,
                 "workspace_path": normalized_workspace_path,
@@ -1485,6 +1538,7 @@ class AgentHarness:
             "executor": self.executor_name,
             "model": self.model_name,
             "task_mode": normalized_mode,
+            "autopilot": bool(autopilot),
             "source": normalized_source,
             "workspace_id": normalized_workspace_id,
             "workspace_path": normalized_workspace_path,

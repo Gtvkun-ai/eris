@@ -1,0 +1,278 @@
+{
+  "max_items": 64,
+  "items": [
+    {
+      "id": "e9ed5548d44c8f38",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:4d33b925f985:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728506.1957572,
+      "updated_at": 1787728506.1957572,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:4d33b925f985:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "3883d5da103a8d02",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:bb86e11fa03f:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728511.546744,
+      "updated_at": 1787728511.546744,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:bb86e11fa03f:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "417a1c60bb0af421",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:86b895e757ee:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728566.6020026,
+      "updated_at": 1787728566.6020026,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:86b895e757ee:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "77ff1f0e7454a6cb",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:0e6a399a65e3:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728700.2655573,
+      "updated_at": 1787728700.2655573,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:0e6a399a65e3:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "bbc322bc2c6bcbbf",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:63cd8777bdb8:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728753.798268,
+      "updated_at": 1787728753.798268,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:63cd8777bdb8:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "4983108a248d3229",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:42326ae732e4:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728879.1610875,
+      "updated_at": 1787728879.1610875,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:42326ae732e4:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "205581bf73fc7123",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:b96e890fb514:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787728884.3601422,
+      "updated_at": 1787728884.3601422,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:b96e890fb514:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "81d0edc6c66d425c",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:db705d31477a:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729010.733271,
+      "updated_at": 1787729010.733271,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:db705d31477a:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "fcdb62710c13a56f",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:43991b26ef47:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729135.9207468,
+      "updated_at": 1787729135.9207468,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:43991b26ef47:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "26cc3b455f31e152",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:6fbf2f7f593a:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729140.9866436,
+      "updated_at": 1787729140.9866436,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:6fbf2f7f593a:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "881e45e0849d09e4",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:ff67f43c123a:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729194.802939,
+      "updated_at": 1787729194.802939,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:ff67f43c123a:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "1c6e448d8adde581",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:42288777a327:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729200.1543784,
+      "updated_at": 1787729200.1543784,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:42288777a327:subconscious_4b:daydream:idle_gt_300s"
+      }
+    },
+    {
+      "id": "39983aefa2bf5a58",
+      "kind": "resource_guard",
+      "summary": "Daydream consolidation bị hoãn bởi scheduler/budget: model_queue_timeout:subconscious_4b:c95611213eac:subconscious_4b:daydream:idle_gt_300s",
+      "evidence_ids": [
+        "model_budget_policy"
+      ],
+      "pressure": 0.42,
+      "urgency": 0.22,
+      "confidence": 0.8,
+      "speech_value": 0.0,
+      "status": "open",
+      "source": "cortex_runtime",
+      "created_at": 1787729255.764294,
+      "updated_at": 1787729255.764294,
+      "ttl_seconds": 900,
+      "attempts": 0,
+      "payload": {
+        "scheduler_error": "model_queue_timeout:subconscious_4b:c95611213eac:subconscious_4b:daydream:idle_gt_300s"
+      }
+    }
+  ]
+}

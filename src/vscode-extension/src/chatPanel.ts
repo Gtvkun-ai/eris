@@ -452,9 +452,17 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
         }
 
         context.webaiModel = String(message.model ?? '');
+        const autopilot = message.autopilot !== false;
+        const requestedTaskMode = String(message.taskMode ?? 'auto');
+        const taskMode: 'auto' | 'plan' | 'inspect' | 'execute' =
+          requestedTaskMode === 'plan' ? 'plan'
+          : requestedTaskMode === 'inspect' ? 'inspect'
+          : requestedTaskMode === 'execute' ? 'execute'
+          : 'auto';
         await this.client.sendUserMessage(content, {
           threadId: this.threadId,
-          taskMode: message.taskMode === 'inspect' ? 'inspect' : 'execute',
+          taskMode,
+          autopilot,
           workspaceRef: currentWorkspaceRef(),
           context,
         });
@@ -700,30 +708,42 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       return;
     }
 
-    if (eventThread) {
+    const targetThread = eventThread
+      || (eventTaskId && eventTaskId === this.activeTaskId ? this.threadId : '')
+      || (eventTaskId ? this.sessions.find((item) => item.taskId === eventTaskId)?.threadId ?? '' : '');
+
+    if (targetThread) {
       const patch: Partial<SessionTab> = {};
       if (eventTaskId) {
         patch.taskId = eventTaskId;
       }
       if (type === 'message.user') {
         const content = String(event.payload?.content ?? '').trim();
-        const current = this.ensureSession(eventThread);
+        const current = this.ensureSession(targetThread);
         if (current.title === NEW_SESSION_LABEL && content) {
           patch.title = this.titleFromContent(content);
         }
         patch.status = 'running';
       } else if (type === 'interrupt.request') {
         patch.status = 'waiting';
-      } else if (type === 'activity.end') {
+      } else if (type === 'activity.end' || type === 'activity.update') {
         const status = String(event.payload?.status ?? '');
-        patch.status = status === 'failed' ? 'failed' : status === 'completed' ? 'done' : 'idle';
-      } else if (type === 'activity.start' || type === 'activity.update' || type === 'coding.state') {
+        if (status === 'failed' || status === 'stopped') {
+          patch.status = 'failed';
+        } else if (status === 'completed' || status === 'done') {
+          patch.status = 'done';
+        } else if (type === 'activity.end') {
+          patch.status = 'idle';
+        } else {
+          patch.status = 'running';
+        }
+      } else if (type === 'activity.start' || type === 'coding.state') {
         patch.status = 'running';
       }
       if (Object.keys(patch).length) {
-        this.touchSession(eventThread, patch);
+        this.touchSession(targetThread, patch);
       }
-      if (eventThread !== this.threadId) {
+      if (targetThread !== this.threadId) {
         return;
       }
     }

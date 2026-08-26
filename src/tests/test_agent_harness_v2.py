@@ -275,6 +275,28 @@ def test_inspect_mode_discloses_no_write_or_control_tools():
     assert "project_run_tests" not in names
 
 
+def test_autopilot_hides_choice_tool_but_interactive_keeps_it():
+    import pytest
+    pytest.importorskip("langchain_core")
+    pytest.importorskip("langgraph")
+    from runtime.agent_harness.graph_builder import AgentHarness
+
+    harness = object.__new__(AgentHarness)
+
+    class _Loader:
+        def tools_for_skills(self, _skills):
+            return []
+
+    harness.skill_loader = _Loader()
+    harness.tool_specs = {}
+    harness.ide_rpc = None
+
+    auto_names = {item["name"] for item in harness._disclosed_tool_specs([], task_mode="auto", autopilot=True)}
+    interactive_names = {item["name"] for item in harness._disclosed_tool_specs([], task_mode="auto", autopilot=False)}
+    assert "ask_user_choice" not in auto_names
+    assert "ask_user_choice" in interactive_names
+
+
 def test_autopilot_interactive_profile_can_still_be_enabled_for_debugging():
     gate = PermissionGate(mode="interactive")
     assert gate.unattended is False

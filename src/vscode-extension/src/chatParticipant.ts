@@ -49,9 +49,11 @@ export function registerErisChatParticipant(
       };
     }
 
-    const taskMode: 'execute' | 'inspect' = request.command === 'inspect' || request.command === 'plan'
-      ? 'inspect'
-      : 'execute';
+    const taskMode: 'auto' | 'plan' | 'inspect' = request.command === 'plan'
+      ? 'plan'
+      : request.command === 'inspect'
+        ? 'inspect'
+        : 'auto';
     const content = participantPrompt(request.command, prompt);
     stream.progress('Eris đang nối vào agent…');
 
@@ -165,7 +167,7 @@ async function runBackendTurn(
   client: ErisClient,
   threadId: string,
   content: string,
-  taskMode: 'execute' | 'inspect',
+  taskMode: 'auto' | 'plan' | 'execute' | 'inspect',
   ideContext: Record<string, unknown>,
   stream: vscode.ChatResponseStream,
   token: vscode.CancellationToken,

@@ -15,10 +15,11 @@ const drawerBody=document.getElementById('drawerBody');
 const drawerTitle=document.getElementById('drawerTitle');
 const menuPopover=document.getElementById('menuPopover');
 const contextPopover=document.getElementById('contextPopover');
-const modeButton=document.getElementById('modeButton');
+const planButton=document.getElementById('planButton');
 const modelButton=document.getElementById('modelButton');
-const modePopover=document.getElementById('modePopover');
 const modelPopover=document.getElementById('modelPopover');
+const autopilotToggle=document.getElementById('autopilotToggle');
+const workspaceMode=document.getElementById('workspaceMode'); // optional; chỉ hiện khi có nhiều môi trường
 const NEW_SESSION_LABEL='Phiên mới';
 const PREVIOUS_SESSION_LABEL='Phiên trước';
 
@@ -27,8 +28,12 @@ let activeTaskId='';
 let sessions=[];
 let catalogTasks=[];
 let catalogSkills=[];
-let selectedMode='execute';
-let selectedModel=(vscode.getState()&&vscode.getState().model)||'deepseek-v4-flash';
+let planNextTurn=false;
+let pendingTaskMode='auto';
+const taskModes=new Map();
+const persistedUiState=vscode.getState()||{};
+let autopilotEnabled=persistedUiState.autopilot!==false;
+let selectedModel=persistedUiState.model||'deepseek-v4-flash';
 const rendered=new Set();
 const pendingInterrupts=new Set();
 const pendingInterruptNodes=new Map();
@@ -50,12 +55,16 @@ if(!MODEL_LABELS[selectedModel]||String(selectedModel).indexOf('gemini-')===0){
   selectedModel='deepseek-v4-flash';
   vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));
 }
-const MODE_LABELS={execute:'Tác vụ',inspect:'Chỉ xem'};
-function syncModeUi(){
-  modeButton.textContent=MODE_LABELS[selectedMode]||'Tác vụ';
-  for(var opt of document.querySelectorAll('[data-mode-option]'))opt.classList.toggle('active',opt.dataset.modeOption===selectedMode);
-  modeButton.classList.toggle('active',modePopover.classList.contains('visible'));
-  modeButton.setAttribute('aria-expanded', String(modePopover.classList.contains('visible')));
+function syncPlanUi(){
+  planButton.classList.toggle('active',planNextTurn);
+  planButton.setAttribute('aria-pressed',String(planNextTurn));
+  planButton.title=planNextTurn?'Plan đang bật · lượt này chỉ lập kế hoạch':'Plan · đọc repo và lập kế hoạch, không sửa file';
+  input.placeholder=planNextTurn?'Mô tả việc cần lập kế hoạch…':'Giao việc cho Eris…';
+}
+function syncAutopilotUi(){
+  autopilotToggle.classList.toggle('active',autopilotEnabled);
+  autopilotToggle.setAttribute('aria-checked',String(autopilotEnabled));
+  autopilotToggle.title=autopilotEnabled?'Tự làm tiếp đến khi hoàn tất.':'Tự động đang tắt.';
 }
 function syncModelUi(){
   modelButton.textContent=MODEL_LABELS[selectedModel]||'Flash';
@@ -84,7 +93,6 @@ function placeSelectPopover(button,popover,alignRight){
   popover.style.top=Math.round(top)+'px';
 }
 function placeOpenSelectPopovers(){
-  placeSelectPopover(modeButton,modePopover,false);
   placeSelectPopover(modelButton,modelPopover,true);
 }
 
@@ -252,20 +260,31 @@ function renderSessions(){
   updateComposerState();
 }
 
-function emptyHtml(){return '<div class="empty compact-empty" id="chatEmpty">'+
-  '<div class="welcome-hero"><div class="welcome-orb" aria-hidden="true">✦</div><div><div class="welcome-kicker">Eris coding agent</div><h2>Mình có thể giúp gì?</h2><p>Giao một việc cụ thể, hỏi về code, hoặc để Eris đọc ngữ cảnh trong workspace hiện tại.</p></div></div>'+
-  '<div class="quick-actions">'+
-    '<button class="quick-action" type="button" data-prompt="Tìm nguyên nhân lỗi trong code hiện tại và đề xuất cách sửa."><span class="quick-icon">⌕</span><span class="quick-copy"><strong>Debug vấn đề</strong><span>Tìm root cause trước khi sửa</span></span><span class="quick-arrow">›</span></button>'+
-    '<button class="quick-action" type="button" data-prompt="Giải thích file hiện tại, cấu trúc chính và luồng xử lý quan trọng."><span class="quick-icon">◫</span><span class="quick-copy"><strong>Hiểu code hiện tại</strong><span>Tóm tắt cấu trúc và luồng xử lý</span></span><span class="quick-arrow">›</span></button>'+
-    '<button class="quick-action" type="button" data-prompt="Refactor phần code hiện tại cho gọn, dễ bảo trì và giữ nguyên hành vi."><span class="quick-icon">⌁</span><span class="quick-copy"><strong>Refactor sạch hơn</strong><span>Cải thiện code mà không đổi hành vi</span></span><span class="quick-arrow">›</span></button>'+
-  '</div>'+
-  '<div class="mode-cards compact"><button class="mode-chip selected" type="button" data-empty-mode="execute">Tác vụ · có thể sửa code</button><button class="mode-chip" type="button" data-empty-mode="inspect">Chỉ xem · không sửa file</button></div>'+
+function relativeTime(ts){
+  var delta=Math.max(0,Date.now()-Number(ts||0));
+  if(delta<60*60*1000)return Math.max(1,Math.round(delta/60000))+' phút';
+  if(delta<24*60*60*1000)return Math.max(1,Math.round(delta/3600000))+' giờ';
+  return Math.max(1,Math.round(delta/86400000))+' ngày';
+}
+function recentSessions(){
+  return sessions.filter(function(item){return String(item.threadId||'')!==activeThreadId;}).sort(function(a,b){return Number(b.updatedAt||0)-Number(a.updatedAt||0);}).slice(0,3);
+}
+function recentChatsHtml(recent){
+  recent=Array.isArray(recent)?recent:recentSessions();
+  if(!recent.length)return '<div class="recent-empty">Chưa có cuộc trò chuyện nào.</div>';
+  return recent.map(function(item){return '<button class="recent-chat" type="button" data-recent-thread="'+esc(item.threadId||'')+'"><span>'+esc(item.title||PREVIOUS_SESSION_LABEL)+'</span><time>'+esc(relativeTime(item.updatedAt))+'</time></button>';}).join('');
+}
+function emptyHtml(){var recent=recentSessions();return '<div class="empty codex-empty" id="chatEmpty">'+
+  '<section class="empty-hero"><div class="empty-hero-head"><div class="empty-mark">✦</div><div><div class="empty-eyebrow">Eris workspace</div><h2>Hôm nay xử gì?</h2></div></div><div class="empty-prompts"><button type="button" data-empty-prompt="Đánh giá nhanh repo này">Đánh giá repo</button><button type="button" data-empty-prompt="Tìm lỗi trong file đang mở">Sửa file đang mở</button><button type="button" data-empty-prompt="Viết test cho thay đổi gần nhất">Viết test</button></div></section>'+
+  '<section class="recent-section"><div class="recent-title">Trò chuyện gần đây</div><div class="recent-chats">'+recentChatsHtml(recent)+'</div>'+(recent.length?'<button class="recent-all" id="recentAll" type="button">Xem tất cả</button>':'')+'</section>'+
 '</div>';}
-function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyModes();}}
+function ensureEmpty(){if(!timeline.children.length){timeline.innerHTML=emptyHtml();bindEmptyActions();}}
+function refreshEmpty(){var e=document.getElementById('chatEmpty');if(!e)return;e.outerHTML=emptyHtml();bindEmptyActions();}
 function removeEmpty(){var e=document.getElementById('chatEmpty');if(e)e.remove();}
-function bindEmptyModes(){
-  for(var card of timeline.querySelectorAll('[data-empty-mode]'))(function(c){c.onclick=function(){selectedMode=c.dataset.emptyMode||'execute';syncModeUi();for(var x of timeline.querySelectorAll('[data-empty-mode]'))x.classList.toggle('selected',x===c);input.focus();};})(card);
-  for(var action of timeline.querySelectorAll('[data-prompt]'))(function(a){a.onclick=function(){input.value=String(a.dataset.prompt||'');resizeInput();input.focus();};})(action);
+function bindEmptyActions(){
+  for(var action of timeline.querySelectorAll('[data-recent-thread]'))(function(a){a.onclick=function(){selectSessionFromUi(String(a.dataset.recentThread||''));};})(action);
+  for(var prompt of timeline.querySelectorAll('[data-empty-prompt]'))(function(btn){btn.onclick=function(){input.value=String(btn.dataset.emptyPrompt||'');resizeInput();input.focus();};})(prompt);
+  var all=document.getElementById('recentAll');if(all)all.onclick=function(){renderDrawer('history');};
 }
 function clearTimeline(showEmpty){if(showEmpty===undefined)showEmpty=true;timeline.innerHTML='';rendered.clear();pendingInterrupts.clear();pendingInterruptNodes.clear();taskGroups.clear();activeTaskId='';if(showEmpty)ensureEmpty();}
 function animateTimelineIn(direction){
@@ -328,8 +347,8 @@ function getTaskGroup(taskId){
   feed.append(feedSum,feedRows,developer);
 
   /* Plan là state người dùng hiểu được; raw tool trace vẫn nằm trong Activity. */
-  var plan=document.createElement('div');plan.className='plan-block';
-  plan.innerHTML='<div class="plan-head"><span>Tiến trình</span><span class="plan-meta"></span></div><div class="plan-list"></div>';
+  var plan=document.createElement('div');plan.className='plan-block';plan.style.display='none';
+  plan.innerHTML='<div class="plan-head"><span>Kế hoạch</span><span class="plan-meta"></span></div><div class="plan-list"></div>';
 
   /* Lỗi có surface riêng để thấy agent đang phục hồi thay vì chỉ thấy tool fail. */
   var issues=document.createElement('div');issues.className='issues-host';
@@ -337,7 +356,7 @@ function getTaskGroup(taskId){
 
   /* Các file thay đổi được gom cạnh nhau như một review surface, không rải card. */
   var changes=document.createElement('div');changes.className='changes-block';changes.style.display='none';
-  changes.innerHTML='<div class="changes-head"><span class="changes-title"><strong>Thay đổi</strong><span class="changes-meta"></span></span><button class="changes-review" type="button">Review</button></div><div class="changes-list"></div><div class="changeset-actions" style="display:none"></div>';
+  changes.innerHTML='<div class="changes-head"><span class="changes-title"><strong>Thay đổi</strong><span class="changes-meta"></span></span><button class="changes-review" type="button">Xem thay đổi</button></div><div class="changes-list"></div><div class="changeset-actions" style="display:none"></div>';
   changes.querySelector('.changes-review').onclick=function(){vscode.postMessage({type:'showSourceControl'});};
 
   /* Assistant document chỉ xuất hiện khi model thật sự có nội dung. */
@@ -351,7 +370,7 @@ function getTaskGroup(taskId){
     groupEl:group,bubbleEl:bubble,feedEl:feed,feedRowsEl:feedRows,feedLabelEl:feedSum.querySelector('.feed-label'),feedCountEl:feedSum.querySelector('.feed-count'),developerEl:developer,developerPreEl:developer.querySelector('pre'),controlsEl:controls,
     planEl:plan,planListEl:plan.querySelector('.plan-list'),planMetaEl:plan.querySelector('.plan-meta'),planSteps:new Map(),issuesEl:issues,issueRows:new Map(),interruptHostEl:interruptHost,
     changesEl:changes,changesListEl:changes.querySelector('.changes-list'),changesMetaEl:changes.querySelector('.changes-meta'),changeSetEl:changes.querySelector('.changeset-actions'),
-    markdownText:'',renderPending:false,status:'running',currentLabel:'Đang xử lý…',operationRows:new Map(),rawEvents:[],files:new Set(),changeFiles:new Map(),actionCount:0,startedAt:Date.now()
+    markdownText:'',renderPending:false,status:'running',currentLabel:'Đang hiểu yêu cầu',taskMode:taskModes.get(key)||'auto',operationRows:new Map(),rawEvents:[],files:new Set(),changeFiles:new Map(),actionCount:0,startedAt:Date.now()
   };
   taskGroups.set(key,entry);stickToBottom=true;scroll(true);return entry;
 }
@@ -379,7 +398,7 @@ function setPlanStep(entry,label,status){
   if(!item){var row=document.createElement('div');row.className='plan-row pending';var mark=document.createElement('span');mark.className='plan-mark';var text=document.createElement('span');text.textContent=label;row.append(mark,text);entry.planListEl.appendChild(row);item={row:row,mark:mark,text:text,label:label,status:'pending'};entry.planSteps.set(key,item);}
   item.status=status||item.status;item.row.classList.remove('pending','running','done','failed');item.row.classList.add(item.status);
   item.mark.textContent=item.status==='done'?'✓':item.status==='failed'?'×':item.status==='running'?'●':'○';
-  entry.planEl.style.display='';entry.planMetaEl.textContent=entry.planSteps.size+' bước';return item;
+  entry.planEl.style.display=entry.taskMode==='plan'?'':'none';entry.planMetaEl.textContent=entry.planSteps.size+' bước';return item;
 }
 function syncPlan(entry,steps){
   steps=Array.isArray(steps)?steps.map(cleanActivityText).filter(Boolean):[];if(!steps.length)return;
@@ -398,21 +417,34 @@ function setIssue(entry,key,title,detail,status){
   if(!row){row=document.createElement('div');row.className='issue-row';row.innerHTML='<span class="issue-icon">×</span><span class="issue-copy"><strong></strong><span></span></span>';entry.issuesEl.appendChild(row);entry.issueRows.set(key,row);}
   var recovered=status==='recovered';row.classList.toggle('recovered',recovered);row.querySelector('.issue-icon').textContent=recovered?'✓':'×';row.querySelector('strong').textContent=recovered?'Đã phục hồi':String(title||'Có lỗi');row.querySelector('.issue-copy span').textContent=clip(detail||title||'',220);return row;
 }
+function simpleActivityLabel(label,status){
+  var raw=cleanActivityText(label||'').toLowerCase();
+  var state=String(status||'running').toLowerCase();
+  if(state==='completed'||state==='done')return 'Hoàn tất';
+  if(state==='failed')return 'Cần xem lại';
+  if(state==='stopped')return 'Đã dừng';
+  if(state==='paused')return 'Cần bạn quyết định';
+  if(/kế hoạch|plan/.test(raw))return 'Đang lập kế hoạch';
+  if(/test|kiểm tra|xác minh|verify|verification|build|lint|typecheck|regression/.test(raw))return 'Đang kiểm tra';
+  if(/sửa|patch|ghi file|thay đổi|refactor|tạo file|apply|edit|modify|implement/.test(raw))return 'Đang thực hiện';
+  if(/đọc|tìm|repository|repo|context|ngữ cảnh|symbol|file|capability|khả năng|search|inspect/.test(raw))return 'Đang đọc ngữ cảnh';
+  if(/phân tích|hiểu yêu cầu|clarif|reason/.test(raw))return 'Đang hiểu yêu cầu';
+  if(/thử lại|recover|phục hồi/.test(raw))return 'Đang thử lại';
+  return 'Đang làm việc';
+}
 function updateActivitySummary(entry,label,status){
   if(label)entry.currentLabel=cleanActivityText(label)||entry.currentLabel;
   if(status)entry.status=status;
   var done=entry.status==='completed'||entry.status==='done';var failed=entry.status==='failed'||entry.status==='stopped';var paused=entry.status==='paused';
   entry.feedEl.classList.toggle('done',done);entry.feedEl.classList.toggle('failed',failed);entry.feedEl.classList.toggle('paused',paused);
-  var actionCount=entry.actionCount||entry.operationRows.size;var fileCount=entry.files.size;
-  if(done)entry.feedLabelEl.textContent='Đã hoàn tất';
-  else if(failed)entry.feedLabelEl.textContent='Task không hoàn tất';
-  else if(paused)entry.feedLabelEl.textContent='Task đang tạm dừng';
-  else entry.feedLabelEl.textContent=clip(entry.currentLabel||'Đang xử lý…',72);
-  var meta=[];if(actionCount)meta.push(actionCount+' thao tác');if(fileCount)meta.push(fileCount+' file');entry.feedCountEl.textContent=meta.join(' · ');
+  entry.feedLabelEl.textContent=simpleActivityLabel(entry.currentLabel,entry.status);
+  var meta=[];if(entry.files.size)meta.push(entry.files.size+' tệp');entry.feedCountEl.textContent=meta.join(' · ');
+  entry.feedEl.title='Bấm để xem chi tiết';
   entry.controlsEl.style.display=(done||failed)?'none':'flex';
   if(done||failed){entry.feedEl.open=false;for(var step of entry.planSteps.values())if(step.status==='running'||step.status==='pending')setPlanStep(entry,step.label,failed?'failed':'done');}
-  else if(entry.feedEl.style.display!=='none')entry.feedEl.open=true;
+  /* Mặc định luôn đóng chi tiết. Người dùng chỉ mở khi họ muốn xem tool/trace. */
 }
+
 function upsertOperation(entry,key,label,status,suffix,increment){
   key=String(key||label||'activity');label=cleanActivityText(label)||'Đang xử lý';status=String(status||'running');
   var op=entry.operationRows.get(key);
@@ -444,6 +476,7 @@ function addActivity(event){
   if(type==='activity.end'){
     var terminalFailed=status==='failed'||status==='stopped';
     if(terminalFailed&&p.detail){upsertOperation(entry,'terminal:error',clip(cleanActivityText(p.detail),150),'failed','',entry.operationRows.has('terminal:error')?false:true);}
+    syncSessionStatusFromEvent(event,status);
     updateActivitySummary(entry,label,status);scroll();return;
   }
 
@@ -558,14 +591,14 @@ function addArtifact(event){
   var entry=getTaskGroup(String(event.taskId||activeTaskId||'main'));ensureChangeFile(entry,filePath,String(p.diff!=null?p.diff:''),event.type==='artifact.created'?'created':'modified');scroll();
 }
 function changeSetStatusLabel(status){
-  status=String(status||'pending');if(status==='accepted')return 'Đã chấp nhận';if(status==='reverted')return 'Đã hoàn tác';if(status==='pending')return 'Chờ duyệt';return status;
+  status=String(status||'pending');if(status==='accepted')return 'Đã chấp nhận';if(status==='reverted')return 'Đã hoàn tác';if(status==='pending')return 'Có thể hoàn tác';return status;
 }
 function addChangeSet(event){
   var p=event.payload||{};var id=String(p.changeSetId!=null?p.changeSetId:p.operationId!=null?p.operationId:'');if(!id)return;
   var taskId=String(event.taskId||activeTaskId||'main');var entry=getTaskGroup(taskId);var files=Array.isArray(p.files)?p.files:[];for(var file of files)ensureChangeFile(entry,String(file||''),'');
   var status=String(p.status!=null?p.status:'pending');var bar=entry.changeSetEl;bar.style.display='flex';bar.dataset.changeSetId=id;bar.innerHTML='';
   var state=document.createElement('span');state.className='changeset-state';state.textContent=changeSetStatusLabel(status);
-  var accept=document.createElement('button');accept.className='primary';accept.textContent='Chấp nhận';
+  var accept=document.createElement('button');accept.className='primary';accept.textContent='Giữ thay đổi';
   var revert=document.createElement('button');revert.textContent='Hoàn tác';
   if(status!=='pending'){accept.disabled=true;revert.disabled=true;}
   accept.onclick=function(){if(taskId)vscode.postMessage({type:'task.control',taskId:taskId,action:'accept_changeset',changeSetId:id});};
@@ -640,17 +673,42 @@ function renderAttachments(){
 function contextKeys(){return [...contextPopover.querySelectorAll('input:checked')].map(function(n){return n.value;});}
 function activeSession(){return sessions.find(function(s){return String(s.threadId||'')===activeThreadId;})||null;}
 function isActiveTaskRunning(){var s=activeSession();return Boolean(s&&String(s.status||'')==='running');}
+function sessionStatusFromActivity(status){
+  var value=String(status||'').toLowerCase();
+  if(value==='completed'||value==='done')return 'done';
+  if(value==='failed'||value==='stopped')return 'failed';
+  if(value==='paused'||value==='waiting_user'||value==='waiting_permission')return 'waiting';
+  if(value==='running'||value==='queued')return 'running';
+  return '';
+}
+function syncSessionStatusFromEvent(event,status){
+  var mapped=sessionStatusFromActivity(status);
+  if(!mapped)return;
+  var threadId=String(event&&event.threadId||'');
+  var taskId=String(event&&event.taskId||'');
+  var session=threadId?sessions.find(function(s){return String(s.threadId||'')===threadId;}):null;
+  if(!session&&taskId)session=sessions.find(function(s){return String(s.taskId||'')===taskId;});
+  if(!session&&(!taskId||taskId===activeTaskId))session=activeSession();
+  if(!session)return;
+  session.status=mapped;
+  if(taskId)session.taskId=taskId;
+  updateComposerState();
+}
 function contextLabelPath(value){var p=String(value||'').replace(/\\/g,'/');return p.split('/').pop()||p;}
 function renderContextSummary(){
-  contextSummary.innerHTML='';var enabled=new Set(contextKeys());var count=0;
-  function chip(key,label,cls,title){if(!enabled.has(key)||!label)return;var b=document.createElement('button');b.type='button';b.className='context-chip'+(cls?' '+cls:'');b.title=title||('Bỏ '+label);b.innerHTML='<span class="ctx-text">'+esc(label)+'</span><span>×</span>';b.onclick=function(){var box=contextPopover.querySelector('input[value="'+key+'"]');if(box)box.checked=false;renderContextSummary();};contextSummary.appendChild(b);count++;}
-  var c=composerContext.current||{};if(c.available)chip('current','@ '+contextLabelPath(c.path),'',c.path||'File hiện tại');
-  var s=composerContext.selection||{};if(s.available&&!s.empty)chip('selection','Selection · '+(s.lineCount||1)+' dòng','',s.path||'Vùng chọn');
-  var p=composerContext.problems||{};var problems=Number(p.error||0)+Number(p.warning||0);if(problems)chip('problems',(p.error?String(p.error)+' lỗi':String(problems)+' vấn đề')+(p.warning?' · '+p.warning+' cảnh báo':''),'problem','Problems hiện tại');
-  var g=composerContext.git||{};if(g.available&&g.changeCount)chip('git','Git · '+g.changeCount+' thay đổi','',g.branch?('Nhánh '+g.branch):'Git changes');
-  var t=composerContext.terminal||{};if(t.active)chip('terminal','Terminal · '+clip(t.active,24),'',t.active);
-  var o=composerContext.openEditors||{};if(o.count)chip('openEditors',o.count+' tab','');
-  contextSummary.classList.toggle('visible',count>0);contextButton.textContent=count?'# '+count:'#';contextButton.title=count?('Context đang bật · '+count):'Context';
+  contextSummary.innerHTML='';var enabled=new Set(contextKeys());var visibleCount=0;var activeCount=0;
+  function available(key,condition){if(enabled.has(key)&&condition)activeCount++;}
+  function chip(key,label,cls,title){if(!enabled.has(key)||!label)return;var b=document.createElement('button');b.type='button';b.className='context-chip'+(cls?' '+cls:'');b.title=title||('Bỏ '+label);b.innerHTML='<span class="ctx-text">'+esc(label)+'</span><span>×</span>';b.onclick=function(){var box=contextPopover.querySelector('input[value="'+key+'"]');if(box)box.checked=false;renderContextSummary();};contextSummary.appendChild(b);visibleCount++;}
+  /* Current file, Git và open editors là context nền: vẫn gửi cho agent nhưng không
+     biến composer thành hàng pill. Chỉ surface context đặc biệt mà user cần thấy. */
+  var c=composerContext.current||{};available('current',Boolean(c.available));
+  var s=composerContext.selection||{};available('selection',Boolean(s.available&&!s.empty));if(s.available&&!s.empty)chip('selection','Vùng chọn · '+(s.lineCount||1)+' dòng','',s.path||'Vùng chọn');
+  var p=composerContext.problems||{};var problems=Number(p.error||0)+Number(p.warning||0);available('problems',problems>0);if(problems)chip('problems',(p.error?String(p.error)+' lỗi':String(problems)+' vấn đề')+(p.warning?' · '+p.warning+' cảnh báo':''),'problem','Lỗi / cảnh báo hiện tại');
+  var g=composerContext.git||{};available('git',Boolean(g.available&&g.changeCount));
+  var t=composerContext.terminal||{};available('terminal',Boolean(t.active));if(t.active)chip('terminal','Terminal · '+clip(t.active,24),'',t.active);
+  var o=composerContext.openEditors||{};available('openEditors',Boolean(o.count));
+  contextSummary.classList.toggle('visible',visibleCount>0);contextButton.textContent='@';contextButton.classList.toggle('has-context',activeCount>0);contextButton.title=activeCount?('Context tự động · '+activeCount+' nguồn'):'Chọn context';
+  var w=composerContext.workspace||{};var name=String(w.name||w.workspaceName||'').trim();var label=workspaceMode&&workspaceMode.querySelector('span');if(label)label.textContent=name?('Cục bộ · '+clip(name,22)):'Làm việc cục bộ';
 }
 function updateComposerState(){
   var running=isActiveTaskRunning();var ready=Boolean(input.value.trim())||attachmentState.size>0;
@@ -659,9 +717,9 @@ function updateComposerState(){
 function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
 function send(){
   if(isActiveTaskRunning()){var s=activeSession();var taskId=String(activeTaskId||(s&&s.taskId)||'');if(taskId)vscode.postMessage({type:'task.control',taskId:taskId,action:'stop'});return;}
-  var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;stickToBottom=true;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:selectedMode,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});
+  var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;var taskMode=planNextTurn?'plan':'auto';pendingTaskMode=taskMode;planNextTurn=false;syncPlanUi();stickToBottom=true;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:taskMode,autopilot:autopilotEnabled,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});
 }
-function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');syncModeUi();syncModelUi();}
+function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');syncPlanUi();syncModelUi();}
 function showNotice(message){notice.textContent=String(message||'');notice.classList.toggle('visible',Boolean(message));if(message)setTimeout(function(){notice.classList.remove('visible');},7000);}
 
 function renderDrawer(kind){
@@ -686,14 +744,15 @@ function renderDrawer(kind){
 }
 
 document.getElementById('newChat').onclick=function(){vscode.postMessage({type:'newChat'});}
-document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
+document.getElementById('menuButton').onclick=function(e){e.stopPropagation();contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');menuPopover.classList.toggle('visible');};
 document.getElementById('reconnect').onclick=function(){vscode.postMessage({type:'reconnect'});};
 document.getElementById('attach').onclick=function(){vscode.postMessage({type:'attachment.pick'});};
-contextButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.remove('visible');contextPopover.classList.toggle('visible');vscode.postMessage({type:'context.refresh'});};
+contextButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');modelPopover.classList.remove('visible');contextPopover.classList.toggle('visible');vscode.postMessage({type:'context.refresh'});};
 for(var ctxBox of contextPopover.querySelectorAll('input'))ctxBox.addEventListener('change',renderContextSummary);
-modeButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');modePopover.classList.toggle('visible');syncModeUi();syncModelUi();requestAnimationFrame(placeOpenSelectPopovers);};
-modelButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modePopover.classList.remove('visible');modelPopover.classList.toggle('visible');syncModeUi();syncModelUi();requestAnimationFrame(placeOpenSelectPopovers);};
-for(var modeOpt of document.querySelectorAll('[data-mode-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedMode=btn.dataset.modeOption||'execute';for(var c of timeline.querySelectorAll('[data-empty-mode]'))c.classList.toggle('selected',c.dataset.emptyMode===selectedMode);hidePopovers();input.focus();};})(modeOpt);
+planButton.onclick=function(e){e.stopPropagation();planNextTurn=!planNextTurn;syncPlanUi();input.focus();};
+autopilotToggle.onclick=function(e){e.stopPropagation();autopilotEnabled=!autopilotEnabled;vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel,autopilot:autopilotEnabled}));syncAutopilotUi();input.focus();};
+if(workspaceMode)workspaceMode.onclick=function(){vscode.postMessage({type:'context.refresh'});input.focus();};
+modelButton.onclick=function(e){e.stopPropagation();menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.toggle('visible');syncPlanUi();syncModelUi();requestAnimationFrame(placeOpenSelectPopovers);};
 for(var modelOpt of document.querySelectorAll('[data-model-option]'))(function(btn){btn.onclick=function(e){e.stopPropagation();selectedModel=btn.dataset.modelOption||'deepseek-v4-flash';vscode.setState(Object.assign({},vscode.getState(),{model:selectedModel}));hidePopovers();input.focus();};})(modelOpt);
 document.getElementById('send').onclick=send;
 document.getElementById('drawerBack').onclick=function(){drawer.classList.remove('visible');};
@@ -706,9 +765,9 @@ contextPopover.onclick=function(e){e.stopPropagation();};
 sessionTabs.addEventListener('scroll',updateSessionIndicator,{passive:true});
 timeline.addEventListener('scroll',function(){stickToBottom=isNearBottom();},{passive:true});
 window.addEventListener('resize',function(){updateSessionIndicator();requestAnimationFrame(placeOpenSelectPopovers);});
-syncModeUi();
+syncPlanUi();
+syncAutopilotUi();
 syncModelUi();
-modePopover.onclick=function(e){e.stopPropagation();};
 modelPopover.onclick=function(e){e.stopPropagation();};
 
 async function ingestFiles(files){for(var file of [...files].slice(0,8)){if(file.type.startsWith('image/')){(function(f){var reader=new FileReader();reader.onload=function(){vscode.postMessage({type:'attachment.image',name:f.name||'image.png',dataUrl:String(reader.result||'')});};reader.readAsDataURL(f);})(file);}}} 
@@ -721,7 +780,7 @@ document.addEventListener('drop',function(e){dragDepth=0;document.getElementById
 
 window.addEventListener('message',function(ev){
   var event=ev.data;
-  if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
+  if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();refreshEmpty();return;}
   if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;stickToBottom=true;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
   if(event.type==='connection'){
     var connected=event.state==='connected';var connecting=event.state==='connecting';
@@ -740,7 +799,7 @@ window.addEventListener('message',function(ev){
   if(event.type==='task.list'){catalogTasks=Array.isArray(event.tasks)?event.tasks:[];return;}
   if(event.type==='thread.history'){renderHistory(event);return;}
   if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
-  if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);updateComposerState();return;}
+  if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);if(activeTaskId){taskModes.set(activeTaskId,pendingTaskMode||'auto');var acceptedEntry=taskGroups.get(activeTaskId);if(acceptedEntry){acceptedEntry.taskMode=taskModes.get(activeTaskId)||'auto';acceptedEntry.planEl.style.display=acceptedEntry.taskMode==='plan'?'':'none';}}pendingTaskMode='auto';updateComposerState();return;}
   if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris service error');return;}
   if(awaitingThreadHistory){deferredEvents.push(event);return;}
   renderEvent(event);

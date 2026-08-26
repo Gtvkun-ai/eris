@@ -327,6 +327,77 @@ def find_godot_export_file(filename):
             return path
     return ""
 
+def _godot_dotnet_required_files(data_dir):
+    return [
+        os.path.join(data_dir, "Eris.dll"),
+        os.path.join(data_dir, "Eris.deps.json"),
+        os.path.join(data_dir, "Eris.runtimeconfig.json"),
+        os.path.join(data_dir, "GodotSharp.dll"),
+    ]
+
+def is_godot_dotnet_export_dir(path):
+    if not os.path.isdir(path):
+        return False
+    return all(os.path.isfile(fp) for fp in _godot_dotnet_required_files(path))
+
+def find_godot_dotnet_export_dir():
+    roots = [REPO, DEV_OUT]
+    preferred_names = [
+        "data_Eris_windows_x86_64",
+        "data_Eris.console_windows_x86_64",
+    ]
+    for root in roots:
+        for name in preferred_names:
+            path = os.path.join(root, name)
+            if is_godot_dotnet_export_dir(path):
+                return path
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for name in os.listdir(root):
+            if not name.lower().startswith("data_eris"):
+                continue
+            path = os.path.join(root, name)
+            if is_godot_dotnet_export_dir(path):
+                return path
+    return ""
+
+def deploy_godot_dotnet_export_dir():
+    src_dir = find_godot_dotnet_export_dir()
+    if not src_dir:
+        print("  [MISSING] Godot .NET export data dir (data_Eris_windows_x86_64)")
+        return False
+
+    dst_dir = os.path.join(OUT, os.path.basename(src_dir))
+    try:
+        if os.path.exists(dst_dir) and not os.path.samefile(src_dir, dst_dir):
+            shutil.rmtree(dst_dir, onerror=remove_readonly)
+        if not os.path.exists(dst_dir):
+            shutil.copytree(src_dir, dst_dir)
+    except OSError as exc:
+        print("  [FAIL] Godot .NET export data dir copy failed: " + str(exc))
+        return False
+
+    dll_count = count_ext(dst_dir, ".dll")
+    print("  [OK] " + os.path.basename(dst_dir) + f"  dlls={dll_count}  md5(Eris.dll)=" + md5_short(os.path.join(dst_dir, "Eris.dll")))
+    return True
+
+def validate_godot_dotnet_output():
+    if not os.path.isfile(os.path.join(OUT, "Eris.exe")):
+        return True
+    candidates = []
+    if os.path.isdir(OUT):
+        for name in os.listdir(OUT):
+            if name.lower().startswith("data_eris"):
+                candidates.append(os.path.join(OUT, name))
+    for data_dir in candidates:
+        if is_godot_dotnet_export_dir(data_dir):
+            print("  [OK ] Godot .NET assemblies: " + os.path.basename(data_dir))
+            return True
+    print("  [MISSING] Godot .NET assemblies beside Eris.exe")
+    print("            Expected data_Eris_windows_x86_64 with Eris.dll/.deps.json/.runtimeconfig.json/GodotSharp.dll")
+    return False
+
 def prune_named_dirs(root, names):
     removed = 0
     if not os.path.isdir(root):
@@ -722,8 +793,14 @@ for src, dst in deploy_pairs:
         all_deploy_ok = False
         continue
     os.makedirs(os.path.dirname(dst), exist_ok=True)
+    if os.path.exists(dst) and os.path.samefile(src, dst):
+        print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
+        continue
     shutil.copy2(src, dst)
     print("  [OK] " + os.path.basename(dst) + "  md5=" + md5_short(dst))
+
+if os.path.isfile(os.path.join(OUT, "Eris.exe")):
+    all_deploy_ok = deploy_godot_dotnet_export_dir() and all_deploy_ok
 
 
 
@@ -1090,6 +1167,8 @@ for p in must_exist:
 eris_exe_path = os.path.join(OUT, "Eris.exe")
 if os.path.isfile(eris_exe_path):
     print("  [OK ] Eris.exe")
+    if not validate_godot_dotnet_output():
+        all_ok = False
 elif IS_RELEASE:
     print("  [MISSING] Eris.exe (release requires exported Godot GUI runtime)")
     all_ok = False

@@ -30,6 +30,31 @@ async function revealErisSidebar(): Promise<void> {
   await vscode.commands.executeCommand(`${ErisChatPanel.viewType}.focus`);
 }
 
+function shouldStartServiceOnActivate(): boolean {
+  if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length) {
+    return false;
+  }
+  const config = vscode.workspace.getConfiguration('eris.service');
+  const mode = String(config.get<string>('connectionMode', 'auto') ?? 'auto').trim();
+  return mode === 'service' && config.get<boolean>('autoStart', true);
+}
+
+async function startServiceOnActivate(
+  serviceManager: ErisServiceManager,
+  client: ErisClient,
+): Promise<void> {
+  if (!shouldStartServiceOnActivate()) {
+    return;
+  }
+  try {
+    await serviceManager.ensureStarted({ allowLaunch: true });
+    await client.connect(true);
+    await client.requestTasks();
+  } catch (error) {
+    console.warn('Eris auto-start skipped:', error);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const serviceManager = new ErisServiceManager(context);
   const client = new ErisClient(context, serviceManager);
@@ -199,9 +224,9 @@ export function activate(context: vscode.ExtensionContext): void {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('eris.serviceLogs', () => serviceManager.showLogs()));
 
-  // Không auto-connect khi activate extension. `eris.service.autoStart` từ đây
-  // có nghĩa là được phép launch backend ON-DEMAND khi user thực sự gửi task.
-  // Vì vậy chỉ mở VS Code / mở Sidebar / save file đều không bật Eris.
+  // In service mode, autoStart warms the local backend as soon as the extension
+  // activates, so the composer is ready when the user sends work.
+  void startServiceOnActivate(serviceManager, client);
 }
 
 export function deactivate(): void {

@@ -250,37 +250,11 @@ button:disabled { cursor: default; opacity: .5; }
 .quick-copy strong { font-size: 11.5px; font-weight: 650; }
 .quick-copy span { color: var(--muted); font-size: 10px; line-height: 1.35; }
 .quick-arrow { color: var(--muted-2); font-size: 16px; }
-.mode-cards.compact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
-  padding-top: 11px;
-  border-top: 1px solid var(--line);
-}
-.mode-chip {
-  min-height: 27px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  padding: 3px 9px;
-  font-size: 10px;
-  transition: background var(--fast), border-color var(--fast), color var(--fast);
-}
-.mode-chip:hover { background: var(--surface-hover); color: var(--fg); }
-.mode-chip.selected { border-color: var(--accent-border); background: var(--accent-soft); color: var(--fg); }
 .empty-line { display: flex; align-items: center; gap: 9px; min-height: 34px; color: var(--muted); }
 .empty-line > div { min-width: 0; display: grid; gap: 1px; }
 .empty-line strong { color: var(--fg); font-size: 11px; font-weight: 620; }
 .empty-line span { color: var(--muted); font-size: 10px; }
 .empty .spark { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--accent); border: 1px solid var(--line); }
-.mode-cards { display: grid; gap: 7px; margin-top: 14px; }
-.mode-card { border: 1px solid var(--line); border-radius: var(--radius-md); background: transparent; text-align: left; padding: 9px 10px; display: grid; gap: 3px; }
-.mode-card:hover { background: var(--surface-hover); border-color: var(--line-strong); }
-.mode-card.selected { border-color: var(--accent-border); background: var(--accent-soft); }
-.mode-card strong { font-size: 11.5px; font-weight: 640; }
-.mode-card span { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 
 /* Messages --------------------------------------------------------------- */
 .msg {
@@ -566,6 +540,7 @@ textarea::placeholder { color: var(--vscode-input-placeholderForeground, var(--m
 .composer-action { min-width: 27px; padding: 0 6px; font-size: 13px; }
 .composer-select { max-width: 92px; padding: 0 7px; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer-action:hover, .composer-select:hover, .composer-select.active { color: var(--fg); background: var(--surface-hover); border-color: var(--line); }
+.composer-plan.active { color: var(--vscode-textLink-foreground, var(--accent)); background: var(--accent-soft); border-color: var(--accent-border); }
 .send {
   margin-left: auto;
   width: 30px;
@@ -663,3 +638,605 @@ textarea::placeholder { color: var(--vscode-input-placeholderForeground, var(--m
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
 .msg-assistant .bubble, .markdown-body, .markdown-body pre, .markdown-body table { max-width: 100%; }
+
+
+/* Eris 0.16 — Codex-like minimal shell + green Autopilot ----------------- */
+:root {
+  --accent: #45d991;
+  --accent-2: #2fc977;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-soft-2: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 34%, transparent);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .16);
+}
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
+.topbar { min-height: 46px; padding: 7px 12px 6px 14px; gap: 6px; border-bottom-color: color-mix(in srgb, var(--line) 72%, transparent); background: var(--bg); }
+.brand { gap: 0; }
+.brand > strong { font-size: 12.5px; font-weight: 620; letter-spacing: -.01em; }
+.brand-mark, .brand-copy { display: none; }
+.top-actions { gap: 1px; }
+.icon-btn { width: 27px; height: 27px; border-radius: 7px; font-size: 14px; }
+.icon-btn:hover { border-color: transparent; }
+.timeline { padding: 12px 14px 160px; }
+.codex-empty { position: relative; min-height: calc(100vh - 206px); }
+.recent-section { width: 100%; }
+.recent-title { margin: 2px 4px 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.recent-chats { display: grid; gap: 1px; }
+.recent-chat { min-height: 34px; width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 5px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--fg); text-align: left; font-size: 11.5px; }
+.recent-chat:hover { background: var(--surface-hover); }
+.recent-chat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-chat time { color: var(--muted); font-size: 10.5px; }
+.recent-empty { padding: 6px 5px; color: var(--muted-2); font-size: 10.5px; }
+.recent-all { margin: 4px 5px 0; padding: 2px 0; border: 0; background: transparent; color: var(--muted-2); font-size: 10.5px; }
+.recent-all:hover { color: var(--fg); }
+.empty-center { position: absolute; inset: 132px 0 0; display: grid; place-items: center; pointer-events: none; }
+.empty-mark { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); background: transparent; font-size: 15px; }
+.welcome-hero, .quick-actions { display: none !important; }
+.msg { gap: 0; }
+.msg .avatar, .avatar-spacer { display: none; }
+.msg-body { width: 100%; }
+.msg-role { margin-bottom: 8px; font-size: 9.5px; color: var(--muted); }
+.msg-assistant .msg-role { color: var(--accent); }
+.msg .bubble { border: 0; background: transparent; padding: 0; box-shadow: none; }
+.plan-block { margin: 8px 0 12px; padding: 0; border: 0; background: transparent; }
+.plan-head { margin-bottom: 8px; text-transform: none; letter-spacing: 0; font-size: 10px; font-weight: 500; }
+.plan-list { gap: 0; }
+.plan-row { min-height: 48px; grid-template-columns: 20px minmax(0,1fr); align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 10.5px; }
+.plan-row .plan-mark { color: var(--muted); }
+.plan-row.running .plan-mark, .plan-row.done .plan-mark { color: var(--accent); }
+.activity-feed { margin: 8px 0; border: 0; border-radius: 0; background: transparent; }
+.activity-feed > summary { padding: 6px 0; }
+.feed-rows { border-top: 1px solid var(--line); }
+.feed-row { padding-left: 0; padding-right: 0; }
+.changes-block { border-left: 0; border-right: 0; border-radius: 0; background: transparent; }
+.interrupt { border-color: var(--accent-border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.interrupt-kicker { color: var(--accent); }
+.composer-wrap { left: 14px; right: 14px; bottom: 8px; }
+.composer-box { border-color: color-mix(in srgb, var(--vscode-input-border, var(--line-strong)) 72%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--vscode-input-background, #363636) 94%, var(--bg) 6%); box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.composer-box:focus-within { border-color: color-mix(in srgb, var(--accent) 46%, var(--line-strong)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent), 0 8px 24px rgba(0,0,0,.15); }
+textarea { min-height: 44px; max-height: 124px; padding: 12px 13px 1px; font-size: 11.5px; }
+.composer-bar { gap: 2px; padding: 4px 7px 7px; }
+.composer-action, .composer-select { height: 25px; border-radius: 6px; }
+.composer-action { min-width: 25px; padding: 0 5px; }
+.composer-select { padding: 0 6px; font-size: 9.5px; }
+.composer-plan.active { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.model-wrap { margin-left: auto; }
+.model-wrap .composer-select { color: var(--muted); }
+.autopilot-control { display: inline-flex; align-items: center; gap: 5px; height: 25px; color: var(--muted); font-size: 9.5px; white-space: nowrap; }
+.autopilot-toggle { width: 31px; height: 18px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 999px; background: color-mix(in srgb, var(--surface) 88%, transparent); transition: background var(--fast), border-color var(--fast); }
+.autopilot-thumb { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transform: translateX(0); transition: transform var(--fast), background var(--fast); }
+.autopilot-toggle.active { border-color: color-mix(in srgb, var(--accent) 62%, transparent); background: color-mix(in srgb, var(--accent) 72%, #0f5f3a 28%); }
+.autopilot-toggle.active .autopilot-thumb { transform: translateX(13px); background: #ecfff6; }
+.send { width: 28px; height: 28px; margin-left: 4px; border-radius: 50%; border-color: var(--line-strong); background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: none; font-size: 14px; }
+.send.ready { color: #102018; border-color: var(--accent); background: var(--accent); box-shadow: none; }
+.send.ready:hover { transform: none; box-shadow: none; filter: brightness(1.06); }
+.send.stop { border-radius: 9px; }
+.workspace-mode { min-height: 28px; display: inline-flex; align-items: center; gap: 6px; margin: 5px 8px 0; padding: 0 2px; border: 0; background: transparent; color: var(--muted); font-size: 10px; }
+.workspace-mode:hover { color: var(--fg); }
+.workspace-chevron { color: var(--muted-2); }
+.context-popover { bottom: 100px; }
+.context-row input { accent-color: var(--accent); }
+.select-option.active { border-color: var(--accent-border); background: var(--accent-soft); }
+.select-icon, .select-check { color: var(--accent); }
+.drop-overlay { border-color: var(--accent); }
+@media (max-width: 345px) { .top-actions #historyQuick, .top-actions #settingsQuick { display: none; } .autopilot-control > span { display: none; } .model-wrap .composer-select { max-width: 68px; } }
+
+/* Eris 0.16.1 — match the compact Codex/Figma composition -----------------
+ * Neutral shell first. Green is reserved for status, Autopilot and send.
+ * Context gathered automatically must not become permanent visual chrome.
+ */
+.topbar {
+  min-height: 38px;
+  padding: 4px 9px 3px 10px;
+  border-bottom-color: transparent;
+}
+.brand { display: none; }
+.top-actions { margin-left: auto; gap: 0; }
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+  font-size: 13px;
+}
+.icon-btn:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.timeline {
+  padding: 6px 10px 140px;
+  scrollbar-color: transparent transparent;
+}
+.timeline:hover {
+  scrollbar-color: color-mix(in srgb, var(--muted) 22%, transparent) transparent;
+}
+.timeline::-webkit-scrollbar { width: 8px; }
+.timeline::-webkit-scrollbar-track { background: transparent; }
+.timeline::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background: transparent;
+}
+.timeline:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
+  background-clip: padding-box;
+}
+
+.codex-empty { min-height: calc(100vh - 176px); }
+.recent-section { padding: 0 1px; }
+.recent-title {
+  margin: 4px 4px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.recent-chats { gap: 0; }
+.recent-chat {
+  min-height: 36px;
+  padding: 5px 4px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+.recent-chat time { font-size: 10px; }
+.recent-all { margin: 3px 4px 0; font-size: 10px; }
+.empty-center { inset: 116px 0 0; }
+.empty-mark {
+  width: 34px;
+  height: 34px;
+  border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
+  color: var(--accent);
+  font-size: 13px;
+  opacity: .86;
+}
+
+.msg { padding-left: 0; padding-right: 0; }
+.msg-role { font-size: 9.5px; }
+.msg-assistant .msg-role { color: color-mix(in srgb, var(--accent) 82%, var(--fg)); }
+
+.composer-wrap {
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+}
+.attachments, .context-summary {
+  gap: 4px;
+  margin: 0 2px 5px;
+}
+.attach-chip, .context-chip {
+  min-height: 23px;
+  padding: 2px 6px;
+  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: none;
+  font-size: 9px;
+}
+.context-chip { max-width: 190px; }
+
+.composer-box {
+  border: 1px solid color-mix(in srgb, var(--line-strong) 78%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--vscode-input-background, #333333) 96%, var(--bg) 4%);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .11);
+}
+.composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--line-strong) 92%, var(--fg) 8%);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, .14);
+}
+textarea {
+  min-height: 40px;
+  max-height: 120px;
+  padding: 11px 12px 0;
+  font-size: 11.5px;
+}
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 7px 6px;
+}
+.composer-left,
+.composer-right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.composer-left { gap: 1px; flex: 0 0 auto; }
+.composer-right { gap: 4px; margin-left: auto; }
+.composer-action,
+.composer-select {
+  height: 25px;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--muted) 92%, transparent);
+}
+.composer-action { min-width: 25px; padding: 0 5px; }
+.composer-select { padding: 0 6px; font-size: 9.5px; }
+.composer-action:hover,
+.composer-select:hover,
+.composer-select.active {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--surface-hover) 68%, transparent);
+}
+.context-button { position: relative; }
+.context-button.has-context { color: var(--fg); }
+.context-button.has-context::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.composer-plan.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.model-wrap { margin-left: 0; }
+.model-wrap .composer-select { max-width: 74px; color: var(--muted); }
+.autopilot-control {
+  gap: 4px;
+  height: 25px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+.autopilot-toggle {
+  width: 30px;
+  height: 18px;
+  padding: 2px;
+  border-color: color-mix(in srgb, var(--line-strong) 82%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+.autopilot-toggle.active {
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  background: var(--accent-2);
+}
+.autopilot-toggle.active .autopilot-thumb { background: #f0fff7; }
+.send {
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  border-color: color-mix(in srgb, var(--line-strong) 82%, transparent);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--muted);
+}
+.send.ready {
+  color: #0e2318;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.send.stop {
+  color: #fff;
+  border-color: color-mix(in srgb, var(--danger) 72%, transparent);
+  background: color-mix(in srgb, var(--danger) 82%, #6f3340 18%);
+}
+.workspace-mode {
+  min-height: 25px;
+  margin: 4px 9px 0;
+  padding: 0;
+  gap: 5px;
+  color: color-mix(in srgb, var(--muted) 92%, transparent);
+  font-size: 9.5px;
+}
+
+/* The normal auto-context sources remain available through @, but do not
+ * create permanent chips above the composer. Only exceptional context is shown.
+ */
+.context-summary:empty { display: none !important; }
+
+@media (max-width: 390px) {
+  .timeline { padding-left: 8px; padding-right: 8px; }
+  .composer-wrap { left: 8px; right: 8px; }
+  .autopilot-control > span { display: none; }
+  .model-wrap .composer-select { max-width: 64px; }
+}
+@media (max-width: 330px) {
+  .model-wrap { display: none; }
+}
+
+
+/* Eris 0.16.2 — Simple-first UX ------------------------------------------------
+ * User-facing concepts stay limited to: prompt, Plan, model, Tự động, Send/Stop.
+ * Tool traces remain available but collapsed by default.
+ */
+.topbar-minimal {
+  min-height: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-bottom: 0;
+  background: transparent;
+}
+.topbar-minimal .top-actions { margin-left: auto; gap: 2px; }
+.topbar-minimal .icon-btn { width: 26px; height: 26px; color: var(--muted); }
+.topbar-minimal .icon-btn:hover { color: var(--fg); background: var(--surface-hover); }
+.session-shadow { display: none !important; }
+
+.timeline { padding-top: 7px; }
+.recent-title { color: var(--fg); font-weight: 600; }
+.recent-empty { padding: 7px 4px; color: var(--muted-2); font-size: 10.5px; }
+
+.activity-feed { margin: 5px 0 8px; border: 0; background: transparent; }
+.activity-feed > summary {
+  min-height: 30px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+}
+.activity-feed > summary:hover { background: transparent; }
+.activity-feed .feed-dot { background: var(--accent); }
+.activity-feed .feed-label { font-weight: 550; }
+.activity-feed .feed-count { color: var(--muted-2); font-size: 9.5px; }
+.activity-feed .feed-chevron { color: var(--muted-2); }
+.feed-rows { margin: 2px 0 4px 12px; padding-left: 10px; border-left: 1px solid var(--line); }
+.developer-details { margin-left: 12px; }
+.plan-block { margin: 6px 0 9px; }
+
+.changes-review { color: var(--muted); }
+.changes-review:hover { color: var(--accent); }
+.changeset-actions .primary { color: var(--fg); background: var(--surface-2); border-color: var(--line-strong); }
+
+.composer-wrap { bottom: 8px; }
+.composer-box { border-radius: 14px; }
+.composer-plan.active { color: var(--accent); background: var(--accent-soft); }
+.model-wrap { display: inline-flex !important; }
+.model-wrap .composer-select { max-width: 78px; min-width: 48px; }
+.autopilot-control { white-space: nowrap; }
+.workspace-mode { display: none !important; }
+
+@media (max-width: 390px) {
+  .composer-right { gap: 2px; }
+  .model-wrap { display: inline-flex !important; }
+  .model-wrap .composer-select { max-width: 58px; padding-left: 4px; padding-right: 4px; }
+}
+@media (max-width: 330px) {
+  .model-wrap { display: inline-flex !important; }
+  .model-wrap .composer-select { max-width: 52px; }
+  .autopilot-control > span { display: none; }
+}
+
+/* Eris 0.16.3 — warmer sidebar polish -------------------------------------
+ * Restore visual hierarchy without turning the webview into a landing page.
+ */
+:root {
+  --accent: #42d98f;
+  --accent-2: #6ab7ff;
+  --accent-soft: color-mix(in srgb, var(--accent) 9%, transparent);
+  --accent-soft-2: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 34%, transparent);
+  --surface: color-mix(in srgb, var(--vscode-editor-background, #202124) 88%, var(--vscode-foreground, #efeff5) 12%);
+  --surface-2: color-mix(in srgb, var(--vscode-editor-background, #202124) 78%, var(--vscode-foreground, #efeff5) 22%);
+  --surface-hover: color-mix(in srgb, var(--vscode-list-hoverBackground, #3a3d41) 82%, var(--fg) 6%);
+  --line: color-mix(in srgb, var(--vscode-panel-border, #5f6368) 56%, transparent);
+  --line-strong: color-mix(in srgb, var(--vscode-panel-border, #7a7d82) 78%, var(--fg) 6%);
+  --shadow: 0 10px 28px rgba(0, 0, 0, .18);
+}
+
+.app-shell {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--fg) 2.5%, transparent), transparent 86px),
+    var(--bg);
+}
+
+.topbar-minimal {
+  min-height: 42px;
+  height: 42px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg) 3%);
+}
+.topbar-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 620;
+}
+.topbar-title span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-spark {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 10px;
+}
+.topbar-minimal .top-actions { gap: 3px; }
+.topbar-minimal .icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.timeline {
+  padding: 12px 12px 148px;
+}
+.codex-empty {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding-top: 4px;
+}
+.empty-center { display: none !important; }
+.empty-hero {
+  display: grid;
+  gap: 13px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), color-mix(in srgb, var(--accent-2) 5%, transparent)),
+    color-mix(in srgb, var(--surface) 70%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+}
+.empty-hero-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.empty-hero .empty-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  box-shadow: none;
+  opacity: 1;
+}
+.empty-eyebrow {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.empty-hero h2 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 690;
+  letter-spacing: 0;
+}
+.empty-prompts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.empty-prompts button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+  color: color-mix(in srgb, var(--fg) 90%, var(--muted) 10%);
+  font-size: 10.5px;
+  line-height: 1.25;
+  text-align: center;
+}
+.empty-prompts button:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-hover));
+}
+
+.recent-section {
+  padding: 0;
+}
+.recent-title {
+  margin: 0 1px 7px;
+  color: color-mix(in srgb, var(--fg) 88%, var(--muted) 12%);
+  font-size: 11px;
+  font-weight: 650;
+}
+.recent-chats {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 54%, transparent);
+}
+.recent-chat {
+  min-height: 38px;
+  padding: 7px 9px;
+  border-radius: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 54%, transparent);
+  font-size: 11.5px;
+}
+.recent-chat:last-child { border-bottom: 0; }
+.recent-chat:hover {
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+.recent-chat time {
+  color: color-mix(in srgb, var(--muted) 86%, transparent);
+  font-size: 10px;
+}
+.recent-empty {
+  padding: 10px 9px;
+  color: var(--muted);
+}
+.recent-all {
+  margin: 7px 1px 0;
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+  font-weight: 540;
+}
+
+.msg {
+  margin-bottom: 22px;
+}
+.msg-role {
+  font-size: 10px;
+}
+.markdown-body {
+  font-size: 12.8px;
+  line-height: 1.64;
+}
+
+.composer-wrap {
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+}
+.composer-box {
+  border-radius: 10px;
+  border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--vscode-input-background, #35373a) 91%, var(--bg) 9%);
+  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+}
+.composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 12px 32px rgba(0, 0, 0, .22);
+}
+textarea {
+  min-height: 42px;
+  padding: 12px 12px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.composer-bar {
+  min-height: 36px;
+  padding: 3px 7px 7px;
+}
+.composer-action,
+.composer-select {
+  height: 26px;
+}
+.composer-action {
+  min-width: 26px;
+}
+.composer-plan.active {
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.autopilot-toggle.active {
+  background: color-mix(in srgb, var(--accent) 88%, #187047 12%);
+}
+.send {
+  width: 29px;
+  height: 29px;
+}
+
+@media (max-width: 390px) {
+  .timeline { padding-left: 10px; padding-right: 10px; }
+  .composer-wrap { left: 10px; right: 10px; }
+  .empty-prompts { grid-template-columns: 1fr; }
+  .empty-prompts button { text-align: left; }
+}

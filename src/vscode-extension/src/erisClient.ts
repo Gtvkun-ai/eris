@@ -208,7 +208,8 @@ export class ErisClient implements vscode.Disposable {
 
   async sendUserMessage(content: string, args: {
     threadId: string;
-    taskMode?: 'execute' | 'inspect';
+    taskMode?: 'auto' | 'plan' | 'execute' | 'inspect';
+    autopilot?: boolean;
     workspaceRef?: string;
     context?: Record<string, unknown>;
   }): Promise<void> {
@@ -217,7 +218,8 @@ export class ErisClient implements vscode.Disposable {
       protocol: 'eris.ide.v2',
       content,
       threadId: args.threadId,
-      taskMode: args.taskMode ?? 'execute',
+      taskMode: args.taskMode ?? 'auto',
+      autopilot: args.autopilot !== false,
       workspaceRef: args.workspaceRef ?? '',
       context: args.context ?? {},
     };
@@ -354,7 +356,8 @@ export class ErisClient implements vscode.Disposable {
     content: string,
     args: {
       threadId: string;
-      taskMode?: 'execute' | 'inspect';
+      taskMode?: 'auto' | 'plan' | 'execute' | 'inspect';
+      autopilot?: boolean;
       workspaceRef?: string;
       context?: Record<string, unknown>;
     },
@@ -384,6 +387,7 @@ export class ErisClient implements vscode.Disposable {
     this.eventEmitter.fire({
       type: 'activity.start',
       taskId,
+      threadId: args.threadId,
       payload: {
         summary: `Direct API: ${config.provider} / ${config.model}`,
         detail: directApiDetail(serviceError),
@@ -400,16 +404,18 @@ export class ErisClient implements vscode.Disposable {
         payload: { content: answer },
       });
       this.eventEmitter.fire({
-        type: 'activity.update',
+        type: 'activity.end',
         taskId,
+        threadId: args.threadId,
         payload: { summary: 'Direct API complete', detail: 'Không dùng Eris Service/IDE bridge trong lượt này.', status: 'completed' },
       });
       return { status: 'sent' };
     } catch (error) {
       const directError = enrichDirectApiError(error, config);
       this.eventEmitter.fire({
-        type: 'activity.update',
+        type: 'activity.end',
         taskId,
+        threadId: args.threadId,
         payload: { summary: 'Direct API failed', detail: directError.message, status: 'failed' },
       });
       this.eventEmitter.fire({ type: 'client.error', message: `Direct API failed: ${directError.message}` });
@@ -473,9 +479,9 @@ export class ErisClient implements vscode.Disposable {
   private async callDirectApi(
     config: DirectApiConfig,
     content: string,
-    args: { taskMode?: 'execute' | 'inspect'; context?: Record<string, unknown> },
+    args: { taskMode?: 'auto' | 'plan' | 'execute' | 'inspect'; context?: Record<string, unknown> },
   ): Promise<string> {
-    const mode = args.taskMode === 'inspect' ? 'inspect-only' : 'chat/direct-api';
+    const mode = args.taskMode === 'plan' ? 'planning-only' : args.taskMode === 'inspect' ? 'inspect-only' : 'auto-intent';
     const contextSummary = compactContext(args.context ?? {});
     const system = [
       'You are Eris inside a VS Code sidebar.',
@@ -483,6 +489,8 @@ export class ErisClient implements vscode.Disposable {
       'You are running in direct external API mode because the local Eris Service/IDE bridge is unavailable.',
       'Do not claim you edited files, ran commands, opened diffs, or inspected live IDE state unless the user provided that content directly.',
       `Mode: ${mode}.`,
+      mode === 'planning-only' ? 'Planning-only: analyze the supplied context and return a concrete implementation plan. Do not claim file edits or execution.' : '',
+      mode === 'auto-intent' ? 'Infer intent yourself: answer analysis/review questions without pretending to edit; when the user clearly requests a change, explain what the local agent would need to execute.' : '',
       contextSummary ? `Available lightweight IDE context:\n${contextSummary}` : '',
     ].filter(Boolean).join('\n');
 

@@ -23,17 +23,14 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
 </head>
 <body>
   <div class="app-shell">
-    <header class="topbar">
-      <div class="brand" title="Eris coding agent">
-        <span class="brand-mark" aria-hidden="true">✦</span>
-        <div class="brand-copy">
-          <strong>Eris</strong>
-          <span id="sessionHeaderTitle">AI coding agent</span>
-        </div>
+    <header class="topbar topbar-minimal">
+      <div class="topbar-title" aria-live="polite">
+        <span class="topbar-spark" aria-hidden="true">✦</span>
+        <span id="sessionHeaderTitle">Eris</span>
       </div>
       <div class="top-actions">
-        <button id="newChat" class="icon-btn" type="button" title="Phiên mới" aria-label="Phiên mới">＋</button>
-        <button id="menuButton" class="icon-btn" type="button" title="Menu" aria-label="Menu">⋯</button>
+        <button id="newChat" class="icon-btn" type="button" title="Cuộc trò chuyện mới" aria-label="Cuộc trò chuyện mới">＋</button>
+        <button id="menuButton" class="icon-btn" type="button" title="Thêm" aria-label="Thêm">⋯</button>
       </div>
       <div class="session-shadow" aria-hidden="true">
         <div id="sessionTabs" class="session-tabs"></div>
@@ -84,33 +81,34 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
       <div class="composer-box">
         <textarea id="input" rows="1" placeholder="Giao việc cho Eris…" aria-label="Tin nhắn cho Eris"></textarea>
         <div class="composer-bar">
-          <button id="attach" class="composer-action" type="button" title="Đính kèm file hoặc ảnh" aria-label="Đính kèm">＋</button>
-          <button id="contextButton" class="composer-action context-button" type="button" title="Context" aria-label="Context">#</button>
-
-          <div class="select-wrap">
-            <button id="modeButton" class="composer-select" type="button" title="Chế độ tác vụ" aria-haspopup="listbox" aria-expanded="false">Tác vụ</button>
-            <div id="modePopover" class="select-popover popover" role="listbox" aria-label="Chế độ tác vụ">
-              <button class="select-option" type="button" data-mode-option="execute">
-                <span class="select-icon">◈</span><span class="select-copy"><strong>Tác vụ</strong><small>Sửa code và kiểm chứng</small></span><span class="select-check">✓</span>
-              </button>
-              <button class="select-option" type="button" data-mode-option="inspect">
-                <span class="select-icon">⌕</span><span class="select-copy"><strong>Chỉ xem</strong><small>Phân tích, không sửa file</small></span><span class="select-check">✓</span>
-              </button>
-            </div>
+          <div class="composer-left">
+            <button id="attach" class="composer-action" type="button" title="Đính kèm file hoặc ảnh" aria-label="Đính kèm">＋</button>
+            <button id="contextButton" class="composer-action context-button" type="button" title="Context" aria-label="Context">@</button>
+            <button id="planButton" class="composer-select composer-plan" type="button" title="Lập kế hoạch cho lượt kế tiếp, không sửa file" aria-pressed="false">Plan</button>
           </div>
 
-          <div class="select-wrap model-wrap">
-            <button id="modelButton" class="composer-select" type="button" title="Mô hình DeepSeek" aria-haspopup="listbox" aria-expanded="false">DS Flash</button>
-            <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình DeepSeek">
-              <button class="select-option" type="button" data-model-option="deepseek-v4-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>DS Flash</strong><small>Nhanh, mặc định</small></span><span class="select-check">✓</span></button>
-              <button class="select-option" type="button" data-model-option="deepseek-v4-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>DS Pro</strong><small>Task khó hơn</small></span><span class="select-check">✓</span></button>
-              <button class="select-option" type="button" data-model-option="auto"><span class="select-icon">⌁</span><span class="select-copy"><strong>Auto</strong><small>Theo cấu hình backend</small></span><span class="select-check">✓</span></button>
+          <div class="composer-right">
+            <div class="select-wrap model-wrap">
+              <button id="modelButton" class="composer-select" type="button" title="Chọn mô hình" aria-label="Chọn mô hình" aria-haspopup="listbox" aria-expanded="false">DS Flash</button>
+              <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình DeepSeek">
+                <button class="select-option" type="button" data-model-option="deepseek-v4-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>DS Flash</strong><small>Nhanh, mặc định</small></span><span class="select-check">✓</span></button>
+                <button class="select-option" type="button" data-model-option="deepseek-v4-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>DS Pro</strong><small>Task khó hơn</small></span><span class="select-check">✓</span></button>
+                <button class="select-option" type="button" data-model-option="auto"><span class="select-icon">⌁</span><span class="select-copy"><strong>Auto</strong><small>Theo cấu hình backend</small></span><span class="select-check">✓</span></button>
+              </div>
             </div>
-          </div>
 
-          <button id="send" class="send" type="button" title="Gửi" aria-label="Gửi">↑</button>
+            <div class="autopilot-control" title="Tự làm tiếp đến khi hoàn tất.">
+              <span>Tự động</span>
+              <button id="autopilotToggle" class="autopilot-toggle" type="button" role="switch" aria-checked="true" aria-label="Tự động">
+                <span class="autopilot-thumb"></span>
+              </button>
+            </div>
+
+            <button id="send" class="send" type="button" title="Gửi" aria-label="Gửi">↑</button>
+          </div>
         </div>
       </div>
+
 
       <div id="contextPopover" class="context-popover popover">
         <div class="popover-title">Context cho lượt này</div>

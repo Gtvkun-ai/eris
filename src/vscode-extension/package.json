@@ -1,8 +1,8 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent cho VS Code với giao diện chat-first gọn, context-aware và DeepSeek model picker.",
-  "version": "0.15.0",
+  "description": "Eris coding agent cho VS Code: giao việc tự nhiên, Plan, Tự động, chọn model và workflow tối giản.",
+  "version": "0.16.2",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -12,6 +12,7 @@
     "Machine Learning"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:eris.mainView",
     "onChatParticipant:gtvk.eris",
     "onCommand:eris.openChat",
@@ -132,10 +133,6 @@
           {
             "name": "fix",
             "description": "Tìm root cause, sửa code và kiểm chứng"
-          },
-          {
-            "name": "inspect",
-            "description": "Điều tra vấn đề nhưng chưa sửa file"
           },
           {
             "name": "plan",

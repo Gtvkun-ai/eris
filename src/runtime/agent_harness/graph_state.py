@@ -24,6 +24,7 @@ class AgentState(TypedDict, total=False):
     executor: str
     model: str
     task_mode: str
+    autopilot: bool
     source: str
     workspace_id: str
     workspace_path: str

@@ -1,0 +1,1238 @@
+{
+  "version": 3,
+  "updated_at": 1787729346.563555,
+  "habitat": {
+    "places": {
+      "repo": {
+        "type": "observed",
+        "meaning": "runtime place learned from foreground observation",
+        "first_observed_at": 1787727489.9363735
+      },
+      "desktop": {
+        "type": "observed",
+        "meaning": "runtime place learned from foreground observation",
+        "first_observed_at": 1787727565.7454429
+      }
+    },
+    "active_place_id": "desktop",
+    "familiarity": 0.5400000000000004,
+    "clutter": 0.1906774761324168,
+    "last_changed_at": 1787729346.563555,
+    "recent_observations": [
+      {
+        "id": "hab.93e23f4f074a5e48",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=brave.exe window=unknown",
+        "evidence_ids": [
+          "active_app:brave.exe"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1787727694.259142
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787727694.259142
+      },
+      {
+        "id": "hab.fc098efc03e3bb72",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Code.exe window=unknown",
+        "evidence_ids": [
+          "active_app:Code.exe"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1787727709.9448237
+      },
+      {
+        "id": "hab.93e23f4f074a5e48",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=brave.exe window=unknown",
+        "evidence_ids": [
+          "active_app:brave.exe"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1787727726.7948594
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787727757.2166858
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787727812.1642542
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787727997.2059298
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728000.9766543
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728004.2506828
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728059.1450408
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728062.8896546
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728189.0636454
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728193.8407454
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728248.3348508
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728252.2965198
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728375.3358579
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728379.6757593
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728506.2017863
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728511.5530043
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728566.60651
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728700.2713535
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728753.8032627
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728879.1675828
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787728884.3666973
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729010.7388368
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729135.9277484
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729140.9926128
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729194.808945
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729200.15968
+      },
+      {
+        "id": "hab.b36a2d58ce2f49a9",
+        "place_id": "runtime",
+        "place_type": "queue",
+        "title": "runtime queue pressure",
+        "note": "model_budget_policy còn 1 request active/queued",
+        "evidence_ids": [
+          "runtime.4291ec53ea7c1b15"
+        ],
+        "confidence": 0.7,
+        "pressure": 0.125,
+        "created_at": 1787729255.7748988
+      },
+      {
+        "id": "hab.fc098efc03e3bb72",
+        "place_id": "repo",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=Code.exe window=unknown",
+        "evidence_ids": [
+          "active_app:Code.exe"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1787729327.7871554
+      },
+      {
+        "id": "hab.cdabec0cc9755099",
+        "place_id": "desktop",
+        "place_type": "desktop",
+        "title": "habitat focus changed",
+        "note": "active_app=explorer.exe window=unknown",
+        "evidence_ids": [
+          "active_app:explorer.exe"
+        ],
+        "confidence": 0.62,
+        "pressure": 0.38,
+        "created_at": 1787729346.563555
+      }
+    ]
+  },
+  "attachments": {},
+  "projects": {},
+  "anchors": {},
+  "daily": {
+    "phase": "first_observation",
+    "session_count": 1,
+    "last_startup_at": 1787727489.9363735,
+    "last_consolidation_at": 0.0,
+    "repeated_unresolved_loop": "",
+    "cold_start_pressure": 0.0,
+    "fatigue_curve": 0.2626134055722235
+  },
+  "taste": {
+    "likes": {},
+    "dislikes": {},
+    "recent_shifts": []
+  },
+  "solitude": {
+    "solitude_seconds_total": 12357.358666666667,
+    "current_solitude_started_at": 1787727720.1568487,
+    "familiarity": 1.0,
+    "attention_to_user": 0.0,
+    "private_project_pressure": 1.0,
+    "last_consolidation_note": ""
+  },
+  "rituals": {},
+  "errands": {},
+  "mental_events": {},
+  "events": [
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1200s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1200"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728920.552793,
+      "id": "life.4b1f2fdf89d3af13"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1206s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1206"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728926.0745828,
+      "id": "life.ae5e148fffffcb7c"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1211s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1211"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728931.2544823,
+      "id": "life.11cec27ea3d3b0b6"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1216s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1216"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728936.560015,
+      "id": "life.4012db8ef30ec23d"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1221s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1221"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728941.8577566,
+      "id": "life.f001498f66ab9ef2"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1227s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1227"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728947.159229,
+      "id": "life.f18dfae4f26d0f4b"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1232s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1232"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728952.6312778,
+      "id": "life.80b443fd05980cc2"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1237s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1237"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728957.8313477,
+      "id": "life.8d1e52ae0778331b"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1242s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1242"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728962.8942308,
+      "id": "life.3b0b8e7b0b860129"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1248s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1248"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728968.1667013,
+      "id": "life.9071283b4a0a0c80"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1253s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1253"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728973.530748,
+      "id": "life.827adccfbcd5b72f"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1258s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1258"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728978.778142,
+      "id": "life.66eff68bbc7716c1"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1263s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1263"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728983.7105677,
+      "id": "life.f5d2e2387149149e"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1269s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1269"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787728989.2915661,
+      "id": "life.6b6800be584bb79e"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1281s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1281"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729001.3791058,
+      "id": "life.ece83ee2dd301d57"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1285s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1285"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729005.4378593,
+      "id": "life.e475fefd328834e0"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "runtime queue pressure",
+      "note": "model_budget_policy còn 1 request active/queued",
+      "evidence_ids": [
+        "runtime.4291ec53ea7c1b15"
+      ],
+      "pressure": 0.125,
+      "privacy_level": "private",
+      "created_at": 1787729010.7388368,
+      "id": "life.a817bd8dbac6d753"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1290s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1290"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729010.7388368,
+      "id": "life.7acb34df91fccbaf"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1295s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1295"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729015.5400763,
+      "id": "life.2fe002654ed1a2a7"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1300s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1300"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729020.6086652,
+      "id": "life.9fd6cb997b6ed743"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1306s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1306"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729026.119475,
+      "id": "life.0d0d3eb160da6946"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1311s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1311"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729031.6227956,
+      "id": "life.a2cbb3a6f170d06b"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1316s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1316"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729036.8281293,
+      "id": "life.a9b0b4dcdc65c12e"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1320s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1320"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729040.9949389,
+      "id": "life.1d5b3513e9e501c6"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1323s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1323"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729043.9627776,
+      "id": "life.97bc607ba44cfb3d"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1347s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1347"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729067.3538592,
+      "id": "life.ad9679d56845868c"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1353s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1353"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729073.4456239,
+      "id": "life.3ac949a0012fbdbb"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1357s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1357"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729078.0721407,
+      "id": "life.03c5ff605d6b9d49"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1361s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1361"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729081.2774858,
+      "id": "life.0ba925e544bbf6ae"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1365s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1365"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729085.7845871,
+      "id": "life.ba6edfb7a869d893"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1370s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1370"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729090.992772,
+      "id": "life.1190146c676833b7"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1376s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1376"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729096.3104959,
+      "id": "life.ec3ba3a1c1f01038"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1381s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1381"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729101.2724123,
+      "id": "life.d55ae8e108e21770"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1385s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1385"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729105.547091,
+      "id": "life.dadb24b020cc658c"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1389s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1389"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729109.9027054,
+      "id": "life.b1e5064cc207d390"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1394s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1394"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729114.2073612,
+      "id": "life.ab715807612dbe7c"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1398s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1398"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729118.275897,
+      "id": "life.670508c5974d30d2"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1402s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1402"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729122.5468175,
+      "id": "life.2f3b3e2ab6bcff27"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1406s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1406"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729126.3811922,
+      "id": "life.c5e8c159f17390ba"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1410s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1410"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729130.3635216,
+      "id": "life.6acd1954c3b30421"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "runtime queue pressure",
+      "note": "model_budget_policy còn 1 request active/queued",
+      "evidence_ids": [
+        "runtime.4291ec53ea7c1b15"
+      ],
+      "pressure": 0.125,
+      "privacy_level": "private",
+      "created_at": 1787729135.9277484,
+      "id": "life.16afcb754005c274"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1415s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1415"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729135.9277484,
+      "id": "life.82991577d2882f63"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1420s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1420"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729140.9926128,
+      "id": "life.4ac1562c2141a9ac"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1423s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1423"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729143.6616912,
+      "id": "life.7ea6e7d4e4beedcb"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1444s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1444"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729164.9802873,
+      "id": "life.1f27887bae530eaf"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1450s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1450"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729170.3699048,
+      "id": "life.312060bf2a4d0998"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1458s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1458"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729178.329333,
+      "id": "life.1cb5c536b493e79a"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1466s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1466"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729186.4214895,
+      "id": "life.f89f8fe85fe4aa8c"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "runtime queue pressure",
+      "note": "model_budget_policy còn 1 request active/queued",
+      "evidence_ids": [
+        "runtime.4291ec53ea7c1b15"
+      ],
+      "pressure": 0.125,
+      "privacy_level": "private",
+      "created_at": 1787729194.808945,
+      "id": "life.77e186dc8b927f83"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1474s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1474"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729194.808945,
+      "id": "life.8e3e2b9f5ff7f8ee"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1479s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1479"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729200.15968,
+      "id": "life.bf23b6f30cee660f"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1484s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1484"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729205.5068974,
+      "id": "life.5351d4d5c38ddbe9"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1492s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1492"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729212.7783587,
+      "id": "life.c6f220fed7468b03"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1497s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1497"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729218.1149373,
+      "id": "life.d29829c49303899e"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1502s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1502"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729222.9753256,
+      "id": "life.056149c1c663937b"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1509s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1509"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729230.0073395,
+      "id": "life.ebffdeedaba102a2"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1515s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1515"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729235.5944731,
+      "id": "life.648fee6cd545c2f4"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1519s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1519"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729239.96002,
+      "id": "life.34804900fa1a5157"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1525s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1525"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729245.510956,
+      "id": "life.8185581fbe88db8d"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1529s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1529"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729249.9910848,
+      "id": "life.62ae3f6a15765f4b"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "runtime queue pressure",
+      "note": "model_budget_policy còn 1 request active/queued",
+      "evidence_ids": [
+        "runtime.4291ec53ea7c1b15"
+      ],
+      "pressure": 0.125,
+      "privacy_level": "private",
+      "created_at": 1787729255.7748988,
+      "id": "life.49e2142467527f0d"
+    },
+    {
+      "type": "solitude_period",
+      "title": "solitude tick",
+      "note": "user absent/quiet khoảng 1535s; attention chuyển sang private projects và dọn drift",
+      "evidence_ids": [
+        "idle_seconds:1535"
+      ],
+      "pressure": 1.0,
+      "privacy_level": "private",
+      "created_at": 1787729255.7748988,
+      "id": "life.cac61195b0c64cec"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=Code.exe window=unknown",
+      "evidence_ids": [
+        "active_app:Code.exe"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1787729327.7871554,
+      "id": "life.b656ce2b5b9e53b5"
+    },
+    {
+      "type": "habitat_changed",
+      "title": "habitat focus changed",
+      "note": "active_app=explorer.exe window=unknown",
+      "evidence_ids": [
+        "active_app:explorer.exe"
+      ],
+      "pressure": 0.38,
+      "privacy_level": "private",
+      "created_at": 1787729346.563555,
+      "id": "life.70bd829764dc8995"
+    }
+  ]
+}

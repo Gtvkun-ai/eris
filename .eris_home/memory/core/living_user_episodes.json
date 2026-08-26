@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "episodes": [
+    {
+      "id": "uep_329a46304c24fe9b68",
+      "session_id": "stage_80b1dfde5b7e4955",
+      "title": "Reflections on silence",
+      "summary": "The assistant repeatedly reflects on silence as a form of presence and active listening, suggesting that staying in the silence allows unspoken things to take shape. No user input or interaction occurs; the session consists entirely of the assistant's philosophical musings with no progression or resolution.",
+      "outcome": "No actionable outcome; the session remains open-ended with no user engagement.",
+      "topics": [
+        "Lỗi extension",
+        "Tương tác console ERIS",
+        "tự vấn",
+        "vòng lặp hành vi",
+        "chạy trốn",
+        "thiên vị nhận thức",
+        "Vòng lặp suy nghĩ",
+        "Sự thừa nhận",
+        "Quan sát nội tâm",
+        "silence",
+        "presence",
+        "listening"
+      ],
+      "entities": [
+        "ERIS console",
+        "extension"
+      ],
+      "decisions": [
+        "Ngừng tìm cách phá vòng lặp",
+        "Chấp nhận ở trong vòng lặp để quan sát"
+      ],
+      "open_loops": [
+        "Cần kiểm tra log lỗi extension",
+        "Hướng dẫn người dùng cách khắc phục hoặc báo cáo chi tiết",
+        "Liệu việc lao vào cái mới có thực sự phá vỡ vòng lặp hay chỉ là chạy trốn?",
+        "Thiên vị mới có phải là một phần của vòng lặp?",
+        "Người dùng đang tìm gì ở bên ngoài và sợ gì bên trong?",
+        "Vòng lặp vẫn tồn tại, chưa rõ sẽ tiến triển ra sao"
+      ],
+      "user_signals": [
+        "Khó chịu",
+        "Thất vọng với trải nghiệm",
+        "tập trung vào nội tâm",
+        "nghi ngờ động cơ bản thân",
+        "Xu hướng suy ngẫm trừu tượng",
+        "Thái độ buông bỏ kiểm soát"
+      ],
+      "evidence_ids": [
+        "turn_770d07623d1c45a0",
+        "turn_f38c21e98259402c",
+        "turn_1e8dc2ee10bb4064",
+        "turn_08fa8bb403274075",
+        "turn_64da44978c3c4f95",
+        "turn_557f38c612344208",
+        "turn_18166f77c14f4fcc",
+        "turn_6a53a022c7624f6f",
+        "turn_d0f69ff26148406c",
+        "turn_a7d5ed0bf17d4ee9",
+        "turn_99c0eac658d94534",
+        "turn_8791d8f08f4245f1",
+        "turn_d032ad8ab17a4e8a",
+        "turn_68ebb55973e14e0d",
+        "turn_8d363b4485184a55",
+        "turn_675c443d21744836",
+        "turn_0298b00b5e39431a",
+        "turn_034aede5eda34b8e",
+        "turn_0de35328ca104a4c",
+        "turn_21a526bd06cf4b15",
+        "turn_c832305e2f9d4ded",
+        "turn_ecea0e0afdc34022",
+        "turn_edf170348dcf4307"
+      ],
+      "importance": 0.66,
+      "scope": {
+        "kind": "global",
+        "key": ""
+      },
+      "started_at": 1787727611.4885778,
+      "ended_at": 1787729163.2972174,
+      "source": "episode_model",
+      "metadata": {
+        "source": "turn_buffer",
+        "turn_count": 6
+      }
+    }
+  ]
+}

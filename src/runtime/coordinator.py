@@ -473,6 +473,7 @@ class RuntimeCoordinator(
         clarified_goal: str = "",
         task_id: str = "",
         task_mode: str = "execute",
+        autopilot: bool = True,
         source: str = "eris_chat",
         session_id: str = "",
         workspace_id: str = "",
@@ -505,6 +506,8 @@ class RuntimeCoordinator(
             )
             if accepts_var_kwargs or "task_mode" in parameters:
                 kwargs["task_mode"] = str(task_mode or "execute")
+            if accepts_var_kwargs or "autopilot" in parameters:
+                kwargs["autopilot"] = bool(autopilot)
             if accepts_var_kwargs or "source" in parameters:
                 kwargs["source"] = str(source or "eris_chat")
             if accepts_var_kwargs or "session_id" in parameters:
@@ -533,6 +536,7 @@ class RuntimeCoordinator(
         source: str = "eris_chat",
         session_id: str = "",
         task_mode: str = "execute",
+        autopilot: bool = True,
         workspace_ref: str = "",
         model: str = "",
         ide_context: dict | None = None,
@@ -606,6 +610,7 @@ class RuntimeCoordinator(
                         "original_goal": goal,
                         "source": str(source or "eris_chat"),
                         "task_mode": str(task_mode or "execute"),
+                        "autopilot": bool(autopilot),
                         "workspace_id": workspace_id,
                         "workspace_path": workspace_path,
                         "workspace_name": workspace_name,
@@ -742,8 +747,12 @@ class RuntimeCoordinator(
                         bridge = None
 
                 cline_ok = bridge is not None and bridge.is_available()
+                # Plan/inspect need the graph's mechanical read-only boundary. When
+                # Tự động is off we also keep execution in LangGraph so ask_user_choice
+                # can pause for a real decision instead of delegating to unattended Cline.
+                use_cline = cline_ok and bool(autopilot) and str(task_mode or "auto").strip().lower() not in {"plan", "inspect"}
 
-                if cline_ok and spec_intent == "plan":
+                if use_cline and spec_intent == "plan":
                     # Tao spec file moi
                     from runtime.agent_harness.spec_manager import create_spec
                     if store:
@@ -753,7 +762,7 @@ class RuntimeCoordinator(
                         on_event=_relay_cline_event,
                     )
 
-                elif cline_ok and spec_intent == "exec":
+                elif use_cline and spec_intent == "exec":
                     # Execute spec co san
                     from runtime.agent_harness.spec_manager import execute_spec
                     if store:
@@ -764,7 +773,7 @@ class RuntimeCoordinator(
                         steering_context=steering,
                     )
 
-                elif cline_ok and spec_intent == "list":
+                elif use_cline and spec_intent == "list":
                     # List specs
                     from runtime.agent_harness.spec_manager import list_specs
                     specs = list_specs(workspace_path)
@@ -775,7 +784,7 @@ class RuntimeCoordinator(
                             importance=0.6, data={"specs": specs},
                         )
 
-                elif cline_ok:
+                elif use_cline:
                     # Normal task -> Cline
                     bridge.run_task_blocking(
                         task_id=task_id,
@@ -794,6 +803,7 @@ class RuntimeCoordinator(
                         clarified_goal=clarified_goal,
                         task_id=task_id,
                         task_mode=task_mode,
+                        autopilot=autopilot,
                         source=source,
                         session_id=session_id,
                         workspace_id=workspace_id,
@@ -828,6 +838,7 @@ class RuntimeCoordinator(
             "source": str(source or "eris_chat"),
             "session_id": str(session_id or ""),
             "task_mode": str(task_mode or "execute"),
+            "autopilot": bool(autopilot),
             "workspace_id": workspace_id,
             "workspace_path": workspace_path,
             "workspace_name": workspace_name,

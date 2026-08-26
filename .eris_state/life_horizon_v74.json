@@ -1,6 +1,6 @@
 {
   "schema": "eris.life_horizon.state.v74",
-  "revision": 1305,
+  "revision": 1320,
   "goals": [
     {
       "goal_id": "h2.private_project.project.derived.ec06365b7c5ae381",
@@ -95,7 +95,7 @@
       "level": "H4",
       "title": "Recurring private concern",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
-      "status": "active",
+      "status": "dormant",
       "strength": 0.5838903770366047,
       "progress": 0.0,
       "parent_goal_id": "",
@@ -117,7 +117,7 @@
         "private_anchor",
         "private_agenda"
       ],
-      "updated_at": 1787023502.1516843,
+      "updated_at": 1787727487.8682492,
       "created_at": 1786698780.4020934
     },
     {
@@ -184,7 +184,7 @@
       "level": "H2",
       "title": "Điều tra concern lặp lại",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
-      "status": "active",
+      "status": "dormant",
       "strength": 0.7267770679296001,
       "progress": 0.0,
       "parent_goal_id": "",
@@ -205,7 +205,7 @@
       "tags": [
         "private_project"
       ],
-      "updated_at": 1787023502.1516843,
+      "updated_at": 1787727487.8682492,
       "created_at": 1787020764.6908534
     },
     {
@@ -213,7 +213,7 @@
       "level": "H4",
       "title": "Recurring private concern",
       "description": "Mối bận tâm lặp lại này cần bằng chứng mới hoặc một hành động kiểm tra nào để tiến triển?",
-      "status": "active",
+      "status": "dormant",
       "strength": 0.46384562075954877,
       "progress": 0.0,
       "parent_goal_id": "",
@@ -235,13 +235,13 @@
         "private_anchor",
         "private_agenda"
       ],
-      "updated_at": 1787023502.1516843,
+      "updated_at": 1787727487.8682492,
       "created_at": 1787020764.6908534
     },
     {
       "goal_id": "h0.last_public_action",
       "level": "H0",
-      "title": "Public action: share_opinion",
+      "title": "Public action: share_observation",
       "description": "Receipt của hành động public vừa được commit.",
       "status": "active",
       "strength": 0.86,
@@ -250,17 +250,51 @@
       "deadline_at": 0.0,
       "source_refs": [
         "session-turn:1",
-        "session-turn:2"
+        "session-turn:2",
+        "session-turn:3",
+        "session-turn:4",
+        "session-turn:5",
+        "session-turn:6",
+        "session-turn:7",
+        "session-turn:8",
+        "session-turn:9",
+        "session-turn:10",
+        "session-turn:11",
+        "session-turn:12"
       ],
       "evidence_refs": [],
       "tags": [
         "public",
         "share_opinion",
         "memory_callback",
-        "share_self_originated_thought"
+        "share_self_originated_thought",
+        "share_reaction",
+        "ask_genuine_question",
+        "share_observation"
       ],
-      "updated_at": 1787023528.0359447,
+      "updated_at": 1787729163.0979607,
       "created_at": 1787021301.4967518
+    },
+    {
+      "goal_id": "h0.current_user_turn",
+      "level": "H0",
+      "title": "Xử lý lượt người dùng hiện tại",
+      "description": "Ưu tiên phản hồi lượt foreground hiện tại trước mọi chủ động nền.",
+      "status": "active",
+      "strength": 1.0,
+      "progress": 0.0,
+      "parent_goal_id": "",
+      "deadline_at": 0.0,
+      "source_refs": [
+        "session_turn:8"
+      ],
+      "evidence_refs": [],
+      "tags": [
+        "foreground",
+        "conversation"
+      ],
+      "updated_at": 1787727607.9465299,
+      "created_at": 1787727607.9465299
     }
   ],
   "milestones": [],
