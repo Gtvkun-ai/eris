@@ -1,6 +1,6 @@
 {
   "version": 4,
-  "next_event_seq": 53,
+  "next_event_seq": 57,
   "tasks": [
     {
       "task_id": "task_d8d5d79a5c3c",
@@ -1150,13 +1150,13 @@
       "session_id": "vscode_0ca0050c-5aae-46f3-b7e4-d2c221b4e84e",
       "goal": "xin chào",
       "clarified_goal": "xin chào",
-      "status": "queued",
+      "status": "stopped",
       "executor": "gemini-cli",
       "model": "deepseek-v4-flash",
       "created_at": 1787727483.6022382,
-      "updated_at": 1787727653.0304077,
+      "updated_at": 1787731364.1678658,
       "started_at": 0.0,
-      "finished_at": 0.0,
+      "finished_at": 1787731364.1678658,
       "current_step": 0,
       "active_skills": [],
       "changed_files": [],
@@ -1169,7 +1169,7 @@
       "coding_state": {
         "version": "coding_state.v1",
         "objective": "xin chào",
-        "phase": "queued",
+        "phase": "stopped",
         "current_action": "",
         "current_file": "",
         "files_inspected": [],
@@ -1185,11 +1185,11 @@
         "next_action": "",
         "last_tool": "",
         "last_summary": "",
-        "updated_at": 1787727483.6022382
+        "updated_at": 1787731364.1678658
       },
       "checkpoint_id": "",
       "checkpoint_count": 0,
-      "last_event_seq": 52,
+      "last_event_seq": 53,
       "pending_interrupt": {},
       "events": [
         {
@@ -1370,6 +1370,20 @@
           "data": {
             "control_id": "ctl_41da013e88fb",
             "source": "vscode"
+          }
+        },
+        {
+          "event_id": "ae_d5cad453e0ff45",
+          "seq": 53,
+          "type": "task_stopped",
+          "actor": "system",
+          "summary": "Task đã dừng theo control plane.",
+          "detail": "",
+          "step": 0,
+          "importance": 0.95,
+          "created_at": 1787731364.1678658,
+          "data": {
+            "reason": "control:vscode"
           }
         }
       ],
@@ -3444,8 +3458,374 @@
               }
             }
           }
+        },
+        {
+          "control_id": "ctl_bba911b24b35",
+          "action": "stop",
+          "text": "",
+          "checkpoint_id": "",
+          "created_at": 1787731364.1599576,
+          "consumed": false,
+          "data": {
+            "source": "vscode",
+            "ide_context": {
+              "capturedAt": 1787731364111,
+              "workspace": {
+                "active": "",
+                "trusted": true,
+                "folders": [
+                  {
+                    "name": "eris",
+                    "path": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris"
+                  }
+                ]
+              },
+              "terminal": {
+                "active": "",
+                "terminals": [
+                  "powershell"
+                ],
+                "outputAvailable": true,
+                "recent": []
+              },
+              "current": {
+                "available": true,
+                "path": "tasks",
+                "absolutePath": "tasks",
+                "languageId": "Log",
+                "version": 1,
+                "dirty": false,
+                "cursor": {
+                  "line": 1,
+                  "column": 1
+                },
+                "excerptStartLine": 1,
+                "excerpt": ""
+              },
+              "selection": {
+                "available": true,
+                "path": "tasks",
+                "empty": true,
+                "start": {
+                  "line": 1,
+                  "column": 1
+                },
+                "end": {
+                  "line": 1,
+                  "column": 1
+                },
+                "text": ""
+              },
+              "problems": {
+                "scope": "current",
+                "counts": {
+                  "error": 0,
+                  "warning": 0,
+                  "information": 0,
+                  "hint": 0
+                },
+                "truncated": false,
+                "items": []
+              },
+              "git": {
+                "available": true,
+                "root": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+                "branch": "main",
+                "detached": false,
+                "changes": [
+                  {
+                    "path": ".eris_home/memory/core/active_state_snapshot.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/agent_mind.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/anchor_journal.jsonl",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/anchor_state.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/inner_diary.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/inner_diary_residue.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/internal_agenda.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/living_user_episodes.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/living_user_trace.jsonl",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/living_user_turn_buffer.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/memory_feed_trace.jsonl",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/panel_snapshot.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/private_concerns.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_home/memory/core/private_life_state.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_state/agent_service.json",
+                    "status": 5
+                  },
+                  {
+                    "path": ".eris_state/life_horizon_v74.json",
+                    "status": 5
+                  },
+                  {
+                    "path": "_fullbuild.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/body/UdpListener.cs",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/body/udpListener.tscn",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/live2d_body/renderer.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/live2d_body/window_bridge.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/runtime/agent_harness/graph_builder.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/runtime/autonomous_loop_runtime.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/runtime/coordinator.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/runtime/runtime_settings_store.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/tests/test_live2d_body_switch.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vision.py",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vscode-extension/eris-vscode-0.16.2.vsix",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vscode-extension/media/eris-chat.js",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vscode-extension/package.json",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vscode-extension/src/erisClient.ts",
+                    "status": 5
+                  },
+                  {
+                    "path": "src/vscode-extension/src/serviceManager.ts",
+                    "status": 5
+                  },
+                  {
+                    "path": "run_eris_service.bat",
+                    "status": 7
+                  }
+                ],
+                "diff": "",
+                "diffTruncated": false
+              },
+              "openEditors": {
+                "count": 1,
+                "truncated": false,
+                "editors": [
+                  {
+                    "path": "src/vscode-extension/media/eris-chat.js",
+                    "active": false,
+                    "preview": false,
+                    "dirty": false,
+                    "pinned": false
+                  }
+                ]
+              },
+              "client": {
+                "name": "eris-vscode",
+                "sessionId": "vscode_0ca0050c-5aae-46f3-b7e4-d2c221b4e84e",
+                "capabilities": [
+                  "context.attachments.file",
+                  "context.attachments.image",
+                  "context.current",
+                  "context.git",
+                  "context.openEditors",
+                  "context.problems",
+                  "context.selection",
+                  "context.terminal.recent",
+                  "context.workspace",
+                  "editor.focusProblems",
+                  "editor.openDiff",
+                  "editor.openFile",
+                  "editor.showSourceControl"
+                ]
+              }
+            }
+          }
         }
       ],
+      "metadata": {
+        "source_turn_id": "",
+        "original_goal": "xin chào",
+        "source": "vscode",
+        "task_mode": "auto",
+        "autopilot": true,
+        "workspace_id": "eris",
+        "workspace_path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris",
+        "workspace_name": "eris",
+        "ide_capabilities": [
+          "context.attachments.file",
+          "context.attachments.image",
+          "context.current",
+          "context.git",
+          "context.openEditors",
+          "context.problems",
+          "context.selection",
+          "context.terminal.recent",
+          "context.workspace",
+          "editor.focusProblems",
+          "editor.openDiff",
+          "editor.openFile",
+          "editor.showSourceControl"
+        ]
+      }
+    },
+    {
+      "task_id": "task_495a655fcc58",
+      "thread_id": "thread_de2f4433-7461-4234-9eb4-29b3ab31ced2",
+      "session_id": "vscode_0ca0050c-5aae-46f3-b7e4-d2c221b4e84e",
+      "goal": "xin chào",
+      "clarified_goal": "xin chào",
+      "status": "queued",
+      "executor": "gemini-cli",
+      "model": "deepseek-v4-flash",
+      "created_at": 1787732883.7540727,
+      "updated_at": 1787732883.9448068,
+      "started_at": 0.0,
+      "finished_at": 0.0,
+      "current_step": 0,
+      "active_skills": [],
+      "changed_files": [],
+      "change_sets": [],
+      "tests": {
+        "passed": 0,
+        "failed": 0,
+        "summary": ""
+      },
+      "coding_state": {
+        "version": "coding_state.v1",
+        "objective": "xin chào",
+        "phase": "queued",
+        "current_action": "",
+        "current_file": "",
+        "files_inspected": [],
+        "files_modified": [],
+        "test_state": {
+          "status": "not_run",
+          "passed": 0,
+          "failed": 0,
+          "summary": ""
+        },
+        "blocker": "",
+        "waiting_for": "",
+        "next_action": "",
+        "last_tool": "",
+        "last_summary": "",
+        "updated_at": 1787732883.7540727
+      },
+      "checkpoint_id": "",
+      "checkpoint_count": 0,
+      "last_event_seq": 56,
+      "pending_interrupt": {},
+      "events": [
+        {
+          "event_id": "ae_6d7f9876f4c347",
+          "seq": 54,
+          "type": "supervisor_comment",
+          "actor": "eris",
+          "summary": "Tôi đang theo dõi task này. Nếu hướng thực thi phình, lặp lỗi hoặc vá trước khi hiểu root cause, tôi sẽ can thiệp.",
+          "detail": "",
+          "step": 0,
+          "importance": 0.58,
+          "created_at": 1787732883.769824,
+          "data": {}
+        },
+        {
+          "event_id": "ae_e0727db9604749",
+          "seq": 55,
+          "type": "user_message",
+          "actor": "user",
+          "summary": "xin chào",
+          "detail": "",
+          "step": 0,
+          "importance": 0.95,
+          "created_at": 1787732883.7818158,
+          "data": {
+            "content": "xin chào",
+            "thread_id": "thread_de2f4433-7461-4234-9eb4-29b3ab31ced2",
+            "session_id": "vscode_0ca0050c-5aae-46f3-b7e4-d2c221b4e84e",
+            "source": "vscode",
+            "attachments": []
+          }
+        },
+        {
+          "event_id": "ae_2e3e071344af4c",
+          "seq": 56,
+          "type": "cline_finished",
+          "actor": "cline",
+          "summary": "TypeError [ERR_INVALID_ARG_TYPE]: The \"path\" argument must be of type string. Received an instance of Array",
+          "detail": "",
+          "step": 0,
+          "importance": 0.95,
+          "created_at": 1787732883.9448068,
+          "data": {
+            "status": "failed",
+            "final": "TypeError [ERR_INVALID_ARG_TYPE]: The \"path\" argument must be of type string. Received an instance of Array"
+          }
+        }
+      ],
+      "controls": [],
       "metadata": {
         "source_turn_id": "",
         "original_goal": "xin chào",

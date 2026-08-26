@@ -387,6 +387,18 @@ class ActionExecutor:
     def _project_find_symbol(self, action_input: str) -> ActionExecutionResult:
         return self._execute_project("project_find_symbol", action_input)
 
+    def _project_semantic_search(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_semantic_search", action_input)
+
+    def _project_git_log(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_git_log", action_input)
+
+    def _project_dependency_summary(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_dependency_summary", action_input)
+
+    def _project_test_inventory(self, action_input: str) -> ActionExecutionResult:
+        return self._execute_project("project_test_inventory", action_input)
+
     def _project_git_diff(self, action_input: str) -> ActionExecutionResult:
         return self._execute_project("project_git_diff", action_input)
 

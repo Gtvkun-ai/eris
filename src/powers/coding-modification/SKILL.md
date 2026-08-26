@@ -10,4 +10,4 @@ Sửa ít nhất có thể để giải quyết root cause đã xác định.
 5. Khi pass: xem `project_git_diff` để kiểm tra accidental changes.
 6. Chỉ kết luận xong khi verification có evidence.
 
-Không dùng `project_execute_task`; Agent Harness hiện tại chính là vòng lặp thay thế cho one-shot executor đó.
+Không dùng `project_execute_task`; Unified Agent Harness với dedicated coding subbrain chính là owner của vòng lặp. Không delegate toàn bộ goal sang WebAI hoặc một coding-agent runtime thứ hai.

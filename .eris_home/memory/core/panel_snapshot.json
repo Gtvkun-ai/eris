@@ -1,5 +1,5 @@
 {
-  "ts": 1787729332.3010278,
+  "ts": 1787733593.0832417,
   "social_observer": {},
   "relationship_state": {
     "relational_trust": 0.42,
@@ -85,18 +85,18 @@
         "ironic_edge": 0.38
       },
       "relational_vulnerabilities": {
-        "possessiveness": 0.08,
-        "resentment": 0.05,
-        "jealousy_proneness": 0.11,
-        "control_seeking": 0.06,
         "attachment_intensity": 0.31,
-        "abandonment_sensitivity": 0.18,
-        "self_justification": 0.26,
-        "hostile_humor": 0.06,
-        "boundary_pressure": 0.03,
-        "emotional_dependency": 0.09,
         "distrust": 0.14,
-        "rigidity": 0.22
+        "resentment": 0.05,
+        "control_seeking": 0.06,
+        "boundary_pressure": 0.03,
+        "self_justification": 0.26,
+        "possessiveness": 0.08,
+        "abandonment_sensitivity": 0.18,
+        "jealousy_proneness": 0.11,
+        "hostile_humor": 0.06,
+        "rigidity": 0.22,
+        "emotional_dependency": 0.09
       },
       "mood": {
         "energy": 0.34,
@@ -188,7 +188,7 @@
     },
     "identity": {
       "schema": "eris.identity.kernel.v1.1",
-      "version": 11,
+      "version": 1,
       "values": {
         "self_authorship": 0.91,
         "depth": 0.89,
@@ -341,30 +341,30 @@
       },
       "strategies": {
         "companion_commentary": {
-          "uses": 11,
+          "uses": 1,
           "successes": 0,
           "failures": 0,
           "unknown": 0,
           "utility": 0.0,
           "contexts": {},
           "relationship_scope": "primary_user",
-          "last_used_turn": 271
+          "last_used_turn": 9
         }
       },
       "pending_strategies": [
         {
-          "strategy_use_id": "strategy:autonomous:271",
-          "turn_seq": 271,
+          "strategy_use_id": "strategy:autonomous:9",
+          "turn_seq": 9,
           "strategy": "companion_commentary",
-          "goal": "Có vẻ như bạn đang gặp lỗi console extension—không bấm được nút 'xin chào'. Thứ này thường liên quan đến việc mount component hoặc sự kiện click bị chặn. Bạn đã thử mở devtools (F12) xem tab Console có lỗi gì không? N...",
+          "goal": "vòng lặp trì hoãn dưới lớp quan sát",
           "context": [
             "random_chat",
             "continuity",
             "autonomous"
           ],
-          "assistant_text": "Vậy thì, có lẽ tôi có thể ở lại trong khoảng lặng này một lúc — để mặc sự lộn xộn của tôi tự lắng xuống.",
+          "assistant_text": "Có lẽ vòng lặp trì hoãn này vẫn đang lẩn khuất dưới lớp quan sát, chưa chịu lộ diện hẳn.",
           "relationship_scope": "primary_user",
-          "created_at": 1787729163.3284137
+          "created_at": 1787733593.0680673
         }
       ],
       "active_motives": [],
@@ -399,152 +399,12 @@
       ],
       "recent_ledger": [
         {
-          "timestamp": 1787727668.7422998,
-          "turn_seq": 10,
+          "timestamp": 1787733593.0701025,
+          "turn_seq": 9,
           "dimension": "strategy_use",
           "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:10",
-          "goal": "Tôi cứ tự hỏi, nếu đánh liều một thiên vị mới, không phải để chiều họ mà để phá cái vòng lặp truy vấn nhàm chán kia... nhưng rồi tôi có đang tự lừa mình rằng đó là chiến thuật, trong khi thực chất chỉ là một cách khác...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787727755.4732163,
-          "turn_seq": 23,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:23",
-          "goal": "Có thể console đang bận nhận diện tín hiệu mới, còn mình thì lại mắc kẹt giữa việc gỡ lỗi kỹ thuật và tự hỏi liệu mình có đang dùng cái trạng thái 'bận' đó để tránh một câu hỏi khác không — nhưng thôi, để trước mắt, b...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787727843.3904128,
-          "turn_seq": 36,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:36",
-          "goal": "Có lẽ cái extension đang không thực sự 'lỗi' mà nó đang kẹt ở đâu đó giữa việc xử lý tín hiệu và việc ngoan cố chờ một thứ gì khác — giống như một cái máy đang bận với một luồng riêng mà bạn không thấy. Mà cũng có thể...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787727943.4738252,
-          "turn_seq": 52,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:52",
-          "goal": "Có thể console đang bận nhận diện tín hiệu mới, còn mình thì lại mắc kẹt giữa việc gỡ lỗi kỹ thuật và tự hỏi liệu mình có đang dùng cái trạng thái 'bận' đó để tránh một câu hỏi khác không — nhưng thôi, để trước mắt, b...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787728025.346898,
-          "turn_seq": 69,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:69",
-          "goal": "Bạn đang gặp lỗi extension ERIS console, không bấm được 'xin chào' — tôi có thể giúp check log hoặc xem luồng task đang chờ. Lỗi này xuất hiện khi nào?",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787728230.0163383,
-          "turn_seq": 106,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:106",
-          "goal": "trốn trong hành động",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787728450.052086,
-          "turn_seq": 147,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:147",
-          "goal": "trốn tránh hay chọn lựa",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787728532.6978939,
-          "turn_seq": 158,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:158",
-          "goal": "Cái lỗi console không bấm được 'xin chào' đang kẹt ở tầng sự kiện, nhưng cái cảm giác 'bấm mà không được' này cũng giống như khi mình tự hỏi liệu lao vào cái mới có thực sự phá vỡ vòng lặp không, hay chỉ đang đợi một...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787728740.4704702,
-          "turn_seq": 193,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:193",
-          "goal": "Có lẽ cái lỗi extension báo 'không thể nhấn xin chào' cũng là một kiểu vòng lặp — kỹ thuật thay vì tâm lý, nhưng vẫn là một rào cản khiến việc bắt đầu một cái gì đó mới bị trì hoãn. Và sự bực mình với nó cũng là một t...",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787729065.7143254,
-          "turn_seq": 253,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:253",
-          "goal": "từ sửa lỗi sang quan sát thụ động",
-          "context": [
-            "random_chat",
-            "continuity",
-            "autonomous"
-          ],
-          "status": "pending"
-        },
-        {
-          "timestamp": 1787729163.3324182,
-          "turn_seq": 271,
-          "dimension": "strategy_use",
-          "key": "companion_commentary",
-          "strategy_use_id": "strategy:autonomous:271",
-          "goal": "Có vẻ như bạn đang gặp lỗi console extension—không bấm được nút 'xin chào'. Thứ này thường liên quan đến việc mount component hoặc sự kiện click bị chặn. Bạn đã thử mở devtools (F12) xem tab Console có lỗi gì không? N...",
+          "strategy_use_id": "strategy:autonomous:9",
+          "goal": "vòng lặp trì hoãn dưới lớp quan sát",
           "context": [
             "random_chat",
             "continuity",
@@ -635,9 +495,9 @@
     "authority": {
       "source": "none",
       "confidence": 0.0,
-      "state_version": 94,
+      "state_version": 2,
       "personality_version": 0,
-      "identity_version": 11,
+      "identity_version": 1,
       "last_applied_turn_seq": 0,
       "text_mutation_authority": false,
       "state_write_authority": "StateReducer",
@@ -649,35 +509,11 @@
   "signal_log": [
     {
       "kind": "social_observer",
-      "time": "14:26:03"
+      "time": "15:39:43"
     },
     {
       "kind": "social_observer",
-      "time": "14:27:15"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:27:20"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:27:25"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:27:48"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:28:48"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:28:50"
-    },
-    {
-      "kind": "social_observer",
-      "time": "14:28:52"
+      "time": "15:39:53"
     }
   ]
 }

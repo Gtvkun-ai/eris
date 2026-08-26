@@ -14,7 +14,7 @@ const ERIS_CONTAINER_ID = 'eris.sidebar';
 const ERIS_CONTAINER_COMMAND = `workbench.view.extension.${ERIS_CONTAINER_ID}`;
 
 /**
- * Mở Eris trong Primary Sidebar giống Cline.
+ * Mở Eris trong Primary Sidebar như một coding-agent panel độc lập.
  *
  * Activity Bar container là contribution native của VS Code nên icon Eris tồn
  * tại độc lập với backend. Service có chết thì UI vẫn mở và báo disconnected;

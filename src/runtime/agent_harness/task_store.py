@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 from .coding_state import initial_coding_state, merge_coding_state, normalize_coding_state
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _MAX_TASKS = 60
 _MAX_EVENTS_PER_TASK = 360
 _MAX_CONTROLS_PER_TASK = 80
@@ -92,8 +92,19 @@ class AgentTaskStore:
                     task.get("coding_state"),
                     objective=str(task.get("clarified_goal", "") or task.get("goal", "") or ""),
                 )
+                raw_team = task.get("coding_team") if isinstance(task.get("coding_team"), dict) else {}
+                metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+                task["coding_team"] = {
+                    "topology": str(raw_team.get("topology", metadata.get("team_topology", "")) or ""),
+                    "roles": [str(x) for x in (raw_team.get("roles") or []) if str(x or "").strip()][:8],
+                    "role": str(raw_team.get("role", "") or ""),
+                    "review_round": int(raw_team.get("review_round", 0) or 0),
+                    "artifacts": dict(raw_team.get("artifacts") or {}) if isinstance(raw_team.get("artifacts"), dict) else {},
+                    "last_findings": [dict(x) for x in (raw_team.get("last_findings") or []) if isinstance(x, dict)][:20],
+                }
                 raw_sets = task.get("change_sets") if isinstance(task.get("change_sets"), list) else []
                 task["change_sets"] = [dict(item) for item in raw_sets[-_MAX_CHANGESETS_PER_TASK:] if isinstance(item, dict)]
+                self._repair_terminal_status_locked(task)
 
             return {
                 "version": _SCHEMA_VERSION,
@@ -126,6 +137,26 @@ class AgentTaskStore:
             if str(task.get("task_id", "")) == key:
                 return task
         return None
+
+    def _repair_terminal_status_locked(self, task: dict[str, Any]) -> None:
+        if str(task.get("status", "") or "").strip().lower() in {"completed", "failed", "stopped"}:
+            return
+        for event in reversed(task.get("events", []) or []):
+            if not isinstance(event, dict):
+                continue
+            kind = str(event.get("type", "") or "").strip()
+            if kind == "task_completed":
+                task["status"] = "completed"
+                task["finished_at"] = float(event.get("created_at", 0.0) or task.get("finished_at", 0.0) or 0.0)
+                return
+            if kind == "task_failed":
+                task["status"] = "failed"
+                task["finished_at"] = float(event.get("created_at", 0.0) or task.get("finished_at", 0.0) or 0.0)
+                return
+            if kind == "task_stopped":
+                task["status"] = "stopped"
+                task["finished_at"] = float(event.get("created_at", 0.0) or task.get("finished_at", 0.0) or 0.0)
+                return
 
     def create_task(
         self,
@@ -165,6 +196,14 @@ class AgentTaskStore:
                 # State semantic nhỏ để VS Code/Eris main hiểu executor đang làm gì
                 # mà không phải parse stdout/tool JSON hay chạm chain-of-thought.
                 "coding_state": initial_coding_state(goal),
+                "coding_team": {
+                    "topology": str((metadata or {}).get("team_topology", "") or ""),
+                    "roles": [],
+                    "role": "",
+                    "review_round": 0,
+                    "artifacts": {},
+                    "last_findings": [],
+                },
                 "checkpoint_id": "",
                 "checkpoint_count": 0,
                 "last_event_seq": 0,
@@ -181,7 +220,7 @@ class AgentTaskStore:
     def update_task(self, task_id: str, **fields: Any) -> dict[str, Any] | None:
         allowed = {
             "goal", "clarified_goal", "status", "executor", "model", "started_at", "finished_at",
-            "current_step", "active_skills", "changed_files", "change_sets", "tests", "coding_state", "checkpoint_id",
+            "current_step", "active_skills", "changed_files", "change_sets", "tests", "coding_state", "coding_team", "checkpoint_id",
             "checkpoint_count", "metadata", "thread_id", "session_id", "pending_interrupt", "last_event_seq",
         }
         with self._lock:
@@ -197,6 +236,12 @@ class AgentTaskStore:
                     value = normalize_coding_state(
                         value, objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
                     )
+                elif key == "coding_team":
+                    current = task.get("coding_team") if isinstance(task.get("coding_team"), dict) else {}
+                    incoming = value if isinstance(value, dict) else {}
+                    merged = dict(current)
+                    merged.update(incoming)
+                    value = merged
                 task[key] = value
             task["updated_at"] = self._now()
             self._save_locked()
@@ -285,6 +330,37 @@ class AgentTaskStore:
             task["status"] = "stopped"
             task["finished_at"] = now
             task["coding_state"] = merge_coding_state(task.get("coding_state"), {"phase": "stopped", "current_action": "", "waiting_for": ""})
+        elif kind == "coding_team_selected":
+            team = dict(task.get("coding_team") or {})
+            roles = [str(x) for x in (data.get("roles") or []) if str(x or "").strip()][:8]
+            team.update({
+                "topology": str(data.get("topology", team.get("topology", "")) or ""),
+                "roles": roles,
+                "role": roles[0] if roles else str(team.get("role", "") or ""),
+            })
+            task["coding_team"] = team
+        elif kind == "team_handoff":
+            team = dict(task.get("coding_team") or {})
+            artifacts = dict(team.get("artifacts") or {}) if isinstance(team.get("artifacts"), dict) else {}
+            source = str(data.get("from", "") or "").strip()
+            artifact = str(data.get("artifact", "") or "").strip()
+            if source and artifact:
+                artifacts[source] = self._compact_text(artifact, 8000)
+            team.update({
+                "role": str(data.get("to", team.get("role", "")) or ""),
+                "review_round": int(data.get("review_round", team.get("review_round", 0)) or 0),
+                "artifacts": artifacts,
+            })
+            findings = data.get("findings") if isinstance(data.get("findings"), list) else []
+            if findings:
+                team["last_findings"] = [dict(x) if isinstance(x, dict) else {"message": str(x)} for x in findings[:20]]
+            task["coding_team"] = team
+        elif kind == "team_review_changes_requested":
+            team = dict(task.get("coding_team") or {})
+            findings = data.get("findings") if isinstance(data.get("findings"), list) else []
+            team["last_findings"] = [dict(x) if isinstance(x, dict) else {"message": str(x)} for x in findings[:20]]
+            team["review_round"] = int(data.get("review_round", team.get("review_round", 0)) or 0)
+            task["coding_team"] = team
         elif kind == "permission_requested":
             task["status"] = "waiting_permission"
             task["pending_interrupt"] = dict(data or {})
@@ -402,6 +478,7 @@ class AgentTaskStore:
                 "coding_state": normalize_coding_state(
                     task.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
                 ),
+                "coding_team": dict(task.get("coding_team") or {}),
                 "checkpoint_id": str(task.get("checkpoint_id", "") or ""),
                 "checkpoint_count": int(task.get("checkpoint_count", 0) or 0),
             }
@@ -436,6 +513,8 @@ class AgentTaskStore:
             task["coding_state"] = normalize_coding_state(
                 projection.get("coding_state"), objective=str(task.get("clarified_goal", "") or task.get("goal", "") or "")
             )
+            if isinstance(projection.get("coding_team"), dict):
+                task["coding_team"] = dict(projection.get("coding_team") or {})
             task["checkpoint_id"] = str(checkpoint_id or projection.get("checkpoint_id", "") or "")
             # Count is historical, so never decrease it during rollback.
             task["checkpoint_count"] = max(

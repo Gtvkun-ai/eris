@@ -1067,10 +1067,10 @@ class AIChatOrchestrator:
                     "goal": str(agent_execution_route.get("goal", "") or "")[:1600],
                     "reason": str(agent_execution_route.get("reason", "") or ""),
                     "rule": (
-                        "A backstage Gemini/LangGraph inspect-only consultation has started. Acknowledge briefly; do not claim it changed files. "
+                        "A backstage Eris coding-subbrain inspect-only consultation has started. Acknowledge briefly; do not claim it changed files. "
                         "The Agent Console shows live evidence and Eris remains the frontstage speaker."
                         if is_consult else
-                        "A backstage Gemini/LangGraph execution task has been started in parallel. "
+                        "A backstage Eris coding-subbrain execution task has been started in parallel. "
                         "Acknowledge briefly and honestly; do not claim completion yet. The Agent Console shows live progress. "
                         "Do not launch a duplicate runtime capability for the same multi-step task."
                     ),

@@ -4,7 +4,7 @@
 The registry says which concrete capabilities exist.  This module answers the
 more useful operational question: what can Eris do *now*, how long will it take,
 how risky/reversible is it, does it require a workspace, and should Eris do it
-natively or delegate it to Gemini/LangGraph.
+natively or route it through the dedicated coding subbrain/Agent Harness.
 """
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ class CapabilitySelfModel:
                 executor="eris",
                 matched_skills=matched_skills,
                 clarification=(
-                    "Chốt nhánh chính trước khi giao Gemini: hành vi/chức năng cần đạt, kiến trúc bên trong, "
+                    "Chốt nhánh chính trước khi giao coding subbrain: hành vi/chức năng cần đạt, kiến trúc bên trong, "
                     "hiệu năng, hay giao diện/trải nghiệm. Nếu hội thoại đã có các phương án cụ thể thì hỏi bằng "
                     "2-4 lựa chọn đó, không hỏi chung chung."
                 ),
@@ -307,7 +307,7 @@ class CapabilitySelfModel:
                     reason="long_executor_unavailable",
                     confidence=0.95,
                     estimated_time="unavailable",
-                    executor="gemini/langgraph",
+                    executor="official-api-coding/langgraph",
                     can_modify=True,
                     matched_skills=matched_skills,
                 )
@@ -316,7 +316,7 @@ class CapabilitySelfModel:
                 reason="multi_step_technical_execution",
                 confidence=0.90 if specific or has_long_scope else 0.80,
                 estimated_time="minutes",
-                executor="gemini/langgraph",
+                executor="official-api-coding/langgraph",
                 can_modify=True,
                 matched_skills=matched_skills,
             )
@@ -335,7 +335,7 @@ class CapabilitySelfModel:
                 reason="technical_backstage_consult",
                 confidence=0.80 if specific else 0.72,
                 estimated_time="seconds to minutes",
-                executor="gemini/langgraph",
+                executor="official-api-coding/langgraph",
                 can_modify=False,
                 matched_skills=matched_skills,
             )

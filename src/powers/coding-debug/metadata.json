@@ -17,6 +17,7 @@
     "read_current_error",
     "inspect_runtime_log",
     "project_search_text",
+    "project_semantic_search",
     "project_find_symbol",
     "project_read_file",
     "project_run_tests",

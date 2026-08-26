@@ -20,7 +20,8 @@
     "project_rollback",
     "project_package_patch",
     "project_read_file",
-    "project_search_text"
+    "project_search_text",
+    "project_semantic_search"
   ],
   "mode": "long",
   "latency": "minutes",

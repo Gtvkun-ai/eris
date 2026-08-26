@@ -37,6 +37,12 @@ class AgentState(TypedDict, total=False):
     resolved_targets: List[dict[str, Any]]
     context_confidence: float
     inspection_evidence: List[dict[str, Any]]
+    # Role-specialized coding team state (GitPilot-inspired topology).
+    team_topology: str
+    team_role: str
+    team_artifacts: dict[str, Any]
+    team_handoff_pending: bool
+    review_rounds: int
     completion_gate_retry: bool
     completion_gate_attempts: int
     status: str

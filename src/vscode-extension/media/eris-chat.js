@@ -190,9 +190,9 @@ function scheduleMarkdown(entry){
 
 /* Semantic labels: UI hiển thị hành động con người hiểu, không hiển thị RPC. */
 const TOOL_LABELS={
-  project_list_files:'Đọc cấu trúc dự án',project_read_file:'Đọc file',project_search_text:'Tìm trong code',project_find_symbol:'Tìm symbol',project_git_diff:'Kiểm tra thay đổi Git',project_apply_patch:'Áp dụng thay đổi',project_run_tests:'Chạy kiểm thử',project_run_command:'Chạy lệnh dự án',editor_open_file:'Mở file trong VS Code',editor_open_diff:'Mở diff',editor_focus_problems:'Mở Problems',editor_show_source_control:'Mở Source Control',ide_get_current_file:'Đọc file hiện tại',ide_get_selection:'Đọc vùng chọn',ide_get_problems:'Đọc lỗi và cảnh báo',ide_get_git_state:'Đọc trạng thái Git',ide_get_terminal_recent:'Đọc terminal gần nhất',ide_get_open_editors:'Đọc các tab đang mở',ide_get_workspace_info:'Đọc workspace',search_capabilities:'Tìm capability phù hợp',activate_skill:'Nạp skill cần thiết',ask_user_choice:'Chờ quyết định của bạn'
+  project_list_files:'Đọc cấu trúc dự án',project_read_file:'Đọc file',project_search_text:'Tìm trong code',project_find_symbol:'Tìm symbol',project_semantic_search:'Tìm code theo ngữ nghĩa',project_git_log:'Đọc lịch sử Git',project_dependency_summary:'Đọc dependency',project_test_inventory:'Kiểm kê test suite',project_git_diff:'Kiểm tra thay đổi Git',project_apply_patch:'Áp dụng thay đổi',project_run_tests:'Chạy kiểm thử',project_run_command:'Chạy lệnh dự án',editor_open_file:'Mở file trong VS Code',editor_open_diff:'Mở diff',editor_focus_problems:'Mở Problems',editor_show_source_control:'Mở Source Control',ide_get_current_file:'Đọc file hiện tại',ide_get_selection:'Đọc vùng chọn',ide_get_problems:'Đọc lỗi và cảnh báo',ide_get_git_state:'Đọc trạng thái Git',ide_get_terminal_recent:'Đọc terminal gần nhất',ide_get_open_editors:'Đọc các tab đang mở',ide_get_workspace_info:'Đọc workspace',search_capabilities:'Tìm capability phù hợp',activate_skill:'Nạp skill cần thiết',ask_user_choice:'Chờ quyết định của bạn'
 };
-const KIND_LABELS={agent_plan:'Lập kế hoạch thực thi',skill_search:'Tìm capability phù hợp',skill_activated:'Nạp skill cần thiết',checkpoint_created:'Tạo checkpoint',checkpoint_restored:'Khôi phục checkpoint',repository_context_started:'Đọc và lập bản đồ repository',repository_context_ready:'Hiểu cấu trúc repository',context_gate_blocked:'Bổ sung ngữ cảnh trước khi sửa',completion_gate_blocked:'Xác minh thay đổi trước khi hoàn tất',supervisor_comment:'Eris rà lại hướng thực thi',supervisor_advisory:'Eris rà lại hướng thực thi',supervisor_redirect:'Eris đổi hướng thực thi',supervisor_veto:'Eris chặn hướng không phù hợp',task_paused:'Task đã tạm dừng',task_resumed:'Task đang tiếp tục',rollback_requested:'Khôi phục thay đổi',rollback_queued:'Khôi phục thay đổi',rollback_failed:'Khôi phục thất bại'};
+const KIND_LABELS={agent_plan:'Lập kế hoạch thực thi',skill_search:'Tìm capability phù hợp',skill_activated:'Nạp skill cần thiết',checkpoint_created:'Tạo checkpoint',checkpoint_restored:'Khôi phục checkpoint',repository_context_started:'Đọc và lập bản đồ repository',repository_context_ready:'Hiểu cấu trúc repository',coding_team_selected:'Lập coding team',team_handoff:'Chuyển giao specialist',team_plan_ready:'Planner chốt kế hoạch',team_review_changes_requested:'Reviewer yêu cầu sửa thêm',team_handoff_rejected:'Handoff bị chặn',context_gate_blocked:'Bổ sung ngữ cảnh trước khi sửa',completion_gate_blocked:'Xác minh thay đổi trước khi hoàn tất',supervisor_comment:'Eris rà lại hướng thực thi',supervisor_advisory:'Eris rà lại hướng thực thi',supervisor_redirect:'Eris đổi hướng thực thi',supervisor_veto:'Eris chặn hướng không phù hợp',task_paused:'Task đã tạm dừng',task_resumed:'Task đang tiếp tục',rollback_requested:'Khôi phục thay đổi',rollback_queued:'Khôi phục thay đổi',rollback_failed:'Khôi phục thất bại'};
 function toolNameFromPayload(p){var d=p&&p.data&&typeof p.data==='object'?p.data:{};return String(d.tool||d.name||'').trim();}
 function semanticToolLabel(tool){return TOOL_LABELS[tool]||String(tool||'Công cụ').replace(/_/g,' ');}
 function cleanActivityText(value){
@@ -363,7 +363,7 @@ function getTaskGroup(taskId){
   var bubble=document.createElement('div');bubble.className='bubble';
   var controls=document.createElement('div');controls.className='task-controls';controls.style.display='none';
   controls.innerHTML='<button class="ctrl-btn" data-control="pause">Tạm dừng</button><button class="ctrl-btn" data-control="resume">Tiếp tục</button><button class="ctrl-btn" data-control="rollback">Khôi phục</button><button class="ctrl-btn" data-control="stop">Dừng</button>';
-  for(var btn of controls.querySelectorAll('[data-control]'))(function(b,k){b.onclick=function(){vscode.postMessage({type:'task.control',taskId:k,action:b.dataset.control});};})(btn,key);
+  for(var btn of controls.querySelectorAll('[data-control]'))(function(b,k){b.onclick=function(){requestTaskControl(k,b.dataset.control);};})(btn,key);
 
   body.append(role,plan,feed,issues,interruptHost,changes,bubble,controls);group.append(avatar,body);timeline.appendChild(group);
   var entry={
@@ -443,6 +443,28 @@ function updateActivitySummary(entry,label,status){
   entry.controlsEl.style.display=(done||failed)?'none':'flex';
   if(done||failed){entry.feedEl.open=false;for(var step of entry.planSteps.values())if(step.status==='running'||step.status==='pending')setPlanStep(entry,step.label,failed?'failed':'done');}
   /* Mặc định luôn đóng chi tiết. Người dùng chỉ mở khi họ muốn xem tool/trace. */
+}
+
+function applyLocalControlState(taskId,action){
+  taskId=String(taskId||activeTaskId||'');action=String(action||'').toLowerCase();
+  if(!taskId)return;
+  var entry=taskGroups.get(taskId);
+  if(action==='stop'){
+    if(entry)updateActivitySummary(entry,'Đã dừng','stopped');
+    syncSessionStatusFromEvent({taskId:taskId,threadId:activeThreadId},'stopped');
+    return;
+  }
+  if(action==='pause'){
+    if(entry)updateActivitySummary(entry,'Đã tạm dừng','paused');
+    syncSessionStatusFromEvent({taskId:taskId,threadId:activeThreadId},'paused');
+  }
+}
+
+function requestTaskControl(taskId,action){
+  taskId=String(taskId||activeTaskId||'');action=String(action||'').toLowerCase();
+  if(!taskId)return;
+  applyLocalControlState(taskId,action);
+  vscode.postMessage({type:'task.control',taskId:taskId,action:action});
 }
 
 function upsertOperation(entry,key,label,status,suffix,increment){
@@ -716,7 +738,7 @@ function updateComposerState(){
 }
 function resizeInput(){input.style.height='auto';input.style.height=Math.min(140,Math.max(40,input.scrollHeight))+'px';updateComposerState();}
 function send(){
-  if(isActiveTaskRunning()){var s=activeSession();var taskId=String(activeTaskId||(s&&s.taskId)||'');if(taskId)vscode.postMessage({type:'task.control',taskId:taskId,action:'stop'});return;}
+  if(isActiveTaskRunning()){var s=activeSession();var taskId=String(activeTaskId||(s&&s.taskId)||'');requestTaskControl(taskId,'stop');return;}
   var content=input.value.trim();var ids=[...attachmentState.keys()];if(!content&&!ids.length)return;var taskMode=planNextTurn?'plan':'auto';pendingTaskMode=taskMode;planNextTurn=false;syncPlanUi();stickToBottom=true;input.value='';resizeInput();hidePopovers();vscode.postMessage({type:'sendMessage',content:content,taskMode:taskMode,autopilot:autopilotEnabled,model:selectedModel,attachmentIds:ids,contextKeys:contextKeys()});
 }
 function hidePopovers(){menuPopover.classList.remove('visible');contextPopover.classList.remove('visible');modelPopover.classList.remove('visible');syncPlanUi();syncModelUi();}
@@ -797,6 +819,7 @@ window.addEventListener('message',function(ev){
   if(event.type==='composer.context'){composerContext=event.context&&typeof event.context==='object'?event.context:{};renderContextSummary();return;}
   if(event.type==='session.ready'){catalogTasks=Array.isArray(event.tasks)?event.tasks:catalogTasks;catalogSkills=Array.isArray(event.capabilities&&event.capabilities.brain&&event.capabilities.brain.skills?event.capabilities.brain.skills:null)?event.capabilities.brain.skills:catalogSkills;return;}
   if(event.type==='task.list'){catalogTasks=Array.isArray(event.tasks)?event.tasks:[];return;}
+  if(event.type==='task.control.ack'){var ackStatus=String(event.status||'').toLowerCase();if(['rejected','failed','not_found','unavailable'].includes(ackStatus))showNotice(event.reason||('Không thể '+String(event.action||'control')+' task'));else applyLocalControlState(event.taskId,event.action);return;}
   if(event.type==='thread.history'){renderHistory(event);return;}
   if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
   if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);if(activeTaskId){taskModes.set(activeTaskId,pendingTaskMode||'auto');var acceptedEntry=taskGroups.get(activeTaskId);if(acceptedEntry){acceptedEntry.taskMode=taskModes.get(activeTaskId)||'auto';acceptedEntry.planEl.style.display=acceptedEntry.taskMode==='plan'?'':'none';}}pendingTaskMode='auto';updateComposerState();return;}

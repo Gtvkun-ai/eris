@@ -1,7 +1,7 @@
 """Eris Spec Manager
 
 Spec-driven development tuong tu Kiro:
-- "plan: <feature>" -> Cline tao spec.md (requirements, design, tasks)
+- "plan: <feature>" -> coding Planner tao spec.md (requirements, design, tasks)
 - "exec spec: <name>" -> Eris execute tung task trong spec tuan tu
 
 Spec file format (.eris/specs/<name>.md):
@@ -107,16 +107,16 @@ def list_specs(workspace_path: str | Path) -> list[dict[str, Any]]:
 def create_spec(
     description: str,
     workspace_path: str | Path,
-    bridge: Any,
+    runner: Any,
     *,
     on_event: EventCallback | None = None,
 ) -> dict[str, Any]:
-    """Dung Cline de tao spec file tu description.
+    """Dung coding-team runner de tao spec file tu description.
 
     Args:
         description: Mo ta feature can lam
         workspace_path: Path den workspace
-        bridge: ClineBridgeClient instance
+        runner: object co ``run_task_blocking`` (AgentHarness adapter/team runner)
         on_event: Callback nhan events realtime
 
     Returns:
@@ -129,7 +129,7 @@ def create_spec(
     spec_name = _slugify(description)
     spec_path = specs_dir / f"{spec_name}.md"
 
-    # System prompt bao Cline tao spec file
+    # Planner contract tao spec file
     goal = f"""Create a spec file for the following feature: {description}
 
 Write the spec to: {spec_path}
@@ -159,7 +159,7 @@ Write ONLY the spec file. Do not implement anything yet."""
 
     task_id = f"spec_plan_{int(time.time())}"
 
-    result = bridge.run_task_blocking(
+    result = runner.run_task_blocking(
         task_id=task_id,
         goal=goal,
         workspace_path=str(workspace_path),
@@ -179,7 +179,7 @@ Write ONLY the spec file. Do not implement anything yet."""
 def execute_spec(
     spec_name: str,
     workspace_path: str | Path,
-    bridge: Any,
+    runner: Any,
     *,
     on_event: EventCallback | None = None,
     steering_context: str = "",
@@ -246,7 +246,7 @@ Spec context:
 
 Complete ONLY this specific task. Verify it works before finishing."""
 
-        result = bridge.run_task_blocking(
+        result = runner.run_task_blocking(
             task_id=task_id,
             goal=goal,
             workspace_path=str(workspace_path),

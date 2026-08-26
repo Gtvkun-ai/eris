@@ -52,6 +52,7 @@ class PermissionGate:
             "project_read_file": Permission.ALLOW,
             "project_search_text": Permission.ALLOW,
             "project_find_symbol": Permission.ALLOW,
+            "project_semantic_search": Permission.ALLOW,
             "project_git_diff": Permission.ALLOW,
             "project_apply_patch": Permission.ALLOW,
             "project_run_tests": Permission.ALLOW,

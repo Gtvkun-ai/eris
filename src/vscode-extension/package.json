@@ -113,7 +113,7 @@
         "eris.service.installRoot": {
           "type": "string",
           "default": "",
-          "description": "Thư mục cài Eris chứa run_eris.bat/run_eris.sh. Chỉ cần đặt một lần nếu auto-detect không thấy."
+          "description": "Thư mục cài Eris chứa run_eris_service.bat/run_eris.bat. Chỉ cần đặt một lần nếu auto-detect không thấy."
         },
         "eris.service.launchCommand": {
           "type": "string",

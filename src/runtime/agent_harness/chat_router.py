@@ -119,7 +119,7 @@ def classify_agent_chat_route(
 
     # Capability Self-Model gets first refusal after explicit commands.  This is
     # the layer that knows whether Eris should use a cheap native action, ask
-    # Gemini to inspect, or hand off a long-running execution task.
+    # the dedicated coding subbrain to inspect, or hand off a long-running coding task.
     assessment = None
     if self_model is not None:
         try:

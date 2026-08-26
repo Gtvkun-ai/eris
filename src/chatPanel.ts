@@ -8,7 +8,7 @@ import { TerminalContextObserver } from './terminalObserver';
 
 /**
  * Webview chính của Eris nằm trong View Container ở Primary Sidebar, cùng kiểu
- * bố trí với Cline. Activity Bar chỉ là lối vào; Webview vẫn chỉ render/gửi
+ * bố trí theo coding-agent sidebar. Activity Bar chỉ là lối vào; Webview vẫn chỉ render/gửi
  * intent, còn socket/file/terminal luôn nằm ở extension host.
  */
 export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposable {

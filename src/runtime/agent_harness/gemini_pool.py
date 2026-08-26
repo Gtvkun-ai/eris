@@ -8,7 +8,7 @@ Pool endpoints (default):
     http://127.0.0.1:8082  <- account 2
     http://127.0.0.1:8083  <- account 3
 
-Usage (in cline_bridge_client.py or coordinator.py):
+Usage (debug/compatibility only):
     from runtime.agent_harness.gemini_pool import GeminiPool
     pool = GeminiPool()
     base_url, model = pool.next()

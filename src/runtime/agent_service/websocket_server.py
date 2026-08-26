@@ -48,6 +48,7 @@ class AgentWebSocketService:
         start_task: Callable[..., dict[str, Any]],
         resume_task: Callable[..., dict[str, Any]],
         control_task: Callable[..., dict[str, Any]] | None = None,
+        chat_message: Callable[..., dict[str, Any]] | None = None,
         capability_catalog: Callable[[], dict[str, Any]] | None = None,
         ide_rpc: Any = None,
         host: str = "127.0.0.1",
@@ -60,6 +61,7 @@ class AgentWebSocketService:
         self.start_task = start_task
         self.resume_task = resume_task
         self.control_task = control_task
+        self.chat_message = chat_message
         self.capability_catalog = capability_catalog
         self.ide_rpc = ide_rpc
         self.host = "127.0.0.1" if str(host or "").strip() not in {"127.0.0.1", "localhost", "::1"} else str(host)
@@ -350,7 +352,8 @@ class AgentWebSocketService:
                 })
                 return
 
-            started = self.start_task(
+            turn_handler = self.chat_message if callable(self.chat_message) else self.start_task
+            started = turn_handler(
                 content,
                 thread_id=thread_id,
                 session_id=client.session_id,

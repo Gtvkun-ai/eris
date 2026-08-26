@@ -32,7 +32,7 @@ from actions.contracts import ActionExecutionResult, ActionExecutionStatus
 from llm.json_sanitizer import extract_last_valid_json_object, strip_reasoning_envelope
 from runtime.workspace_manager import WorkspaceManager, extract_workspace_source
 
-PROJECT_OPERATIONS_VERSION = "project_operations.v1.2"
+PROJECT_OPERATIONS_VERSION = "project_operations.v1.3"
 
 
 _READ_ONLY_PROJECT_CAPABILITIES = frozenset({
@@ -40,6 +40,10 @@ _READ_ONLY_PROJECT_CAPABILITIES = frozenset({
     "project_read_file",
     "project_search_text",
     "project_find_symbol",
+    "project_semantic_search",
+    "project_git_log",
+    "project_dependency_summary",
+    "project_test_inventory",
     "project_git_diff",
     "workspace_list",
     "workspace_switch",
@@ -166,6 +170,15 @@ PROJECT_CAPABILITY_CONTRACTS: dict[str, ProjectCapabilityContract] = {
     "project_semantic_search": ProjectCapabilityContract(
         "project_semantic_search", "tìm kiếm ngữ nghĩa", "truy vấn AST vector bằng ngôn ngữ tự nhiên (LanceDB)", "project.semantic_search", "low"
     ),
+    "project_git_log": ProjectCapabilityContract(
+        "project_git_log", "đọc lịch sử Git", "đọc commit history gần đây để hiểu ý định và vùng code đang tiến hóa", "project.git_log", "low"
+    ),
+    "project_dependency_summary": ProjectCapabilityContract(
+        "project_dependency_summary", "đọc dependency project", "tóm tắt dependency manifests mà không kéo lockfile khổng lồ vào context", "project.dependency_summary", "low"
+    ),
+    "project_test_inventory": ProjectCapabilityContract(
+        "project_test_inventory", "kiểm kê test suite", "liệt kê test/config liên quan để Planner biết verification surface trước khi sửa", "project.test_inventory", "low"
+    ),
     "project_git_diff": ProjectCapabilityContract(
         "project_git_diff", "xem diff project", "đọc git diff hiện tại", "project.git_diff", "low"
     ),
@@ -246,12 +259,17 @@ class ProjectOperationsRuntime:
                     self.logger.debug("Không bind được workspace manager vào owner: %s", exc)
         self._lock = threading.RLock()
         self._audit: deque[ProjectActionResult] = deque(maxlen=max(30, int(max_audit)))
+        self._semantic_indexer = None
+        self._semantic_indexer_root = ""
         self._handlers: dict[str, Callable[[str, str], ProjectActionResult]] = {
             "project_list_files": self._list_files,
             "project_read_file": self._read_file,
             "project_search_text": self._search_text,
             "project_find_symbol": self._find_symbol,
             "project_semantic_search": self._semantic_search,
+            "project_git_log": self._git_log,
+            "project_dependency_summary": self._dependency_summary,
+            "project_test_inventory": self._test_inventory,
             "project_git_diff": self._git_diff,
             "project_apply_patch": self._apply_patch,
             "project_run_tests": self._run_tests,
@@ -294,8 +312,20 @@ class ProjectOperationsRuntime:
             return False, "active_workspace_required"
         if not root.exists() or not root.is_dir():
             return False, "active_workspace_unavailable"
-        if cap in {"project_git_diff", "project_apply_patch"} and shutil.which("git") is None:
+        if cap in {"project_git_diff", "project_git_log", "project_apply_patch"} and shutil.which("git") is None:
             return False, "git_executable_missing"
+        if cap == "project_semantic_search":
+            # Do not advertise Continue-style semantic retrieval when its optional
+            # stack is absent. A visible tool that deterministically ImportErrors
+            # is worse than no tool because it teaches the agent false affordances.
+            import importlib.util
+            required = (
+                "lancedb", "pyarrow", "sentence_transformers", "tree_sitter",
+                "tree_sitter_python", "tree_sitter_javascript", "tree_sitter_typescript",
+            )
+            missing = [name for name in required if importlib.util.find_spec(name) is None]
+            if missing:
+                return False, "semantic_dependencies_missing:" + ",".join(missing)
         return True, "autonomous_workspace_runtime_ready"
 
     def execute(self, capability_id: str, action_input: str = "") -> ProjectActionResult:
@@ -539,16 +569,19 @@ class ProjectOperationsRuntime:
         return result
 
     def _get_semantic_indexer(self) -> Any:
-        if getattr(self, "_semantic_indexer", None) is None:
+        root = self._active_project_root()
+        if not root:
+            raise RuntimeError("Chưa có active workspace để index.")
+        resolved_root = str(Path(root).resolve())
+        if getattr(self, "_semantic_indexer", None) is None or getattr(self, "_semantic_indexer_root", "") != resolved_root:
             try:
                 from runtime.agent_harness.semantic_indexer import SemanticIndexer
             except ImportError as e:
                 raise RuntimeError(f"Lỗi nạp SemanticIndexer: {e}. Cần pip install lancedb tree-sitter sentence-transformers")
-            
-            root = self._active_project_root()
-            if not root:
-                raise RuntimeError("Chưa có active workspace để index.")
-            self._semantic_indexer = SemanticIndexer(str(root))
+            # Semantic state is workspace-scoped. Reusing an indexer after a
+            # workspace switch leaks stale code context across repositories.
+            self._semantic_indexer = SemanticIndexer(resolved_root)
+            self._semantic_indexer_root = resolved_root
         return self._semantic_indexer
 
     def _semantic_search(self, operation_id: str, action_input: str) -> ProjectActionResult:
@@ -560,16 +593,243 @@ class ProjectOperationsRuntime:
         
         limit = max(1, min(int(payload.get("limit", 5) or 5), 20))
         indexer = self._get_semantic_indexer()
-        
-        if payload.get("reindex", False):
+
+        # First use must be useful without requiring the model to discover a
+        # magic reindex flag. Subsequent calls remain incremental and cheap.
+        if payload.get("reindex", False) or not indexer.is_ready():
             indexer.index_workspace(force=False)
-            
+
         results = indexer.search(query, limit=limit)
         
         evidence = (self._evidence(_hash_id("semantic_search", query), "project_semantic_search", f"query={query[:50]}"),)
         return self._success(operation_id, "project_semantic_search", started,
             f"Tìm thấy {len(results)} đoạn code liên quan.", evidence,
             {"verification_key": "project_semantic_search", "query": query, "results": results})
+
+    def _git_log(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        """Read a bounded commit history; Explorer uses this to recover repository intent."""
+        started = time.time(); payload = _parse_payload(action_input)
+        limit = max(1, min(int(payload.get("limit", 20) or 20), 100))
+        path_value = str(payload.get("path", "") or "").strip()
+        args = [
+            "git", "-C", str(self._project_root()), "log", "--no-color", "--decorate=short",
+            "--date=short", f"--max-count={limit}",
+            "--pretty=format:%h%x09%ad%x09%an%x09%d%x09%s",
+        ]
+        rel_path = ""
+        if path_value:
+            path = self._guard().resolve(path_value, must_exist=True)
+            rel_path = self._guard().relative(path)
+            args.extend(["--", rel_path])
+        completed = self._run_process(args, timeout=20)
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr or completed.stdout or "git log failed")
+        commits: list[dict[str, str]] = []
+        for raw in (completed.stdout or "").splitlines()[:limit]:
+            parts = raw.split("\t", 4)
+            if not parts or not parts[0].strip():
+                continue
+            while len(parts) < 5:
+                parts.append("")
+            commits.append({
+                "hash": parts[0].strip(), "date": parts[1].strip(), "author": parts[2].strip(),
+                "refs": parts[3].strip(), "subject": parts[4].strip(),
+            })
+        evidence = (self._evidence(
+            _hash_id("git_log", json.dumps(commits, ensure_ascii=False, sort_keys=True)),
+            "project_git_log", f"commits={len(commits)} path={rel_path or '*'}",
+        ),)
+        return self._success(
+            operation_id, "project_git_log", started,
+            f"Tôi đã đọc {len(commits)} commit gần nhất" + (f" cho {rel_path}." if rel_path else "."),
+            evidence,
+            {"verification_key": "project_git_log", "commits": commits, "count": len(commits), "path": rel_path},
+        )
+
+    def _dependency_summary(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        """Summarize dependency manifests without flooding context with generated lockfiles."""
+        started = time.time(); payload = _parse_payload(action_input)
+        limit = max(1, min(int(payload.get("limit", 80) or 80), 300))
+        all_files = self._iter_files()
+        candidates = [
+            rel for rel in all_files
+            if self._is_dependency_manifest(rel)
+        ][:40]
+        manifests: list[dict[str, Any]] = []
+        remaining = limit
+        for rel in candidates:
+            if remaining <= 0:
+                break
+            path = self._guard().resolve(rel, must_exist=True)
+            names = self._dependency_names_from_manifest(path, remaining)
+            remaining -= len(names)
+            manifests.append({"path": rel, "dependencies": names, "count": len(names)})
+        flattened = [name for item in manifests for name in item.get("dependencies", [])]
+        evidence = (self._evidence(
+            _hash_id("dependency_summary", json.dumps(manifests, ensure_ascii=False, sort_keys=True)),
+            "project_dependency_summary", f"manifests={len(manifests)} dependencies={len(flattened)}",
+        ),)
+        return self._success(
+            operation_id, "project_dependency_summary", started,
+            f"Tôi đã đọc {len(manifests)} dependency manifest và tóm tắt {len(flattened)} dependency.",
+            evidence,
+            {"verification_key": "project_dependency_summary", "manifests": manifests,
+             "dependencies": flattened, "manifest_count": len(manifests), "dependency_count": len(flattened)},
+        )
+
+    def _test_inventory(self, operation_id: str, action_input: str) -> ProjectActionResult:
+        """Return a bounded test surface instead of executing arbitrary discovery commands."""
+        started = time.time(); payload = _parse_payload(action_input)
+        limit = max(1, min(int(payload.get("limit", 300) or 300), 1200))
+        files = self._iter_files()
+        test_files = [rel for rel in files if self._looks_like_test_file(rel)][:limit]
+        config_names = {
+            "pytest.ini", "tox.ini", "noxfile.py", "jest.config.js", "jest.config.ts", "jest.config.cjs",
+            "vitest.config.js", "vitest.config.ts", "playwright.config.js", "playwright.config.ts",
+            "phpunit.xml", "phpunit.xml.dist", "karma.conf.js", "testthat.R",
+        }
+        configs = [
+            rel for rel in files
+            if Path(rel).name.lower() in {name.lower() for name in config_names}
+            or Path(rel).name.lower() in {"pyproject.toml", "package.json", "project.godot", "cargo.toml", "go.mod"}
+        ][:80]
+        frameworks = self._infer_test_frameworks(configs, files)
+        evidence = (self._evidence(
+            _hash_id("test_inventory", json.dumps({"tests": test_files, "configs": configs}, sort_keys=True)),
+            "project_test_inventory", f"tests={len(test_files)} configs={len(configs)} frameworks={','.join(frameworks)}",
+        ),)
+        return self._success(
+            operation_id, "project_test_inventory", started,
+            f"Tôi đã kiểm kê {len(test_files)} test file và {len(configs)} test/config manifest.",
+            evidence,
+            {"verification_key": "project_test_inventory", "test_files": test_files, "count": len(test_files),
+             "configs": configs, "frameworks": frameworks},
+        )
+
+    @staticmethod
+    def _is_dependency_manifest(rel: str) -> bool:
+        name = Path(rel).name.lower()
+        if name in {
+            "pyproject.toml", "setup.py", "setup.cfg", "pipfile", "poetry.lock", "uv.lock",
+            "package.json", "pnpm-workspace.yaml", "cargo.toml", "go.mod", "pom.xml",
+            "build.gradle", "build.gradle.kts", "gradle.properties", "composer.json", "gemfile",
+            "project.godot",
+        }:
+            return True
+        if name.startswith("requirements") and name.endswith((".txt", ".in")):
+            return True
+        return name.endswith((".csproj", ".fsproj", ".vbproj"))
+
+    @staticmethod
+    def _looks_like_test_file(rel: str) -> bool:
+        normalized = rel.replace("\\", "/").lower()
+        name = Path(normalized).name
+        parts = set(Path(normalized).parts)
+        if parts.intersection({"tests", "test", "__tests__", "spec", "specs"}):
+            return True
+        return bool(re.search(
+            r"(^test_.*\.py$|.*_test\.py$|.*\.(test|spec)\.(js|jsx|ts|tsx)$|.*_test\.(go|rs)$|.*tests?\.cs$|test_.*\.gd$)",
+            name,
+        ))
+
+    @staticmethod
+    def _dependency_names_from_manifest(path: Path, limit: int) -> list[str]:
+        if limit <= 0:
+            return []
+        name = path.name.lower()
+        text = path.read_text(encoding="utf-8", errors="replace")[:250000]
+        found: list[str] = []
+
+        def add(value: str) -> None:
+            token = str(value or "").strip()
+            if token and token not in found and len(found) < limit:
+                found.append(token)
+
+        if name == "package.json" or name == "composer.json":
+            try:
+                data = json.loads(text)
+            except Exception:
+                data = {}
+            for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "require", "require-dev"):
+                values = data.get(section, {}) if isinstance(data, dict) else {}
+                if isinstance(values, dict):
+                    for dep in values:
+                        add(dep)
+            return found
+        if name == "pyproject.toml":
+            try:
+                import tomllib
+                data = tomllib.loads(text)
+            except Exception:
+                data = {}
+            project = data.get("project", {}) if isinstance(data, dict) else {}
+            for item in project.get("dependencies", []) if isinstance(project, dict) else []:
+                add(re.split(r"[<>=!~;\[ ]", str(item), maxsplit=1)[0])
+            optional = project.get("optional-dependencies", {}) if isinstance(project, dict) else {}
+            if isinstance(optional, dict):
+                for values in optional.values():
+                    for item in values if isinstance(values, list) else []:
+                        add(re.split(r"[<>=!~;\[ ]", str(item), maxsplit=1)[0])
+            tool = data.get("tool", {}) if isinstance(data, dict) else {}
+            poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
+            for section in ("dependencies", "dev-dependencies"):
+                values = poetry.get(section, {}) if isinstance(poetry, dict) else {}
+                if isinstance(values, dict):
+                    for dep in values:
+                        if dep.lower() != "python": add(dep)
+            return found
+        if name.startswith("requirements"):
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "-r", "--")):
+                    continue
+                add(re.split(r"[<>=!~;\[ ]", line, maxsplit=1)[0])
+            return found
+        if name == "cargo.toml":
+            section = ""
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    section = stripped.strip("[]").lower()
+                    continue
+                if "dependencies" in section and "=" in stripped and not stripped.startswith("#"):
+                    add(stripped.split("=", 1)[0].strip())
+            return found
+        if name == "go.mod":
+            for match in re.finditer(r"(?m)^\s*([\w.-]+\.[\w./-]+)\s+v\d", text):
+                add(match.group(1))
+            return found
+        if name.endswith((".csproj", ".fsproj", ".vbproj")):
+            for match in re.finditer(r"<PackageReference\s+Include=[\"']([^\"']+)", text, re.I):
+                add(match.group(1))
+            return found
+        if name == "pom.xml":
+            for match in re.finditer(r"<artifactId>([^<]+)</artifactId>", text):
+                add(match.group(1))
+            return found
+        if name.startswith("build.gradle"):
+            for match in re.finditer(r"(?:implementation|api|testImplementation|runtimeOnly)\s*[\( ]*[\"']([^:\"']+:[^:\"']+)", text):
+                add(match.group(1))
+            return found
+        # Generic manifests are still useful as evidence; return bounded lexical hints.
+        for match in re.finditer(r"(?m)^\s*[\"']?([A-Za-z0-9_.@/-]{2,80})[\"']?\s*[=:]", text):
+            add(match.group(1))
+        return found
+
+    @staticmethod
+    def _infer_test_frameworks(configs: Sequence[str], files: Sequence[str]) -> list[str]:
+        corpus = "\n".join(list(configs) + list(files[:2000])).lower()
+        checks = [
+            ("pytest", ("pytest.ini", "test_", "/tests/")),
+            ("jest", ("jest.config", ".test.ts", ".test.js", "__tests__")),
+            ("vitest", ("vitest.config",)),
+            ("playwright", ("playwright.config",)),
+            ("go test", ("_test.go",)),
+            ("cargo test", ("cargo.toml", "/tests/")),
+            ("dotnet test", (".csproj", "tests.cs")),
+            ("godot test", ("project.godot", "test_")),
+        ]
+        return [label for label, needles in checks if any(needle in corpus for needle in needles)]
 
     def _git_diff(self, operation_id: str, action_input: str) -> ProjectActionResult:
         started = time.time(); payload = _parse_payload(action_input)
@@ -1089,7 +1349,10 @@ class ProjectOperationsRuntime:
         service = getattr(self.owner, "llm_service", None)
         if service is None:
             return None
-        return getattr(service, "escalation_client", None) or getattr(service, "fallback_client", None) or getattr(service, "client", None)
+        # Coding has one explicit owner.  Legacy project_execute_task may still
+        # call this helper for compatibility, but it must never borrow another
+        # cognition lane implicitly.
+        return getattr(service, "coding_client", None)
 
     @staticmethod
     def _extract_response_text(response: Any) -> str:

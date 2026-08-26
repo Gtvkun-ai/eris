@@ -134,7 +134,7 @@ class RuntimeCoordinator(
         )
         # Agent Console là projection/control plane độc lập với cognition. Gắn bridge
         # ở composition root để Subject Core có thể comment/advisory/redirect/veto
-        # executor mà không phải import LangGraph hay biết schema tool của Gemini.
+        # executor mà không phải import LangGraph hay biết schema tool của coding subbrain.
         try:
             from runtime.agent_harness.task_store import AgentTaskStore
             from runtime.agent_harness.event_bus import AgentEventBus
@@ -160,9 +160,10 @@ class RuntimeCoordinator(
             if callable(debug):
                 debug("[agent-console] supervisor bridge unavailable: %s", exc)
 
-        # Agent Harness V2: Gemini chỉ quyết định tool call; side effect thật vẫn
-        # đi qua ActionExecutor/SandboxWorld. Import lazy để Eris vẫn boot được
-        # trên máy chưa cài optional LangGraph dependency.
+        # Unified Agent Harness: dedicated official-API coding subbrain owns every
+        # coding decision; side effects remain inside ActionExecutor/SandboxWorld.
+        # No WebAI or secondary coding-agent fallback may steal task ownership implicitly.
+        # Import lazy để Eris vẫn boot được trên máy chưa cài optional LangGraph.
         self.agent_harness = None
         self.agent_ws_service = None
         self.agent_ide_rpc = None
@@ -173,9 +174,8 @@ class RuntimeCoordinator(
         self.agent_default_workspace = ""
         if action_executor is not None:
             try:
-                import os
                 from pathlib import Path
-                from runtime.agent_harness.gemini_cli_executor import GeminiCliDecisionExecutor
+                from runtime.agent_harness.official_api_executor import OfficialApiDecisionExecutor
                 from runtime.agent_harness.graph_builder import AgentHarness
                 from runtime.agent_harness.native_tool_adapter import NativeCapabilityToolAdapter
 
@@ -189,26 +189,30 @@ class RuntimeCoordinator(
                 native_tools = NativeCapabilityToolAdapter(action_executor)
                 from runtime.agent_service.ide_rpc import IdeRpcBroker
                 self.agent_ide_rpc = IdeRpcBroker(self.agent_event_bus, logger=logger)
-                gemini = GeminiCliDecisionExecutor(
+
+                coding_client = getattr(llm_service, "coding_client", None)
+                if coding_client is None:
+                    raise RuntimeError("dedicated_coding_client_unavailable")
+                coding_executor = OfficialApiDecisionExecutor(
+                    coding_client,
                     workspace=workspace_root,
-                    model=os.environ.get("ERIS_GEMINI_AGENT_MODEL", "auto"),
                     logger=logger,
                 )
-                self.agent_executor_backend = gemini
+                self.agent_executor_backend = coding_executor
                 self.agent_harness = AgentHarness(
-                    gemini,
+                    coding_executor,
                     str(source_root / "powers"),
                     tool_registry=native_tools.registry(),
                     tool_specs=native_tools.tool_specs(),
                     task_store=self.agent_task_store,
                     event_bus=self.agent_event_bus,
-                    executor_name="gemini-cli",
-                    model_name=gemini.model,
+                    executor_name="official-api-coding",
+                    model_name=coding_executor.model,
                     workspace_scope=lambda ref: self.workspace_manager.scoped_active(ref),
                     ide_rpc=self.agent_ide_rpc,
                     logger=logger,
                 )
-                ok, reason = gemini.health()
+                ok, reason = coding_executor.health()
                 from runtime.agent_harness.capability_self_model import CapabilitySelfModel
                 self.agent_capability_self_model = CapabilitySelfModel(
                     harness=self.agent_harness,
@@ -217,7 +221,7 @@ class RuntimeCoordinator(
                 info = getattr(logger, "info", None)
                 if callable(info):
                     info(
-                        "[agent-harness] ready graph=langgraph executor=gemini-cli health=%s detail=%s skills=%s tools=%s",
+                        "[agent-harness] ready graph=langgraph executor=official-api-coding health=%s detail=%s skills=%s tools=%s",
                         ok, reason, len(self.agent_harness.discovery.capabilities), len(native_tools.agent_ids()),
                     )
                     info(
@@ -239,6 +243,7 @@ class RuntimeCoordinator(
                         start_task=self.start_agent_task_async,
                         resume_task=self.resume_agent_task_async,
                         control_task=self.control_agent_task,
+                        chat_message=self.start_vscode_user_turn,
                         capability_catalog=self._agent_ws_capability_catalog,
                         ide_rpc=self.agent_ide_rpc,
                         logger=logger,
@@ -260,9 +265,9 @@ class RuntimeCoordinator(
                 if callable(warn):
                     warn("[agent-harness] unavailable; VS Code bridge disabled: %s", exc, exc_info=True)
 
-        # Self-model tồn tại ngay cả khi Gemini CLI/LangGraph đang unavailable.
+        # Self-model tồn tại ngay cả khi coding Agent Harness đang unavailable.
         # Eris vẫn phải biết các native capability nhanh của chính mình thay vì
-        # suy ra "không làm được" chỉ vì backstage executor đang chết.
+        # suy ra "không làm được" chỉ vì coding lane đang chết.
         if self.agent_capability_self_model is None:
             try:
                 from runtime.agent_harness.capability_self_model import CapabilitySelfModel
@@ -273,23 +278,12 @@ class RuntimeCoordinator(
             except Exception:
                 self.agent_capability_self_model = None
 
-        # Cline Bridge — Phase A shadow mode.
-        # ClineBridgeClient chạy song song với graph_builder agent loop để so sánh.
-        # Khi bridge không có (Node.js chưa cài, dist/ chưa build), Eris vẫn boot bình thường.
-        self.cline_bridge: object | None = None
-        try:
-            from runtime.agent_harness.cline_bridge_client import ClineBridgeClient
-            self.cline_bridge = ClineBridgeClient(auto_start=False)  # manual start khi cần
-            info = getattr(logger, "info", None)
-            if callable(info):
-                info("[cline-bridge] client initialized (bridge not started yet — call cline_bridge._ensure_started())")
-        except Exception as exc:
-            debug = getattr(logger, "debug", None)
-            if callable(debug):
-                debug("[cline-bridge] client unavailable: %s", exc)
+        # No secondary coding-agent sidecar is constructed here.
+        # The official-API coding team owns Explorer -> Planner -> Coder -> Reviewer
+        # inside the same AgentHarness/checkpoint/permission spine.
 
     def _supervise_agent_event(self, event: dict) -> None:
-        """Deterministic first-line technical supervision for Gemini execution.
+        """Deterministic first-line technical supervision for coding-agent execution.
 
         This is intentionally narrow: only intervene on observable anti-patterns
         with low false-positive risk. Subject Core/model review can add richer
@@ -327,7 +321,7 @@ class RuntimeCoordinator(
 
         def _mark_once(key: str, instruction: str, reason: str, *, mode: str = "advisory") -> None:
             # Các anti-pattern kỹ thuật đã quan sát được phải tác động vào executor thật,
-            # không chỉ biến thành một dòng status đẹp mắt rồi bị Gemini phớt lờ.
+            # không chỉ biến thành một dòng status đẹp mắt rồi bị coding executor phớt lờ.
             if key in marks:
                 return
             marks.add(key)
@@ -341,8 +335,8 @@ class RuntimeCoordinator(
             except Exception:
                 marks.discard(key)
 
-        # Patch should follow evidence. If Gemini tries to write before it has
-        # inspected any project source, push it back toward root-cause work.
+        # Patch should follow evidence. If the coding subbrain tries to write before
+        # inspecting project evidence, push it back toward root-cause work.
         if event_type == "tool_started":
             tool = str((event.get("data") or {}).get("tool", "") if isinstance(event.get("data"), dict) else "")
             if tool == "project_apply_patch":
@@ -358,7 +352,7 @@ class RuntimeCoordinator(
                     _mark_once(
                         "patch_before_inspection",
                         "Dừng vá ngay. Đọc implementation/caller và evidence hiện có trước, rồi mới chọn patch nhỏ nhất.",
-                        "Gemini bắt đầu project_apply_patch trước khi có inspection evidence trong task.",
+                        "Coding subbrain bắt đầu project_apply_patch trước khi có inspection evidence trong task.",
                         mode="redirect",
                     )
 
@@ -399,7 +393,7 @@ class RuntimeCoordinator(
                 mode="redirect",
             )
 
-        # Close the autonomy loop: terminal Gemini work becomes fresh Eris context
+        # Close the autonomy loop: terminal coding-agent work becomes fresh Eris context
         # and wakes the self-turn loop. We do not make the executor speak directly;
         # Subject Core still owns wording/personality and can judge the result.
         if event_type in {"task_completed", "task_failed"}:
@@ -415,9 +409,9 @@ class RuntimeCoordinator(
                         f"[BACKSTAGE AGENT {status_label}]\n"
                         f"Task: {goal[:1200]}\n"
                         f"Result: {final_text[:6000]}\n"
-                        "This is fresh execution evidence from Gemini/LangGraph. Review it as Eris, "
+                        "This is fresh execution evidence from the Eris coding subbrain/Agent Harness. Review it as Eris, "
                         "then proactively tell the user the meaningful result when appropriate. "
-                        "Do not pretend you personally performed steps that were executed by Gemini."
+                        "Do not collapse frontstage identity into backstage execution; report the verified result, not invented steps."
                     )
                     append_history = getattr(self, "_append_chat_history", None)
                     if callable(append_history):
@@ -480,10 +474,11 @@ class RuntimeCoordinator(
         workspace_path: str = "",
         workspace_name: str = "",
         ide_context: dict | None = None,
+        model_name: str = "",
     ):
         """Run one Unified Agent Harness task synchronously.
 
-        Chat normally uses ``start_agent_task_async`` so Gemini execution never
+        Chat normally uses ``start_agent_task_async`` so coding API execution never
         blocks the public reply. Tests/CLI can still call this synchronous entry.
         """
         harness = getattr(self, "agent_harness", None)
@@ -520,6 +515,8 @@ class RuntimeCoordinator(
                 kwargs["workspace_path"] = str(workspace_path or "")
             if accepts_var_kwargs or "workspace_name" in parameters:
                 kwargs["workspace_name"] = str(workspace_name or "")
+            if accepts_var_kwargs or "model_name" in parameters:
+                kwargs["model_name"] = str(model_name or "")
         except (TypeError, ValueError):
             # C-extension/mock callables may not expose a signature. Real AgentHarness
             # does, so falling back to the legacy four arguments is safe here.
@@ -541,7 +538,7 @@ class RuntimeCoordinator(
         model: str = "",
         ide_context: dict | None = None,
     ) -> dict:
-        """Start Gemini/LangGraph in a daemon worker and return immediately.
+        """Start the official-API coding/LangGraph worker and return immediately.
 
         The task id is reserved before the thread starts, so the foreground
         writer and Agent Console can refer to one stable execution session.
@@ -555,7 +552,7 @@ class RuntimeCoordinator(
 
         # Snapshot workspace identity before the worker starts. The graph keeps
         # this lock for the whole task even if the user changes the panel's active
-        # workspace while Gemini is still running.
+        # workspace while the coding subbrain is still running.
         try:
             workspace = self._resolve_agent_workspace(workspace_ref)
         except Exception as exc:
@@ -581,22 +578,26 @@ class RuntimeCoordinator(
         resolved_thread = str(thread_id or source_turn_id or f"agent_{uuid.uuid4().hex[:12]}")
         self._agent_last_started_task_id = task_id
 
+        # Model identity is a task snapshot. Resolve it before touching the task
+        # store so even lightweight/tests without a store cannot race or inherit
+        # an uninitialized model variable.
+        model_name = str(getattr(harness, "model_name", "") or "")
+        requested_model = str(model or "").strip()
+        backend = getattr(harness, "llm", getattr(harness, "executor", None))
+        resolver = getattr(backend, "resolve_model", None)
+        if callable(resolver):
+            model_name = str(resolver(requested_model) or model_name)
+        elif requested_model and requested_model.lower() != "auto":
+            debug = getattr(getattr(self, "logger", None), "debug", None)
+            if callable(debug):
+                debug("[agent-harness] ignored task model override %s: backend is fixed", requested_model)
+
         # Reserve the task synchronously so Agent Console never races a just-
         # started worker and shows an empty screen for the first snapshot.
         store = getattr(self, "agent_task_store", None)
         if store is not None:
             try:
-                executor = str(getattr(harness, "executor_name", "gemini") or "gemini")
-                model_name = str(getattr(harness, "model_name", "") or "")
-                
-                if model:
-                    model_name = model
-                    # Backend hiện tại nằm ở harness.llm. Giữ tương thích với mock/
-                    # executor cũ nhưng không giả định thuộc tính ``executor`` tồn tại.
-                    backend = getattr(harness, "llm", getattr(harness, "executor", None))
-                    if backend is not None and hasattr(backend, "model"):
-                        backend.model = model
-                    harness.model_name = model
+                executor = str(getattr(harness, "executor_name", "official-api-coding") or "official-api-coding")
 
                 store.create_task(
                     clarified_goal or goal,
@@ -668,149 +669,25 @@ class RuntimeCoordinator(
 
         def _worker() -> None:
             try:
-                # --- Load steering files cho workspace ---
-                steering = ""
-                try:
-                    from runtime.agent_harness.steering_loader import load_steering
-                    steering = load_steering(workspace_path) if workspace_path else ""
-                except Exception as _se:
-                    pass
-
-                # --- Detect spec intent ---
-                spec_intent: str | None = None
-                spec_arg: str = ""
-                try:
-                    from runtime.agent_harness.spec_manager import detect_spec_intent
-                    spec_intent, spec_arg = detect_spec_intent(clarified_goal or goal)
-                except Exception:
-                    pass
-
-                # --- Build event relay cho Cline events ---
-                event_bus = getattr(self, "agent_event_bus", None)
-                store = getattr(self, "agent_task_store", None)
-
-                def _relay_cline_event(event: dict) -> None:
-                    """Chuyen Cline bridge event sang Eris agent event store."""
-                    try:
-                        etype = str(event.get("type", "") or "")
-                        payload = event.get("payload", {}) or {}
-
-                        if etype == "message.assistant.delta":
-                            delta = str(payload.get("delta", "") or "")
-                            # Bo qua JSON chunks tu Cline stream
-                            if delta and not delta.startswith("{"):
-                                if store:
-                                    store.append_event(
-                                        task_id, "assistant_delta",
-                                        actor="assistant", summary=delta[:200],
-                                        importance=0.3, data={"delta": delta},
-                                    )
-                        elif etype in ("task_completed", "task_failed"):
-                            final = str(payload.get("final", "") or "")
-                            ev_status = str(payload.get("status", etype) or etype)
-                            if event_bus:
-                                event_bus.emit(
-                                    task_id, "cline_finished",
-                                    actor="cline", summary=final[:300],
-                                    importance=0.95,
-                                    data={"status": ev_status, "final": final},
-                                )
-                        elif etype == "spec.task_start":
-                            if event_bus:
-                                event_bus.emit(
-                                    task_id, "spec_task_start",
-                                    actor="cline",
-                                    summary=f"[{payload.get('task_index')}/{payload.get('task_total')}] {payload.get('task_text', '')}",
-                                    importance=0.7,
-                                    data=payload,
-                                )
-                        elif etype == "spec.task_done":
-                            if event_bus:
-                                event_bus.emit(
-                                    task_id, "spec_task_done",
-                                    actor="cline",
-                                    summary=f"Done: {payload.get('task_text', '')[:120]}",
-                                    importance=0.8,
-                                    data=payload,
-                                )
-                    except Exception:
-                        pass
-
-                # --- Try Cline bridge first ---
-                bridge = getattr(self, "cline_bridge", None)
-                if bridge is None:
-                    try:
-                        from runtime.agent_harness.cline_bridge_client import ClineBridgeClient
-                        bridge = ClineBridgeClient(auto_start=True)
-                        self.cline_bridge = bridge  # cache
-                    except Exception:
-                        bridge = None
-
-                cline_ok = bridge is not None and bridge.is_available()
-                # Plan/inspect need the graph's mechanical read-only boundary. When
-                # Tự động is off we also keep execution in LangGraph so ask_user_choice
-                # can pause for a real decision instead of delegating to unattended Cline.
-                use_cline = cline_ok and bool(autopilot) and str(task_mode or "auto").strip().lower() not in {"plan", "inspect"}
-
-                if use_cline and spec_intent == "plan":
-                    # Tao spec file moi
-                    from runtime.agent_harness.spec_manager import create_spec
-                    if store:
-                        store.update_task(task_id, clarified_goal=f"[SPEC] {spec_arg}")
-                    create_spec(
-                        spec_arg, workspace_path, bridge,
-                        on_event=_relay_cline_event,
-                    )
-
-                elif use_cline and spec_intent == "exec":
-                    # Execute spec co san
-                    from runtime.agent_harness.spec_manager import execute_spec
-                    if store:
-                        store.update_task(task_id, clarified_goal=f"[EXEC SPEC] {spec_arg}")
-                    execute_spec(
-                        spec_arg, workspace_path, bridge,
-                        on_event=_relay_cline_event,
-                        steering_context=steering,
-                    )
-
-                elif use_cline and spec_intent == "list":
-                    # List specs
-                    from runtime.agent_harness.spec_manager import list_specs
-                    specs = list_specs(workspace_path)
-                    if event_bus:
-                        event_bus.emit(
-                            task_id, "spec_list",
-                            actor="cline", summary=f"{len(specs)} specs found",
-                            importance=0.6, data={"specs": specs},
-                        )
-
-                elif use_cline:
-                    # Normal task -> Cline
-                    bridge.run_task_blocking(
-                        task_id=task_id,
-                        goal=clarified_goal or goal,
-                        workspace_path=workspace_path,
-                        steering_context=steering,
-                        model=model or None,
-                        on_event=_relay_cline_event,
-                    )
-
-                else:
-                    # Fallback: graph_builder
-                    self.execute_agent_task(
-                        goal,
-                        thread_id=resolved_thread,
-                        clarified_goal=clarified_goal,
-                        task_id=task_id,
-                        task_mode=task_mode,
-                        autopilot=autopilot,
-                        source=source,
-                        session_id=session_id,
-                        workspace_id=workspace_id,
-                        workspace_path=workspace_path,
-                        workspace_name=workspace_name,
-                        ide_context=dict(ide_context or {}),
-                    )
+                # One task, one owner.  Every coding request enters the same
+                # LangGraph state machine backed by the dedicated official-API
+                # coding team. Explorer, Planner, Coder and Reviewer are separate
+                # official-API specialist contexts sharing one checkpoint/tool spine.
+                self.execute_agent_task(
+                    goal,
+                    thread_id=resolved_thread,
+                    clarified_goal=clarified_goal,
+                    task_id=task_id,
+                    task_mode=task_mode,
+                    autopilot=autopilot,
+                    source=source,
+                    session_id=session_id,
+                    workspace_id=workspace_id,
+                    workspace_path=workspace_path,
+                    workspace_name=workspace_name,
+                    ide_context=dict(ide_context or {}),
+                    model_name=model_name,
+                )
 
             except Exception as exc:
                 logger = getattr(self, "logger", None)
@@ -1000,8 +877,19 @@ class RuntimeCoordinator(
         if status == "running" and worker_alive and action == "resume":
             return {"status": "running", "reason": "task_worker_already_active", "task_id": task_id}
 
-        if action == "stop" and (status in {"waiting_user", "waiting_permission", "paused"} or (status == "running" and not worker_alive)):
-            return harness.stop_task(task_id, reason=f"control:{source}")
+        if action == "stop":
+            store.enqueue_control(
+                task_id,
+                action,
+                text=str(text or ""),
+                checkpoint_id=str(checkpoint_id or ""),
+                data={
+                    "source": str(source or "vscode"),
+                    "ide_context": dict(ide_context or {}),
+                },
+            )
+            stopped = harness.stop_task(task_id, reason=f"control:{source}")
+            return {"status": "stopped" if stopped else "failed", "task_id": task_id}
 
         if action == "rollback" and not worker_alive:
             try:
@@ -1092,6 +980,172 @@ class RuntimeCoordinator(
             ],
         }
 
+    def start_vscode_user_turn(
+        self,
+        goal: str,
+        *,
+        thread_id: str = "",
+        session_id: str = "",
+        task_mode: str = "auto",
+        autopilot: bool = True,
+        workspace_ref: str = "",
+        model: str = "",
+        ide_context: dict | None = None,
+        source: str = "vscode",
+    ) -> dict:
+        """Route a VS Code foreground turn before deciding whether it is a task."""
+        import threading
+        import uuid
+
+        user_text = str(goal or "").strip()
+        resolved_thread = str(thread_id or f"vscode_{uuid.uuid4().hex[:12]}").strip()
+        requested_mode = str(task_mode or "auto").strip().lower()
+        normalized_mode = requested_mode if requested_mode in {"auto", "plan", "inspect", "execute"} else "auto"
+
+        try:
+            from runtime.agent_harness.chat_router import classify_agent_chat_route
+            self_model = getattr(self, "agent_capability_self_model", None)
+            refresh_self_model = getattr(self_model, "refresh", None)
+            if callable(refresh_self_model):
+                refresh_self_model()
+            route = classify_agent_chat_route(user_text, self_model=self_model)
+        except Exception:
+            route = None
+
+        route_action = str(getattr(route, "action", "none") or "none")
+        route_reason = str(getattr(route, "reason", "normal_chat") or "normal_chat")
+        if route_action in {"execute", "consult"}:
+            execution_mode = "inspect" if route_action == "consult" else ("execute" if normalized_mode == "auto" else normalized_mode)
+            return self.start_agent_task_async(
+                str(getattr(route, "goal", "") or user_text),
+                thread_id=resolved_thread,
+                clarified_goal=str(getattr(route, "goal", "") or user_text),
+                source_turn_id=resolved_thread,
+                source=source,
+                session_id=session_id,
+                task_mode=execution_mode,
+                autopilot=autopilot,
+                workspace_ref=workspace_ref,
+                model=model,
+                ide_context=ide_context,
+            )
+
+        try:
+            workspace = self._resolve_agent_workspace(workspace_ref)
+        except Exception:
+            workspace = {"workspace_id": "", "workspace_path": "", "workspace_name": ""}
+        workspace_id = str(workspace.get("workspace_id", "") or "")
+        workspace_path = str(workspace.get("workspace_path", "") or "")
+        workspace_name = str(workspace.get("workspace_name", "") or "")
+        task_id = f"chat_{uuid.uuid4().hex[:12]}"
+        metadata = {
+            "original_goal": user_text,
+            "source": str(source or "vscode"),
+            "task_mode": "chat",
+            "route_reason": route_reason,
+            "autopilot": False,
+            "workspace_id": workspace_id,
+            "workspace_path": workspace_path,
+            "workspace_name": workspace_name,
+        }
+        store = getattr(self, "agent_task_store", None)
+        event_bus = getattr(self, "agent_event_bus", None)
+        if store is None or event_bus is None:
+            return {"status": "unavailable", "reason": "agent_chat_store_unavailable", "task_id": ""}
+
+        store.create_task(
+            user_text,
+            task_id=task_id,
+            executor="eris-chat",
+            model=str(model or getattr(getattr(getattr(self, "llm_service", None), "client", None), "model_name", "") or ""),
+            thread_id=resolved_thread,
+            session_id=str(session_id or ""),
+            metadata=metadata,
+        )
+        event_bus.emit(
+            task_id,
+            "user_message",
+            actor="user",
+            summary=user_text[:1200],
+            importance=0.95,
+            data={"content": user_text[:8000], "source": str(source or "vscode"), "attachments": []},
+        )
+        event_bus.emit(
+            task_id,
+            "task_started",
+            actor="system",
+            summary="Responding in chat",
+            importance=0.45,
+            data={"executor": "eris-chat", "route": route_reason},
+        )
+
+        def _worker() -> None:
+            try:
+                final = self._generate_vscode_chat_reply(user_text, route=route)
+                event_bus.emit(
+                    task_id,
+                    "task_completed",
+                    actor="assistant",
+                    summary="Chat response complete",
+                    importance=0.9,
+                    data={"final": final},
+                )
+            except Exception as exc:
+                event_bus.emit(
+                    task_id,
+                    "task_failed",
+                    actor="system",
+                    summary=f"Chat response failed: {type(exc).__name__}: {exc}",
+                    importance=0.98,
+                    data={"reason": "vscode_chat_failed"},
+                )
+
+        threading.Thread(target=_worker, name=f"eris-vscode-chat-{task_id[-6:]}", daemon=True).start()
+        return {
+            "status": "started",
+            "task_id": task_id,
+            "thread_id": resolved_thread,
+            "goal": user_text,
+            "source": str(source or "vscode"),
+            "session_id": str(session_id or ""),
+            "task_mode": "chat",
+            "reason": route_reason,
+        }
+
+    def _generate_vscode_chat_reply(self, user_text: str, *, route=None) -> str:
+        clarification = str(getattr(route, "clarification", "") or "").strip()
+        if str(getattr(route, "action", "") or "") == "clarify" and clarification:
+            return clarification
+
+        llm_service = getattr(self, "llm_service", None)
+        parser = getattr(self, "parser", None)
+        if llm_service is None or parser is None:
+            return "Mình nhận được tin nhắn rồi, nhưng chat runtime chưa sẵn sàng để sinh câu trả lời."
+        build_user = getattr(parser, "build_chat_user_message", None)
+        if callable(build_user):
+            user_message = build_user(user_message=user_text, last_chat_answer="")
+        else:
+            user_message = f"Người dùng: {user_text}"
+        raw = llm_service.generate_chat_reply(
+            chat_history=[],
+            user_message=user_message,
+            raw_user_text=user_text,
+            conversation_context=(
+                "VS Code foreground chat. Reply naturally to the user's message. "
+                "Do not claim that files were inspected, changed, tested, or executed unless a tool task actually ran."
+            ),
+            require_text=True,
+            allow_local_fallback=False,
+            reasoning_effort="low",
+        )
+        parse = getattr(parser, "parse", None)
+        if callable(parse):
+            decision = parse(raw, user_hint=user_text)
+            text = str(getattr(decision, "text", "") or "").strip()
+            if text:
+                return text
+        return str(raw or "").strip() or "Mình đang ở đây, nhưng lượt chat này không tạo được nội dung trả lời."
+
     def route_agent_user_turn(
         self,
         user_text: str,
@@ -1102,7 +1156,7 @@ class RuntimeCoordinator(
         """Conservative foreground routing into the execution harness.
 
         Returns a public-safe projection used by the normal Eris writer.  A
-        ``clarify`` route never starts Gemini; ``execute`` starts it in parallel.
+        ``clarify`` never starts the coding harness; ``execute`` starts the dedicated coding task in parallel.
         """
         try:
             from runtime.agent_harness.chat_router import classify_agent_chat_route

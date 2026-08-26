@@ -68,6 +68,30 @@ class DesktopWindowBridge:
         width, height = glfw.get_window_size(window)
         return WindowGeometry(int(x), int(y), max(1, int(width)), max(1, int(height)))
 
+    def replay_mouse_button_down(self, button: str) -> bool:
+        """Replay only the down edge after a stale overlay hit on Windows.
+
+        The renderer flips the native window to click-through immediately before
+        this call. The user's real mouse-up is therefore delivered to the app
+        underneath, preserving normal click/drag semantics instead of fabricating
+        an entire click inside Eris.
+        """
+        if not self.is_windows or self._user32 is None:
+            return False
+        flags = {
+            "left": 0x0002,
+            "right": 0x0008,
+            "middle": 0x0020,
+        }
+        flag = flags.get(str(button or "").strip().lower(), 0)
+        if not flag:
+            return False
+        try:
+            self._user32.mouse_event(flag, 0, 0, 0, 0)
+            return True
+        except Exception:
+            return False
+
     def keep_live2d_below_godot(self, glfw: Any, window: Any) -> bool:
         """Đặt Live2D ngay dưới top-level window Godot trong z-order Windows."""
         if not self.is_windows or self._user32 is None or self._ctypes is None:

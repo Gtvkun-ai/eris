@@ -32,6 +32,36 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _vscode_service_mode() -> bool:
+    return _env_flag("ERIS_VSCODE_SERVICE_MODE")
+
+
+def _apply_vscode_service_quiet_env() -> None:
+    if not _vscode_service_mode():
+        return
+    for key, value in {
+        "ERIS_TTS_ENABLED": "0",
+        "ERIS_COMMENTARY_ENABLED": "0",
+        "ERIS_AUTONOMOUS_EXPRESSION_ENABLED": "0",
+        "ERIS_INITIATIVE_ENABLED": "0",
+        "ERIS_AI_STARTUP_GREETING_ENABLED": "0",
+        "ERIS_AI_STARTUP_SCREEN_OPENING": "0",
+        "ERIS_AI_STARTUP_FORCE_SPEAK": "0",
+        "ERIS_RANDOM_CHAT_SEED_RESERVOIR_ENABLED": "0",
+        "ERIS_BACKGROUND_TUTOR_ENABLED": "0",
+        "ERIS_BACKGROUND_OBSERVER": "0",
+        "ERIS_MEMORY_BACKGROUND_DIGEST": "0",
+        "ERIS_BROWSER_BRIDGE_ENABLED": "0",
+        "ERIS_CHESS_BRIDGE_ENABLED": "0",
+        "ERIS_ELEVENLABS_POOL_UI_ENABLED": "0",
+    }.items():
+        os.environ[key] = value
+
+
 class AttentionOverseer:
     def __init__(self, model_path: str = "", n_ctx: int = 8192, n_gpu_layers: int = -1):
         self.logger = get_logger("Vision")
@@ -71,6 +101,7 @@ class AttentionOverseer:
             RuntimeSettingsStore().load(materialize_env=True)
         except Exception as exc:
             self.logger.debug("Runtime settings bootstrap trước provider bị bỏ qua: %s", exc)
+        _apply_vscode_service_quiet_env()
         self.process_manager = RemoteModelProcessManager(
             logger=self.process_logger,
             project_root=project_root,
@@ -109,6 +140,7 @@ class AttentionOverseer:
             n_ctx=min(n_ctx, 4096),
             n_gpu_layers=n_gpu_layers,
         )
+        coding_client = self.process_manager.build_coding_client()
         social_models_enabled = str(
             os.environ.get(
                 "ERIS_SOCIAL_OBSERVER_ENABLED",
@@ -147,6 +179,7 @@ class AttentionOverseer:
             vision_client=vision_client,
             fallback_client=fallback_client,
             escalation_client=escalation_client,
+            coding_client=coding_client,
             social_parser_client=social_parser_client,
             social_critic_client=social_critic_client,
             social_fallback_client=social_fallback_client,
@@ -167,6 +200,7 @@ class AttentionOverseer:
             role
             for role, worker in (
                 ("companion", self.llm_client),
+                ("coding", getattr(self.llm_service, "coding_client", None)),
                 ("observer", getattr(self.llm_service, "observer_client", None)),
                 ("critic", getattr(self.llm_service, "critic_client", None)),
                 ("inner", getattr(self.llm_service, "inner_client", None)),
@@ -234,12 +268,16 @@ class AttentionOverseer:
         self.coordinator.long_term_memory = long_term_memory
 
         # TTS engine — khởi động sau coordinator để biết cờ ERIS_TTS_ENABLED.
-        self.tts_engine = build_tts_engine()
-        bind_tts = getattr(self.coordinator, "bind_tts_engine", None)
-        if callable(bind_tts):
-            bind_tts(self.tts_engine)
+        self.tts_engine = None
+        if _vscode_service_mode():
+            self.logger.info("[vscode-service] TTS disabled; IDE bridge runs headless.")
         else:
-            self.coordinator.tts_engine = self.tts_engine
+            self.tts_engine = build_tts_engine()
+            bind_tts = getattr(self.coordinator, "bind_tts_engine", None)
+            if callable(bind_tts):
+                bind_tts(self.tts_engine)
+            else:
+                self.coordinator.tts_engine = self.tts_engine
 
     def _is_body_running(self) -> bool:
         try:

@@ -33,7 +33,7 @@ export class ErisServiceManager implements vscode.Disposable {
   private async discoveryCandidates(): Promise<string[]> {
     const override = process.env.ERIS_AGENT_SERVICE_DISCOVERY?.trim();
     const config = vscode.workspace.getConfiguration('eris.service');
-    const configuredRoot = (process.env.ERIS_HOME ?? config.get<string>('installRoot', '') ?? '').trim();
+    const configuredRoot = (process.env.ERIS_INSTALL_ROOT ?? config.get<string>('installRoot', '') ?? '').trim();
     const firstWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     const candidates: string[] = [];
     if (override) {
@@ -162,7 +162,24 @@ export class ErisServiceManager implements vscode.Disposable {
     const env = {
       ...process.env,
       ERIS_LAUNCHED_BY_VSCODE: '1',
+      ERIS_VSCODE_SERVICE_MODE: '1',
       ERIS_AGENT_SERVICE_DISCOVERY: await this.discoveryPath(),
+      ERIS_RUNTIME_SETTINGS_PATH: process.env.ERIS_RUNTIME_SETTINGS_PATH
+        ?? path.join(launch.cwd, '.eris_state', 'vscode_service_runtime_settings.json'),
+      ERIS_TTS_ENABLED: '0',
+      ERIS_COMMENTARY_ENABLED: '0',
+      ERIS_AUTONOMOUS_EXPRESSION_ENABLED: '0',
+      ERIS_INITIATIVE_ENABLED: '0',
+      ERIS_AI_STARTUP_GREETING_ENABLED: '0',
+      ERIS_AI_STARTUP_SCREEN_OPENING: '0',
+      ERIS_AI_STARTUP_FORCE_SPEAK: '0',
+      ERIS_RANDOM_CHAT_SEED_RESERVOIR_ENABLED: '0',
+      ERIS_BACKGROUND_TUTOR_ENABLED: '0',
+      ERIS_BACKGROUND_OBSERVER: '0',
+      ERIS_MEMORY_BACKGROUND_DIGEST: '0',
+      ERIS_BROWSER_BRIDGE_ENABLED: '0',
+      ERIS_CHESS_BRIDGE_ENABLED: '0',
+      ERIS_ELEVENLABS_POOL_UI_ENABLED: '0',
     };
     const child = spawn(launch.command, launch.args, {
       cwd: launch.cwd,
@@ -210,7 +227,7 @@ export class ErisServiceManager implements vscode.Disposable {
   private async resolveLaunch(): Promise<{ command: string; args: string[]; cwd: string; shell: boolean; display: string }> {
     const config = vscode.workspace.getConfiguration('eris.service');
     const configuredCommand = (process.env.ERIS_SERVICE_COMMAND ?? config.get<string>('launchCommand', '')).trim();
-    const configuredRoot = (process.env.ERIS_HOME ?? config.get<string>('installRoot', '')).trim();
+    const configuredRoot = (process.env.ERIS_INSTALL_ROOT ?? config.get<string>('installRoot', '')).trim();
     const firstWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     const cwd = configuredRoot || firstWorkspace || os.homedir();
 
@@ -224,7 +241,9 @@ export class ErisServiceManager implements vscode.Disposable {
       };
     }
 
-    const launcherName = process.platform === 'win32' ? 'run_eris.bat' : 'run_eris.sh';
+    const launcherNames = process.platform === 'win32'
+      ? ['run_eris_service.bat', 'run_eris.bat']
+      : ['run_eris_service.sh', 'run_eris.sh'];
     // Workspace khi code Eris thường có thể đang mở ở src/, body/ hoặc một folder
     // con sâu hơn. Quét vài ancestor để user không phải tự chạy run_eris.bat chỉ
     // vì VS Code đang mở không đúng root một cấp.
@@ -240,11 +259,15 @@ export class ErisServiceManager implements vscode.Disposable {
         current = parent;
       }
     }
-    const candidates = unique([
-      configuredRoot ? path.join(configuredRoot, launcherName) : '',
-      ...workspaceRoots.map((root) => path.join(root, launcherName)),
-      process.platform === 'win32' ? path.join(os.homedir(), 'Documents', 'eris', launcherName) : path.join(os.homedir(), 'eris', launcherName),
-    ]);
+    const candidates = unique(
+      launcherNames.flatMap((launcherName) => [
+        configuredRoot ? path.join(configuredRoot, launcherName) : '',
+        ...workspaceRoots.map((root) => path.join(root, launcherName)),
+        process.platform === 'win32'
+          ? path.join(os.homedir(), 'Documents', 'eris', launcherName)
+          : path.join(os.homedir(), 'eris', launcherName),
+      ]),
+    );
     for (const candidate of candidates) {
       if (await exists(candidate)) {
         if (process.platform === 'win32' && candidate.toLowerCase().endsWith('.bat')) {

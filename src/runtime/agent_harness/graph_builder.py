@@ -7,6 +7,7 @@ scraping model reasoning or stdout.
 from __future__ import annotations
 
 import json
+import inspect
 import uuid
 import threading
 import time
@@ -29,14 +30,19 @@ from .checkpointing import DurableSqliteCheckpointer, default_langgraph_checkpoi
 from .coding_state import tool_start_patch, tool_result_patch, human_tool_label
 from .repository_context import RepositoryContextManager
 from .context_policy import context_gate_reason, requires_verified_change, tool_result_success
+from .coding_team import (
+    ROLE_EXPLORER, ROLE_PLANNER, ROLE_CODER, ROLE_REVIEWER,
+    normalize_topology, first_role, next_role, role_model, role_default_skills, role_reasoning_effort,
+    max_review_rounds, role_tool_specs, role_instructions, team_context_text,
+)
 
 
 class AgentHarness:
     """Kiro-like execution harness backed by LangGraph checkpoints.
 
-    `tool_registry` is intentionally generic.  Eris native capabilities, Gemini
+    `tool_registry` is intentionally generic. Eris native capabilities, compatibility
     adapters, MCP tools or test helpers can all be mounted here without teaching
-    the Subject Core their schemas.
+    the Subject Core their schemas or changing the coding-model owner.
     """
 
     def __init__(
@@ -48,7 +54,7 @@ class AgentHarness:
         tool_specs: dict[str, dict[str, Any]] | None = None,
         task_store: AgentTaskStore | None = None,
         event_bus: AgentEventBus | None = None,
-        executor_name: str = "gemini",
+        executor_name: str = "official-api-coding",
         model_name: str = "",
         workspace_scope: Callable[[str], Any] | None = None,
         checkpoint_path: str | None = None,
@@ -70,12 +76,12 @@ class AgentHarness:
         # Mỗi task luôn đi qua full inventory + incremental symbol/import index trước khi executor chạy.
         self.repository_context = RepositoryContextManager(state_path.parent / "repository_context", logger=logger)
         self.event_bus = event_bus or AgentEventBus(self.task_store, logger=logger)
-        self.executor_name = str(executor_name or "gemini")
+        self.executor_name = str(executor_name or "official-api-coding")
         self.model_name = str(model_name or "")
         self.workspace_scope = workspace_scope
         self.ide_rpc = ide_rpc
         # ProjectOperations reads the active WorkspaceManager record. Serialize only
-        # the tiny activate+tool critical section so concurrent Gemini tasks may
+        # the tiny activate+tool critical section so concurrent coding tasks may
         # reason in parallel without ever running a tool against the wrong repo.
         self._workspace_tool_lock = threading.RLock()
         self.logger = logger
@@ -360,6 +366,19 @@ class AgentHarness:
         repository_context_text = str(repository_context.get("context_pack", "") or "")
         task_mode = str(state.get("task_mode", "execute") or "execute").strip().lower()
         autopilot = bool(state.get("autopilot", True))
+        topology = normalize_topology(str(state.get("team_topology", "") or ""), task_mode)
+        team_role = str(state.get("team_role", "") or first_role(topology)).strip().lower()
+        if team_role not in topology.roles:
+            team_role = first_role(topology)
+        team_artifacts = dict(state.get("team_artifacts", {}) or {})
+        review_rounds = int(state.get("review_rounds", 0) or 0)
+        role_skills = role_default_skills(team_role)
+        effective_skills = list(dict.fromkeys(list(state.get("active_skills", []) or []) + list(role_skills)))
+        role_skill_context = "\n\n".join(
+            text for text in (self.skill_loader.activate_skill(name) for name in role_skills)
+            if text and not text.startswith("Error:")
+        )
+        effective_injected = "\n\n".join(part for part in (str(injected or "").strip(), role_skill_context.strip()) if part)
         step = int(state.get("step_count", 0) or 0) + 1
 
         if task_id:
@@ -368,7 +387,7 @@ class AgentHarness:
                 task_id,
                 "agent_status",
                 actor="executor",
-                summary="Executor đang quyết định bước tiếp theo.",
+                summary=f"{team_role.title()} đang xử lý bước tiếp theo.",
                 step=step,
                 importance=0.34,
             )
@@ -410,10 +429,12 @@ class AgentHarness:
             "verify results, and expose concise action summaries rather than private reasoning.\n"
             + autopilot_guidance +
             mode_guidance +
+            f"Coding Team Topology: {topology.id} ({' -> '.join(topology.roles)})\n"
+            f"Current Specialist: {team_role}\n"
             f"Current Goal: {state.get('goal', '')}\n"
             f"Current Task ID: {task_id or '(none)'}\n"
             f"Locked Workspace: {state.get('workspace_path', '') or '(none)'}\n"
-            f"Active Skills: {', '.join(state.get('active_skills', []) or [])}\n"
+            f"Active Skills: {', '.join(effective_skills)}\n"
             f"IDE Context (structured, may be partial): {ide_context_text}\n"
             f"Repository Context Ready: {bool(state.get('context_ready', False))}\n"
             f"Resolved Targets: {json.dumps(state.get('resolved_targets', []) or [], ensure_ascii=False)}\n"
@@ -421,34 +442,59 @@ class AgentHarness:
             f"\n--- PERSISTENT REPOSITORY CONTEXT ---\n{repository_context_text}\n--- END REPOSITORY CONTEXT ---\n"
             "Repository rule: build decisions from the persistent repo map first, then deep-read task-relevant implementation/callers before modifying. "
             "If a user path appears misspelled, resolve it against Resolved Targets instead of guessing a different module.\n"
-            f"\n--- INJECTED SKILL CONTEXT ---\n{injected}\n--- END SKILL CONTEXT ---\n"
+            f"\n--- INJECTED SKILL CONTEXT ---\n{effective_injected}\n--- END SKILL CONTEXT ---\n"
         ))
 
         response = None
-        disclosed_tools = self._disclosed_tool_specs(
-            state.get("active_skills", []) or [],
-            task_mode=task_mode,
-            autopilot=autopilot,
-            ide_context=ide_context,
+        disclosed_tools = role_tool_specs(
+            team_role,
+            self._disclosed_tool_specs(
+                effective_skills,
+                task_mode=task_mode,
+                autopilot=autopilot,
+                ide_context=ide_context,
+            ),
         )
+        specialist_context = role_instructions(
+            team_role, topology=topology, autopilot=autopilot,
+            artifacts=team_artifacts, review_rounds=review_rounds,
+        ) + "\n\n" + team_context_text(team_artifacts, review_rounds=review_rounds)
         invoke_with_tools = getattr(self.llm, "invoke_with_tools", None)
         if callable(invoke_with_tools):
-            response = invoke_with_tools(
-                [sys_msg] + messages,
-                tools=disclosed_tools,
-                goal=str(state.get("goal", "") or ""),
-                active_skills=list(state.get("active_skills", []) or []),
-                workspace=str(state.get("workspace_path", "") or "") or None,
+            base_model = str(state.get("model", "") or self.model_name)
+            call_kwargs = {
+                "tools": disclosed_tools,
+                "goal": str(state.get("goal", "") or ""),
+                "active_skills": effective_skills,
+                "workspace": str(state.get("workspace_path", "") or "") or None,
                 # Attachment ảnh đi riêng vào OpenAI-compatible multimodal payload.
                 # Không nhét base64 vào checkpoint/system prompt rồi tự cắt cụt nó.
-                ide_context=ide_context,
-            )
+                "ide_context": ide_context,
+                "model": role_model(team_role, base_model),
+                "role": team_role,
+                "role_context": specialist_context,
+                "reasoning_effort": role_reasoning_effort(team_role),
+            }
+            # Compatibility with tests/older debug executors: only pass kwargs the
+            # callable explicitly accepts. Production OfficialApiDecisionExecutor
+            # accepts the full team contract.
+            try:
+                signature = inspect.signature(invoke_with_tools)
+                accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
+                if not accepts_kwargs:
+                    call_kwargs = {k: v for k, v in call_kwargs.items() if k in signature.parameters}
+            except (TypeError, ValueError):
+                pass
+            response = invoke_with_tools([sys_msg] + messages, **call_kwargs)
         else:
             invoke = getattr(self.llm, "invoke", None)
             if callable(invoke):
                 response = invoke([sys_msg] + messages)
 
-        patch: dict[str, Any] = {"step_count": step, "completion_gate_retry": False, **control_patch}
+        patch: dict[str, Any] = {
+            "step_count": step, "completion_gate_retry": False,
+            "team_handoff_pending": False, **control_patch,
+        }
         if directive_messages:
             patch["messages"] = directive_messages
         if response is not None:
@@ -493,6 +539,121 @@ class AgentHarness:
                     self._emit_coding_state(task_id, semantic, step=step)
                 else:
                     final_text = str(getattr(response, "content", "") or "").strip()
+                    response_meta = getattr(response, "additional_kwargs", {})
+                    response_meta = response_meta if isinstance(response_meta, dict) else {}
+                    explicit_handoff = response_meta.get("coding_handoff")
+                    explicit_handoff = explicit_handoff if isinstance(explicit_handoff, dict) else {}
+                    expected_target = next_role(topology, team_role)
+                    requested_target = str(explicit_handoff.get("target", "") or "").strip().lower()
+                    handoff_target = requested_target or expected_target
+
+                    # Every non-terminal specialist hands a bounded artifact to the next
+                    # specialist. Reviewer may explicitly send findings back to Coder.
+                    if handoff_target:
+                        allowed = handoff_target in topology.roles and handoff_target != team_role
+                        if team_role == ROLE_REVIEWER and handoff_target == ROLE_CODER and ROLE_CODER in topology.roles:
+                            allowed = True
+                        if not allowed:
+                            self.event_bus.emit(
+                                task_id, "team_handoff_rejected", actor="system",
+                                summary=f"Handoff không hợp lệ: {team_role} -> {handoff_target}.",
+                                step=step, importance=0.92,
+                                data={"role": team_role, "target": handoff_target, "topology": topology.id},
+                            )
+                            patch["status"] = "failed"
+                            return patch
+
+                        # Coder may not escape to Reviewer without a real verified change
+                        # when the user explicitly requested a mutation.
+                        if team_role == ROLE_CODER and handoff_target == ROLE_REVIEWER and requires_verified_change(str(state.get("goal", "") or "")):
+                            task_snapshot = self.task_store.get_task(task_id, event_limit=0) or {}
+                            changed_files = [str(item) for item in (task_snapshot.get("changed_files") or []) if str(item or "").strip()]
+                            if not changed_files:
+                                attempts = int(state.get("completion_gate_attempts", 0) or 0) + 1
+                                if attempts <= 2:
+                                    patch.setdefault("messages", [])
+                                    patch["messages"] = list(patch["messages"]) + [HumanMessage(content=(
+                                        "[CODER HANDOFF GATE] Reviewer cannot receive this task yet: the requested change has no verified changed_files artifact. "
+                                        "Stay in Coder role, use the project edit tools, run verification, inspect the diff, then hand off again."
+                                    ))]
+                                    patch["completion_gate_retry"] = True
+                                    patch["completion_gate_attempts"] = attempts
+                                    self.event_bus.emit(
+                                        task_id, "completion_gate_blocked", actor="system",
+                                        summary="Coder chưa được handoff sang Reviewer vì chưa có thay đổi được xác minh.",
+                                        step=step, importance=0.90, data={"attempt": attempts, "role": team_role},
+                                    )
+                                    return patch
+                                patch["status"] = "failed"
+                                self.event_bus.emit(
+                                    task_id, "task_failed", actor="system",
+                                    summary="Coder liên tục cố handoff mà không tạo artifact thay đổi được xác minh.",
+                                    step=step, importance=0.98, data={"reason": "coder_handoff_gate_exhausted"},
+                                )
+                                return patch
+
+                        artifact = str(explicit_handoff.get("artifact", "") or final_text or "").strip()
+                        updated_artifacts = dict(team_artifacts)
+                        if artifact:
+                            updated_artifacts[team_role] = artifact[:24000]
+                        updated_rounds = review_rounds
+                        findings = explicit_handoff.get("findings") if isinstance(explicit_handoff.get("findings"), list) else []
+                        if team_role == ROLE_REVIEWER and handoff_target == ROLE_CODER:
+                            updated_rounds += 1
+                            if updated_rounds > max_review_rounds():
+                                patch["status"] = "failed"
+                                self.event_bus.emit(
+                                    task_id, "task_failed", actor="reviewer",
+                                    summary=f"Reviewer vẫn còn blocking findings sau {review_rounds} vòng sửa; dừng để tránh loop vô hạn.",
+                                    step=step, importance=0.98,
+                                    data={"reason": "review_loop_exhausted", "findings": findings[:12]},
+                                )
+                                return patch
+
+                        patch["team_role"] = handoff_target
+                        patch["team_artifacts"] = updated_artifacts
+                        patch["review_rounds"] = updated_rounds
+                        patch["team_handoff_pending"] = True
+                        patch.setdefault("messages", [])
+                        patch["messages"] = list(patch["messages"]) + [HumanMessage(content=(
+                            f"[TEAM ROLE START:{handoff_target.upper()}]\n"
+                            f"Handoff from {team_role}: {artifact[:12000] if artifact else 'No additional artifact.'}"
+                        ))]
+                        handoff_summary = f"{team_role.title()} -> {handoff_target.title()}"
+                        if artifact:
+                            handoff_summary += f": {artifact[:700]}"
+                        self.event_bus.emit(
+                            task_id, "team_handoff", actor=team_role, summary=handoff_summary,
+                            step=step, importance=0.76,
+                            data={
+                                "from": team_role, "to": handoff_target, "topology": topology.id,
+                                "artifact": artifact[:12000], "findings": findings[:12], "review_round": updated_rounds,
+                            },
+                        )
+                        if team_role == ROLE_PLANNER:
+                            self.event_bus.emit(
+                                task_id, "team_plan_ready", actor="planner",
+                                summary=(artifact[:1200] if artifact else "Planner đã hoàn tất execution plan."),
+                                step=step, importance=0.82,
+                                data={"plan": artifact[:16000], "next": handoff_target},
+                            )
+                        elif team_role == ROLE_REVIEWER and handoff_target == ROLE_CODER:
+                            self.event_bus.emit(
+                                task_id, "team_review_changes_requested", actor="reviewer",
+                                summary=(artifact[:1200] if artifact else "Reviewer yêu cầu Coder sửa thêm."),
+                                step=step, importance=0.88,
+                                data={"findings": findings[:12], "review_round": updated_rounds},
+                            )
+                        self._emit_coding_state(task_id, {
+                            "phase": ("investigating" if handoff_target == ROLE_EXPLORER else
+                                      "planning" if handoff_target == ROLE_PLANNER else
+                                      "implementing" if handoff_target == ROLE_CODER else "reviewing"),
+                            "current_action": f"{handoff_target.title()} đang nhận handoff",
+                            "last_summary": artifact[:900],
+                            "next_action": f"Tiếp tục bằng vai trò {handoff_target}",
+                        }, step=step, importance=0.58)
+                        return patch
+
                     # Completion Gate: task có ý định sửa/tạo/xóa file không được phép
                     # "nói là đã làm" khi task store chưa có artifact đã verify. Đây là
                     # invariant máy móc, không còn phụ thuộc model nhớ câu "verify before final".
@@ -1143,7 +1304,8 @@ class AgentHarness:
                 text = _tool_result_text(result)
                 out_messages.append(ToolMessage(content=text, tool_call_id=call_id))
                 if tool_result_success(result) and name in {
-                    "project_list_files", "project_read_file", "project_search_text", "project_find_symbol", "project_git_diff"
+                    "project_list_files", "project_read_file", "project_search_text", "project_find_symbol", "project_semantic_search",
+                    "project_git_log", "project_dependency_summary", "project_test_inventory", "project_git_diff"
                 }:
                     evidence = {"tool": name, "step": step}
                     if name == "project_read_file":
@@ -1339,7 +1501,10 @@ class AgentHarness:
             return "__end__"
         if str(state.get("status", "running") or "running") in {"paused", "stopped", "failed", "waiting_permission", "waiting_user"}:
             return "__end__"
-        # Completion Gate có thể đẩy một final thiếu evidence quay lại chính agent node.
+        # Team handoffs and Completion Gate both re-enter the reasoning node
+        # without fabricating a tool call.
+        if bool(state.get("team_handoff_pending", False)):
+            return "agent"
         if bool(state.get("completion_gate_retry", False)):
             return "agent"
         messages = state.get("messages", []) or []
@@ -1374,6 +1539,7 @@ class AgentHarness:
         workspace_path: str = "",
         workspace_name: str = "",
         ide_context: dict[str, Any] | None = None,
+        model_name: str = "",
     ):
         """Bắt đầu một task mới trên LangGraph thread bền vững.
 
@@ -1382,17 +1548,23 @@ class AgentHarness:
         """
         requested_mode = str(task_mode or "auto").strip().lower()
         normalized_mode = requested_mode if requested_mode in {"auto", "plan", "inspect", "execute"} else "auto"
+        team_topology = normalize_topology(None, normalized_mode)
+        initial_team_role = first_role(team_topology)
         normalized_source = str(source or "eris_chat").strip() or "eris_chat"
         normalized_session = str(session_id or "").strip()
         normalized_workspace_id = str(workspace_id or "").strip()
         normalized_workspace_path = str(workspace_path or "").strip()
         normalized_workspace_name = str(workspace_name or "").strip()
+        normalized_model = str(model_name or self.model_name or "").strip()
+        resolver = getattr(self.llm, "resolve_model", None)
+        if callable(resolver):
+            normalized_model = str(resolver(normalized_model) or self.model_name).strip()
         clean_context = _compact_ide_context(ide_context)
         task = self.task_store.create_task(
             clarified_goal or goal,
             task_id=task_id,
             executor=self.executor_name,
-            model=self.model_name,
+            model=normalized_model,
             thread_id=thread_id,
             session_id=normalized_session,
             metadata={
@@ -1403,6 +1575,7 @@ class AgentHarness:
                 "workspace_id": normalized_workspace_id,
                 "workspace_path": normalized_workspace_path,
                 "workspace_name": normalized_workspace_name,
+                "team_topology": team_topology.id,
             },
         )
         task_id = str(task.get("task_id", ""))
@@ -1415,6 +1588,7 @@ class AgentHarness:
             "workspace_id": normalized_workspace_id,
             "workspace_path": normalized_workspace_path,
             "workspace_name": normalized_workspace_name,
+            "team_topology": team_topology.id,
         })
         self.task_store.update_task(
             task_id,
@@ -1433,7 +1607,7 @@ class AgentHarness:
             importance=0.90,
             data={
                 "executor": self.executor_name,
-                "model": self.model_name,
+                "model": normalized_model,
                 "source": normalized_source,
                 "task_mode": normalized_mode,
                 "autopilot": bool(autopilot),
@@ -1441,7 +1615,17 @@ class AgentHarness:
                 "workspace_id": normalized_workspace_id,
                 "workspace_path": normalized_workspace_path,
                 "workspace_name": normalized_workspace_name,
+                "team_topology": team_topology.id,
+                "team_roles": list(team_topology.roles),
             },
+        )
+        self.event_bus.emit(
+            task_id,
+            "coding_team_selected",
+            actor="system",
+            summary=f"Coding team: {' -> '.join(role.title() for role in team_topology.roles)}.",
+            importance=0.74,
+            data={"topology": team_topology.id, "roles": list(team_topology.roles)},
         )
         repository_context: dict[str, Any] = {
             "ready": False,
@@ -1522,10 +1706,13 @@ class AgentHarness:
             }
             self.task_store.update_task(task_id, metadata=existing_metadata)
 
+        first_phase = ("investigating" if initial_team_role == ROLE_EXPLORER else
+                       "planning" if initial_team_role == ROLE_PLANNER else
+                       "implementing" if initial_team_role == ROLE_CODER else "reviewing")
         self._emit_coding_state(task_id, {
             "objective": clarified_goal or goal,
-            "phase": "planning",
-            "current_action": "Đang lập kế hoạch từ Repository Context đã ground",
+            "phase": first_phase,
+            "current_action": f"{initial_team_role.title()} đang nhận Repository Context",
             "waiting_for": "",
             "blocker": "",
         }, step=0, importance=0.55)
@@ -1536,7 +1723,7 @@ class AgentHarness:
             "thread_id": thread_id,
             "session_id": normalized_session,
             "executor": self.executor_name,
-            "model": self.model_name,
+            "model": normalized_model,
             "task_mode": normalized_mode,
             "autopilot": bool(autopilot),
             "source": normalized_source,
@@ -1549,10 +1736,18 @@ class AgentHarness:
             "resolved_targets": list(repository_context.get("resolved_targets") or []),
             "context_confidence": float(repository_context.get("confidence", 0.0) or 0.0),
             "inspection_evidence": [],
+            "team_topology": team_topology.id,
+            "team_role": initial_team_role,
+            "team_artifacts": {},
+            "team_handoff_pending": False,
+            "review_rounds": 0,
             "completion_gate_retry": False,
             "completion_gate_attempts": 0,
             "status": "running",
-            "messages": [HumanMessage(content=clarified_goal or goal)],
+            "messages": [
+                HumanMessage(content=clarified_goal or goal),
+                HumanMessage(content=f"[TEAM ROLE START:{initial_team_role.upper()}]\nBegin specialist work from the grounded repository context."),
+            ],
             "active_skills": [],
             "active_tools": [],
             "injected_context": "",
@@ -1829,6 +2024,9 @@ class AgentHarness:
                     return result
 
                 if final_status == "running":
+                    latest_task = self.task_store.get_task(task_id, event_limit=0)
+                    if latest_task is not None and str(latest_task.get("status", "") or "") == "stopped":
+                        return {"status": "stopped", "task_id": task_id}
                     final_text = _final_result_text(result)
                     self._emit_coding_state(task_id, {
                         "phase": "completed",
@@ -1842,7 +2040,7 @@ class AgentHarness:
                         task_id,
                         "task_completed",
                         actor="executor",
-                        summary=(final_text[:520] if final_text else "Gemini đã hoàn tất task."),
+                        summary=(final_text[:520] if final_text else "Coding subbrain đã hoàn tất task."),
                         detail=final_text,
                         importance=0.92,
                         # Public answer là output của user, không phải telemetry.
@@ -1852,6 +2050,9 @@ class AgentHarness:
                     )
                 return result
         except Exception as exc:
+            latest_task = self.task_store.get_task(task_id, event_limit=0)
+            if latest_task is not None and str(latest_task.get("status", "") or "") == "stopped":
+                return {"status": "stopped", "task_id": task_id}
             self._emit_coding_state(task_id, {
                 "phase": "failed",
                 "current_action": "",

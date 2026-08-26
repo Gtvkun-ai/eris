@@ -59,6 +59,7 @@ class Live2DRenderer:
         self._runtime_scale = float(config.scale)
         self._mouse_passthrough_active = False
         self._mouse_passthrough_supported = True
+        self._mouse_replay_guard_until = 0.0
         self._bridge = DesktopWindowBridge(godot_pid=config.godot_pid)
         self._gaze = GazeController(
             strength_x=config.eye_strength_x,
@@ -557,6 +558,49 @@ class Live2DRenderer:
             int(self._drag_origin_window[1] + dy),
         )
 
+    def _forward_stale_mouse_press(
+        self,
+        glfw: Any,
+        window: Any,
+        model: Any,
+        button: int,
+    ) -> bool:
+        """Recover a click that arrived after the cursor already left the model."""
+        if not self.config.transparent or not self._mouse_passthrough_supported:
+            return False
+        now = time.monotonic()
+        if now < self._mouse_replay_guard_until or self._dragging_window:
+            return False
+
+        cursor = self._bridge.cursor_screen()
+        if cursor is None:
+            return False
+        geometry = self._bridge.geometry(glfw, window)
+        local_x = float(cursor[0] - geometry.x)
+        local_y = float(cursor[1] - geometry.y)
+        if (
+            0.0 <= local_x < geometry.width
+            and 0.0 <= local_y < geometry.height
+            and self._model_hit_test(model, local_x, local_y)
+        ):
+            return False
+
+        button_name = None
+        if button == glfw.MOUSE_BUTTON_LEFT:
+            button_name = "left"
+        elif button == glfw.MOUSE_BUTTON_RIGHT:
+            button_name = "right"
+        elif button == glfw.MOUSE_BUTTON_MIDDLE:
+            button_name = "middle"
+        if button_name is None:
+            return False
+
+        # The stale press already landed on the Live2D rectangle. Release the
+        # rectangle first, then replay only mouse-down to the underlying app.
+        self._set_mouse_passthrough(glfw, window, True)
+        self._mouse_replay_guard_until = now + 0.08
+        return self._bridge.replay_mouse_button_down(button_name)
+
     def _install_callbacks(self, glfw: Any, window: Any, model: Any) -> None:
         def on_framebuffer_size(_window: Any, width: int, height: int) -> None:
             if width > 0 and height > 0:
@@ -579,6 +623,9 @@ class Live2DRenderer:
                 model.SetScale(self._runtime_scale)
 
         def on_mouse_button(_window: Any, button: int, action: int, _mods: int) -> None:
+            if action == glfw.PRESS and self._forward_stale_mouse_press(glfw, window, model, button):
+                return
+
             if button == glfw.MOUSE_BUTTON_RIGHT and action == glfw.PRESS:
                 cursor = self._bridge.cursor_screen()
                 if cursor is None:

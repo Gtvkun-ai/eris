@@ -9,9 +9,11 @@ import os
 import uuid
 import sqlite3
 import hashlib
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Generator
 
+_SEMANTIC_IMPORT_ERROR: Exception | None = None
 try:
     import lancedb
     import pyarrow as pa
@@ -20,8 +22,9 @@ try:
     import tree_sitter_python
     import tree_sitter_javascript
     import tree_sitter_typescript
-except ImportError:
+except ImportError as exc:
     lancedb = None
+    _SEMANTIC_IMPORT_ERROR = exc
 
 class Chunk:
     def __init__(self, path: str, content: str, start_line: int, end_line: int):
@@ -33,7 +36,10 @@ class Chunk:
 class SemanticIndexer:
     def __init__(self, workspace_path: str):
         if lancedb is None:
-            raise ImportError("Please install lancedb, tree-sitter, and sentence-transformers")
+            detail = f": {_SEMANTIC_IMPORT_ERROR}" if _SEMANTIC_IMPORT_ERROR else ""
+            raise ImportError(
+                "Semantic coding dependencies are missing; install Eris with the 'semantic' extra" + detail
+            )
             
         self.workspace_path = Path(workspace_path)
         self.eris_dir = self.workspace_path / ".eris"
@@ -45,12 +51,13 @@ class SemanticIndexer:
         self.db = lancedb.connect(str(self.db_path))
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
         self.table_name = "codebase_index"
-        
+        self._lock = threading.RLock()
+
         self._init_sqlite()
         self._init_parsers()
 
     def _init_sqlite(self):
-        self.conn = sqlite3.connect(str(self.sqlite_path))
+        self.conn = sqlite3.connect(str(self.sqlite_path), check_same_thread=False)
         self.conn.execute('''
             CREATE TABLE IF NOT EXISTS index_cache (
                 uuid TEXT PRIMARY KEY,
@@ -112,9 +119,26 @@ class SemanticIndexer:
             
         return chunks
 
+    def is_ready(self) -> bool:
+        """Whether this workspace already has a searchable vector table."""
+        try:
+            return self.table_name in self.db.table_names()
+        except Exception:
+            return False
+
+    def _remove_indexed_path(self, relative_path: str) -> None:
+        """Delete stale chunks for one file before inserting its new version."""
+        cursor = self.conn.execute("SELECT uuid FROM index_cache WHERE path = ?", (relative_path,))
+        uuids = [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+        if uuids and self.table_name in self.db.table_names():
+            tbl = self.db.open_table(self.table_name)
+            escaped = [value.replace("'", "''") for value in uuids]
+            uuid_str = ", ".join(f"'{value}'" for value in escaped)
+            tbl.delete(f"uuid IN ({uuid_str})")
+        self.conn.execute("DELETE FROM index_cache WHERE path = ?", (relative_path,))
+
     def index_workspace(self, force: bool = False):
-        """Quét và lập chỉ mục toàn bộ thư mục."""
-        print("Đang quét workspace...")
+        """Incrementally index the workspace without retaining stale file chunks."""
         data = []
         cache_inserts = []
         
@@ -141,6 +165,12 @@ class SemanticIndexer:
                 if cursor.fetchone() and not force:
                     continue
                     
+                # The file changed (or force=True): remove its previous chunks
+                # before inserting replacements, otherwise semantic search keeps
+                # returning obsolete implementations forever.
+                with self._lock:
+                    self._remove_indexed_path(rel_path)
+
                 # Chunk and Embed
                 chunks = self._chunk_file(path, content)
                 for chunk in chunks:
@@ -154,35 +184,27 @@ class SemanticIndexer:
                     cache_inserts.append((chunk_uuid, cache_key, rel_path, chunk.start_line, chunk.end_line, chunk.content))
                     
         if data:
-            print(f"Đang ghi {len(data)} chunks vào LanceDB...")
-            if self.table_name in self.db.table_names():
-                tbl = self.db.open_table(self.table_name)
-                tbl.add(data)
-            else:
-                self.db.create_table(self.table_name, data=data)
-                
-            self.conn.executemany(
-                "INSERT OR REPLACE INTO index_cache (uuid, cacheKey, path, startLine, endLine, contents) VALUES (?, ?, ?, ?, ?, ?)",
-                cache_inserts
-            )
-            self.conn.commit()
+            with self._lock:
+                if self.table_name in self.db.table_names():
+                    tbl = self.db.open_table(self.table_name)
+                    tbl.add(data)
+                else:
+                    self.db.create_table(self.table_name, data=data)
+
+                self.conn.executemany(
+                    "INSERT OR REPLACE INTO index_cache (uuid, cacheKey, path, startLine, endLine, contents) VALUES (?, ?, ?, ?, ?, ?)",
+                    cache_inserts
+                )
+                self.conn.commit()
             
     def update_file(self, relative_path: str, content: str):
         """Cập nhật một file vào index (dùng khi user sửa file trên VS Code)."""
         cache_key = self._get_cache_key(content)
         path = self.workspace_path / relative_path
         
-        # Xóa chunk cũ
-        if self.table_name in self.db.table_names():
-            tbl = self.db.open_table(self.table_name)
-            # Không có delete theo path dễ dàng trong lancedb, nên query SQLite để lấy uuid
-            cursor = self.conn.execute("SELECT uuid FROM index_cache WHERE path = ?", (relative_path,))
-            uuids = [row[0] for row in cursor.fetchall()]
-            if uuids:
-                uuid_str = ", ".join([f"'{u}'" for u in uuids])
-                tbl.delete(f"uuid IN ({uuid_str})")
-        
-        self.conn.execute("DELETE FROM index_cache WHERE path = ?", (relative_path,))
+        # Xóa chunk cũ atomically trước khi thêm bản mới.
+        with self._lock:
+            self._remove_indexed_path(relative_path)
         
         # Thêm chunk mới
         data = []
@@ -199,17 +221,18 @@ class SemanticIndexer:
             cache_inserts.append((chunk_uuid, cache_key, relative_path, chunk.start_line, chunk.end_line, chunk.content))
             
         if data:
-            if self.table_name in self.db.table_names():
-                tbl = self.db.open_table(self.table_name)
-                tbl.add(data)
-            else:
-                self.db.create_table(self.table_name, data=data)
-                
-            self.conn.executemany(
-                "INSERT OR REPLACE INTO index_cache (uuid, cacheKey, path, startLine, endLine, contents) VALUES (?, ?, ?, ?, ?, ?)",
-                cache_inserts
-            )
-            self.conn.commit()
+            with self._lock:
+                if self.table_name in self.db.table_names():
+                    tbl = self.db.open_table(self.table_name)
+                    tbl.add(data)
+                else:
+                    self.db.create_table(self.table_name, data=data)
+
+                self.conn.executemany(
+                    "INSERT OR REPLACE INTO index_cache (uuid, cacheKey, path, startLine, endLine, contents) VALUES (?, ?, ?, ?, ?, ?)",
+                    cache_inserts
+                )
+                self.conn.commit()
 
     def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Tìm kiếm ngữ nghĩa (Semantic Search)."""
@@ -217,22 +240,22 @@ class SemanticIndexer:
             return []
             
         vector = self.model.encode(query).tolist()
-        tbl = self.db.open_table(self.table_name)
-        
-        results = tbl.search(vector).limit(limit).to_list()
-        
-        final_results = []
-        for res in results:
-            uuid_val = res['uuid']
-            cursor = self.conn.execute("SELECT path, startLine, endLine, contents FROM index_cache WHERE uuid = ?", (uuid_val,))
-            row = cursor.fetchone()
-            if row:
-                final_results.append({
-                    "path": row[0],
-                    "startLine": row[1],
-                    "endLine": row[2],
-                    "content": row[3],
-                    "distance": res['_distance']
-                })
-                
+        with self._lock:
+            tbl = self.db.open_table(self.table_name)
+            results = tbl.search(vector).limit(limit).to_list()
+
+            final_results = []
+            for res in results:
+                uuid_val = res['uuid']
+                cursor = self.conn.execute("SELECT path, startLine, endLine, contents FROM index_cache WHERE uuid = ?", (uuid_val,))
+                row = cursor.fetchone()
+                if row:
+                    final_results.append({
+                        "path": row[0],
+                        "startLine": row[1],
+                        "endLine": row[2],
+                        "content": row[3],
+                        "distance": res['_distance']
+                    })
+
         return final_results

@@ -430,6 +430,7 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("initiative", "importance_margin"): ("ERIS_INITIATIVE_IMPORTANCE_MARGIN", "float"),
     ("initiative", "activity_update_cooldown_seconds"): ("ERIS_INITIATIVE_ACTIVITY_UPDATE_COOLDOWN_SECONDS", "int"),
     ("commentary", "enabled"): ("ERIS_COMMENTARY_ENABLED", "bool"),
+    ("commentary", "autonomous_expression_enabled"): ("ERIS_AUTONOMOUS_EXPRESSION_ENABLED", "bool"),
     ("commentary", "desired_interval_seconds"): ("ERIS_COMMENTARY_DESIRED_INTERVAL_SECONDS", "int"),
     ("commentary", "maximum_quiet_seconds"): ("ERIS_COMMENTARY_MAXIMUM_QUIET_SECONDS", "int"),
     ("commentary", "startup_delay_seconds"): ("ERIS_COMMENTARY_STARTUP_DELAY_SECONDS", "int"),

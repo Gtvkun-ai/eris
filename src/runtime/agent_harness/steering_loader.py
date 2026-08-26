@@ -1,11 +1,11 @@
 """Eris Steering Files Loader
 
-Doc cac file .eris/steering/*.md tu workspace va inject vao Cline context.
+Doc cac file .eris/steering/*.md tu workspace va inject vao coding-team context.
 Tuong tu Kiro steering files: product.md, structure.md, tech.md, v.v.
 
 Usage:
     steering = load_steering(workspace_path)
-    bridge.run_task_blocking(..., steering_context=steering)
+    team_runner.run_task_blocking(..., steering_context=steering)
 """
 from __future__ import annotations
 

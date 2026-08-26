@@ -608,6 +608,130 @@ class RemoteModelProcessManager:
         """Retired lane: semantic tutor no longer owns a DeepSeek account pool."""
         return None
 
+    def build_coding_client(self):
+        """Build the dedicated remote coding brain.
+
+        Coding is a first-class ownership lane, not an alias to companion, critic,
+        escalation, WebAI or another agent runtime. If this lane is not configured, the coding
+        Agent Harness stays unavailable instead of silently changing model owner.
+
+        Configuration (highest precedence first):
+        - providers.<provider>.coding in secrets.json
+        - ERIS_CODING_* environment variables
+        - provider-specific official API credentials
+
+        ``ERIS_CODING_PROVIDER`` defaults to ``ERIS_REMOTE_PROVIDER``.  A
+        ``deepseek_web`` companion configuration is intentionally translated to
+        official ``deepseek`` for this lane; localhost endpoints are rejected by
+        default so a web/session sidecar cannot become the coding authority by
+        accident.
+        """
+        apply_secrets_to_environ()
+        if not self._env_flag("ERIS_CODING_ENABLED", "1"):
+            return None
+
+        raw_remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek").strip().lower() or "deepseek"
+        remote_provider = _normalize_remote_provider(raw_remote_provider)
+        configured_provider = os.environ.get("ERIS_CODING_PROVIDER", "").strip().lower()
+        raw_provider = configured_provider or raw_remote_provider
+        provider = _normalize_remote_provider(raw_provider)
+        if provider == "deepseek_web":
+            provider = "deepseek"
+
+        slot = os.environ.get("ERIS_CODING_SLOT", "coding").strip() or "coding"
+        # Secrets files tend to use human/provider names (e.g. ``openai``), while
+        # runtime normalization may call the same protocol ``openai_compatible``.
+        # Try the literal provider first so a dedicated ``providers.openai.coding``
+        # profile is never made invisible by transport normalization.
+        profile = get_provider_profile(raw_provider, slot=slot)
+        if not profile and raw_provider != provider:
+            profile = get_provider_profile(provider, slot=slot)
+        explicit_base = str(profile.get("base_url") or "").strip() or os.environ.get("ERIS_CODING_BASE_URL", "").strip()
+        explicit_model = (
+            str(profile.get("model") or "").strip()
+            or str(profile.get("model_name") or "").strip()
+            or os.environ.get("ERIS_CODING_MODEL", "").strip()
+        )
+        explicit_key = str(profile.get("api_key") or "").strip() or get_secret("ERIS_CODING_API_KEY")
+
+        def _reject_local(base_url: str) -> bool:
+            allow_local = self._env_flag("ERIS_CODING_ALLOW_LOCAL", "0")
+            lowered = str(base_url or "").strip().lower()
+            return (not allow_local) and any(token in lowered for token in ("localhost", "127.0.0.1", "0.0.0.0"))
+
+        try:
+            if provider == "gemini":
+                base_url = explicit_base or "https://generativelanguage.googleapis.com/v1beta"
+                model_name = (
+                    explicit_model
+                    or (os.environ.get("ERIS_REMOTE_MODEL", "").strip() if remote_provider == "gemini" else "")
+                    or os.environ.get("GEMINI_MODEL", "").strip()
+                    or "gemini-2.5-pro"
+                )
+                api_key = explicit_key or get_secret("GEMINI_API_KEY")
+                if not api_key and remote_provider == "gemini":
+                    api_key = get_secret("ERIS_REMOTE_API_KEY")
+                if not api_key:
+                    self.logger.info("Coding brain tat: chua co ERIS_CODING_API_KEY/GEMINI_API_KEY.")
+                    return None
+                if _reject_local(base_url):
+                    self.logger.warning("Coding brain tu choi local endpoint: %s", base_url)
+                    return None
+                client = GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=None)
+
+            elif provider == "deepseek":
+                base_url = explicit_base or DEEPSEEK_BASE_URL
+                model_name = normalize_model(explicit_model or DEEPSEEK_STRONG_MODEL)
+                api_key = explicit_key or get_secret("DEEPSEEK_API_KEY")
+                if not api_key and remote_provider == "deepseek":
+                    api_key = get_secret("ERIS_REMOTE_API_KEY")
+                if not api_key:
+                    self.logger.info("Coding brain tat: chua co ERIS_CODING_API_KEY/DEEPSEEK_API_KEY.")
+                    return None
+                if _reject_local(base_url):
+                    self.logger.warning("Coding brain tu choi local endpoint: %s", base_url)
+                    return None
+                client = OpenAICompatibleClient(
+                    base_url=base_url, api_key=api_key, model_name=model_name, key_pool=None,
+                    provider_circuit_id=f"{base_url.rstrip('/')}#coding",
+                )
+
+            else:
+                # Generic remote OpenAI-compatible coding lane.  Require an
+                # explicit model to avoid silently inheriting a cheap chat model.
+                base_url = explicit_base or (
+                    "https://api.openai.com/v1" if provider == "openai_compatible" and raw_provider == "openai" else
+                    (os.environ.get("ERIS_REMOTE_BASE_URL", "").strip() if provider == remote_provider else "")
+                )
+                model_name = explicit_model or (
+                    os.environ.get("ERIS_REMOTE_MODEL", "").strip() if provider == remote_provider else ""
+                )
+                api_key = explicit_key or get_secret("OPENAI_API_KEY")
+                if provider == remote_provider:
+                    api_key = api_key or get_secret("ERIS_REMOTE_API_KEY")
+                if not base_url or not model_name or not api_key:
+                    self.logger.info(
+                        "Coding brain tat: provider=%s can ERIS_CODING_BASE_URL, ERIS_CODING_MODEL va ERIS_CODING_API_KEY.",
+                        provider,
+                    )
+                    return None
+                if _reject_local(base_url):
+                    self.logger.warning("Coding brain tu choi local endpoint: %s", base_url)
+                    return None
+                client = OpenAICompatibleClient(
+                    base_url=base_url, api_key=api_key, model_name=model_name, key_pool=None,
+                    provider_circuit_id=f"{base_url.rstrip('/')}#coding",
+                )
+        except (RuntimeError, ValueError) as exc:
+            self.logger.warning("Khong dung duoc coding brain provider=%s: %s", provider, exc)
+            return None
+
+        self.logger.info(
+            "Coding brain official API san sang: provider=%s model=%s base=%s",
+            provider, getattr(client, "model_name", model_name), getattr(client, "base_url", base_url),
+        )
+        return client
+
     def build_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         if not self._env_flag("ERIS_REMOTE_API_ENABLED", "1"):
             raise RuntimeError("Local model runtime da bi go bo; hay bat ERIS_REMOTE_API_ENABLED=1.")

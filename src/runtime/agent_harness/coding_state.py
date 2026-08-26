@@ -104,7 +104,7 @@ def tool_start_patch(name: str, args: dict[str, Any] | None = None) -> dict[str,
     args = dict(args or {})
     file_path = _tool_path(tool, args)
     phase = "executing"
-    if tool in {"project_list_files", "project_read_file", "project_search_text", "project_find_symbol", "project_git_diff"}:
+    if tool in {"project_list_files", "project_read_file", "project_search_text", "project_find_symbol", "project_semantic_search", "project_git_log", "project_dependency_summary", "project_test_inventory", "project_git_diff"}:
         phase = "investigating"
     elif tool == "project_apply_patch":
         phase = "modifying"
@@ -192,6 +192,10 @@ def human_tool_label(name: str, args: dict[str, Any] | None = None) -> str:
         "project_read_file": "Đang đọc file",
         "project_search_text": "Đang tìm code",
         "project_find_symbol": "Đang tìm symbol",
+        "project_semantic_search": "Đang tìm code theo ngữ nghĩa",
+        "project_git_log": "Đang đọc lịch sử Git",
+        "project_dependency_summary": "Đang đọc dependency",
+        "project_test_inventory": "Đang kiểm kê test suite",
         "project_git_diff": "Đang kiểm tra diff",
         "project_apply_patch": "Đang áp patch",
         "project_run_tests": "Đang chạy test",

@@ -220,7 +220,7 @@ def test_capability_self_model_distinguishes_instant_long_and_ambiguous():
 
     long_task = model.assess("debug capability_route trong executive_cortex.py rồi sửa và chạy test")
     assert long_task.lane == "long_execution"
-    assert long_task.executor == "gemini/langgraph"
+    assert long_task.executor == "official-api-coding/langgraph"
     assert long_task.can_modify is True
 
     ambiguous = model.assess("làm agent ngon hơn đi")

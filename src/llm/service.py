@@ -135,6 +135,7 @@ class LlmService:
         vision_client=None,
         fallback_client=None,
         escalation_client=None,
+        coding_client=None,
         social_parser_client=None,
         social_critic_client=None,
         social_fallback_client=None,
@@ -192,6 +193,10 @@ class LlmService:
         # cheap draft scores low / cần tool, ta chạy lại lượt trên client này. Để
         # None thì tự dùng fallback_client (đã là model mạnh hơn trong cấu hình hiện tại).
         self.escalation_client = escalation_client
+        # Dedicated coding authority.  No implicit fallback is allowed here: the
+        # Agent Harness must never silently borrow companion/critic/surface and
+        # change model ownership just because one credential is missing.
+        self.coding_client = coding_client
         # Hai lane advisory cho Social Cognition V2. Chúng không thay model chính
         # và không được phép làm turn chết nếu Groq lỗi.
         self.social_parser_client = self.observer_client or social_parser_client

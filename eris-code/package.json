@@ -1,0 +1,168 @@
+{
+  "name": "eris-code",
+  "displayName": "Eris Code",
+  "description": "Standalone VS Code coding client powered by GitPilot. Eris Desktop is optional observation/context only.",
+  "version": "0.18.0",
+  "publisher": "gtvk",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onView:erisCode.mainView",
+    "onChatParticipant:gtvk.erisCode",
+    "onCommand:erisCode.openChat",
+    "onCommand:erisCode.newChat",
+    "onCommand:erisCode.openTask",
+    "onCommand:erisCode.reconnect",
+    "onCommand:erisCode.gitpilotStart",
+    "onCommand:erisCode.gitpilotRestart",
+    "onCommand:erisCode.gitpilotStop",
+    "onCommand:erisCode.gitpilotLogs",
+    "onCommand:erisCode.installGitPilot",
+    "onCommand:erisCode.selfTest"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "erisCode.openChat",
+        "title": "Eris Code: Open Chat"
+      },
+      {
+        "command": "erisCode.newChat",
+        "title": "Eris Code: New Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "erisCode.reconnect",
+        "title": "Eris Code: Reconnect GitPilot",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "erisCode.openTask",
+        "title": "Eris Code: Open Task"
+      },
+      {
+        "command": "erisCode.gitpilotStart",
+        "title": "Eris Code: Start GitPilot"
+      },
+      {
+        "command": "erisCode.gitpilotRestart",
+        "title": "Eris Code: Restart GitPilot"
+      },
+      {
+        "command": "erisCode.gitpilotStop",
+        "title": "Eris Code: Stop Managed GitPilot"
+      },
+      {
+        "command": "erisCode.gitpilotLogs",
+        "title": "Eris Code: Show GitPilot Logs"
+      },
+      {
+        "command": "erisCode.installGitPilot",
+        "title": "Eris Code: Install GitPilot 0.2.7"
+      },
+      {
+        "command": "erisCode.selfTest",
+        "title": "Eris Code: Run Self Test",
+        "icon": "$(beaker)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "erisCode.agentSidebar",
+          "title": "Eris Code",
+          "icon": "media/eris.svg"
+        }
+      ]
+    },
+    "views": {
+      "erisCode.agentSidebar": [
+        {
+          "type": "webview",
+          "id": "erisCode.mainView",
+          "name": "Eris Code",
+          "contextualTitle": "Eris Code",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Eris Code",
+      "properties": {
+        "erisCode.gitpilot.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tự khởi động GitPilot local khi Eris Code cần nó. Không bao giờ khởi động Eris Desktop."
+        },
+        "erisCode.gitpilot.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "GitPilot backend REST API."
+        },
+        "erisCode.gitpilot.command": {
+          "type": "string",
+          "default": "gitpilot",
+          "description": "GitPilot CLI command. Eris Code gọi `<command> serve --port <port>` khi autoStart bật."
+        },
+        "erisCode.gitpilot.topology": {
+          "type": "string",
+          "default": "feature_builder",
+          "description": "GitPilot topology. `feature_builder` ưu tiên Explorer → Planner → Coder → Reviewer → PR Manager khi backend/session hỗ trợ."
+        },
+        "erisCode.erisLink.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cho phép Eris Desktop gửi observation/project memory vào task. Optional; Eris Code vẫn chạy đầy đủ khi tắt."
+        },
+        "erisCode.erisLink.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8767/v1/context",
+          "description": "Read-only Eris Link v1 context endpoint. Extension không bao giờ launch Eris Desktop."
+        },
+        "erisCode.gitpilot.allowFolderDirectFallback": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cho phép GitPilot dùng folder-only direct LLM khi không có GitHub-connected multi-agent session. Mặc định tắt để không âm thầm downgrade khỏi coding team."
+        }
+      }
+    },
+    "chatParticipants": [
+      {
+        "id": "gtvk.erisCode",
+        "name": "eris-code",
+        "fullName": "Eris Code",
+        "description": "GitPilot coding team trong VS Code; Eris Desktop chỉ là observer tùy chọn.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "fix",
+            "description": "Tìm root cause, sửa code và kiểm chứng qua GitPilot"
+          },
+          {
+            "name": "plan",
+            "description": "Lập kế hoạch read-only qua GitPilot"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "vscode:prepublish": "node esbuild.js --production",
+    "package:vsix": "python package_vsix.py"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.8.0",
+    "esbuild": "^0.25.0"
+  }
+}

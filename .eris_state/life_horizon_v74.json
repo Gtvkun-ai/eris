@@ -1,6 +1,6 @@
 {
   "schema": "eris.life_horizon.state.v74",
-  "revision": 1320,
+  "revision": 1327,
   "goals": [
     {
       "goal_id": "h2.private_project.project.derived.ec06365b7c5ae381",
@@ -241,7 +241,7 @@
     {
       "goal_id": "h0.last_public_action",
       "level": "H0",
-      "title": "Public action: share_observation",
+      "title": "Public action: memory_callback",
       "description": "Receipt của hành động public vừa được commit.",
       "status": "active",
       "strength": 0.86,
@@ -260,7 +260,8 @@
         "session-turn:9",
         "session-turn:10",
         "session-turn:11",
-        "session-turn:12"
+        "session-turn:12",
+        "session-turn:13"
       ],
       "evidence_refs": [],
       "tags": [
@@ -272,7 +273,7 @@
         "ask_genuine_question",
         "share_observation"
       ],
-      "updated_at": 1787729163.0979607,
+      "updated_at": 1787733592.754246,
       "created_at": 1787021301.4967518
     },
     {

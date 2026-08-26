@@ -2,6 +2,7 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -494,7 +495,80 @@ public partial class UdpListener : Node2D
 	}
 
 	private bool _overlayMousePassthroughActive = false;
+	private ulong _staleOverlayReplayGuardUntilMs = 0;
 	private string _shutdownReason = "unknown tree exit";
+
+	private static class NativeMouseReplay
+	{
+		private const uint MouseEventLeftDown = 0x0002;
+		private const uint MouseEventRightDown = 0x0008;
+		private const uint MouseEventMiddleDown = 0x0020;
+
+		[DllImport("user32.dll", EntryPoint = "mouse_event")]
+		private static extern void MouseEvent(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+
+		public static bool TryReplayButtonDown(MouseButton button)
+		{
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				return false;
+
+			uint flags = button switch
+			{
+				MouseButton.Left => MouseEventLeftDown,
+				MouseButton.Right => MouseEventRightDown,
+				MouseButton.Middle => MouseEventMiddleDown,
+				_ => 0u,
+			};
+			if (flags == 0u)
+				return false;
+
+			try
+			{
+				// Chỉ phát lại mouse-down. Mouse-up vật lý kế tiếp sẽ đi xuyên qua
+				// overlay sau khi MousePassthrough đã bật, nên vẫn giữ được drag/click
+				// tự nhiên ở ứng dụng bên dưới.
+				MouseEvent(flags, 0u, 0u, 0u, UIntPtr.Zero);
+				return true;
+			}
+			catch (DllNotFoundException)
+			{
+				return false;
+			}
+			catch (EntryPointNotFoundException)
+			{
+				return false;
+			}
+		}
+	}
+
+	private bool TryForwardStaleOverlayMouseDown(InputEventMouseButton mouseEvent)
+	{
+		if (!EnableDesktopOverlayWindow
+			|| !EnableMousePassthrough
+			|| _overlayMousePassthroughActive
+			|| !mouseEvent.Pressed
+			|| _draggingPanel != null
+			|| _isDraggingCharacter)
+		{
+			return false;
+		}
+
+		// Nếu click thật sự nằm trên UI/nhân vật Eris thì Eris phải nhận nó.
+		if (IsMouseOverInteractiveOverlay(mouseEvent.Position))
+			return false;
+
+		ulong now = Time.GetTicksMsec();
+		if (now < _staleOverlayReplayGuardUntilMs)
+			return false;
+
+		// Đây là click đã tới cửa sổ full-screen vì trạng thái hover của frame
+		// trước còn capture. Nhả overlay trước rồi phát lại đúng mouse-down xuống
+		// ứng dụng phía dưới. Guard ngắn tránh synthetic event tự lặp nếu driver
+		// áp dụng window flag chậm.
+		SetOverlayMousePassthrough(true);
+		_staleOverlayReplayGuardUntilMs = now + 80UL;
+		return NativeMouseReplay.TryReplayButtonDown(mouseEvent.ButtonIndex);
+	}
 
 	private void MarkShutdownReason(string reason)
 	{
@@ -651,6 +725,10 @@ public partial class UdpListener : Node2D
 		TickRuntimePresencePanel();
 		TickConversationUi();
 
+		// Một số tick phía trên có thể auto-hide/show panel. Đồng bộ hit-test lần
+		// nữa ngay trong cùng frame để không giữ một rectangle click cũ.
+		UpdateMousePassthrough();
+
 		while (_udp.GetAvailablePacketCount() > 0)
 		{
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
@@ -693,6 +771,15 @@ public partial class UdpListener : Node2D
 
 		if (@event is not InputEventMouseButton mouseEvent)
 			return;
+
+		// Full-screen transparent overlay có thể còn giữ hit-test của frame trước.
+		// Nếu một mouse-down lọt vào Eris ở vùng không tương tác, chuyển nó ngay
+		// xuống app bên dưới thay vì nuốt mất click đầu tiên.
+		if (TryForwardStaleOverlayMouseDown(mouseEvent))
+		{
+			GetViewport().SetInputAsHandled();
+			return;
+		}
 
 		if (_grabModeArmed && mouseEvent.ButtonIndex == MouseButton.Left)
 		{
@@ -1187,6 +1274,7 @@ public partial class UdpListener : Node2D
 			MarkChatActivity();
 			UpdateChatPanelLayout();
 			_chatPanel.Visible = true;
+			UpdateMousePassthrough();
 			_chatInput.GrabFocus();
 			SendChatSignal("chat_start");
 		}
@@ -1197,6 +1285,7 @@ public partial class UdpListener : Node2D
 		_bodyAutonomy?.RecordUserInteraction();
 		_chatPanel.Visible = false;
 		_chatInput.Text = "";
+		UpdateMousePassthrough();
 		SendChatSignal("chat_end");
 	}
 
@@ -1359,7 +1448,36 @@ public partial class UdpListener : Node2D
 			return;
 
 		Vector2 viewport = GetViewportRect().Size;
-		float targetWidth = Mathf.Clamp(viewport.X - 28f, 460f, 880f);
+		float usableLeft = 0f;
+		float usableTop = 0f;
+		float usableRight = viewport.X;
+		float usableBottom = viewport.Y;
+		try
+		{
+			int screen = DisplayServer.WindowGetCurrentScreen();
+			Rect2I usableScreen = DisplayServer.ScreenGetUsableRect(screen);
+			Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
+			usableLeft = Mathf.Clamp(usableScreen.Position.X - overlayScreenPosition.X, 0f, viewport.X);
+			usableTop = Mathf.Clamp(usableScreen.Position.Y - overlayScreenPosition.Y, 0f, viewport.Y);
+			usableRight = Mathf.Clamp(usableScreen.Position.X + usableScreen.Size.X - overlayScreenPosition.X, 0f, viewport.X);
+			usableBottom = Mathf.Clamp(usableScreen.Position.Y + usableScreen.Size.Y - overlayScreenPosition.Y, 0f, viewport.Y);
+			if (usableRight <= usableLeft + 120f || usableBottom <= usableTop + 80f)
+			{
+				usableLeft = 0f;
+				usableTop = 0f;
+				usableRight = viewport.X;
+				usableBottom = viewport.Y;
+			}
+		}
+		catch (Exception)
+		{
+			// Backend/window manager không hỗ trợ usable rect: dùng viewport như cũ.
+		}
+
+		float usableWidth = Mathf.Max(1f, usableRight - usableLeft);
+		float minWidth = Mathf.Min(460f, usableWidth);
+		float maxWidth = Mathf.Min(880f, usableWidth);
+		float targetWidth = Mathf.Clamp(usableWidth - 28f, minWidth, maxWidth);
 		float scale = Mathf.Clamp(targetWidth / 880f, 0.7f, 1f);
 		// Keep height stable to avoid squishing the baked-in circular icon in chatframe.png.
 		float targetHeight = 64f;
@@ -1381,8 +1499,8 @@ public partial class UdpListener : Node2D
 		_chatPanel.CustomMinimumSize = new Vector2(targetWidth, targetHeight);
 		_chatPanel.Size = new Vector2(targetWidth, targetHeight);
 		_chatPanel.Position = new Vector2(
-			Mathf.Max(0f, (viewport.X - targetWidth) * 0.5f),
-			Mathf.Max(0f, viewport.Y - targetHeight - 8f));
+			usableLeft + Mathf.Max(0f, (usableWidth - targetWidth) * 0.5f),
+			Mathf.Max(usableTop, usableBottom - targetHeight - 8f));
 
 		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
 		{

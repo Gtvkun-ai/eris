@@ -136,6 +136,7 @@ export async function runCodingTask(
   let finalText = '';
   let taskStatus: CodingTaskResult['status'] = 'completed';
   let resolvedSessionId = '';
+  const hooksPath = path.join(input.workspacePath, '.eris', 'hooks');
 
   // Subscribe events TRƯỚC startSession
   const unsubscribe = host.subscribe((event: CoreSessionEvent) => {
@@ -203,9 +204,7 @@ export async function runCodingTask(
       // Hooks: SDK tu doc .eris/hooks/*.json, tu chay shell command
       extensions: [
         createHookConfigFileExtension({
-          searchPaths: resolveHooksConfigSearchPaths([
-            path.join(input.workspacePath, '.eris', 'hooks'),
-          ]),
+          searchPaths: resolveHooksConfigSearchPaths(hooksPath),
         }),
       ],
       prompt: input.goal,

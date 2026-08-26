@@ -95,6 +95,23 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         id="project_find_symbol", effect="read", public_name_vi="tìm symbol",
         description_vi="tìm class, function hoặc symbol theo tên", visible_in_ui_group="project",
     ),
+    "project_semantic_search": CapabilityDefinition(
+        id="project_semantic_search", effect="read", public_name_vi="tìm code theo ngữ nghĩa",
+        description_vi="tìm đoạn code liên quan theo ý nghĩa bằng semantic index; dùng để định hướng trước khi đọc source chính xác",
+        visible_in_ui_group="project",
+    ),
+    "project_git_log": CapabilityDefinition(
+        id="project_git_log", effect="read", public_name_vi="đọc lịch sử Git",
+        description_vi="đọc commit history gần đây để hiểu ý định, convention và vùng code đang tiến hóa", visible_in_ui_group="project",
+    ),
+    "project_dependency_summary": CapabilityDefinition(
+        id="project_dependency_summary", effect="read", public_name_vi="đọc dependency project",
+        description_vi="tóm tắt dependency manifests theo tên package mà không nhét lockfile lớn vào context", visible_in_ui_group="project",
+    ),
+    "project_test_inventory": CapabilityDefinition(
+        id="project_test_inventory", effect="read", public_name_vi="kiểm kê test suite",
+        description_vi="liệt kê test file, config và framework để lập kế hoạch verification có căn cứ", visible_in_ui_group="project",
+    ),
     "project_git_diff": CapabilityDefinition(
         id="project_git_diff", effect="read", public_name_vi="xem diff project",
         description_vi="đọc git diff hiện tại bằng evidence thật", visible_in_ui_group="project",
@@ -125,9 +142,9 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         risk_level="medium", visible_in_ui_group="project",
     ),
     "project_execute_task": CapabilityDefinition(
-        id="project_execute_task", effect="write", public_name_vi="tự hoàn thành tác vụ code",
-        description_vi="tự inspect, lập patch, sửa, chạy test, rollback nếu lỗi và đóng gói",
-        risk_level="high", visible_in_ui_group="project",
+        id="project_execute_task", effect="write", public_name_vi="tác vụ code one-shot (legacy)",
+        description_vi="compatibility contract cũ; production coding phải đi qua Unified Agent Harness",
+        risk_level="high", visible_in_ui_group="project", exposure="compatibility", callable=False,
     ),
     "workspace_join": CapabilityDefinition(
         id="workspace_join", effect="write", public_name_vi="gia nhập workspace",
@@ -372,6 +389,21 @@ _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
         "symbol": _string("Class, function, or symbol name"),
         "limit": _integer("Maximum matches", minimum=1, maximum=500),
     }, ("symbol",)), "json"),
+    "project_semantic_search": (_object_schema({
+        "query": _string("Natural-language description of the code or behavior to find"),
+        "limit": _integer("Maximum semantic matches", minimum=1, maximum=20),
+        "reindex": _boolean("Refresh the incremental semantic index before searching"),
+    }, ("query",)), "json"),
+    "project_git_log": (_object_schema({
+        "limit": _integer("Maximum recent commits", minimum=1, maximum=100),
+        "path": _string("Optional workspace-relative path to scope history"),
+    }), "json"),
+    "project_dependency_summary": (_object_schema({
+        "limit": _integer("Maximum dependency names across manifests", minimum=1, maximum=300),
+    }), "json"),
+    "project_test_inventory": (_object_schema({
+        "limit": _integer("Maximum test files", minimum=1, maximum=1200),
+    }), "json"),
     "project_git_diff": (_object_schema({"staged": _boolean("Read staged diff instead of working tree")}), "json"),
     "project_apply_patch": (_object_schema({"patch": _string("Unified diff")}, ("patch",)), "json"),
     "project_run_tests": (_object_schema({

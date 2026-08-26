@@ -17,6 +17,10 @@ _TOOL_LABELS: dict[str, str] = {
     "project_read_file": "Đọc file",
     "project_search_text": "Tìm trong code",
     "project_find_symbol": "Tìm symbol",
+    "project_semantic_search": "Tìm code theo ngữ nghĩa",
+    "project_git_log": "Đọc lịch sử Git",
+    "project_dependency_summary": "Đọc dependency",
+    "project_test_inventory": "Kiểm kê test suite",
     "project_git_diff": "Kiểm tra thay đổi Git",
     "project_apply_patch": "Áp dụng thay đổi",
     "project_run_tests": "Chạy kiểm thử",
@@ -181,6 +185,8 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
         "task_paused", "task_resumed", "interrupt_resume_requested", "rollback_requested",
         "rollback_queued", "rollback_failed", "repository_context_started", "repository_context_ready",
         "context_gate_blocked", "completion_gate_blocked",
+        "coding_team_selected", "team_handoff", "team_handoff_rejected",
+        "team_plan_ready", "team_review_changes_requested",
     }:
         status = "running"
         if kind in {"tool_failed", "rollback_failed"}:
@@ -228,6 +234,22 @@ def project_agent_event(event: dict[str, Any]) -> list[dict[str, Any]]:
             label = "Đang bổ sung ngữ cảnh trước khi sửa"
         elif kind == "completion_gate_blocked":
             label = "Đang xác minh thay đổi trước khi hoàn tất"
+        elif kind == "coding_team_selected":
+            label = "Đã lập coding team"
+            status = "completed"
+        elif kind == "team_handoff":
+            source = str(data.get("from", "") or "").title()
+            target = str(data.get("to", "") or "").title()
+            label = f"{source} → {target}" if source and target else "Chuyển giao giữa specialist"
+            status = "completed"
+        elif kind == "team_plan_ready":
+            label = "Planner đã chốt kế hoạch"
+            status = "completed"
+        elif kind == "team_review_changes_requested":
+            label = "Reviewer yêu cầu Coder sửa thêm"
+        elif kind == "team_handoff_rejected":
+            label = "Handoff bị chặn"
+            status = "failed"
         else:
             label = summary or "Đang xử lý"
 

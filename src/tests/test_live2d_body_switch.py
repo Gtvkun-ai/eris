@@ -336,5 +336,52 @@ def test_godot_overlay_uses_dynamic_window_passthrough_not_merged_hitbox() -> No
     assert "DisplayServer.WindowFlags.MousePassthrough" in source
     assert "DisplayServer.MouseGetPosition()" in source
     assert "IsMouseOverInteractiveOverlay" in source
+    assert "TryForwardStaleOverlayMouseDown" in source
+    assert "NativeMouseReplay.TryReplayButtonDown" in source
+    assert "DisplayServer.ScreenGetUsableRect" in source
+    scene = (Path(__file__).resolve().parents[1] / "body" / "udpListener.tscn").read_text(encoding="utf-8")
+    root_block = scene.split('[node name="Control" type="Control" parent="CanvasLayer"', 1)[1].split("[node", 1)[0]
+    assert "mouse_filter = 2" in root_block
     assert "MergeInteractivePanelRects" not in source
     assert "TryBuildCharacterMouseCaptureRect" not in source
+
+
+def test_live2d_stale_mouse_press_is_replayed_below_window() -> None:
+    from types import SimpleNamespace
+
+    from live2d_body.renderer import Live2DRenderer
+    from live2d_body.window_bridge import WindowGeometry
+
+    class FakeGlfw:
+        MOUSE_BUTTON_LEFT = 0
+        MOUSE_BUTTON_RIGHT = 1
+        MOUSE_BUTTON_MIDDLE = 2
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.replayed = []
+
+        @staticmethod
+        def cursor_screen():
+            return (180.0, 160.0)
+
+        @staticmethod
+        def geometry(_glfw, _window):
+            return WindowGeometry(10, 10, 100, 100)
+
+        def replay_mouse_button_down(self, button: str) -> bool:
+            self.replayed.append(button)
+            return True
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer.config = SimpleNamespace(transparent=True)
+    renderer._mouse_passthrough_supported = True
+    renderer._mouse_replay_guard_until = 0.0
+    renderer._dragging_window = False
+    renderer._bridge = FakeBridge()
+    passthrough = []
+    renderer._set_mouse_passthrough = lambda _glfw, _window, enabled: passthrough.append(enabled) or True
+
+    assert renderer._forward_stale_mouse_press(FakeGlfw(), "window", object(), 0) is True
+    assert passthrough == [True]
+    assert renderer._bridge.replayed == ["left"]

@@ -79,6 +79,10 @@ from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATU
 from screen import build_screen_text_runtime
 
 
+def _vscode_service_mode() -> bool:
+    return os.environ.get("ERIS_VSCODE_SERVICE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class AutonomousLoopRuntimeMixin:
     def _wake_autonomous_loop(self, reason: str = "external_event") -> None:
         """Đánh thức vòng self-turn mà không phát ngôn từ thread nguồn event."""
@@ -194,6 +198,17 @@ class AutonomousLoopRuntimeMixin:
     def run_loop(self):
         """Chạy runtime production duy nhất: Architecture C + semantic_frame.v1."""
         self.logger.info("--- Architecture C runtime; chat vision theo yêu cầu màn hình ---")
+        if _vscode_service_mode():
+            service = getattr(self, "agent_ws_service", None)
+            if service is None:
+                self.logger.error("[vscode-service] agent service is unavailable; cannot run IDE bridge")
+                self.stop()
+                return
+            self.logger.info("[vscode-service] headless IDE bridge mode; autonomous startup and speech loop disabled.")
+            while self.running:
+                time.sleep(0.5)
+            return
+
         orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
             self.logger.error("[architecture C] bootstrap failed; legacy runtime has been removed")
