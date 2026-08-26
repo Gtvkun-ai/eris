@@ -4,7 +4,7 @@
 
 Eris uses a native role-specialized coding team inspired by GitPilot's public topology model, while keeping **one Eris task owner, one official coding API lane, one checkpoint graph, and one tool/permission spine**.
 
-This is intentionally **not** a vendored GitPilot/CrewAI sidecar. A second autonomous runtime would duplicate task state, context, permissions and retries—the same integration tax that made the earlier Cline path non-elegant.
+This is intentionally **not** a vendored GitPilot/CrewAI sidecar. A second coding runtime would duplicate task state, context, permissions and retries.
 
 ## Engineering Team
 

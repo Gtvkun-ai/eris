@@ -8,6 +8,8 @@ pattern often enough to know how that movie ends.
 """
 from __future__ import annotations
 
+import os
+
 from domain import Decision
 from failure_meta import is_technical_failure_meta
 from runtime.autonomous_loop_runtime import AutonomousLoopRuntimeMixin
@@ -233,7 +235,7 @@ class RuntimeCoordinator(
 
                 # IDE gateway chạy cùng Eris Service nhưng hoàn toàn tách khỏi Webview.
                 # Extension chỉ đọc discovery file rồi handshake bằng token localhost.
-                ws_enabled = str(os.environ.get("ERIS_AGENT_WS_ENABLED", "1") or "1").strip().lower()
+                ws_enabled = str(os.environ.get("ERIS_AGENT_WS_ENABLED", "0") or "0").strip().lower()
                 if ws_enabled not in {"0", "false", "no", "off"}:
                     from runtime.agent_service import AgentWebSocketService
 
@@ -278,9 +280,29 @@ class RuntimeCoordinator(
             except Exception:
                 self.agent_capability_self_model = None
 
-        # No secondary coding-agent sidecar is constructed here.
-        # The official-API coding team owns Explorer -> Planner -> Coder -> Reviewer
-        # inside the same AgentHarness/checkpoint/permission spine.
+        # Legacy Eris IDE agent WebSocket is opt-in only. Eris Code is now an
+        # independent GitPilot client and never depends on this runtime.
+
+        # Optional read-only bridge: Eris Desktop may contribute observation/memory
+        # to Eris Code, but cannot own or control a coding task. Disabled by default.
+        self.eris_code_observer_link = None
+        try:
+            from runtime.eris_code_observer_link import (
+                ErisCodeObserverLink, build_observer_context, observer_link_enabled,
+            )
+            if observer_link_enabled():
+                port = int(os.environ.get("ERIS_CODE_OBSERVER_LINK_PORT", "8767") or "8767")
+                link = ErisCodeObserverLink(
+                    lambda workspace: build_observer_context(self, workspace),
+                    port=port,
+                    logger=logger,
+                )
+                if link.start():
+                    self.eris_code_observer_link = link
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[eris-link] optional observer bridge unavailable: %s", exc)
 
     def _supervise_agent_event(self, event: dict) -> None:
         """Deterministic first-line technical supervision for coding-agent execution.

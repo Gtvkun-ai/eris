@@ -1,5 +1,4 @@
 // esbuild.js — build script cho Eris VS Code extension
-// Thay thế tsc trực tiếp vì @cline/core là ESM-only.
 // esbuild bundle ESM dependencies vào CJS output mà VS Code Extension Host cần.
 
 const esbuild = require('esbuild');

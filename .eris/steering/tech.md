@@ -2,7 +2,7 @@
 
 ## Backend (Python Brain)
 - Python 3.12+
-- LangGraph cho agent loop (fallback khi Cline bridge khong co)
+- LangGraph cho agent loop
 - Khong dung async/await trong runtime chinh (threading model)
 - Tat ca import lazy (trong ham) de tranh circular import
 
@@ -11,11 +11,10 @@
 - Khong dung React/Vue — vanilla JS trong webview
 - WebSocket de communicate voi Python Brain
 
-## Cline Bridge (Node.js)
-- Node.js ESM
-- @cline/core SDK
-- Provider: openai-compatible + localhost:8081 (WebAI proxy)
-- Build: tsc (khong dung esbuild cho bridge)
+## GitPilot
+- Local backend clone: services/gitpilot
+- CLI: gitpilot
+- Default API docs: http://127.0.0.1:8000/docs
 
 ## Conventions
 - Python: snake_case, type hints, docstrings
@@ -25,7 +24,4 @@
 - File spec: .eris/specs/*.md
 
 ## LLM
-- Provider: Gemini qua WebAI-to-API proxy
-- Endpoint: http://localhost:8081/v1 (OpenAI-compatible)
-- Model mac dinh: gemini-3-pro
-- Khong can API key — dung Google cookie session
+- Coding provider is configured in GitPilot.

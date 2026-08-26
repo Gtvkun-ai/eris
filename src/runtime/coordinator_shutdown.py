@@ -89,6 +89,12 @@ class CoordinatorShutdownMixin:
                 agent_ws.stop()
             except Exception as exc:
                 self.logger.debug("[agent-ws] stop error: %s", exc)
+        observer_link = getattr(self, "eris_code_observer_link", None)
+        if observer_link is not None:
+            try:
+                observer_link.stop()
+            except Exception as exc:
+                self.logger.debug("[eris-link] stop error: %s", exc)
         agent_harness = getattr(self, "agent_harness", None)
         if agent_harness is not None:
             try:

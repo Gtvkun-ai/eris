@@ -5,23 +5,19 @@ eris/
   src/
     runtime/              # Python Brain (logic chinh)
       coordinator.py      # Entry point, dispatch tasks
-      agent_harness/      # Cline bridge, spec, steering, graph_builder
-        cline_bridge_client.py  # HTTP client -> cline-bridge sidecar
+      agent_harness/      # spec, steering, graph_builder
         steering_loader.py      # Doc .eris/steering/*.md
         spec_manager.py         # Spec-driven development
-        graph_builder.py        # Fallback: LangGraph agent loop
+        graph_builder.py        # LangGraph agent loop
       memory_core/        # Long-term memory
     vscode-extension/     # TypeScript extension (UI shell)
       src/
         chatPanel.ts      # Chat UI webview
         erisClient.ts     # WebSocket client -> Python
-  cline-bridge/           # Node.js sidecar (Cline SDK)
-    src/
-      bridge.ts           # HTTP server (nhận task tu Python)
-      runtime.ts          # Chay Cline session
-      context-provider.ts # Inject Eris context vao Cline
+  services/
+    gitpilot/             # GitPilot backend clone
   .eris/
-    steering/             # Project-level rules cho Cline
+    steering/             # Project-level rules
     specs/                # Spec files (plan/exec workflow)
 ```
 
@@ -31,9 +27,6 @@ eris/
 User chat
   -> erisClient.ts (WS)
   -> coordinator.py
-  -> cline_bridge_client.py (HTTP)
-  -> cline-bridge/bridge.ts
-  -> runtime.ts (Cline session)
-  -> WebAI proxy (localhost:8081)
-  -> Gemini
+  -> GitPilot backend (services/gitpilot, localhost:8000)
+  -> official coding provider
 ```

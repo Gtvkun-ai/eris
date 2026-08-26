@@ -1,7 +1,7 @@
 {
   "name": "eris-vscode",
   "displayName": "Eris",
-  "description": "Eris coding agent trong VS Code Primary Sidebar kiểu Cline + @eris native Chat, dùng Eris Service/LangGraph.",
+  "description": "Eris coding client trong VS Code Primary Sidebar, dùng GitPilot backend và Eris Service.",
   "version": "0.5.0",
   "publisher": "gtvk",
   "engines": {

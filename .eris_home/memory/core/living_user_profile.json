@@ -1,14 +1,14 @@
 {
   "schema_version": 2,
-  "version": 3,
-  "updated_at": 1787733356.2002742,
+  "version": 4,
+  "updated_at": 1787749803.3963084,
   "records": [
     {
       "id": "upr_a6d26a5bac4bc10660",
       "path": "tech.extension_issues",
       "value": "ERIS console extension error reported, unable to press 'xin chào'",
       "value_type": "text",
-      "confidence": 0.916,
+      "confidence": 0.964,
       "explicitness": "observed",
       "sensitivity": "normal",
       "scope": {
@@ -24,16 +24,20 @@
         "turn_08fa8bb403274075",
         "turn_64da44978c3c4f95",
         "turn_0809b978892e46fe",
-        "turn_23aa847ef8f1456a"
+        "turn_23aa847ef8f1456a",
+        "turn_2aa4bbe03af84d03",
+        "turn_27a248d2e4bd422f",
+        "turn_e883995297a34cd1",
+        "turn_fcbc46c778014c63"
       ],
-      "recurrence": 2,
+      "recurrence": 3,
       "source": "dream_model",
       "valid_from": 1787727786.6267793,
       "valid_until": null,
       "expires_at": null,
       "created_at": 1787727786.6267793,
-      "updated_at": 1787733356.2002742,
-      "last_confirmed_at": 1787733356.2002742,
+      "updated_at": 1787749803.395295,
+      "last_confirmed_at": 1787749803.395295,
       "metadata": {
         "reason": "User explicitly reported an error with the ERIS console extension; this is a technical issue that may reoccur.",
         "reinforcement_sources": [
@@ -46,7 +50,7 @@
       "path": "affect.reported_frustration",
       "value": "frustrated with extension functionality",
       "value_type": "text",
-      "confidence": 0.866,
+      "confidence": 0.924,
       "explicitness": "observed",
       "sensitivity": "normal",
       "scope": {
@@ -62,16 +66,20 @@
         "turn_08fa8bb403274075",
         "turn_64da44978c3c4f95",
         "turn_0809b978892e46fe",
-        "turn_23aa847ef8f1456a"
+        "turn_23aa847ef8f1456a",
+        "turn_2aa4bbe03af84d03",
+        "turn_27a248d2e4bd422f",
+        "turn_e883995297a34cd1",
+        "turn_fcbc46c778014c63"
       ],
-      "recurrence": 2,
+      "recurrence": 3,
       "source": "dream_model",
       "valid_from": 1787727786.6267793,
       "valid_until": null,
       "expires_at": null,
       "created_at": 1787727786.6267793,
-      "updated_at": 1787733356.2002742,
-      "last_confirmed_at": 1787733356.2002742,
+      "updated_at": 1787749803.3963084,
+      "last_confirmed_at": 1787749803.3963084,
       "metadata": {
         "reason": "User signals of frustration and disappointment were explicitly present in the interaction.",
         "reinforcement_sources": [
@@ -319,6 +327,151 @@
           }
         }
       ]
+    },
+    {
+      "version": 4,
+      "at": 1787749803.3963084,
+      "reason": "dream:worker_idle",
+      "records_before": [
+        {
+          "id": "upr_a6d26a5bac4bc10660",
+          "path": "tech.extension_issues",
+          "value": "ERIS console extension error reported, unable to press 'xin chào'",
+          "value_type": "text",
+          "confidence": 0.916,
+          "explicitness": "observed",
+          "sensitivity": "normal",
+          "scope": {
+            "kind": "global",
+            "key": ""
+          },
+          "cardinality": "single",
+          "status": "active",
+          "evidence_ids": [
+            "turn_770d07623d1c45a0",
+            "turn_f38c21e98259402c",
+            "turn_1e8dc2ee10bb4064",
+            "turn_08fa8bb403274075",
+            "turn_64da44978c3c4f95",
+            "turn_0809b978892e46fe",
+            "turn_23aa847ef8f1456a"
+          ],
+          "recurrence": 2,
+          "source": "dream_model",
+          "valid_from": 1787727786.6267793,
+          "valid_until": null,
+          "expires_at": null,
+          "created_at": 1787727786.6267793,
+          "updated_at": 1787733356.2002742,
+          "last_confirmed_at": 1787733356.2002742,
+          "metadata": {
+            "reason": "User explicitly reported an error with the ERIS console extension; this is a technical issue that may reoccur.",
+            "reinforcement_sources": [
+              "dream_model"
+            ]
+          }
+        },
+        {
+          "id": "upr_52bcd62efd9b92ffaa",
+          "path": "affect.reported_frustration",
+          "value": "frustrated with extension functionality",
+          "value_type": "text",
+          "confidence": 0.866,
+          "explicitness": "observed",
+          "sensitivity": "normal",
+          "scope": {
+            "kind": "global",
+            "key": ""
+          },
+          "cardinality": "single",
+          "status": "active",
+          "evidence_ids": [
+            "turn_770d07623d1c45a0",
+            "turn_f38c21e98259402c",
+            "turn_1e8dc2ee10bb4064",
+            "turn_08fa8bb403274075",
+            "turn_64da44978c3c4f95",
+            "turn_0809b978892e46fe",
+            "turn_23aa847ef8f1456a"
+          ],
+          "recurrence": 2,
+          "source": "dream_model",
+          "valid_from": 1787727786.6267793,
+          "valid_until": null,
+          "expires_at": null,
+          "created_at": 1787727786.6267793,
+          "updated_at": 1787733356.2002742,
+          "last_confirmed_at": 1787733356.2002742,
+          "metadata": {
+            "reason": "User signals of frustration and disappointment were explicitly present in the interaction.",
+            "reinforcement_sources": [
+              "dream_model"
+            ]
+          }
+        },
+        {
+          "id": "upr_191c98108e57724189",
+          "path": "communication.preferred_language",
+          "value": "vi",
+          "value_type": "text",
+          "confidence": 0.78,
+          "explicitness": "observed",
+          "sensitivity": "normal",
+          "scope": {
+            "kind": "global",
+            "key": ""
+          },
+          "cardinality": "single",
+          "status": "active",
+          "evidence_ids": [
+            "session_turn:8"
+          ],
+          "recurrence": 1,
+          "source": "behavior_rule",
+          "valid_from": 1787727619.5900416,
+          "valid_until": null,
+          "expires_at": null,
+          "created_at": 1787727619.5900416,
+          "updated_at": 1787727619.5900416,
+          "last_confirmed_at": 1787727619.5900416,
+          "metadata": {
+            "reason": "Người dùng đang giao tiếp bằng tiếng Việt."
+          }
+        },
+        {
+          "id": "upr_e69ce9306dea230ad3",
+          "path": "communication.style_preference",
+          "value": "prefers direct actionable fixes over reflective responses",
+          "value_type": "text",
+          "confidence": 0.7,
+          "explicitness": "inferred",
+          "sensitivity": "normal",
+          "scope": {
+            "kind": "global",
+            "key": ""
+          },
+          "cardinality": "single",
+          "status": "active",
+          "evidence_ids": [
+            "turn_770d07623d1c45a0",
+            "turn_f38c21e98259402c",
+            "turn_1e8dc2ee10bb4064",
+            "turn_08fa8bb403274075",
+            "turn_64da44978c3c4f95"
+          ],
+          "recurrence": 1,
+          "source": "dream_model",
+          "valid_from": 1787727786.6267793,
+          "valid_until": null,
+          "expires_at": null,
+          "created_at": 1787727786.6267793,
+          "updated_at": 1787727786.6267793,
+          "last_confirmed_at": 1787727786.6267793,
+          "metadata": {
+            "reason": "User expressed frustration and the assistant's reflective response did not resolve the issue; inferred that user values practical solutions."
+          }
+        }
+      ]
     }
   ],
   "audit": [
@@ -495,6 +648,68 @@
           "turn_64da44978c3c4f95"
         ],
         "reason": "User continues to express frustration (implied by reporting the same issue), adding evidence and confidence.",
+        "source": "dream_model",
+        "metadata": {}
+      },
+      "record_ids": [
+        "upr_52bcd62efd9b92ffaa"
+      ]
+    },
+    {
+      "at": 1787749803.3963084,
+      "operation": {
+        "op": "reinforce",
+        "path": "tech.extension_issues",
+        "value": "ERIS console extension error reported, unable to press 'xin chào'",
+        "old_value": null,
+        "confidence": 0.94,
+        "explicitness": "observed",
+        "sensitivity": "normal",
+        "scope": {
+          "kind": "global",
+          "key": ""
+        },
+        "cardinality": "single",
+        "evidence_ids": [
+          "turn_2aa4bbe03af84d03",
+          "turn_27a248d2e4bd422f",
+          "turn_e883995297a34cd1",
+          "turn_fcbc46c778014c63",
+          "turn_0809b978892e46fe",
+          "turn_23aa847ef8f1456a"
+        ],
+        "reason": "User continued to report extension issue across new episodes, reinforcing the technical problem.",
+        "source": "dream_model",
+        "metadata": {}
+      },
+      "record_ids": [
+        "upr_a6d26a5bac4bc10660"
+      ]
+    },
+    {
+      "at": 1787749803.3963084,
+      "operation": {
+        "op": "reinforce",
+        "path": "affect.reported_frustration",
+        "value": "frustrated with extension functionality",
+        "old_value": null,
+        "confidence": 0.9,
+        "explicitness": "observed",
+        "sensitivity": "normal",
+        "scope": {
+          "kind": "global",
+          "key": ""
+        },
+        "cardinality": "single",
+        "evidence_ids": [
+          "turn_2aa4bbe03af84d03",
+          "turn_27a248d2e4bd422f",
+          "turn_e883995297a34cd1",
+          "turn_fcbc46c778014c63",
+          "turn_0809b978892e46fe",
+          "turn_23aa847ef8f1456a"
+        ],
+        "reason": "User signals of frustration persist across multiple interactions related to the same extension issue.",
         "source": "dream_model",
         "metadata": {}
       },
