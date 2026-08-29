@@ -1,52 +1,67 @@
-# Kiến trúc Eris Code V78
+# Kiến trúc Eris Code V79
 
 ## Invariant
 
 1. GitPilot là coding owner duy nhất trong VS Code.
 2. Eris Desktop không phải dependency của extension.
 3. Extension không launch Eris Desktop.
-4. Local workspace phải đi qua GitPilot multi-agent SSE, không âm thầm downgrade sang direct LLM.
+4. Local workspace đi qua GitPilot multi-agent SSE, không downgrade âm thầm sang direct LLM.
 5. Approval authority thuộc GitPilot `ApprovalGate`; extension chỉ render và forward quyết định user.
-6. Eris Desktop chỉ cung cấp observation/context read-only khi user bật link.
+6. V79 chỉ mirror **observable coding facts** sang Desktop; Desktop không có đường điều khiển task.
 
 ## Module tối thiểu
 
 ```text
 GitPilotClient
 GitPilotRuntimeManager
+CodingObservation normalizer
 TerminalContextObserver
-ErisObserverBridge (optional)
+ErisObserverBridge (best-effort)
 ChatPanel / ChatParticipant
 ```
 
-Không thêm Eris Planner, Eris Coder, Eris Reviewer, patch engine hay terminal agent. Nếu GitPilot đã có tool thì tái sử dụng tool GitPilot.
+Không thêm Eris Planner, Eris Coder, Eris Reviewer, patch engine hay terminal agent.
 
-## Local team adapter
-
-Patch backend V78 chỉ thêm adapter nối `Session.folder_path/repo_root` vào `WorkspaceManager.attach_local_workspace()` và CrewAI sequence của GitPilot. GitHub-only role như PR manager không chạy ở local mode.
+## Observation spine
 
 ```text
-local_git/folder session
+GitPilot AgentEventBus
+        ↓ SSE
+Eris Code
+        ↓ normalize + sanitize
+CodingObservation
+        ↓ best-effort loopback
+Eris Desktop
         ↓
-WorkspaceInfo (current tree)
+CodingObservationService
         ↓
-Explorer  [read/search/git diff]
-        ↓
-Planner   [read-only]
-        ↓
-Coder     [read/write/test; ApprovalGate]
-        ↓
-Reviewer  [read/diff]
-        ↓
-Validation
+CodingFlowInterpreter + JSONL journal
 ```
 
-## Rollback
-
-Desktop legacy AgentHarness mặc định tắt. Chỉ bật tạm bằng:
+Các event quan trọng:
 
 ```text
-ERIS_LEGACY_CODING_HARNESS_ENABLED=1
+task_started
+phase_changed
+phase_summary
+tool_started / tool_finished
+file_changed
+approval_requested / approval_resolved
+test_result / diagnostics
+task_completed / failed / cancelled
 ```
 
-Flag này là đường rollback developer-only, không phải fallback production lâu dài.
+`phase_summary` là output explicit của specialist. V79 không scrape verbose CrewAI logs hoặc hidden chain-of-thought.
+
+## Flow findings hiện có
+
+Interpreter chỉ cảnh báo pattern có evidence tương đối chắc:
+
+- `patch_before_inspection`
+- `repeated_same_failure`
+- `repeated_test_failure`
+- `scope_expansion`
+- `no_structured_verification`
+- `review_not_observed`
+
+V79 **không tự hành động** dựa trên finding. V80 Mentor mới quyết định có nên giải thích/gợi ý/dạy user hay không.

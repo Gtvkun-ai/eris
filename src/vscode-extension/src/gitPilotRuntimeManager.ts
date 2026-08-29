@@ -157,7 +157,7 @@ export class GitPilotRuntimeManager implements vscode.Disposable {
       await new Promise((resolve) => setTimeout(resolve, 350));
     }
     this.showLogs();
-    throw new Error('GitPilot không sẵn sàng sau khi launch. Xem Output → Eris Code · GitPilot hoặc chạy setup backend V78.');
+    throw new Error('GitPilot không sẵn sàng sau khi launch. Xem Output → Eris Code · GitPilot hoặc chạy setup backend V79.');
   }
 
   async restart(): Promise<void> {
@@ -183,7 +183,7 @@ export class GitPilotRuntimeManager implements vscode.Disposable {
   showLogs(): void { this.output.show(true); }
 
   openInstallTerminal(): void {
-    const terminal = vscode.window.createTerminal({ name: 'Setup GitPilot V78' });
+    const terminal = vscode.window.createTerminal({ name: 'Setup GitPilot V79' });
     terminal.show();
     const script = this.findSetupScript();
     if (script && process.platform === 'win32') {

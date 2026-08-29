@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0 — V79 Coding Observation Spine
+
+- Normalize GitPilot SSE thành `CodingObservation` nhỏ, có actor/task/workspace/tool/file/test/review evidence.
+- Thêm `phase_summary` explicit cho Explorer/Planner/Coder/Reviewer; không log hidden chain-of-thought.
+- Eris Link v2 nhận telemetry append-only tại `/v1/coding/observations`.
+- Desktop thêm journal + `CodingFlowInterpreter` read-only.
+- Phát hiện patch-before-inspection, retry cùng lỗi, test fail lặp, scope expansion, thiếu verification/review.
+- Telemetry best-effort: Desktop OFF không được làm task GitPilot fail.
+- Không thêm coding agent/tool/patch engine mới vào Eris.
+
 ## 0.19.0 — V78 GitPilot Cutover
 
 - Eris Code độc lập runtime với Eris Desktop; không còn `ErisClient`, `ErisServiceManager`, `run_eris*` hay `eris.service.*`.

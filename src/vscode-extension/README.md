@@ -1,58 +1,59 @@
-# Eris Code — V78
+# Eris Code — V79
 
-Eris Code là **VS Code shell mỏng dùng GitPilot làm coding brain**. Eris Desktop không còn nằm trên coding execution path.
+Eris Code là **VS Code shell mỏng dùng GitPilot làm coding brain**. V79 bổ sung Coding Observation Spine để Eris Desktop hiểu GitPilot đã làm gì mà không chen vào execution loop.
 
-## Boundary
+## Luồng chính
 
 ```text
-Eris Desktop (optional)
-  └─ observation / project memory read-only
-            ↓
-Eris Code
-  └─ VS Code UI + IDE observation + approval renderer
-            ↓
+User
+ ↓
+Eris Code UI
+ ↓
 GitPilot
-  └─ Explorer → Planner → Coder → Reviewer + tools + provider API
-            ↓
-Local workspace
+ Explorer → Planner → Coder → Reviewer → Validation
+ ↓ SSE
+Eris Code observation normalizer
+ ↓ best-effort
+Eris Desktop journal / flow interpreter
 ```
 
-V78 cố ý không tự viết planner/coder/reviewer/patch engine/terminal agent trong Eris Code. Những việc đó thuộc GitPilot.
-
 ## Cài backend trong monorepo
-
-Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\services\gitpilot\setup_eris_code_backend.ps1
 ```
 
-Script tạo `services/gitpilot/.venv` rồi `pip install -e services/gitpilot`. Extension sẽ ưu tiên executable trong venv này.
-
-Chạy thủ công nếu cần:
+Chạy thủ công khi cần:
 
 ```powershell
 .\services\gitpilot\run_eris_code_backend.ps1
 ```
 
-Mặc định backend ở `http://127.0.0.1:8000`.
+Backend mặc định: `http://127.0.0.1:8000`.
 
 ## Local workspace
 
-Eris Code luôn tạo `local_git` session khi folder hiện tại là Git repo, nếu không thì dùng `folder` session. Local session đi qua SSE multi-agent path của GitPilot; Eris Code không gọi `/api/chat/send` làm coding fallback.
-
-Các mode:
+Git repo dùng `local_git`, folder thường dùng `folder`. Local session đi qua `/api/v2/chat/stream` multi-agent path.
 
 - **Plan / Inspect:** read-only.
-- **Ask:** mutation phải đi qua `ApprovalGate` GitPilot.
-- **Auto:** GitPilot tự approve theo permission mode của chính nó.
+- **Ask:** mutation qua `ApprovalGate` GitPilot.
+- **Auto:** GitPilot xử lý theo permission mode của nó.
 
-## Eris Desktop link
+## Eris Link v2
 
-`erisCode.erisLink.enabled=false` mặc định. Khi bật, extension chỉ đọc context từ Desktop. Desktop không được approve tool, sửa workspace hay điều khiển GitPilot qua link này.
+`erisCode.erisLink.enabled=false` mặc định (opt-in). Khi bật, nó vẫn là **best-effort**. Extension không launch Desktop. Nếu Desktop đóng, request localhost fail-silent và task GitPilot vẫn chạy.
+
+V79 gửi sang Desktop các event đã sanitize; không gửi raw `read_file` content hay hidden chain-of-thought.
+
+Muốn tắt:
+
+```text
+erisCode.erisLink.enabled=false
+```
 
 ## Invariant kiểm thử
 
-1. Desktop OFF + VS Code/GitPilot ON → coding vẫn đầy đủ.
-2. VS Code OFF + Desktop ON → Eris Desktop vẫn hoạt động bình thường.
-3. Không có source path nào trong extension launch `run_eris*`.
+1. Desktop OFF + VS Code/GitPilot ON → coding đầy đủ.
+2. VS Code OFF + Desktop ON → Desktop hoạt động bình thường.
+3. Eris Link không có route command/approval/workspace mutation.
+4. GitPilot vẫn là coding owner duy nhất.

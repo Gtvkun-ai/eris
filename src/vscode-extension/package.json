@@ -1,8 +1,8 @@
 {
   "name": "eris-code",
   "displayName": "Eris Code",
-  "description": "Eris Code V78: VS Code shell mỏng dùng GitPilot làm coding brain; Eris Desktop chỉ quan sát/ngữ cảnh tùy chọn.",
-  "version": "0.19.0",
+  "description": "Eris Code V79: VS Code shell mỏng dùng GitPilot làm coding brain; Eris Desktop quan sát coding flow qua telemetry append-only.",
+  "version": "0.20.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -64,7 +64,7 @@
       },
       {
         "command": "erisCode.installGitPilot",
-        "title": "Eris Code: Cài GitPilot backend V78"
+        "title": "Eris Code: Cài GitPilot backend V79"
       },
       {
         "command": "erisCode.selfTest",
@@ -118,12 +118,12 @@
         "erisCode.erisLink.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Cho phép Eris Desktop gửi observation/project memory vào task. Optional; Eris Code vẫn chạy đầy đủ khi tắt."
+          "description": "V79: bật Eris Link khi muốn Desktop đọc coding telemetry và góp project context. Opt-in; Desktop tắt/link tắt thì Eris Code vẫn chạy bình thường."
         },
         "erisCode.erisLink.endpoint": {
           "type": "string",
           "default": "http://127.0.0.1:8767/v1/context",
-          "description": "Read-only Eris Link v1 context endpoint. Extension không bao giờ launch Eris Desktop."
+          "description": "Eris Link v2 context endpoint. Extension không bao giờ launch Desktop; telemetry dùng cùng loopback origin."
         }
       }
     },

@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Optional, read-only Eris Desktop -> Eris Code context bridge.
+"""Eris Link: context outbound + coding telemetry inbound trên loopback.
 
-This bridge is intentionally tiny and disabled by default.  It never owns a
-coding task, starts GitPilot, or accepts mutation/approval commands.  Eris Code
-must remain fully functional when this service does not exist.
+V79 giữ boundary rất cứng:
+- GET /v1/context: Desktop góp environment/project memory cho Eris Code.
+- POST /v1/coding/observations: Eris Code gửi observation GitPilot đã xảy ra.
+- GET /v1/coding/journal, /v1/coding/flow: đọc journal/snapshot để debug UI sau này.
+
+Không có endpoint task-control, approval, terminal hoặc workspace mutation. Vì vậy
+Eris Desktop có thể hiểu coding flow nhưng không trở thành coding brain thứ hai.
 """
 from __future__ import annotations
 
@@ -22,11 +26,17 @@ class ErisCodeObserverLink:
         self,
         context_provider: Callable[[str], dict[str, Any]],
         *,
+        observation_sink: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        journal_provider: Callable[[str, str, int], list[dict[str, Any]]] | None = None,
+        flow_provider: Callable[[str], dict[str, Any]] | None = None,
         host: str = "127.0.0.1",
         port: int = 8767,
         logger: Any = None,
     ) -> None:
         self.context_provider = context_provider
+        self.observation_sink = observation_sink
+        self.journal_provider = journal_provider
+        self.flow_provider = flow_provider
         self.host = host
         self.port = int(port)
         self.logger = logger
@@ -39,7 +49,7 @@ class ErisCodeObserverLink:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "ErisLink/1"
+            server_version = "ErisLink/2"
 
             def log_message(self, fmt: str, *args: Any) -> None:
                 if owner.logger is not None:
@@ -49,28 +59,82 @@ class ErisCodeObserverLink:
 
             def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
                 parsed = urlparse(self.path)
+                query = parse_qs(parsed.query)
                 if parsed.path == "/health":
-                    self._send(200, {"ok": True, "protocol": "eris.link.v1"})
+                    self._send(200, {
+                        "ok": True,
+                        "protocol": "eris.link.v2",
+                        "coding_observation": owner.observation_sink is not None,
+                    })
                     return
-                if parsed.path != "/v1/context":
-                    self._send(404, {"error": "not_found"})
+                if parsed.path == "/v1/context":
+                    workspace = str(query.get("workspace", [""])[0] or "").strip()
+                    try:
+                        self._send(200, owner.context_provider(workspace))
+                    except Exception as exc:  # fail closed: no traceback/secret payload
+                        self._send(500, {"protocol": "eris.link.v2", "error": type(exc).__name__})
                     return
-                workspace = str(parse_qs(parsed.query).get("workspace", [""])[0] or "").strip()
-                try:
-                    payload = owner.context_provider(workspace)
-                    self._send(200, payload)
-                except Exception as exc:  # fail closed: no internal traceback/secret payload
-                    self._send(500, {"protocol": "eris.link.v1", "error": type(exc).__name__})
+                if parsed.path == "/v1/coding/journal":
+                    if owner.journal_provider is None:
+                        self._send(404, {"error": "coding_journal_unavailable"})
+                        return
+                    task_id = str(query.get("task_id", [""])[0] or "").strip()
+                    workspace = str(query.get("workspace", [""])[0] or "").strip()
+                    try:
+                        limit = max(1, min(int(query.get("limit", ["120"])[0]), 500))
+                    except Exception:
+                        limit = 120
+                    self._send(200, {
+                        "schema": "eris.coding.journal.v1",
+                        "events": owner.journal_provider(task_id, workspace, limit),
+                    })
+                    return
+                if parsed.path == "/v1/coding/flow":
+                    if owner.flow_provider is None:
+                        self._send(404, {"error": "coding_flow_unavailable"})
+                        return
+                    task_id = str(query.get("task_id", [""])[0] or "").strip()
+                    if not task_id:
+                        self._send(400, {"error": "task_id_required"})
+                        return
+                    self._send(200, owner.flow_provider(task_id))
+                    return
+                self._send(404, {"error": "not_found"})
 
             def do_POST(self) -> None:  # noqa: N802
-                # Read-only boundary. No task control, approvals, terminal or file mutation.
-                self._send(405, {"error": "read_only"})
+                parsed = urlparse(self.path)
+                if parsed.path != "/v1/coding/observations":
+                    # Boundary cứng: không mở generic RPC. Coding command đi thẳng
+                    # user/VS Code -> GitPilot, không qua Desktop.
+                    self._send(405, {"error": "observation_only"})
+                    return
+                if owner.observation_sink is None:
+                    self._send(404, {"error": "coding_observer_unavailable"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0") or "0")
+                except Exception:
+                    length = 0
+                if length <= 0 or length > 64 * 1024:
+                    self._send(413, {"error": "invalid_payload_size"})
+                    return
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("object_required")
+                    result = owner.observation_sink(payload)
+                    self._send(202, {"protocol": "eris.link.v2", **dict(result or {})})
+                except ValueError as exc:
+                    self._send(400, {"error": str(exc)[:120] or "invalid_observation"})
+                except Exception as exc:
+                    self._send(500, {"protocol": "eris.link.v2", "error": type(exc).__name__})
 
             def _send(self, status: int, payload: dict[str, Any]) -> None:
                 raw = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
@@ -89,7 +153,7 @@ class ErisCodeObserverLink:
         if self.logger is not None:
             info = getattr(self.logger, "info", None)
             if callable(info):
-                info("[eris-link] read-only observer bridge listening http://%s:%s", self.host, self.port)
+                info("[eris-link] v2 context + coding telemetry listening http://%s:%s", self.host, self.port)
         return True
 
     def stop(self) -> None:
@@ -107,7 +171,7 @@ class ErisCodeObserverLink:
 
 
 def build_observer_context(host: Any, workspace: str) -> dict[str, Any]:
-    """Build a compact evidence packet; no coding instruction or secret config."""
+    """Build compact evidence packet; no coding instruction or secret config."""
     now = time.time()
     workspace_path = Path(workspace).expanduser() if workspace else None
     project = workspace_path.name if workspace_path else ""
@@ -137,8 +201,9 @@ def build_observer_context(host: Any, workspace: str) -> dict[str, Any]:
             except Exception:
                 pass
 
+
     return {
-        "protocol": "eris.link.v1",
+        "protocol": "eris.link.v2",
         "role": "observer",
         "project": project,
         "workspace": str(workspace_path) if workspace_path else "",
@@ -150,11 +215,13 @@ def build_observer_context(host: Any, workspace: str) -> dict[str, Any]:
             "task_control": False,
             "tool_approval": False,
             "workspace_mutation": False,
+            "telemetry_ingest_only": True,
         },
     }
 
 
 def observer_link_enabled() -> bool:
+    # Opt-in để localhost process khác không tự nhiên đọc project memory/giả telemetry.
     return str(os.environ.get("ERIS_CODE_OBSERVER_LINK_ENABLED", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
