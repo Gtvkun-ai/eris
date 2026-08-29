@@ -1,0 +1,2114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="__CSP__" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitPilot Workspace</title>
+  <link rel="stylesheet" href="__CSS_URI__" />
+</head>
+<body>
+  <div class="app">
+    <!--
+      A thin action bar, not a status card.
+
+      This block used to restate everything the sidebar already said —
+      "Provider not set", "Disconnected", "No model", "Repo: gitpilot" — and
+      then contradict itself with a Disconnected pill beside a Ready pill.
+      Status is stated once now: on the landing page while there is nothing to
+      read, and in the composer's own status line while there is.
+    -->
+    <section class="surface header">
+      <div class="header-top">
+        <div class="header-title" id="header-title"></div>
+
+        <div class="header-actions">
+          <button class="icon-btn" id="settings-header-btn" type="button" title="Settings" aria-label="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button class="icon-btn" id="setup-context-btn" type="button" title="Refresh Context" aria-label="Refresh Context">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
+          </button>
+          <button class="icon-btn" id="idle-setup-btn" type="button" title="Setup Wizard" aria-label="Setup Wizard">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.5 6 .5-4.5 4 1.3 5.9L12 15l-5.2 2.9L8.1 12l-4.5-4 6-.5z"/></svg>
+          </button>
+          <button class="icon-btn" id="provider-setup-btn" type="button" title="Change Provider" aria-label="Change Provider">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M20.24 7.76L12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="surface card notice-banner hidden" id="error-banner">
+      <div class="section-head">
+        <h2 class="section-title">Workspace Notice</h2>
+      </div>
+      <div class="section-copy" id="error-copy"></div>
+    </section>
+
+    <section class="surface card hidden" id="assistant-summary-section">
+      <div class="section-head">
+        <h2 class="section-title">Task Status</h2>
+        <span class="pill" id="task-status-pill">Idle</span>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-title" id="task-title"></div>
+
+        <div class="status-row">
+          <span class="pill" id="task-step-pill"></span>
+        </div>
+
+        <div class="summary-note" id="task-summary"></div>
+
+        <div class="progress">
+          <div class="progress-track">
+            <div class="progress-bar" id="task-progress-bar"></div>
+          </div>
+          <div class="progress-label" id="task-progress-label"></div>
+        </div>
+      </div>
+    </section>
+
+
+    <section class="surface card hidden" id="idle-recent-section">
+      <div class="section-head">
+        <h2 class="section-title">Recent Files</h2>
+      </div>
+      <ul class="list" id="recent-files-list"></ul>
+    </section>
+
+    <section class="surface card" id="chat-section">
+      <div class="chat-shell">
+        <!--
+          The landing page and the conversation are the same surface at two
+          moments. Empty, this is GitPilot Home; send a message and the
+          transcript below takes over. One tab, so there is never a question
+          about which composer is the real one.
+        -->
+        <div class="chat-empty-state" id="chat-empty-state">
+          <div class="home-brand">
+            <span class="home-mark">GP</span>
+            <span class="home-name">GitPilot</span>
+          </div>
+          <h1 class="home-headline" id="home-headline">What are we building?</h1>
+          <p class="home-subhead">Ask GitPilot to investigate, explain, change, review, or test your code.</p>
+        </div>
+        <ul class="chat-list hidden" id="chat-list" aria-live="polite" aria-label="Chat messages"></ul>
+
+        <div class="approval-card hidden" id="approval-card">
+          <div class="approval-header">
+            <span class="approval-title" id="approval-title">GitPilot wants to edit a file</span>
+            <span class="pill approval-risk" id="approval-risk">medium</span>
+          </div>
+          <div class="approval-body">
+            <div class="approval-summary" id="approval-summary"></div>
+            <pre class="approval-diff hidden" id="approval-diff"></pre>
+          </div>
+          <div class="approval-actions">
+            <button id="approval-allow" type="button">Allow</button>
+            <button class="secondary" id="approval-allow-session" type="button">Allow for session</button>
+            <button class="ghost" id="approval-deny" type="button">Deny</button>
+          </div>
+        </div>
+
+        <div class="terminal-panel hidden" id="terminal-panel">
+          <div class="terminal-panel-header">
+            <span class="section-title">Terminal</span>
+            <button class="quiet" id="terminal-close" type="button">Close</button>
+          </div>
+          <pre class="terminal-output" id="terminal-output"></pre>
+        </div>
+
+        <div class="results-bar hidden" id="results-bar">
+          <span class="test-badge passed hidden" id="test-passed-badge">0 passed</span>
+          <span class="test-badge failed hidden" id="test-failed-badge">0 failed</span>
+          <span class="test-badge skipped hidden" id="test-skipped-badge">0 skipped</span>
+          <span class="diag-badge errors hidden" id="diag-errors-badge">0 errors</span>
+          <span class="diag-badge warnings hidden" id="diag-warnings-badge">0 warnings</span>
+        </div>
+
+        <div class="chat-compose">
+          <!--
+            What GitPilot will look at, stated before you send rather than
+            guessed afterwards. The selection chip appears on its own as you
+            select code; the rest you add with + or @.
+          -->
+          <div class="context-chips" id="context-chips" aria-label="Context attached to your next message"></div>
+
+          <div class="compose-field">
+            <textarea id="chat-input" placeholder="Describe the task, ask a question, or request a change..."></textarea>
+            <!-- Inline completion for @ and /. A dropdown, not a modal: the
+                 sentence you are writing stays on screen while you pick. -->
+            <div class="compose-popup hidden" id="compose-popup" role="listbox" aria-label="Suggestions"></div>
+          </div>
+
+          <div class="primary-row">
+            <button class="compose-chip" id="attach-btn" type="button" title="Add a file to the context" aria-label="Add a file to the context">+</button>
+            <button class="compose-chip" id="mention-btn" type="button" title="Reference a file" aria-label="Reference a file">@</button>
+            <button class="compose-chip" id="slash-btn" type="button" title="Run a command" aria-label="Run a command">/</button>
+
+            <span class="row-spacer"></span>
+
+            <!--
+              The permission model, compact.
+              A three-segment control ate the width the composer needed; the
+              menu still names every mode and says what each will and will not
+              do, which the segments only managed in a tooltip.
+            -->
+            <div class="mode-picker">
+              <button class="mode-trigger" id="mode-trigger" type="button"
+                      aria-haspopup="listbox" aria-expanded="false"
+                      title="How much GitPilot may do on its own">
+                <span id="mode-label">Ask</span><span class="caret">⌄</span>
+              </button>
+              <div class="mode-menu hidden" id="mode-selector" role="radiogroup" aria-label="Execution mode">
+                <button class="mode-btn active" id="mode-ask" role="radio" aria-checked="true" data-mode="ask" type="button" title="Answer and suggest — approve each change">
+                  <span class="mode-name">Ask</span>
+                  <span class="mode-detail">Proposes changes; you approve each change</span>
+                </button>
+                <button class="mode-btn" id="mode-plan" role="radio" aria-checked="false" data-mode="plan" type="button" title="Investigate and prepare a plan — nothing is written">
+                  <span class="mode-name">Plan</span>
+                  <span class="mode-detail">Read-only. Investigates and plans; nothing is written</span>
+                </button>
+                <button class="mode-btn" id="mode-auto" role="radio" aria-checked="false" data-mode="auto" type="button" title="Work on the repository and make changes without prompting">
+                  <span class="mode-name">Agent</span>
+                  <span class="mode-detail">Edits files and runs tools without prompting</span>
+                </button>
+              </div>
+            </div>
+
+            <button id="send-btn" type="button" title="Send (Enter)" aria-label="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            </button>
+          </div>
+
+          <div class="compose-meta">
+            <span id="compose-hint">Enter to send · Shift+Enter for a new line · @ file · / command</span>
+            <span id="compose-status">Ready</span>
+          </div>
+
+          <div class="secondary-row hidden" id="secondary-actions-row">
+            <button class="secondary hidden" id="apply-btn" type="button">Apply Patch</button>
+            <button class="ghost hidden" id="revert-btn" type="button" title="Undo the last change GitPilot made">Revert</button>
+            <button class="ghost" id="rewind-btn" type="button" title="Go back to an earlier point in this task">Rewind&hellip;</button>
+          </div>
+        </div>
+
+        <!--
+          Below the composer on purpose: the question is asked, the box to
+          answer it in comes next, and only then the shortcuts. Putting these
+          above the composer pushed the one thing to do off the fold.
+        -->
+        <div class="home-actions" id="home-actions">
+          <div class="empty-suggestions">
+            <button class="suggestion-chip" data-suggestion="Review the current file for issues" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              Review code
+            </button>
+            <button class="suggestion-chip" data-suggestion="Find potential bugs in the codebase" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              Find bugs
+            </button>
+            <button class="suggestion-chip" data-suggestion="Write tests for the current file" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v6l4 9a2 2 0 0 1-1.8 3H6.8A2 2 0 0 1 5 18l4-9z"/></svg>
+              Write tests
+            </button>
+            <button class="suggestion-chip" data-suggestion="Explain this project's architecture" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Explain project
+            </button>
+          </div>
+          <!-- The quiet enterprise answer: ready, which model, which repo, what it may do. -->
+          <div class="home-trust" id="home-trust"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="surface card hidden" id="plan-section">
+      <details class="disclosure" id="plan-disclosure" open>
+        <summary>
+          <span class="summary-label">Execution Plan</span>
+          <span class="chevron">⌄</span>
+        </summary>
+        <div class="disclosure-body">
+          <ul class="list" id="plan-list"></ul>
+          <div class="plan-approval hidden" id="plan-approval-bar">
+            <p class="plan-approval__text">Review the plan above. When you're ready:</p>
+            <div class="plan-approval__actions">
+              <button class="primary" id="plan-approve-btn" type="button">Approve &amp; Execute</button>
+              <button class="ghost" id="plan-reject-btn" type="button">Dismiss</button>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="surface card hidden" id="scope-section">
+      <details class="disclosure" id="scope-disclosure">
+        <summary>
+          <span class="summary-label">Files in Scope</span>
+          <span class="chevron">⌄</span>
+        </summary>
+        <div class="disclosure-body">
+          <ul class="list" id="scope-list"></ul>
+        </div>
+      </details>
+    </section>
+
+    <section class="surface card hidden" id="changes-section">
+      <details class="disclosure" id="changes-disclosure">
+        <summary>
+          <span class="summary-label" id="changes-label">Proposed Changes</span>
+          <span class="summary-stat" id="changes-stat"></span>
+          <span class="chevron">⌄</span>
+        </summary>
+        <div class="disclosure-body">
+          <ul class="list" id="changes-list"></ul>
+        </div>
+      </details>
+    </section>
+
+    <section class="surface card hidden" id="actions-section">
+      <details class="disclosure" id="task-controls-disclosure">
+        <summary>
+          <span class="summary-label">Task Controls</span>
+          <span class="chevron">⌄</span>
+        </summary>
+        <div class="disclosure-body">
+          <div class="secondary-row">
+            <button class="secondary" id="replan-btn" type="button">Regenerate Plan</button>
+            <button class="ghost" id="setup-btn" type="button">Setup Wizard</button>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <div class="busy-overlay" id="busy-overlay" aria-live="polite" aria-hidden="true">
+    <div class="spinner"></div>
+    <div class="busy-text" id="busy-text">GitPilot is working…</div>
+  </div>
+
+  <script nonce="__NONCE__">
+    const vscode = acquireVsCodeApi();
+
+    let currentState = null;
+    let lastError = null;
+    let busyCount = 0;
+    let lastRenderedSignature = "";
+    let dynamicHandlerAbortController = null;
+    let thinkingStartedAt = 0;
+    let thinkingTimerId = null;
+
+    const byId = (id) => document.getElementById(id);
+
+    const esc = (value) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const post = (msg) => vscode.postMessage(msg);
+    const nowIso = () => new Date().toISOString();
+
+    const formatTime = (iso) => {
+      try {
+        const date = iso ? new Date(iso) : new Date();
+        if (Number.isNaN(date.getTime())) return "";
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      } catch {
+        return "";
+      }
+    };
+
+    const formatElapsed = (ms) => {
+      const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    };
+
+    const statusLabel = (status) => ({
+      idle: "Idle",
+      planning: "Planning",
+      generating: "Generating",
+      reviewing: "Reviewing",
+      ready_to_apply: "Ready to apply",
+      applying: "Applying",
+      done: "Done",
+      failed: "Failed"
+    }[status] || String(status || "idle"));
+
+    const phaseMap = {
+      planning:    { icon: "&#9679;", label: "Analyzing your request..." },
+      generating:  { icon: "&#9998;", label: "Writing response..." },
+      reviewing:   { icon: "&#128269;", label: "Reviewing changes..." },
+      applying:    { icon: "&#9889;", label: "Applying changes..." },
+    };
+
+    const getPhaseLabel = () => {
+      const status = ((currentState || {}).activeTask || {}).status;
+      return (phaseMap[status] || {}).label || "GitPilot is thinking...";
+    };
+
+    const getPhaseIcon = () => {
+      const status = ((currentState || {}).activeTask || {}).status;
+      return (phaseMap[status] || {}).icon || "&#9679;";
+    };
+
+    const pillClassForStatus = (status) => {
+      if (status === "failed") return "pill pill-danger";
+      if (status === "ready_to_apply" || status === "done") return "pill pill-success";
+      if (status === "planning" || status === "generating" || status === "reviewing" || status === "applying") return "pill pill-accent";
+      return "pill";
+    };
+
+    const normalizeAssistantText = (text) => {
+      const value = String(text || "").trim();
+      if (!value) return "GitPilot is ready for your next request.";
+
+      return esc(value)
+        .replace(/^###\s*(.+)$/gm, "<h4>$1</h4>")
+        .replace(/^##\s*(.+)$/gm, "<h4>$1</h4>")
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    };
+
+    const getChatMessages = (state) => {
+      const messages = (((state || {}).chat || {}).messages || []).slice();
+      if (messages.length > 0) return messages;
+
+      return [{
+        id: "assistant:default",
+        role: "assistant",
+        content: "What would you like GitPilot to do?",
+        createdAt: nowIso()
+      }];
+    };
+
+    const taskIsActive = (state) => {
+      if (!state) return false;
+      if (state.ui && state.ui.mode === "idle") return false;
+
+      const task = state.activeTask || {};
+      return Boolean(
+        task.title ||
+        (task.plan && task.plan.steps && task.plan.steps.length) ||
+        (task.filesInScope && task.filesInScope.length) ||
+        (task.changedFiles && task.changedFiles.length) ||
+        (task.status && task.status !== "idle")
+      );
+    };
+
+    const startThinkingTimer = () => {
+      if (!thinkingStartedAt) thinkingStartedAt = Date.now();
+      stopThinkingTimer();
+      thinkingTimerId = window.setInterval(() => {
+        const elapsedNode = byId("chat-thinking-elapsed");
+        if (elapsedNode && thinkingStartedAt) {
+          elapsedNode.textContent = formatElapsed(Date.now() - thinkingStartedAt);
+        }
+      }, 1000);
+    };
+
+    const stopThinkingTimer = () => {
+      if (thinkingTimerId) {
+        window.clearInterval(thinkingTimerId);
+        thinkingTimerId = null;
+      }
+    };
+
+    const pushOptimisticUserMessage = (text) => {
+      if (!currentState) currentState = {};
+      if (!currentState.chat) currentState.chat = {};
+      if (!Array.isArray(currentState.chat.messages)) currentState.chat.messages = [];
+
+      currentState.chat.messages = [
+        ...currentState.chat.messages,
+        {
+          id: "user:optimistic:" + Date.now(),
+          role: "user",
+          content: text,
+          createdAt: nowIso()
+        }
+      ];
+
+      render(currentState);
+    };
+
+    const collapseThinkingBubble = (callback) => {
+      const existing = byId("chat-thinking-item");
+      if (!existing) { callback(); return; }
+      existing.classList.add("collapsing");
+      existing.addEventListener("animationend", () => {
+        existing.remove();
+        callback();
+      }, { once: true });
+      setTimeout(() => { if (existing.parentNode) { existing.remove(); callback(); } }, 250);
+    };
+
+    const setLoadingIndicator = (visible, text) => {
+      const list = byId("chat-list");
+      if (!list) return;
+
+      const existing = byId("chat-thinking-item");
+
+      if (!visible) {
+        if (existing) {
+          collapseThinkingBubble(() => {});
+        }
+        thinkingStartedAt = 0;
+        stopThinkingTimer();
+        return;
+      }
+
+      if (!thinkingStartedAt) {
+        thinkingStartedAt = Date.now();
+      }
+
+      const phaseLabel = text || getPhaseLabel();
+      const phaseIcon = getPhaseIcon();
+
+      if (existing) {
+        const label = existing.querySelector(".thinking-label");
+        const elapsed = existing.querySelector("#chat-thinking-elapsed");
+        const icon = existing.querySelector(".thinking-phase-icon");
+
+        if (label) label.textContent = phaseLabel;
+        if (elapsed) elapsed.textContent = formatElapsed(Date.now() - thinkingStartedAt);
+        if (icon) icon.innerHTML = phaseIcon;
+
+        startThinkingTimer();
+
+        requestAnimationFrame(() => {
+          list.scrollTop = list.scrollHeight;
+        });
+        return;
+      }
+
+      const item = document.createElement("li");
+      item.id = "chat-thinking-item";
+      item.className = "chat-item assistant thinking";
+      item.innerHTML = `
+        <div class="chat-role-row">
+          <div class="chat-role">
+            <span class="role-avatar assistant">G</span>
+            GitPilot
+          </div>
+          <div class="chat-time" id="chat-thinking-elapsed">${formatElapsed(Date.now() - thinkingStartedAt)}</div>
+        </div>
+        <div class="chat-content">
+          <div class="thinking-row">
+            <div class="thinking-main">
+              <span class="thinking-phase-icon" aria-hidden="true">${phaseIcon}</span>
+              <div class="thinking-dots" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <span class="thinking-label">${esc(phaseLabel)}</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      list.appendChild(item);
+      startThinkingTimer();
+
+      requestAnimationFrame(() => {
+        list.scrollTop = list.scrollHeight;
+      });
+    };
+
+    const pushAssistantMessage = (payload) => {
+      if (!payload) return;
+      if (!currentState) currentState = {};
+      if (!currentState.chat) currentState.chat = {};
+      if (!Array.isArray(currentState.chat.messages)) currentState.chat.messages = [];
+
+      currentState.chat.messages = [
+        ...currentState.chat.messages,
+        {
+          id: payload.id || ("assistant:" + Date.now()),
+          role: payload.role || "assistant",
+          content: payload.content || "",
+          createdAt: payload.createdAt || nowIso()
+        }
+      ];
+
+      const activeTask = currentState.activeTask || {};
+      if (payload.plan && (!activeTask.plan || !activeTask.plan.steps || !activeTask.plan.steps.length)) {
+        currentState.activeTask = {
+          ...activeTask,
+          plan: payload.plan,
+          status: activeTask.status || "planning",
+          title: activeTask.title || "Task in progress"
+        };
+      }
+
+      render(currentState);
+
+      requestAnimationFrame(() => {
+        const items = document.querySelectorAll(".chat-item.assistant:not(.thinking)");
+        const last = items[items.length - 1];
+        if (!last) return;
+        const taskStatus = (currentState.activeTask || {}).status;
+        if (taskStatus === "done") {
+          last.classList.add("success-flash");
+          last.addEventListener("animationend", () => last.classList.remove("success-flash"), { once: true });
+        } else if (taskStatus === "failed") {
+          last.classList.add("error-flash");
+          last.addEventListener("animationend", () => last.classList.remove("error-flash"), { once: true });
+        }
+      });
+    };
+
+    const setActionButtonsDisabled = (visible) => {
+      ["send-btn", "apply-btn", "revert-btn"].forEach((id) => {
+        const button = byId(id);
+        if (button) button.disabled = visible;
+      });
+    };
+
+    const updateSendButton = (busy) => {
+      const btn = byId("send-btn");
+      if (!btn) return;
+      if (busy) {
+        btn.textContent = "Stop";
+        btn.classList.add("stop-mode");
+        btn.disabled = false;
+      } else {
+        btn.textContent = "Send";
+        btn.classList.remove("stop-mode");
+        btn.disabled = false;
+      }
+    };
+
+    const setBusy = (busy, text) => {
+      busyCount = Math.max(0, busy ? busyCount + 1 : busyCount - 1);
+
+      const visible = busyCount > 0;
+      const overlay = byId("busy-overlay");
+      const composeStatus = byId("compose-status");
+
+      overlay.classList.toggle("visible", visible);
+      overlay.setAttribute("aria-hidden", visible ? "false" : "true");
+
+      if (text) byId("busy-text").textContent = text;
+      composeStatus.textContent = visible ? (text || "Working\u2026") : "Ready";
+      appendQueueStatus();
+
+      setLoadingIndicator(visible, text || getPhaseLabel());
+      setActionButtonsDisabled(visible);
+      updateSendButton(visible);
+    };
+
+    const clearBusy = () => {
+      busyCount = 0;
+      sealActivityBlock();
+      byId("busy-overlay").classList.remove("visible");
+      byId("busy-overlay").setAttribute("aria-hidden", "true");
+      byId("compose-status").textContent = "Ready";
+      setLoadingIndicator(false);
+      setActionButtonsDisabled(false);
+      updateSendButton(false);
+      drainQueue();
+    };
+
+    const renderError = (state) => {
+      const banner = byId("error-banner");
+      const copy = byId("error-copy");
+
+      const notice = lastError || (
+        state && state.ui && state.ui.notice
+          ? { title: "Notice", message: state.ui.notice }
+          : undefined
+      );
+
+      if (!notice) {
+        banner.classList.add("hidden");
+        banner.classList.remove("danger");
+        copy.textContent = "";
+        return;
+      }
+
+      banner.classList.remove("hidden");
+      banner.classList.toggle("danger", Boolean(lastError));
+      copy.textContent = String(notice.title || "Notice") + ": " + String(notice.message || "");
+    };
+
+    /**
+     * The header names the task, or nothing at all.
+     *
+     * It used to carry provider, connection, model, repo and branch, plus a
+     * Disconnected pill next to a Ready pill. All of that was already on the
+     * landing page and in the sidebar, and two of the pills could contradict
+     * each other. What is genuinely useful here is what this tab is *about*,
+     * which is only knowable once a task exists.
+     */
+    const renderHeader = (state) => {
+      const task = state.activeTask || {};
+      const taskActive = task.status && task.status !== "idle";
+
+      const title = byId("header-title");
+      if (taskActive || task.title) {
+        title.textContent = task.title || statusLabel(task.status);
+        title.classList.remove("hidden");
+      } else {
+        title.textContent = "";
+        title.classList.add("hidden");
+      }
+
+      // Sync execution mode selector with state
+      const execMode = state.executionMode || "ask";
+      document.querySelectorAll(".mode-btn").forEach((btn) => {
+        const active = btn.dataset.mode === execMode;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-checked", String(active));
+        if (active) {
+          byId("mode-label").textContent =
+            btn.querySelector(".mode-name").textContent;
+        }
+      });
+    };
+
+
+    const renderSummary = (state) => {
+      const task = state.activeTask || {};
+      const steps = ((task.plan || {}).steps || []);
+      const totalSteps = steps.length;
+      const completedCount = steps.filter((step) =>
+        ["applied", "ready", "done"].includes(step.status)
+      ).length;
+      const ratio = totalSteps > 0 ? Math.max(0, Math.min(1, completedCount / totalSteps)) : 0;
+      const activeStepIndex = steps.findIndex((step) => !["applied", "ready", "done"].includes(step.status));
+      const currentStep = totalSteps === 0 ? 0 : (activeStepIndex >= 0 ? activeStepIndex + 1 : totalSteps);
+
+      // ── Only show the Task Status card when there is real progress
+      // to display (plan steps with a progress ratio). During the initial
+      // "planning" / "generating" phases without steps, the inline
+      // thinking bubble in chat is the only status indicator — showing
+      // the Task Status card too creates double-stacked UI that pushes
+      // the chat down and overlaps visually.
+      const hasProgress = totalSteps > 0;
+      const isTerminalWithInfo = ["done", "failed", "ready_to_apply"].includes(task.status) && (task.title || task.summary);
+      const showCard = hasProgress || isTerminalWithInfo;
+      byId("assistant-summary-section").classList.toggle("hidden", !showCard);
+
+      if (!showCard) return;
+
+      byId("task-title").textContent = task.title || "";
+      byId("task-status-pill").textContent = statusLabel(task.status);
+      byId("task-status-pill").className = pillClassForStatus(task.status);
+      const stepPill = byId("task-step-pill");
+      stepPill.textContent = totalSteps > 0 ? ("Step " + Math.max(1, currentStep) + "/" + totalSteps) : "";
+      stepPill.classList.toggle("hidden", totalSteps === 0);
+
+      byId("task-summary").textContent =
+        task.status === "ready_to_apply" ? "Changes ready to review."
+        : task.status === "done" ? (task.summary || "Done.")
+        : task.status === "failed" ? "See chat for details."
+        : "";
+
+      const progressSection = byId("task-progress-bar").parentElement.parentElement;
+      if (totalSteps > 0) {
+        progressSection.classList.remove("hidden");
+        byId("task-progress-bar").style.width = Math.round(ratio * 100) + "%";
+        byId("task-progress-label").textContent = completedCount + "/" + totalSteps + " steps";
+      } else {
+        progressSection.classList.add("hidden");
+      }
+    };
+
+    const renderPlan = (state) => {
+      const section = byId("plan-section");
+      const list = byId("plan-list");
+      const steps = (((state.activeTask || {}).plan || {}).steps || []);
+
+      section.classList.toggle("hidden", !steps.length);
+
+      list.innerHTML = steps.length
+        ? steps.map((step, index) => {
+            let cssClass = "pending";
+            if (["applied", "ready", "done"].includes(step.status)) cssClass = "done";
+            else if (step.status === "failed") cssClass = "failed";
+            else if (index === 0 || step.status === "pending" || step.status === "planning") cssClass = "active";
+
+            const marker =
+              cssClass === "done" ? "✓" :
+              cssClass === "failed" ? "!" :
+              cssClass === "active" ? "→" : "•";
+
+            return `
+              <li class="row plan-item ${cssClass}">
+                <div class="plan-marker">${marker}</div>
+                <div>
+                  <div class="item-title">${esc(step.title || step.action || ("Step " + (index + 1)))}</div>
+                  <div class="item-meta">${esc(step.description || step.file || "Planned task step")}</div>
+                </div>
+              </li>
+            `;
+          }).join("")
+        : "";
+
+      // Show the "Approve & Execute" bar when plan steps exist and
+      // the task has not started executing yet. Once executing/done,
+      // hide it — the user already approved or the agent auto-ran.
+      const approvalBar = byId("plan-approval-bar");
+      if (approvalBar) {
+        const taskStatus = ((state.activeTask) || {}).status || "idle";
+        const planReady = steps.length > 0 && ["planning", "ready_to_apply"].includes(taskStatus);
+        approvalBar.classList.toggle("hidden", !planReady);
+      }
+    };
+
+    const renderScope = (state) => {
+      const section = byId("scope-section");
+      const list = byId("scope-list");
+      const files = ((state.activeTask || {}).filesInScope || []);
+
+      section.classList.toggle("hidden", !files.length);
+
+      list.innerHTML = files.map((item) => `
+        <li class="row">
+          <div class="item-head">
+            <div>
+              <div class="item-title">${esc(item.path)}</div>
+              <div class="item-meta">${esc(item.reason || "In scope for the current task")}</div>
+            </div>
+            <div class="item-actions">
+              <button class="secondary" data-open-file="${esc(item.path)}" type="button">Open</button>
+              <button class="ghost" data-reveal-file="${esc(item.path)}" type="button">Reveal</button>
+            </div>
+          </div>
+        </li>
+      `).join("");
+    };
+
+    /**
+     * How big a change is.
+     *
+     * The backend does not send counts, so they are read off the diff preview
+     * when there is one. A `+++`/`---` header line is not an edit, which is
+     * the mistake that makes every one-file diff report two extra lines.
+     */
+    const diffCounts = (change) => {
+      if (typeof change.additions === "number" || typeof change.deletions === "number") {
+        return {
+          additions: Number(change.additions) || 0,
+          deletions: Number(change.deletions) || 0,
+        };
+      }
+
+      const diff = change.diffPreview;
+      if (!diff) return { additions: 0, deletions: 0 };
+
+      let additions = 0;
+      let deletions = 0;
+      for (const line of String(diff).split("\n")) {
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+")) additions++;
+        else if (line.startsWith("-")) deletions++;
+      }
+      return { additions, deletions };
+    };
+
+    const renderChanges = (state) => {
+      const section = byId("changes-section");
+      const list = byId("changes-list");
+      const changes = ((state.activeTask || {}).changedFiles || []);
+
+      section.classList.toggle("hidden", !changes.length);
+
+      /*
+       * One line first, the file list second.
+       *
+       * A diff you have already reviewed is reference material. Stating the
+       * shape of it — "Updated user.ts · +8 −2" — answers the question most
+       * of the time, and the rows below answer the rest.
+       */
+      const additions = changes.reduce((n, c) => n + diffCounts(c).additions, 0);
+      const deletions = changes.reduce((n, c) => n + diffCounts(c).deletions, 0);
+      const applied = changes.every((c) => c.status === "applied");
+
+      const subject = changes.length === 1
+        ? changes[0].path.split("/").pop()
+        : changes.length + " files";
+
+      byId("changes-label").textContent =
+        (applied ? "\u2713 Updated " : "Proposed changes to ") + subject;
+
+      const stat = byId("changes-stat");
+      const counts = [];
+      if (additions) counts.push("+" + additions);
+      if (deletions) counts.push("\u2212" + deletions);
+      stat.textContent = counts.join(" ");
+      stat.classList.toggle("hidden", counts.length === 0);
+
+      list.innerHTML = changes.map((item) => `
+        <li class="row">
+          <div class="item-head">
+            <div>
+              <div class="item-title">${esc((item.kind || "M") + " " + item.path)}</div>
+              <div class="item-meta">${esc(item.summary || item.reason || item.status || "Proposed change")}</div>
+            </div>
+            <div class="item-actions">
+              <span class="mini-tag">${esc(String(item.status || "pending"))}</span>
+              <button class="secondary" data-open-file="${esc(item.path)}" type="button">Open</button>
+              <button class="secondary" data-open-diff="${esc(item.path)}" type="button">Diff</button>
+            </div>
+          </div>
+        </li>
+      `).join("");
+    };
+
+    const roleAvatarLetter = (role) =>
+      role === "user" ? "U" : role === "assistant" ? "G" : "S";
+
+    const roleName = (role) =>
+      role === "assistant" ? "GitPilot" : role === "user" ? "You" : "System";
+
+    /** Quote a value for use inside an attribute selector. */
+    const cssEscape = (value) => String(value).replace(/["\\]/g, "\\$&");
+
+    /** One turn of the conversation. Shared by the transcript and streaming. */
+    const messageInnerHtml = (msg) => `
+      <div class="chat-role-row">
+        <div class="chat-role">
+          <span class="role-avatar ${esc(msg.role)}">${roleAvatarLetter(msg.role)}</span>
+          ${esc(roleName(msg.role))}
+        </div>
+        <div class="chat-time">${esc(formatTime(msg.createdAt))}</div>
+      </div>
+      <div class="chat-content">${msg.role === "assistant" ? normalizeAssistantText(msg.content) : esc(msg.content)}</div>
+    `;
+
+    const injectCopyButtons = () => {
+      document.querySelectorAll(".chat-content pre").forEach((pre) => {
+        if (pre.querySelector(".code-copy-btn")) return;
+        const btn = document.createElement("button");
+        btn.className = "code-copy-btn";
+        btn.textContent = "Copy";
+        btn.type = "button";
+        btn.addEventListener("click", () => {
+          const code = pre.querySelector("code");
+          const text = code ? code.textContent : pre.textContent;
+          navigator.clipboard.writeText(text || "").then(() => {
+            btn.textContent = "\u2713 Copied";
+            btn.classList.add("copied");
+            setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1800);
+          });
+        });
+        pre.appendChild(btn);
+      });
+    };
+
+    const renderChat = (state) => {
+      const list = byId("chat-list");
+      const emptyState = byId("chat-empty-state");
+      const messages = getChatMessages(state);
+      const thinkingVisible = busyCount > 0;
+      const isStreaming = Boolean(streamingItemId);
+
+      const hasRealMessages = (((state || {}).chat || {}).messages || []).length > 0;
+
+      // An empty transcript still has something to show if GitPilot has been
+      // working, so activity blocks keep the list alive.
+      const hasActivity = list.querySelector(".activity-block") !== null;
+
+      const homeActions = byId("home-actions");
+
+      if (!hasRealMessages && !thinkingVisible && !isStreaming && !hasActivity) {
+        list.classList.add("hidden");
+        list.innerHTML = "";
+        activityBlockId = null;
+        if (emptyState) emptyState.classList.remove("hidden");
+        if (homeActions) homeActions.classList.remove("hidden");
+        return;
+      }
+
+      if (homeActions) homeActions.classList.add("hidden");
+
+      if (emptyState) emptyState.classList.add("hidden");
+      list.classList.remove("hidden");
+
+      /*
+       * Reconcile, do not rebuild.
+       *
+       * `list.innerHTML = …` destroyed everything the transcript had learned
+       * since the last render: the streaming node, the thinking bubble, and —
+       * once tool activity moved into the flow — every block the user had
+       * expanded. It also forced a detach-and-reattach dance to keep the
+       * in-flight nodes alive.
+       *
+       * Messages are keyed instead. A node that is already present stays
+       * exactly where it is, so blocks interleaved between messages keep
+       * their position and their open/closed state.
+       */
+      const seen = new Set();
+      for (const msg of messages) {
+        const key = "msg:" + (msg.id || msg.createdAt || messages.indexOf(msg));
+        seen.add(key);
+
+        let node = list.querySelector('[data-key="' + cssEscape(key) + '"]');
+        if (!node) {
+          node = document.createElement("li");
+          node.className = "chat-item " + esc(msg.role);
+          node.dataset.key = key;
+          list.appendChild(node);
+        }
+
+        const signature = msg.role + "\u0000" + msg.content;
+        if (node.dataset.signature !== signature) {
+          node.dataset.signature = signature;
+          node.className = "chat-item " + esc(msg.role);
+          node.innerHTML = messageInnerHtml(msg);
+        }
+      }
+
+      for (const node of [...list.querySelectorAll("[data-key]")]) {
+        const key = node.dataset.key || "";
+        if (key.startsWith("msg:") && !seen.has(key)) {
+          node.remove();
+        }
+      }
+
+      // The thinking bubble belongs at the tail, after whatever just arrived.
+      const thinkingNode = byId("chat-thinking-item");
+      if (thinkingVisible || isStreaming) {
+        if (thinkingNode) {
+          list.appendChild(thinkingNode);
+        } else {
+          setLoadingIndicator(true, getPhaseLabel());
+        }
+      }
+
+      requestAnimationFrame(() => {
+        list.scrollTop = list.scrollHeight;
+        injectCopyButtons();
+      });
+    };
+
+    /**
+     * The landing page's status line.
+     *
+     * Stated once, in one place, and only while the landing page is visible —
+     * repeating "Ready" beside every other control is what made the old
+     * interface feel like it was arguing with itself.
+     */
+    const renderHomeTrust = (state) => {
+      const box = byId("home-trust");
+      if (!box) return;
+
+      const server = state.server || {};
+      const provider = state.provider || {};
+      const connected = Boolean(server.connected);
+      const connecting = Boolean(server.connecting);
+
+      const status = connecting ? "Connecting" : connected ? "Ready" : "Offline";
+      const dotClass = connecting ? "pending" : connected ? "ok" : "bad";
+
+      const items = [];
+      if (provider.model) items.push(esc(provider.model));
+
+      const repo = (state.projectContextSummary || {}).repoName
+        || (state.workspace || {}).folderName;
+      if (repo) items.push(esc(repo) + " repository");
+
+      const MODE_TRUST = {
+        ask: "Changes require approval",
+        plan: "Read-only \u2014 nothing is written",
+        auto: "Changes applied automatically",
+      };
+      items.push(MODE_TRUST[state.executionMode] || MODE_TRUST.ask);
+
+      box.innerHTML =
+        '<span class="trust-item"><span class="home-dot ' + dotClass + '"></span>' + status + "</span>"
+        + items.map((text) => '<span class="trust-sep">\u00b7</span><span class="trust-item">' + text + "</span>").join("");
+    };
+
+    const renderContextualActions = (state) => {
+      const task = state.activeTask || {};
+      const changes = task.changedFiles || [];
+      const hasPatch = task.status === "ready_to_apply" || changes.length > 0;
+      // Rewind is useful precisely when there is no pending patch — the
+      // change has already been applied and you want it back.
+      const canRewind = Boolean((state.session || {}).sessionId);
+      const showSecondaryRow = hasPatch || canRewind;
+
+      byId("secondary-actions-row").classList.toggle("hidden", !showSecondaryRow);
+      byId("rewind-btn").classList.toggle("hidden", !canRewind);
+      byId("apply-btn").classList.toggle("hidden", !hasPatch);
+      byId("revert-btn").classList.toggle("hidden", !hasPatch);
+
+      const showTaskControls = taskIsActive(state) || hasPatch;
+      byId("actions-section").classList.toggle("hidden", !showTaskControls);
+    };
+
+    const bindDynamicEvents = () => {
+      if (dynamicHandlerAbortController) {
+        dynamicHandlerAbortController.abort();
+      }
+
+      dynamicHandlerAbortController = new AbortController();
+      const signal = dynamicHandlerAbortController.signal;
+
+      document.querySelectorAll("[data-open-file]").forEach((node) => {
+        node.addEventListener("click", () => {
+          post({ type: "OPEN_CHANGED_FILE", payload: { path: node.getAttribute("data-open-file") } });
+        }, { signal });
+      });
+
+      document.querySelectorAll("[data-open-diff]").forEach((node) => {
+        node.addEventListener("click", () => {
+          post({ type: "OPEN_CHANGED_DIFF", payload: { path: node.getAttribute("data-open-diff") } });
+        }, { signal });
+      });
+
+      document.querySelectorAll("[data-reveal-file]").forEach((node) => {
+        node.addEventListener("click", () => {
+          post({ type: "REVEAL_FILE", payload: { path: node.getAttribute("data-reveal-file") } });
+        }, { signal });
+      });
+
+      document.querySelectorAll("[data-quick-action]").forEach((node) => {
+        node.addEventListener("click", () => {
+          const action = node.getAttribute("data-quick-action");
+          if (!action) return;
+          setBusy(true, "Running " + action.replace(/_/g, " ") + "…");
+          post({ type: "RUN_QUICK_ACTION", payload: { action } });
+        }, { signal });
+      });
+
+      document.querySelectorAll("[data-suggestion]").forEach((node) => {
+        node.addEventListener("click", () => {
+          const text = node.getAttribute("data-suggestion");
+          if (text) sendSuggestion(text);
+        }, { signal });
+      });
+    };
+
+    const createRenderSignature = (state) => JSON.stringify({
+      provider: state && state.provider,
+      server: state && state.server,
+      executionMode: state && state.executionMode,
+      workflow: state && state.workflow,
+      projectContextSummary: state && state.projectContextSummary,
+      activeTask: state && state.activeTask,
+      chat: ((state || {}).chat || {}).messages || [],
+      session: (state || {}).session,
+      ui: state && state.ui,
+      lastError,
+      busyCount
+    });
+
+    const render = (state) => {
+      const signature = createRenderSignature(state);
+      if (signature === lastRenderedSignature) return;
+      lastRenderedSignature = signature;
+
+      currentState = state || {};
+
+      renderHeader(currentState);
+      renderError(currentState);
+      renderSummary(currentState);
+      renderPlan(currentState);
+      renderScope(currentState);
+      renderChanges(currentState);
+      renderChat(currentState);
+      renderHomeTrust(currentState);
+      renderContextualActions(currentState);
+      bindDynamicEvents();
+    };
+
+    /**
+     * Messages typed while GitPilot is still working.
+     *
+     * Thinking of the next thing to say while an agent runs is normal, and
+     * throwing that text away — or interrupting the run to take it — is the
+     * wrong answer to both. They are held and sent in order as the run ends.
+     */
+    let queuedMessages = [];
+
+    /** Say how many messages are waiting, without hiding what is happening. */
+    const appendQueueStatus = () => {
+      const status = byId("compose-status");
+      if (!status || queuedMessages.length === 0) return;
+      const label = queuedMessages.length === 1
+        ? "1 queued"
+        : queuedMessages.length + " queued";
+      status.textContent = status.textContent + " \u00b7 " + label;
+    };
+
+    const renderQueue = () => {
+      const status = byId("compose-status");
+      if (!status) return;
+      status.textContent = busyCount > 0 ? (getPhaseLabel() || "Working\u2026") : "Ready";
+      appendQueueStatus();
+    };
+
+    const dispatchChat = (text) => {
+      // The transcript shows what you typed; the backend also gets the
+      // context you attached above it.
+      const outbound = buildContextPreamble() + text;
+      clearAttachedContext();
+
+      pushOptimisticUserMessage(text);
+      setBusy(true, getPhaseLabel());
+      post({ type: "SEND_CHAT", payload: { text: outbound } });
+    };
+
+    const drainQueue = () => {
+      if (queuedMessages.length === 0) return;
+      const next = queuedMessages.shift();
+      renderQueue();
+      dispatchChat(next);
+    };
+
+    /** Enter, and the send button when it is not offering to stop. */
+    const submitComposer = () => {
+      const input = byId("chat-input");
+      const text = input.value.trim();
+      if (!text) return;
+
+      input.value = "";
+      closeCompletion();
+
+      if (busyCount > 0) {
+        queuedMessages.push(text);
+        renderQueue();
+        return;
+      }
+
+      dispatchChat(text);
+    };
+
+    const sendChat = () => {
+      const btn = byId("send-btn");
+
+      // Only the button offers to stop. Enter must never cancel a run — it is
+      // the key you press to say something, and losing a task to a reflex is
+      // not a trade anyone would choose.
+      if (btn && btn.classList.contains("stop-mode")) {
+        queuedMessages = [];
+        post({ type: "CANCEL_TASK" });
+        clearBusy();
+        return;
+      }
+
+      submitComposer();
+    };
+
+    const sendSuggestion = (text) => {
+      if (!text) return;
+      const input = byId("chat-input");
+      if (input) input.value = "";
+      pushOptimisticUserMessage(text);
+      setBusy(true, getPhaseLabel());
+      post({ type: "SEND_CHAT", payload: { text } });
+    };
+
+    const requestRefreshContext = () => {
+      setBusy(true, "Refreshing repository context…");
+      post({ type: "REFRESH_PROJECT_CONTEXT" });
+    };
+
+    const handleContextualAction = () => {
+      const action = byId("contextual-btn").dataset.action;
+
+      if (action === "apply") {
+        setBusy(true, "Applying proposed changes…");
+        post({ type: "APPLY_PROPOSED_CHANGES" });
+        return;
+      }
+
+      if (action === "retry") {
+        const messages = getChatMessages(currentState);
+        const latestUser = [...messages].reverse().find((msg) => msg.role === "user");
+        if (!latestUser) {
+          requestRefreshContext();
+          return;
+        }
+        setBusy(true, "Retrying request…");
+        post({ type: "SEND_CHAT", payload: { text: latestUser.content } });
+        return;
+      }
+
+      requestRefreshContext();
+    };
+
+    // ── V2 event handlers ──
+
+    /*
+     * Tool activity, in the conversation rather than beside it.
+     *
+     * A fixed feed under the transcript answered "what is happening now?" and
+     * nothing else — scroll back through a finished task and every trace of
+     * how GitPilot reached its answer was gone. Worse, an eight-line list of
+     * `read_file · completed` is a log, not an explanation.
+     *
+     * Consecutive tool calls now collapse into one line in the flow —
+     * "Investigated 4 files" — which expands to the individual calls. The
+     * transcript reads as prose, and the work behind it is one click away.
+     */
+    const TOOL_VERBS = {
+      read: "Read", read_file: "Read", open_file: "Read",
+      search: "Searched", grep: "Searched", find: "Searched",
+      write: "Wrote", write_file: "Wrote", edit: "Edited", edit_file: "Edited",
+      run: "Ran", bash: "Ran", terminal: "Ran", test: "Ran",
+    };
+
+    /** "read_file" + "src/a.ts" → "Read src/a.ts"; unknown tools keep their name. */
+    const toolLine = (payload) => {
+      const name = String(payload.name || "tool");
+      const verb = TOOL_VERBS[name.toLowerCase()];
+      const target = payload.target || payload.detail || "";
+      if (!verb) return target ? name.replace(/_/g, " ") + " " + target : name.replace(/_/g, " ");
+      return target ? verb + " " + target : verb;
+    };
+
+    /** The block currently accepting tool calls, or null after a turn ends. */
+    let activityBlockId = null;
+
+    const activitySummary = (block) => {
+      const rows = [...block.querySelectorAll(".activity-item")];
+      const failed = rows.filter((r) => r.classList.contains("failed")).length;
+      const running = rows.some((r) => r.classList.contains("running"));
+
+      if (rows.length === 1) return rows[0].querySelector(".activity-name").textContent;
+      if (failed > 0) return failed + " of " + rows.length + " steps failed";
+      return (running ? "Investigating " : "Investigated ") + rows.length + " steps";
+    };
+
+    const refreshActivityBlock = (block) => {
+      const rows = [...block.querySelectorAll(".activity-item")];
+      const running = rows.some((r) => r.classList.contains("running"));
+      const failed = rows.some((r) => r.classList.contains("failed"));
+
+      block.classList.toggle("running", running);
+      block.classList.toggle("failed", !running && failed);
+      block.querySelector(".activity-summary-text").textContent = activitySummary(block);
+      block.querySelector(".activity-glyph").innerHTML =
+        running ? "&#9679;" : failed ? "&#10007;" : "&#10003;";
+    };
+
+    const currentActivityBlock = () => {
+      const list = byId("chat-list");
+      if (!list) return null;
+
+      let block = activityBlockId ? document.getElementById(activityBlockId) : null;
+      if (block) return block;
+
+      activityBlockId = "activity-block-" + Date.now();
+      block = document.createElement("li");
+      block.className = "chat-item activity-block running";
+      block.id = activityBlockId;
+      block.innerHTML = `
+        <button class="activity-summary" type="button" aria-expanded="false">
+          <span class="activity-caret">&#9656;</span>
+          <span class="activity-glyph">&#9679;</span>
+          <span class="activity-summary-text">Working…</span>
+        </button>
+        <ul class="activity-list"></ul>
+      `;
+
+      const toggle = block.querySelector(".activity-summary");
+      const rows = block.querySelector(".activity-list");
+      toggle.addEventListener("click", () => {
+        const open = block.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        block.querySelector(".activity-caret").innerHTML = open ? "&#9662;" : "&#9656;";
+      });
+      void rows;
+
+      // Before the thinking bubble, so the tail of the transcript stays "GitPilot
+      // is thinking" rather than a finished list of steps.
+      const thinking = byId("chat-thinking-item");
+      list.classList.remove("hidden");
+      const emptyState = byId("chat-empty-state");
+      if (emptyState) emptyState.classList.add("hidden");
+      if (thinking) list.insertBefore(block, thinking); else list.appendChild(block);
+
+      return block;
+    };
+
+    const handleToolActivity = (payload) => {
+      if (!payload) return;
+      const block = currentActivityBlock();
+      if (!block) return;
+
+      const rows = block.querySelector(".activity-list");
+      let item = document.getElementById("activity-" + payload.id);
+      if (!item) {
+        item = document.createElement("li");
+        item.id = "activity-" + payload.id;
+        item.className = "activity-item running";
+        item.innerHTML = `
+          <span class="activity-icon">&#9679;</span>
+          <span class="activity-name">${esc(toolLine(payload))}</span>
+          <span class="activity-status">running</span>
+        `;
+        rows.appendChild(item);
+      }
+
+      item.className = "activity-item " + esc(payload.status);
+      const statusEl = item.querySelector(".activity-status");
+      if (statusEl) statusEl.textContent = payload.status;
+
+      const iconEl = item.querySelector(".activity-icon");
+      if (iconEl) {
+        iconEl.innerHTML = payload.status === "completed" ? "&#10003;"
+          : payload.status === "failed" ? "&#10007;" : "&#9679;";
+      }
+
+      refreshActivityBlock(block);
+      const list = byId("chat-list");
+      requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
+    };
+
+    /** A turn is over; the next tool call starts a fresh block. */
+    const sealActivityBlock = () => {
+      const block = activityBlockId ? document.getElementById(activityBlockId) : null;
+      if (block) refreshActivityBlock(block);
+      activityBlockId = null;
+    };
+
+    let pendingApprovalId = null;
+
+    const showApprovalCard = (payload) => {
+      const card = byId("approval-card");
+      if (!card) return;
+
+      pendingApprovalId = payload.id;
+      byId("approval-title").textContent = "GitPilot wants to " + esc(payload.tool).replace(/_/g, " ");
+      byId("approval-summary").textContent = payload.summary || "";
+
+      const riskEl = byId("approval-risk");
+      riskEl.textContent = payload.riskLevel || "medium";
+      riskEl.className = "pill approval-risk risk-" + (payload.riskLevel || "medium");
+
+      const diffEl = byId("approval-diff");
+      if (payload.diffPreview) {
+        diffEl.textContent = payload.diffPreview;
+        diffEl.classList.remove("hidden");
+      } else {
+        diffEl.classList.add("hidden");
+      }
+
+      card.classList.remove("hidden");
+    };
+
+    const resolveApproval = (approved, scope) => {
+      if (!pendingApprovalId) return;
+      post({
+        type: "TOOL_APPROVAL_RESPONSE",
+        payload: { id: pendingApprovalId, approved, scope: scope || "once" },
+      });
+      pendingApprovalId = null;
+      const card = byId("approval-card");
+      if (card) card.classList.add("hidden");
+    };
+
+    const handlePlanStepUpdate = (payload) => {
+      const list = byId("plan-list");
+      if (!list) return;
+
+      const items = list.querySelectorAll(".plan-item");
+      const item = items[payload.stepIndex];
+      if (!item) return;
+
+      const marker = item.querySelector(".plan-marker");
+      if (!marker) return;
+
+      if (payload.status === "started" || payload.status === "running" || payload.status === "pending") {
+        item.className = "row plan-item active";
+        marker.textContent = "\u2192";
+      } else if (payload.status === "completed" || payload.status === "applied") {
+        item.className = "row plan-item done";
+        marker.textContent = "\u2713";
+      } else if (payload.status === "failed") {
+        item.className = "row plan-item failed";
+        marker.textContent = "!";
+      }
+    };
+
+    const handleTerminalOutput = (payload) => {
+      const panel = byId("terminal-panel");
+      const output = byId("terminal-output");
+      if (!panel || !output) return;
+
+      panel.classList.remove("hidden");
+      output.textContent += payload.text || "";
+
+      requestAnimationFrame(() => {
+        output.scrollTop = output.scrollHeight;
+      });
+    };
+
+    const handleDiagnostics = (payload) => {
+      const bar = byId("results-bar");
+      if (!bar) return;
+      bar.classList.remove("hidden");
+
+      const errBadge = byId("diag-errors-badge");
+      const warnBadge = byId("diag-warnings-badge");
+
+      if (payload.errors > 0 && errBadge) {
+        errBadge.textContent = payload.errors + " error" + (payload.errors !== 1 ? "s" : "");
+        errBadge.classList.remove("hidden");
+      }
+      if (payload.warnings > 0 && warnBadge) {
+        warnBadge.textContent = payload.warnings + " warning" + (payload.warnings !== 1 ? "s" : "");
+        warnBadge.classList.remove("hidden");
+      }
+    };
+
+    const handleTestResult = (payload) => {
+      const bar = byId("results-bar");
+      if (!bar) return;
+      bar.classList.remove("hidden");
+
+      const passed = byId("test-passed-badge");
+      const failed = byId("test-failed-badge");
+      const skipped = byId("test-skipped-badge");
+
+      if (payload.passed > 0 && passed) {
+        passed.textContent = payload.passed + " passed";
+        passed.classList.remove("hidden");
+      }
+      if (payload.failed > 0 && failed) {
+        failed.textContent = payload.failed + " failed";
+        failed.classList.remove("hidden");
+      }
+      if (payload.skipped > 0 && skipped) {
+        skipped.textContent = payload.skipped + " skipped";
+        skipped.classList.remove("hidden");
+      }
+    };
+
+    // ── Composer: context chips ─────────────────────────────────────────
+    //
+    // Naming the file you mean is the most tedious step of an AI coding
+    // workflow, so GitPilot does it for you: selecting code attaches a chip,
+    // and + or @ attaches more. Chips are visible and removable, because
+    // context that is attached invisibly is context you cannot trust.
+
+    /** Files pinned by the user, in the order they were added. */
+    let attachedFiles = [];
+    /** The live editor selection, replaced (not accumulated) as it changes. */
+    let selectionContext = null;
+    /** Every workspace path, fetched once and reused for completion. */
+    let fileIndex = [];
+
+    const renderContextChips = () => {
+      const box = byId("context-chips");
+      if (!box) return;
+
+      const chips = [];
+      if (selectionContext) {
+        chips.push({
+          key: "selection",
+          icon: "&#9673;",
+          label: selectionContext.file + ":" + selectionContext.range,
+          title: "The code you have selected",
+        });
+      }
+      for (const file of attachedFiles) {
+        chips.push({ key: "file:" + file, icon: "&#64;", label: file, title: file });
+      }
+
+      box.classList.toggle("hidden", chips.length === 0);
+      box.replaceChildren();
+
+      for (const chip of chips) {
+        const node = document.createElement("span");
+        node.className = "context-chip";
+        node.title = chip.title;
+        node.innerHTML =
+          '<span class="chip-icon">' + chip.icon + '</span>' +
+          '<span class="chip-label">' + esc(chip.label) + '</span>' +
+          '<button class="chip-remove" type="button" aria-label="Remove ' + esc(chip.label) + '">&#10005;</button>';
+        node.querySelector(".chip-remove").addEventListener("click", () => {
+          if (chip.key === "selection") {
+            selectionContext = null;
+          } else {
+            attachedFiles = attachedFiles.filter((f) => "file:" + f !== chip.key);
+          }
+          renderContextChips();
+        });
+        box.appendChild(node);
+      }
+    };
+
+    const attachFile = (path) => {
+      if (!path || attachedFiles.includes(path)) return;
+      attachedFiles.push(path);
+      renderContextChips();
+    };
+
+    /**
+     * Turn the chips into text the model can act on.
+     *
+     * Kept in the webview so the prompt the user sends is exactly the prompt
+     * they can see described above the composer — nothing is added on the way
+     * to the backend that was not on screen.
+     */
+    const buildContextPreamble = () => {
+      const parts = [];
+      if (selectionContext) {
+        parts.push(
+          "Selected code from " + selectionContext.file + ":" + selectionContext.range +
+          (selectionContext.text ? "\n```\n" + selectionContext.text + "\n```" : "")
+        );
+      }
+      if (attachedFiles.length > 0) {
+        parts.push("Relevant files: " + attachedFiles.join(", "));
+      }
+      return parts.length > 0 ? parts.join("\n\n") + "\n\n" : "";
+    };
+
+    const clearAttachedContext = () => {
+      attachedFiles = [];
+      renderContextChips();
+    };
+
+    // ── Composer: inline completion for @ and / ─────────────────────────
+
+    const SLASH_COMMANDS = [
+      { label: "/explain", detail: "Explain how something works" },
+      { label: "/review", detail: "Review code for problems" },
+      { label: "/fix", detail: "Fix a specific issue" },
+      { label: "/test", detail: "Write or extend tests" },
+      { label: "/plan", detail: "Plan a change before writing it" },
+      { label: "/security", detail: "Scan for security issues" },
+    ];
+
+    /** { kind, start, query } while a completion is open, else null. */
+    let completion = null;
+    let completionItems = [];
+    let completionIndex = 0;
+
+    const closeCompletion = () => {
+      completion = null;
+      completionItems = [];
+      completionIndex = 0;
+      byId("compose-popup").classList.add("hidden");
+    };
+
+    /**
+     * Find the trigger the caret is sitting inside.
+     *
+     * Only a trigger at the start of a word counts, so an email address or a
+     * path separator never opens the picker mid-sentence.
+     */
+    const triggerAtCaret = (value, caret) => {
+      const upto = value.slice(0, caret);
+      const match = /(^|\s)([@/])([^\s]*)$/.exec(upto);
+      if (!match) return null;
+      const kind = match[2];
+      if (kind === "/" && match.index + match[1].length !== 0) {
+        // A slash command is only a command at the very start of the message.
+        return null;
+      }
+      return { kind, start: caret - match[3].length - 1, query: match[3].toLowerCase() };
+    };
+
+    const renderCompletion = () => {
+      const popup = byId("compose-popup");
+      popup.replaceChildren();
+
+      if (completionItems.length === 0) {
+        popup.classList.add("hidden");
+        return;
+      }
+
+      completionItems.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = "popup-row" + (index === completionIndex ? " active" : "");
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", index === completionIndex ? "true" : "false");
+        row.innerHTML =
+          '<span class="popup-label">' + esc(item.label) + '</span>' +
+          (item.detail ? '<span class="popup-detail">' + esc(item.detail) + '</span>' : "");
+        row.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          acceptCompletion(index);
+        });
+        popup.appendChild(row);
+      });
+
+      popup.classList.remove("hidden");
+    };
+
+    const openCompletion = () => {
+      const input = byId("chat-input");
+      const found = triggerAtCaret(input.value, input.selectionStart ?? 0);
+      if (!found) {
+        closeCompletion();
+        return;
+      }
+
+      completion = found;
+      completionIndex = 0;
+
+      if (found.kind === "/") {
+        completionItems = SLASH_COMMANDS.filter((c) =>
+          c.label.slice(1).startsWith(found.query)
+        );
+      } else {
+        if (fileIndex.length === 0) post({ type: "REQUEST_FILE_INDEX" });
+        completionItems = fileIndex
+          .filter((p) => p.toLowerCase().includes(found.query))
+          .slice(0, 12)
+          .map((p) => ({ label: p, detail: "", path: p }));
+      }
+
+      renderCompletion();
+    };
+
+    const acceptCompletion = (index) => {
+      if (!completion || !completionItems[index]) return;
+
+      const input = byId("chat-input");
+      const item = completionItems[index];
+      const before = input.value.slice(0, completion.start);
+      const after = input.value.slice(input.selectionStart ?? completion.start);
+
+      if (completion.kind === "@") {
+        // The reference becomes a chip, not inline noise in the sentence.
+        attachFile(item.path);
+        input.value = before + after;
+        const caret = before.length;
+        input.setSelectionRange(caret, caret);
+      } else {
+        const insert = item.label + " ";
+        input.value = before + insert + after;
+        const caret = before.length + insert.length;
+        input.setSelectionRange(caret, caret);
+      }
+
+      input.focus();
+      closeCompletion();
+    };
+
+    /** Everything the previous task left behind, in one place. */
+    const resetConversation = () => {
+      const list = byId("chat-list");
+      if (list) {
+        list.innerHTML = "";
+        list.classList.add("hidden");
+      }
+
+      const emptyState = byId("chat-empty-state");
+      if (emptyState) emptyState.classList.remove("hidden");
+      const homeActions = byId("home-actions");
+      if (homeActions) homeActions.classList.remove("hidden");
+
+      streamingItemId = null;
+      activityBlockId = null;
+      queuedMessages = [];
+      // The signature guard would otherwise skip the next render, because the
+      // state it compares has not changed — only the DOM has.
+      lastRenderedSignature = "";
+
+      const input = byId("chat-input");
+      if (input) input.value = "";
+      closeCompletion();
+      clearAttachedContext();
+
+      // A previous plan, diff or changed-file list describes work that is no
+      // longer this conversation's.
+      for (const id of ["plan-section", "scope-section", "changes-section",
+                        "actions-section", "assistant-summary-section",
+                        "error-banner", "approval-card", "terminal-panel",
+                        "results-bar", "secondary-actions-row"]) {
+        const node = byId(id);
+        if (node) node.classList.add("hidden");
+      }
+
+      clearBusy();
+    };
+
+    const bindStaticEvents = () => {
+      byId("send-btn").addEventListener("click", sendChat);
+
+      byId("attach-btn").addEventListener("click", () => {
+        post({ type: "PICK_CONTEXT_FILE" });
+      });
+
+      // @ and / are the same triggers the keyboard has; the buttons type them
+      // for anyone who reaches for the mouse first.
+      const typeTrigger = (char) => {
+        const input = byId("chat-input");
+        const at = input.selectionStart ?? input.value.length;
+        const before = input.value.slice(0, at);
+        const prefix = before && !/\s$/.test(before) ? " " : "";
+        input.value = before + prefix + char + input.value.slice(at);
+        const caret = at + prefix.length + 1;
+        input.focus();
+        input.setSelectionRange(caret, caret);
+        openCompletion();
+      };
+      byId("mention-btn").addEventListener("click", () => typeTrigger("@"));
+      byId("slash-btn").addEventListener("click", () => typeTrigger("/"));
+
+      // ── Mode menu ──
+      const modeMenu = byId("mode-selector");
+      const modeTrigger = byId("mode-trigger");
+
+      const closeModeMenu = () => {
+        modeMenu.classList.add("hidden");
+        modeTrigger.setAttribute("aria-expanded", "false");
+      };
+
+      modeTrigger.addEventListener("click", (event) => {
+        // Without this the document handler below would close the menu in the
+        // same click that opened it.
+        event.stopPropagation();
+        // toggle() reports whether the class is now *present*, so this is the
+        // hidden state, not the open one.
+        const hidden = modeMenu.classList.toggle("hidden");
+        modeTrigger.setAttribute("aria-expanded", hidden ? "false" : "true");
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!modeMenu.contains(event.target) && event.target !== modeTrigger) {
+          closeModeMenu();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeModeMenu();
+      });
+
+      modeMenu.addEventListener("click", () => closeModeMenu());
+
+      byId("chat-input").addEventListener("input", openCompletion);
+      byId("chat-input").addEventListener("blur", () => closeCompletion());
+
+      byId("chat-input").addEventListener("keydown", (event) => {
+        // While the picker is open it owns the arrows, Enter, Tab and Escape.
+        if (completion && completionItems.length > 0) {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            const step = event.key === "ArrowDown" ? 1 : -1;
+            completionIndex =
+              (completionIndex + step + completionItems.length) % completionItems.length;
+            renderCompletion();
+            return;
+          }
+          if (event.key === "Enter" || event.key === "Tab") {
+            event.preventDefault();
+            acceptCompletion(completionIndex);
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeCompletion();
+            return;
+          }
+        }
+
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          submitComposer();
+          return;
+        }
+
+        // Escape stops a run in progress. Nothing else in the composer wants
+        // Escape, and reaching for the mouse to stop a runaway agent is the
+        // friction this removes.
+        if (event.key === "Escape" && busyCount > 0) {
+          event.preventDefault();
+          queuedMessages = [];
+          post({ type: "CANCEL_TASK" });
+          clearBusy();
+        }
+      });
+
+      byId("setup-context-btn").addEventListener("click", requestRefreshContext);
+
+      byId("provider-setup-btn").addEventListener("click", () => {
+        post({ type: "OPEN_PROVIDER_SETUP" });
+      });
+
+      byId("idle-setup-btn").addEventListener("click", () => {
+        post({ type: "OPEN_SETUP_WIZARD" });
+      });
+
+      // ── New Chat button: clears chat and starts a fresh session ──
+
+      // ── Plan approval: user must click before execution proceeds ──
+      byId("plan-approve-btn").addEventListener("click", () => {
+        byId("plan-approval-bar").classList.add("hidden");
+        setBusy(true, "Executing approved plan…");
+        post({ type: "APPROVE_PLAN" });
+      });
+
+      byId("plan-reject-btn").addEventListener("click", () => {
+        byId("plan-approval-bar").classList.add("hidden");
+        clearBusy();
+        post({ type: "REJECT_PLAN" });
+      });
+
+      byId("rewind-btn").addEventListener("click", () => {
+        post({ type: "REWIND" });
+      });
+
+      byId("apply-btn").addEventListener("click", () => {
+        setBusy(true, "Applying proposed changes…");
+        post({ type: "APPLY_PROPOSED_CHANGES" });
+      });
+
+      byId("revert-btn").addEventListener("click", () => {
+        setBusy(true, "Reverting proposed changes…");
+        post({ type: "REVERT_PROPOSED_CHANGES" });
+      });
+
+      byId("replan-btn").addEventListener("click", () => {
+        setBusy(true, "Regenerating plan…");
+        post({ type: "REGENERATE_TASK_PLAN" });
+      });
+
+      byId("setup-btn").addEventListener("click", () => {
+        post({ type: "OPEN_SETUP_WIZARD" });
+      });
+
+      byId("settings-header-btn").addEventListener("click", () => {
+        post({ type: "OPEN_SETTINGS" });
+      });
+
+      // V2 approval card buttons
+      byId("approval-allow")?.addEventListener("click", () => resolveApproval(true, "once"));
+      byId("approval-allow-session")?.addEventListener("click", () => resolveApproval(true, "session"));
+      byId("approval-deny")?.addEventListener("click", () => resolveApproval(false));
+
+      // Terminal close
+      byId("terminal-close")?.addEventListener("click", () => {
+        const panel = byId("terminal-panel");
+        if (panel) panel.classList.add("hidden");
+      });
+
+      // ── Execution mode selector ──
+      document.querySelectorAll(".mode-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".mode-btn").forEach((b) => {
+            b.classList.remove("active");
+            b.setAttribute("aria-checked", "false");
+          });
+          btn.classList.add("active");
+          btn.setAttribute("aria-checked", "true");
+          // Immediately, not after the backend echoes: the trigger is the only
+          // thing on screen saying which mode you are in.
+          byId("mode-label").textContent = btn.querySelector(".mode-name").textContent;
+          post({ type: "SET_EXECUTION_MODE", payload: { mode: btn.dataset.mode } });
+        });
+      });
+    };
+
+    let streamingItemId = null;
+
+    const handleStreamChunk = (payload) => {
+      if (!payload || !payload.content) return;
+      const list = byId("chat-list");
+      const emptyState = byId("chat-empty-state");
+      if (emptyState) emptyState.classList.add("hidden");
+      list.classList.remove("hidden");
+
+      const existing = byId("chat-thinking-item");
+      if (existing) { existing.remove(); stopThinkingTimer(); }
+
+      let item = streamingItemId ? document.getElementById(streamingItemId) : null;
+
+      if (!item) {
+        streamingItemId = "streaming-" + Date.now();
+        item = document.createElement("li");
+        item.id = streamingItemId;
+        item.className = "chat-item assistant streaming";
+        item.innerHTML = `
+          <div class="chat-role-row">
+            <div class="chat-role">
+              <span class="role-avatar assistant">G</span>
+              GitPilot
+            </div>
+            <div class="chat-time">${esc(formatTime(nowIso()))}</div>
+          </div>
+          <div class="chat-content"></div>
+        `;
+        list.appendChild(item);
+      }
+
+      const content = item.querySelector(".chat-content");
+      if (content) {
+        content.innerHTML = normalizeAssistantText(
+          (content.getAttribute("data-raw") || "") + payload.content
+        );
+        content.setAttribute("data-raw",
+          (content.getAttribute("data-raw") || "") + payload.content
+        );
+      }
+
+      requestAnimationFrame(() => {
+        list.scrollTop = list.scrollHeight;
+        injectCopyButtons();
+      });
+    };
+
+    const finalizeStream = (payload) => {
+      const item = streamingItemId ? document.getElementById(streamingItemId) : null;
+      if (item) {
+        item.classList.remove("streaming");
+        item.classList.add("success-flash");
+        item.addEventListener("animationend", () => item.classList.remove("success-flash"), { once: true });
+      }
+
+      if (item) {
+        const rawText = item.querySelector(".chat-content")?.getAttribute("data-raw") || "";
+        const id = (payload && payload.id) || streamingItemId;
+
+        if (!currentState) currentState = {};
+        if (!currentState.chat) currentState.chat = {};
+        if (!Array.isArray(currentState.chat.messages)) currentState.chat.messages = [];
+        currentState.chat.messages.push({
+          id,
+          role: "assistant",
+          content: rawText,
+          createdAt: (payload && payload.createdAt) || nowIso()
+        });
+
+        // Hand the streamed node to the reconciler rather than letting it
+        // build a second copy of the same answer beside it.
+        item.dataset.key = "msg:" + id;
+        item.dataset.signature = "assistant\u0000" + rawText;
+      }
+
+      streamingItemId = null;
+      clearBusy();
+    };
+
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "STATE_SYNC") {
+        lastError = undefined;
+        const syncState = msg.payload || {};
+        const taskStatus = ((syncState.activeTask) || {}).status || "idle";
+
+        const isTerminal = ["idle", "done", "failed", "ready_to_apply"].includes(taskStatus);
+        const isActive = ["planning", "generating", "reviewing"].includes(taskStatus);
+
+        if (isTerminal) {
+          clearBusy();
+        } else if (isActive && busyCount === 0) {
+          // The v2 stream may have cleared busy (via CHAT_STREAM_END or
+          // a premature "done" status_change) but the extension host is
+          // still working (e.g. batch fallback). Re-activate the thinking
+          // bubble so the user sees the animation during the entire call.
+          setBusy(true, getPhaseLabel());
+        }
+
+        render(syncState);
+        return;
+      }
+
+      if (msg.type === "CHAT_RESPONSE") {
+        clearBusy();
+        pushAssistantMessage(msg.payload);
+        return;
+      }
+
+      if (msg.type === "CHAT_STREAM_CHUNK") {
+        handleStreamChunk(msg.payload);
+        return;
+      }
+
+      if (msg.type === "CHAT_STREAM_END") {
+        finalizeStream(msg.payload);
+        return;
+      }
+
+      if (msg.type === "AGENT_TOOL_ACTIVITY") {
+        handleToolActivity(msg.payload);
+        return;
+      }
+
+      if (msg.type === "TOOL_APPROVAL_REQUEST") {
+        showApprovalCard(msg.payload);
+        return;
+      }
+
+      if (msg.type === "PLAN_STEP_UPDATE") {
+        handlePlanStepUpdate(msg.payload);
+        return;
+      }
+
+      if (msg.type === "TERMINAL_OUTPUT") {
+        handleTerminalOutput(msg.payload);
+        return;
+      }
+
+      if (msg.type === "DIAGNOSTICS_RESULT") {
+        handleDiagnostics(msg.payload);
+        return;
+      }
+
+      if (msg.type === "TEST_RESULT") {
+        handleTestResult(msg.payload);
+        return;
+      }
+
+      /**
+       * The editor selection, pushed as it changes.
+       *
+       * Replaced rather than accumulated: the chip always describes what is
+       * selected right now, and clearing the selection removes it.
+       */
+      if (msg.type === "EDITOR_CONTEXT") {
+        selectionContext = msg.payload && msg.payload.file ? msg.payload : null;
+        renderContextChips();
+        return;
+      }
+
+      /**
+       * A new task: put the panel back to the landing page.
+       *
+       * Clearing state.chat.messages is not enough on its own. Tool-activity
+       * blocks live in the transcript DOM and carry no message key, so the
+       * reconciler leaves them alone and `hasActivity` keeps the transcript on
+       * screen — a "new" task would open showing the last one's steps. The
+       * composer's own memory has to go too: a queued message, a pinned file
+       * and a half-typed sentence all belong to the task being replaced.
+       */
+      if (msg.type === "SESSION_RESET") {
+        resetConversation();
+        return;
+      }
+
+      if (msg.type === "FILE_INDEX") {
+        fileIndex = (msg.payload && msg.payload.files) || [];
+        // A completion opened before the index arrived is filled in now
+        // rather than showing an empty list the user has to retrigger.
+        if (completion && completion.kind === "@") openCompletion();
+        return;
+      }
+
+      if (msg.type === "ATTACH_CONTEXT_FILE") {
+        attachFile(msg.payload && msg.payload.path);
+        byId("chat-input").focus();
+        return;
+      }
+
+      if (msg.type === "ERROR") {
+        clearBusy();
+        lastError = msg.payload || { title: "Error", message: "Unknown error" };
+        render(currentState || {});
+      }
+    });
+
+    bindStaticEvents();
+    post({ type: "INIT" });
+  </script>
+</body>
+</html>

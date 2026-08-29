@@ -72,6 +72,7 @@ src/vscode-extension/node_modules/
 
 # Vendored/generated tool copies
 src/tools/whale2api/
+services/gitpilot/.git-disabled/
 
 # Eris runtime data (specs duoc tao ra, khong phai steering)
 .eris/specs/
