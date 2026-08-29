@@ -89,11 +89,11 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
 
           <div class="composer-right">
             <div class="select-wrap model-wrap">
-              <button id="modelButton" class="composer-select" type="button" title="Chọn mô hình" aria-label="Chọn mô hình" aria-haspopup="listbox" aria-expanded="false">DS Flash</button>
-              <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình DeepSeek">
-                <button class="select-option" type="button" data-model-option="deepseek-v4-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>DS Flash</strong><small>Nhanh, mặc định</small></span><span class="select-check">✓</span></button>
-                <button class="select-option" type="button" data-model-option="deepseek-v4-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>DS Pro</strong><small>Task khó hơn</small></span><span class="select-check">✓</span></button>
-                <button class="select-option" type="button" data-model-option="auto"><span class="select-icon">⌁</span><span class="select-copy"><strong>Auto</strong><small>Theo cấu hình backend</small></span><span class="select-check">✓</span></button>
+              <button id="modelButton" class="composer-select" type="button" title="Chọn mô hình" aria-label="Chọn mô hình" aria-haspopup="listbox" aria-expanded="false">Auto</button>
+              <div id="modelPopover" class="select-popover popover" role="listbox" aria-label="Mô hình Eris">
+                <button class="select-option" type="button" data-model-option="auto"><span class="select-icon">⌁</span><span class="select-copy"><strong>Auto</strong><small>Ưu tiên model khả dụng trong VS Code</small></span><span class="select-check">✓</span></button>
+                <button class="select-option" type="button" data-model-option="deepseek-v4-flash"><span class="select-icon">⚡</span><span class="select-copy"><strong>DS Flash</strong><small>Dùng khi provider có model tương ứng</small></span><span class="select-check">✓</span></button>
+                <button class="select-option" type="button" data-model-option="deepseek-v4-pro"><span class="select-icon">◆</span><span class="select-copy"><strong>DS Pro</strong><small>Task khó hơn nếu provider hỗ trợ</small></span><span class="select-check">✓</span></button>
               </div>
             </div>
 

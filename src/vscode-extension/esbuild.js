@@ -1,6 +1,6 @@
 // esbuild.js — build script cho Eris VS Code extension
-// Bundle extension host code into one VS Code-compatible CommonJS entrypoint.
-// esbuild bundle ESM dependencies vào CJS output mà VS Code Extension Host cần.
+// Bundle extension thành CommonJS để VS Code Extension Host nạp ổn định.
+// V78 không còn phụ thuộc Cline hay bất kỳ coding-agent SDK thứ hai nào.
 
 const esbuild = require('esbuild');
 const path = require('path');

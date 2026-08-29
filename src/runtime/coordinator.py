@@ -174,7 +174,14 @@ class RuntimeCoordinator(
         self._agent_task_threads = {}
         self._agent_last_started_task_id = ""
         self.agent_default_workspace = ""
-        if action_executor is not None:
+        # V78: coding owner mặc định là GitPilot ở Eris Code. AgentHarness cũ
+        # chỉ còn developer rollback flag, không được tự trở thành coding brain
+        # thứ hai trong production Desktop.
+        legacy_coding_enabled = str(
+            os.environ.get("ERIS_LEGACY_CODING_HARNESS_ENABLED", "0") or "0"
+        ).strip().lower() not in {"0", "false", "no", "off", ""}
+
+        if action_executor is not None and legacy_coding_enabled:
             try:
                 from pathlib import Path
                 from runtime.agent_harness.official_api_executor import OfficialApiDecisionExecutor
@@ -266,6 +273,13 @@ class RuntimeCoordinator(
                 warn = getattr(logger, "warning", None)
                 if callable(warn):
                     warn("[agent-harness] unavailable; VS Code bridge disabled: %s", exc, exc_info=True)
+        else:
+            info = getattr(logger, "info", None)
+            if callable(info):
+                info(
+                    "[V78] legacy coding AgentHarness disabled; GitPilot owns VS Code coding. "
+                    "Set ERIS_LEGACY_CODING_HARNESS_ENABLED=1 only for temporary rollback."
+                )
 
         # Self-model tồn tại ngay cả khi coding Agent Harness đang unavailable.
         # Eris vẫn phải biết các native capability nhanh của chính mình thay vì

@@ -1,0 +1,3 @@
+# Fallback khi không chạy GitPilot vendored trong services/gitpilot.
+# V78 monorepo ưu tiên `pip install -e services/gitpilot` để source of truth là source đã patch.
+gitcopilot==0.2.8

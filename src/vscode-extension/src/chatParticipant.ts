@@ -2,10 +2,10 @@ import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { captureIdeContext, currentWorkspaceRef } from './contextBridge';
-import { ErisClient } from './erisClient';
+import { GitPilotClient } from './gitPilotClient';
 import { TerminalContextObserver } from './terminalObserver';
 
-const PARTICIPANT_ID = 'gtvk.eris';
+const PARTICIPANT_ID = 'gtvk.erisCode';
 const INACTIVITY_TIMEOUT_MS = 40 * 60_000;
 
 interface ErisChatResult extends vscode.ChatResult {
@@ -19,13 +19,11 @@ interface ErisChatResult extends vscode.ChatResult {
 /**
  * Đăng ký @eris trong Chat native của VS Code.
  *
- * Surface này KHÔNG gọi model Copilot. Nó chỉ mượn UI Chat của VS Code rồi gửi
- * request vào đúng Eris Service/LangGraph đang phục vụ Eris Panel. Vì vậy Eris
- * vẫn giữ brain, memory, supervisor, permission policy và checkpoint của mình.
+ * Surface này dùng cùng GitPilotClient với Sidebar. Ở mode Auto, coding task được sở hữu bởi GitPilot backend; Eris Desktop không nằm trên execution path.
  */
 export function registerErisChatParticipant(
   context: vscode.ExtensionContext,
-  client: ErisClient,
+  client: GitPilotClient,
   terminalObserver: TerminalContextObserver,
 ): vscode.ChatParticipant {
   const handler: vscode.ChatRequestHandler = async (
@@ -39,7 +37,7 @@ export function registerErisChatParticipant(
     if (!prompt) {
       return {
         metadata: { threadId, taskId: '', status: 'empty' },
-        errorDetails: { message: 'Nhập nội dung sau @eris.' },
+        errorDetails: { message: 'Nhập nội dung sau @eris-code.' },
       };
     }
     if (!vscode.workspace.isTrusted) {
@@ -55,10 +53,9 @@ export function registerErisChatParticipant(
         ? 'inspect'
         : 'auto';
     const content = participantPrompt(request.command, prompt);
-    stream.progress('Eris đang nối vào agent…');
+    stream.progress('GitPilot đang chuẩn bị coding team…');
 
     try {
-      await client.createThread(threadId);
       const ideContext = await captureIdeContext(terminalObserver);
       ideContext.chat = {
         surface: 'vscode-native-chat',
@@ -77,7 +74,7 @@ export function registerErisChatParticipant(
       );
       // Full Eris Panel vẫn là nơi xem Choice Card/ChangeSet/timeline dài hơi.
       // Native Chat giữ vai trò cửa vào nhanh thay vì cố clone toàn bộ UI lần hai.
-      stream.button({ command: 'eris.openChat', title: 'Open Eris' });
+      stream.button({ command: 'erisCode.openChat', title: 'Open Eris Code' });
       return { metadata: { threadId, taskId: result.taskId, status: result.status } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -164,7 +161,7 @@ function serializeReference(reference: vscode.ChatPromptReference): Record<strin
 }
 
 async function runBackendTurn(
-  client: ErisClient,
+  client: GitPilotClient,
   threadId: string,
   content: string,
   taskMode: 'auto' | 'plan' | 'execute' | 'inspect',
@@ -220,7 +217,7 @@ async function runBackendTurn(
       }
       inactivityTimer = setTimeout(() => {
         fail(new Error(
-          'Eris không phát tiến độ trong 40 phút. Native Chat đã ngừng chờ; task backend có thể vẫn còn và có thể xem trong Eris Panel.',
+          'GitPilot không phát tiến độ trong 40 phút. Native Chat đã ngừng chờ; task backend có thể vẫn còn và có thể xem trong Eris Code Panel.',
         ));
       }, INACTIVITY_TIMEOUT_MS);
     };

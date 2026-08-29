@@ -461,7 +461,7 @@
       var event=ev.data;
       if(event.type==='session.tabs'){sessions=Array.isArray(event.sessions)?event.sessions:[];activeThreadId=String(event.activeThreadId||'');renderSessions();return;}
       if(event.type==='chat.reset'){activeThreadId=String(event.threadId||activeThreadId);activeTaskId=String(event.preserveTask||'');drawer.classList.remove('visible');if(event.reason==='new'){var d=pendingSwitchDirection||1;clearTimeline(false);ensureEmpty();animateTimelineIn(d);awaitingThreadHistory=false;pendingSwitchDirection=0;deferredEvents=[];}return;}
-      if(event.type==='connection'){var connected=event.state==='connected';var connecting=event.state==='connecting';connection.classList.toggle('visible',!connected);connection.classList.toggle('connecting',connecting);document.getElementById('connectionText').textContent=connecting?'Đang kết nối Eris Service…':'Mất kết nối với Eris Service';return;}
+      if(event.type==='connection'){var connected=event.state==='connected';var connecting=event.state==='connecting';connection.classList.toggle('visible',!connected);connection.classList.toggle('connecting',connecting);document.getElementById('connectionText').textContent=connecting?'Đang kết nối GitPilot…':'Mất kết nối với GitPilot';return;}
       if(event.type==='service.error'){return;}
       if(event.type==='attachment.add'){var att=Object.assign({},event.attachment||{},{preview:event.preview||''});if(att.id){attachmentState.set(att.id,att);renderAttachments();}return;}
       if(event.type==='attachments.clear'){attachmentState.clear();renderAttachments();return;}
@@ -470,7 +470,7 @@
       if(event.type==='thread.history'){renderHistory(event);return;}
       if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
       if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);return;}
-      if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris Service gặp lỗi');return;}
+      if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'GitPilot gặp lỗi');return;}
       if(awaitingThreadHistory){deferredEvents.push(event);return;}
       renderEvent(event);
     });

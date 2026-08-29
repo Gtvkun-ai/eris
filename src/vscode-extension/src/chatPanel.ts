@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { captureIdeContext, currentWorkspaceRef } from './contextBridge';
 import { WorkspaceDiffProvider } from './diffProvider';
 import { openWorkspaceFile } from './editorBridge';
-import { ErisClient } from './erisClient';
+import { GitPilotClient } from './gitPilotClient';
 import { TerminalContextObserver } from './terminalObserver';
 import { renderChatWebviewHtml } from './webviewHtml';
 
@@ -31,9 +31,9 @@ type ComposerAttachment = {
   excerpt?: string;
 };
 
-const SESSION_KEY = 'eris.openSessions.v4';
-const LEGACY_SESSION_KEY = 'eris.openSessions.v3';
-const CURRENT_THREAD_KEY = 'eris.currentThreadId';
+const SESSION_KEY = 'erisCode.openSessions.v1';
+const LEGACY_SESSION_KEY = 'erisCode.openSessions.legacy';
+const CURRENT_THREAD_KEY = 'erisCode.currentThreadId';
 const MAX_OPEN_SESSIONS = 8;
 const MAX_ATTACHMENTS = 8;
 const MAX_PASTED_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -48,7 +48,7 @@ const PREVIOUS_SESSION_LABEL = 'Phiên trước';
  * trông giống bảng quản trị. Socket/file I/O vẫn nằm ở Extension Host.
  */
 export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposable {
-  static readonly viewType = 'eris.mainView';
+  static readonly viewType = 'erisCode.mainView';
 
   private readonly disposables: vscode.Disposable[] = [];
   private readonly viewDisposables: vscode.Disposable[] = [];
@@ -60,7 +60,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly client: ErisClient,
+    private readonly client: GitPilotClient,
     private readonly extensionContext: vscode.ExtensionContext,
     private readonly terminalObserver: TerminalContextObserver,
     private readonly diffProvider: WorkspaceDiffProvider,
@@ -94,7 +94,7 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
       localResourceRoots: [this.extensionUri, this.extensionContext.globalStorageUri],
     };
     view.webview.html = this.html(view.webview);
-    view.description = 'Trợ lý lập trình Eris';
+    view.description = 'GitPilot coding client · Eris Code';
 
     this.viewDisposables.push(
       view.webview.onDidReceiveMessage((message) => void this.onWebviewMessage(message)),
@@ -115,6 +115,10 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
     // dormant hợp lệ. Lần gửi message đầu tiên mới gọi connect() on-demand.
     if (this.client.connectionState === 'connected') {
       void this.hydrateRemoteState();
+    } else {
+      // Auto standalone vẫn có local history dù không có socket/service.
+      void this.client.requestThreadHistory(this.threadId);
+      void this.client.requestTasks();
     }
   }
 
@@ -532,15 +536,15 @@ export class ErisChatPanel implements vscode.WebviewViewProvider, vscode.Disposa
         return;
       }
       if (type === 'reconnect') {
-        await vscode.commands.executeCommand('eris.reconnect');
+        await vscode.commands.executeCommand('erisCode.reconnect');
         return;
       }
       if (type === 'selfTest') {
-        await vscode.commands.executeCommand('eris.selfTest');
+        await vscode.commands.executeCommand('erisCode.selfTest');
         return;
       }
       if (type === 'settings') {
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:gtvk.eris-vscode');
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:gtvk.eris-code');
         return;
       }
       if (type === 'newChat') {

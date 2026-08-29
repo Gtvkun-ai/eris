@@ -1,8 +1,8 @@
 {
-  "name": "eris-vscode",
-  "displayName": "Eris",
-  "description": "Eris coding agent cho VS Code: giao việc tự nhiên, Plan, Tự động, chọn model và workflow tối giản.",
-  "version": "0.16.2",
+  "name": "eris-code",
+  "displayName": "Eris Code",
+  "description": "Eris Code V78: VS Code shell mỏng dùng GitPilot làm coding brain; Eris Desktop chỉ quan sát/ngữ cảnh tùy chọn.",
+  "version": "0.19.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -12,131 +12,136 @@
     "Machine Learning"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:eris.mainView",
-    "onChatParticipant:gtvk.eris",
-    "onCommand:eris.openChat",
-    "onCommand:eris.newChat",
-    "onCommand:eris.openTask",
-    "onCommand:eris.serviceStart",
-    "onCommand:eris.serviceRestart",
-    "onCommand:eris.serviceStop",
-    "onCommand:eris.serviceLogs",
-    "onCommand:eris.selfTest"
+    "onView:erisCode.mainView",
+    "onChatParticipant:gtvk.erisCode",
+    "onCommand:erisCode.openChat",
+    "onCommand:erisCode.newChat",
+    "onCommand:erisCode.openTask",
+    "onCommand:erisCode.reconnect",
+    "onCommand:erisCode.gitpilotStart",
+    "onCommand:erisCode.gitpilotRestart",
+    "onCommand:erisCode.gitpilotStop",
+    "onCommand:erisCode.gitpilotLogs",
+    "onCommand:erisCode.installGitPilot",
+    "onCommand:erisCode.selfTest"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "eris.openChat",
-        "title": "Eris: Open Chat"
+        "command": "erisCode.openChat",
+        "title": "Eris Code: Open Chat"
       },
       {
-        "command": "eris.newChat",
-        "title": "Eris: New Chat",
+        "command": "erisCode.newChat",
+        "title": "Eris Code: New Chat",
         "icon": "$(add)"
       },
       {
-        "command": "eris.reconnect",
-        "title": "Eris: Reconnect Service",
+        "command": "erisCode.reconnect",
+        "title": "Eris Code: Reconnect GitPilot",
         "icon": "$(refresh)"
       },
       {
-        "command": "eris.openTask",
-        "title": "Eris: Open Task"
+        "command": "erisCode.openTask",
+        "title": "Eris Code: Open Task"
       },
       {
-        "command": "eris.serviceStart",
-        "title": "Eris: Start Service"
+        "command": "erisCode.gitpilotStart",
+        "title": "Eris Code: Start GitPilot"
       },
       {
-        "command": "eris.serviceRestart",
-        "title": "Eris: Restart Service"
+        "command": "erisCode.gitpilotRestart",
+        "title": "Eris Code: Restart GitPilot"
       },
       {
-        "command": "eris.serviceStop",
-        "title": "Eris: Stop Managed Service"
+        "command": "erisCode.gitpilotStop",
+        "title": "Eris Code: Stop Managed GitPilot"
       },
       {
-        "command": "eris.serviceLogs",
-        "title": "Eris: Show Service Logs"
+        "command": "erisCode.gitpilotLogs",
+        "title": "Eris Code: Show GitPilot Logs"
       },
       {
-        "command": "eris.selfTest",
-        "title": "Eris: Run Self Test",
+        "command": "erisCode.installGitPilot",
+        "title": "Eris Code: Cài GitPilot backend V78"
+      },
+      {
+        "command": "erisCode.selfTest",
+        "title": "Eris Code: Run Self Test",
         "icon": "$(beaker)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "eris.agentSidebar",
-          "title": "Eris",
+          "id": "erisCode.agentSidebar",
+          "title": "Eris Code",
           "icon": "media/eris.svg"
         }
       ]
     },
     "views": {
-      "eris.agentSidebar": [
+      "erisCode.agentSidebar": [
         {
           "type": "webview",
-          "id": "eris.mainView",
-          "name": "Eris",
-          "contextualTitle": "Eris",
+          "id": "erisCode.mainView",
+          "name": "Eris Code",
+          "contextualTitle": "Eris Code",
           "visibility": "visible"
         }
       ]
     },
     "configuration": {
-      "title": "Eris",
+      "title": "Eris Code",
       "properties": {
-        "eris.service.autoStart": {
+        "erisCode.gitpilot.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Cho phép extension tự khởi động Eris Service khi connectionMode=service hoặc khi auto không có Direct API khả dụng. Lệnh Eris: Start Service vẫn khởi động thủ công."
+          "description": "Tự khởi động GitPilot local khi Eris Code cần nó. Không bao giờ khởi động Eris Desktop."
         },
-        "eris.service.connectionMode": {
+        "erisCode.gitpilot.serverUrl": {
           "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "service",
-            "directApi"
-          ],
-          "enumDescriptions": [
-            "Attach vào Eris Service nếu đang chạy; nếu không có service và đã cấu hình API key thì dùng Direct API, không tự bật Eris.",
-            "Luôn dùng Eris Service/IDE bridge và tự khởi động backend khi cần.",
-            "Luôn dùng Direct API; không đọc discovery, không khởi động Eris Service."
-          ],
-          "description": "Chọn cách Eris VS Code gửi tin nhắn. Direct API phù hợp khi chỉ muốn chat bằng official/external API mà không bật runtime Eris."
+          "default": "http://127.0.0.1:8000",
+          "description": "GitPilot backend REST API."
         },
-        "eris.service.installRoot": {
+        "erisCode.gitpilot.command": {
           "type": "string",
           "default": "",
-          "description": "Thư mục cài Eris chứa run_eris_service.bat/run_eris.bat. Chỉ cần đặt một lần nếu auto-detect không thấy."
+          "description": "Lệnh GitPilot tùy chọn. Để trống để Eris Code ưu tiên services/gitpilot/.venv trong monorepo, sau đó mới fallback sang gitpilot trên PATH."
         },
-        "eris.service.launchCommand": {
+        "erisCode.gitpilot.topology": {
           "type": "string",
-          "default": "",
-          "description": "Lệnh launch Eris tùy chỉnh. Khi có giá trị, lệnh này được ưu tiên hơn auto-detect launcher."
+          "default": "feature_builder",
+          "description": "Topology GitPilot dùng cho local workspace. feature_builder tương ứng Explorer → Planner → Coder → Reviewer (GitHub-only PR agent bị bỏ qua ở local mode)."
+        },
+        "erisCode.erisLink.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cho phép Eris Desktop gửi observation/project memory vào task. Optional; Eris Code vẫn chạy đầy đủ khi tắt."
+        },
+        "erisCode.erisLink.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8767/v1/context",
+          "description": "Read-only Eris Link v1 context endpoint. Extension không bao giờ launch Eris Desktop."
         }
       }
     },
     "chatParticipants": [
       {
-        "id": "gtvk.eris",
-        "name": "eris",
-        "fullName": "Eris",
-        "description": "Hỏi Eris về code, giao task hoặc tiếp tục task LangGraph hiện tại.",
+        "id": "gtvk.erisCode",
+        "name": "eris-code",
+        "fullName": "Eris Code",
+        "description": "GitPilot coding team trong VS Code; Eris Desktop chỉ là observer tùy chọn.",
         "isSticky": true,
         "commands": [
           {
             "name": "fix",
-            "description": "Tìm root cause, sửa code và kiểm chứng"
+            "description": "Tìm root cause, sửa code và kiểm chứng qua GitPilot"
           },
           {
             "name": "plan",
-            "description": "Lập kế hoạch thực thi, không tạo side effect"
+            "description": "Lập kế hoạch read-only qua GitPilot"
           }
         ]
       }
