@@ -1,0 +1,3 @@
+[submodule "services/gitpilot"]
+	path = services/gitpilot
+	url = https://github.com/ruslanmv/gitpilot
