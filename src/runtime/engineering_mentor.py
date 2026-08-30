@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""V80/V80.1 - Engineering Mentor cho Eris Desktop.
+"""V80/V80.1/V81/V82 - Engineering Mentor cho Eris Desktop.
 
 Mục tiêu của module này KHÔNG phải tạo thêm một coding agent.
-Nó chỉ làm ba việc:
+Nó chỉ làm bốn việc:
 1) giữ một projection nhỏ về kỹ năng/vibe-coding behavior của user;
 2) đọc flow observation từ V79;
-3) chọn cách dạy phù hợp cho public conversation.
+3) chọn cách dạy phù hợp cho public conversation;
+4) V81 theo dõi learning evidence/teach-back nhẹ, không biến Eris thành LMS;
+5) V82 dạy user chọn đúng engineering tool/evidence mà không tự chạy tool.
 
 Boundary quan trọng:
 - không gọi tool coding;
@@ -29,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from runtime.adaptive_engineering_learning import AdaptiveEngineeringLearning
+from runtime.tool_literacy_mentor import EngineeringToolLiteracy
 from runtime.workspace_manager import default_eris_home
 
 _SCHEMA = "eris.engineering_mentor.v1"
@@ -585,7 +589,8 @@ class EngineeringTeachingPolicy:
         # Có flow gần đây không có nghĩa mọi câu chat sau đó đều là coding talk.
         # Relevance phải đến từ chính turn hiện tại; tránh Eris đem bài giảng code
         # chen vào chuyện ăn uống/chơi game chỉ vì GitPilot vừa chạy trước đó.
-        coding_related = any(marker in low for marker in _CODE_MARKERS) or (
+        candidate_misconception = "candidate_misconception" in signals
+        coding_related = candidate_misconception or any(marker in low for marker in _CODE_MARKERS) or (
             bool(flow) and any(marker in low for marker in _FLOW_REFERENCE_MARKERS)
         )
         asks_learning = "learning_intent" in signals
@@ -599,6 +604,11 @@ class EngineeringTeachingPolicy:
 
         focus = self._focus_skills(findings, signals)
         trusted_level = self._trusted_focus_level(model, focus)
+        if candidate_misconception:
+            return MentorDecision(
+                True, "guide", "firm", "candidate_misconception_needs_check",
+                focus, tuple(findings), signals, risk,
+            )
         if asks_learning:
             # Khi đã có evidence user khá, giảm spoon-feeding: đưa hint/challenge thay
             # vì giảng lại từ số 0. Khi chưa đủ confidence, chọn guide an toàn.
@@ -670,7 +680,7 @@ class EngineeringTeachingPolicy:
 
 
 class EngineeringMentorService:
-    """Facade V80 dùng bởi Coordinator + public chat orchestration."""
+    """Facade V80/V80.1/V81/V82 dùng bởi Coordinator + public chat orchestration."""
 
     def __init__(
         self,
@@ -678,6 +688,8 @@ class EngineeringMentorService:
         path: Path | None = None,
         runtime_path: Path | None = None,
         evaluation_path: Path | None = None,
+        learning_path: Path | None = None,
+        tool_literacy_path: Path | None = None,
         logger: Any = None,
     ) -> None:
         self.logger = logger
@@ -688,9 +700,14 @@ class EngineeringMentorService:
         if path is not None:
             runtime_path = runtime_path or path.with_name("engineering_mentor_runtime.json")
             evaluation_path = evaluation_path or path.with_name("engineering_mentor_evaluation.jsonl")
+            learning_path = learning_path or path.with_name("engineering_learning.json")
+            tool_literacy_path = tool_literacy_path or path.with_name("engineering_tool_literacy.json")
         self.ledger = MentorInterventionLedger(
             path=runtime_path, evaluation_path=evaluation_path, logger=logger
         )
+        self.learning = AdaptiveEngineeringLearning(path=learning_path, logger=logger)
+        # V82 chỉ tư vấn tool/evidence, không sở hữu hay thực thi bất kỳ tool nào.
+        self.tool_literacy = EngineeringToolLiteracy(path=tool_literacy_path, logger=logger)
         self._last_flow: dict[str, Any] = {}
         self._last_policy_decision = MentorDecision()
         self._last_decision = MentorDecision()
@@ -726,6 +743,7 @@ class EngineeringMentorService:
         with self._lock:
             self._last_flow = clean
         self.model.note_agent_flow(clean)
+        self.learning.note_coding_flow(clean)
 
     def _relevant_flow(self, *, now: float | None = None) -> dict[str, Any]:
         """Chỉ mang flow gần đây vào bài giảng; journal cũ không được giả làm context hiện tại."""
@@ -763,10 +781,25 @@ class EngineeringMentorService:
             now=ts,
             suppress_blind_execution_risk="mentor_opt_out" in feedback,
         )
+        learning_events = self.learning.observe_user_turn(
+            user_text,
+            signals=signals,
+            feedback=feedback,
+            evidence_ref=turn_id,
+            now=ts,
+        )
+        # V82 chỉ ghi tool-use demonstration khi user nói rõ đã dùng tool và thấy
+        # evidence gì; nhắc tên debugger/diff trong câu hỏi không được tính mastery.
+        self.tool_literacy.observe_user_turn(user_text, evidence_ref=turn_id, now=ts)
+        if any(str(x).startswith("candidate_misconception:") for x in learning_events):
+            signals = tuple((*signals, "candidate_misconception"))
         flow = self._relevant_flow(now=ts)
         policy_decision = self.policy.decide(
             user_text, model=self.model, flow=flow, signals=signals, now=ts
         )
+        event_focus = self.learning.focus_skills_for_events(learning_events)
+        if event_focus:
+            policy_decision.focus_skills = tuple(dict.fromkeys((*policy_decision.focus_skills, *event_focus)))[:4]
         with self._lock:
             self._last_policy_decision = policy_decision
             self._last_turn_id = str(turn_id or "")
@@ -805,6 +838,39 @@ class EngineeringMentorService:
                     "confidence": raw.get("confidence"),
                     "evidence_count": raw.get("evidence_count"),
                 }
+        runtime_snapshot = self.ledger.snapshot()
+        session_serial = int(runtime_snapshot.get("session_serial", 0) or 0)
+        learning_directive = self.learning.plan(
+            decision_mode=decision.mode,
+            focus_skills=decision.focus_skills,
+            findings=decision.grounded_findings,
+            signals=decision.user_signals,
+            session_serial=session_serial,
+            now=now,
+            compact=decision.verbosity == "compact",
+        )
+        learning_projection = self.learning.projection(
+            [learning_directive.concept_id] if learning_directive.active else []
+        )
+        if learning_directive.active:
+            self.learning.register_prompt(learning_directive, session_serial=session_serial, now=now)
+
+        # V82: chọn đúng một tool chính để user tự lấy evidence. Không execute tool,
+        # không tạo checklist dài, và không được claim tool đã chạy.
+        tool_directive = self.tool_literacy.plan(
+            user_text,
+            decision_mode=decision.mode,
+            findings=decision.grounded_findings,
+            recent_flow=flow,
+            compact=decision.verbosity == "compact",
+            now=now,
+        )
+        if tool_directive.active:
+            self.tool_literacy.register_recommendation(tool_directive, now=now)
+        tool_projection = self.tool_literacy.projection(
+            [tool_directive.primary_tool, *tool_directive.supporting_tools] if tool_directive.active else []
+        )
+
         flow_summary = {
             "task_id": flow.get("task_id", ""),
             "status": flow.get("status", ""),
@@ -827,12 +893,23 @@ class EngineeringMentorService:
             "warn": "Nói thẳng, có thể hơi gắt và tự nhiên: pattern hiện tại đang làm user phụ thuộc AI. Chỉ ra bằng chứng và cho một bài tập nhỏ cụ thể. Không xúc phạm nhân phẩm/user intelligence.",
         }.get(decision.mode, "")
         return (
-            "ENGINEERING_MENTOR_V80_1:\n"
+            "ENGINEERING_MENTOR_V82:\n"
             + json.dumps({
                 "role": "mentor_and_supervisor_not_coding_agent",
                 "decision": decision.to_dict(),
                 "skill_projection": skill_projection,
                 "recent_coding_flow": flow_summary,
+                "adaptive_learning": {
+                    "directive": learning_directive.to_dict(),
+                    "projection": learning_projection,
+                    "rule": "Tối đa hai teach-back/micro-practice trong một mentor session; self-report hiểu rồi không phải mastery evidence.",
+                },
+                "tool_literacy": {
+                    "directive": tool_directive.to_dict(),
+                    "projection": tool_projection,
+                    "rule": "Ưu tiên một tool chính để trả lời một câu hỏi evidence cụ thể; tối đa hai tool phụ. Dạy user nhìn evidence, không chạy tool thay user.",
+                    "calibration_rule": "Nếu stage=unobserved/introduced, chỉ một bước mở/đọc tool cơ bản. Nếu stage=demonstrated/familiar, bỏ tutorial UI và chỉ nêu evidence/question cần kiểm chứng.",
+                },
                 "teaching_rule": rule,
                 "delivery": {
                     "verbosity": decision.verbosity,
@@ -845,6 +922,12 @@ class EngineeringMentorService:
                     "Do not seize GitPilot control; teach/discuss/interpret only.",
                     "Prefer one concrete next learning action over a long lecture.",
                     "If mentoring was suppressed by V80.1, say nothing mentor-specific and continue normal conversation.",
+                    "Never treat 'I understand' as proof of mastery; prefer retrieval/application evidence.",
+                    "Never call a candidate misconception a fact about the user; verify it with one short teach-back first.",
+                    "Adaptive learning never blocks GitPilot execution and never creates background homework notifications.",
+                    "Tool literacy is advisory only: never claim to have opened Problems, debugger, profiler, Git diff, tests, logs, or Godot Remote Scene unless there is explicit observation evidence.",
+                    "Prefer existing IDE/engine/git/test tools over inventing a new Eris coding tool.",
+                    "Recommend one primary tool for one evidence question; do not dump a generic tool checklist.",
                 ],
             }, ensure_ascii=False, separators=(",", ":"))
         )
@@ -855,6 +938,8 @@ class EngineeringMentorService:
                 "schema": _SCHEMA,
                 "model": self.model.snapshot(),
                 "runtime": self.ledger.snapshot(),
+                "adaptive_learning": self.learning.snapshot(),
+                "tool_literacy": self.tool_literacy.snapshot(),
                 "last_flow": dict(self._last_flow),
                 "last_policy_decision": self._last_policy_decision.to_dict(),
                 "last_decision": self._last_decision.to_dict(),
