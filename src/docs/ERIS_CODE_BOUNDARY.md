@@ -1,4 +1,4 @@
-# Boundary Eris Desktop / Eris Code — V79
+# Boundary Eris Desktop / Eris Code — V80
 
 Eris Desktop và Eris Code là hai runtime độc lập. **GitPilot là coding owner duy nhất trong VS Code.**
 
@@ -8,7 +8,8 @@ Eris Desktop và Eris Code là hai runtime độc lập. **GitPilot là coding o
 - long-term memory;
 - desktop/environment observation;
 - coding observation journal;
-- technical flow interpretation để V80 Mentor dùng sau này.
+- technical flow interpretation từ V79;
+- Engineering Mentor V80: skill projection + teaching policy + supervision dialogue.
 
 Desktop **không** sở hữu coding task state, tool approval hoặc workspace mutation.
 
@@ -34,7 +35,7 @@ Khi bật, V79 dùng loopback service ở `127.0.0.1:8767`. Link mặc định t
 ```text
 Desktop -> Code: GET /v1/context
 Code -> Desktop: POST /v1/coding/observations
-Desktop local read: GET /v1/coding/journal, /v1/coding/flow
+Desktop local read: GET /v1/coding/journal, /v1/coding/flow, /v1/mentor/state
 ```
 
 `POST /v1/coding/observations` là **telemetry append-only**, không phải generic RPC. Route coding-control cố ý không tồn tại.
@@ -60,4 +61,6 @@ erisCode.erisLink.enabled=false
 3. Eris Desktop không approve tool thay user.
 4. Eris Desktop không nhận raw source-code result chỉ để "quan sát cho nhiều".
 5. Không log hidden chain-of-thought.
-6. V79 chỉ tạo evidence spine; adaptive teaching thuộc V80/V81.
+6. V80 có adaptive teaching mức cơ bản nhưng vẫn read-only đối với coding.
+7. Skill user không được suy giảm chỉ vì GitPilot fail hoặc user giao việc cho AI.
+8. V81 mới sở hữu teach-back/practice/misconception tracking dài hạn.

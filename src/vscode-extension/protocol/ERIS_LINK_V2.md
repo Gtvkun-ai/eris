@@ -41,9 +41,10 @@ Không gửi raw `read_file` result, terminal spam, hidden chain-of-thought ho�
 ```text
 GET /v1/coding/journal?task_id=<id>&limit=120
 GET /v1/coding/flow?task_id=<id>
+GET /v1/mentor/state
 ```
 
-Các endpoint này chỉ đọc journal/snapshot trong Desktop.
+Các endpoint này chỉ đọc journal/snapshot trong Desktop. `mentor/state` là audit projection V80; không có API chỉnh skill hoặc ép teaching mode.
 
 ## Boundary bắt buộc
 

@@ -998,6 +998,24 @@ class AIChatOrchestrator:
             if str(part).strip()
         )
 
+        # V80 Engineering Mentor là discourse policy, KHÔNG phải grounding fact và
+        # càng không phải coding authority. Nó chỉ nhìn evidence V79 + skill projection
+        # rồi bảo public writer nên giải thích/hint/challenge ở mức nào.
+        engineering_mentor_context = ""
+        engineering_mentor = getattr(host, "engineering_mentor_service", None)
+        mentor_prompt = getattr(engineering_mentor, "prompt_context", None)
+        if callable(mentor_prompt):
+            try:
+                engineering_mentor_context = str(
+                    mentor_prompt(user_text, turn_id=turn_id, now=cycle_start) or ""
+                )
+            except Exception as exc:
+                host.logger.debug("[mentor-v80] chat projection failed: %s", exc)
+        if engineering_mentor_context:
+            discourse_context = "\n\n".join(
+                part for part in (discourse_context, engineering_mentor_context) if str(part).strip()
+            )
+
         # V39: mood sống phải tới được public writer. Personality chỉ là shape;
         # affective voice state mới là authority cho cường độ/hướng cảm xúc.
         # Đặt block này TRƯỚC personality summary để hard-budget vẫn giữ được
@@ -1186,6 +1204,7 @@ class AIChatOrchestrator:
             "discovery": discovery_context,
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
+            "engineering_mentor_context": engineering_mentor_context,
             "conversation_handoff": handoff_state.to_dict(),
             "conversation_trajectory": trajectory_state.to_dict(),
             "conversation_courtesy": courtesy_runtime.runtime_context(now=cycle_start),

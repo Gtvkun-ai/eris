@@ -297,8 +297,20 @@ class RuntimeCoordinator(
         # Legacy Eris IDE agent WebSocket is opt-in only. Eris Code is now an
         # independent GitPilot client and never depends on this runtime.
 
+        # V80 Engineering Mentor tồn tại độc lập với GitPilot/observer link. Nó chỉ
+        # giữ skill projection + teaching policy, tuyệt đối không có coding authority.
+        self.engineering_mentor_service = None
+        try:
+            from runtime.engineering_mentor import EngineeringMentorService
+            self.engineering_mentor_service = EngineeringMentorService(logger=logger)
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[mentor-v80] optional engineering mentor unavailable: %s", exc)
+
         # V79 Coding Observation Spine. Desktop chỉ nhận telemetry GitPilot và
-        # tạo journal/flow findings; không có authority để điều khiển coding task.
+        # tạo journal/flow findings; V80 chỉ đọc flow này để dạy user. Không khối
+        # nào ở đây có authority để điều khiển task, approve tool hay sửa workspace.
         self.eris_code_observer_link = None
         self.coding_observation_service = None
         try:
@@ -308,14 +320,30 @@ class RuntimeCoordinator(
             )
             if observer_link_enabled():
                 coding_observer = CodingObservationService(logger=logger)
+                mentor = self.engineering_mentor_service
+
+                # Replay đúng flow gần nhất sau restart để mentor có continuity nhưng
+                # không kéo cả raw journal vào prompt.
+                if mentor is not None:
+                    recent_flows = coding_observer.recent_flows(limit=1)
+                    if recent_flows:
+                        mentor.observe_coding_flow(recent_flows[0])
+
+                def _ingest_coding_observation(payload):
+                    result = coding_observer.ingest(payload)
+                    if mentor is not None:
+                        mentor.observe_coding_flow(result.get("flow") or {})
+                    return result
+
                 port = int(os.environ.get("ERIS_CODE_OBSERVER_LINK_PORT", "8767") or "8767")
                 link = ErisCodeObserverLink(
                     lambda workspace: build_observer_context(self, workspace),
-                    observation_sink=coding_observer.ingest,
+                    observation_sink=_ingest_coding_observation,
                     journal_provider=lambda task_id, workspace, limit: coding_observer.recent(
                         task_id=task_id, workspace=workspace, limit=limit
                     ),
                     flow_provider=coding_observer.flow,
+                    mentor_provider=mentor.snapshot if mentor is not None else None,
                     port=port,
                     logger=logger,
                 )
