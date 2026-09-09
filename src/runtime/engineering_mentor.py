@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""V80/V80.1/V81/V82 - Engineering Mentor cho Eris Desktop.
+"""V80/V80.1/V81/V82/V83/V84 - Engineering Mentor cho Eris Desktop.
 
 Mục tiêu của module này KHÔNG phải tạo thêm một coding agent.
 Nó chỉ làm bốn việc:
@@ -7,7 +7,9 @@ Nó chỉ làm bốn việc:
 2) đọc flow observation từ V79;
 3) chọn cách dạy phù hợp cho public conversation;
 4) V81 theo dõi learning evidence/teach-back nhẹ, không biến Eris thành LMS;
-5) V82 dạy user chọn đúng engineering tool/evidence mà không tự chạy tool.
+5) V82 dạy user chọn đúng engineering tool/evidence mà không tự chạy tool;
+6) V83 nối CodingFlow với WorldState/environment để dạy cross-environment;
+7) V84 hợp nhất delivery Companion/Mentor/Supervisor thành một giọng Eris.
 
 Boundary quan trọng:
 - không gọi tool coding;
@@ -32,6 +34,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.adaptive_engineering_learning import AdaptiveEngineeringLearning
+from runtime.cross_environment_supervisor import CrossEnvironmentSupervisor, CrossEnvironmentDirective
+from runtime.companion_mentor_orchestrator import CompanionMentorRoleDirective, CompanionMentorRoleOrchestrator
 from runtime.tool_literacy_mentor import EngineeringToolLiteracy
 from runtime.workspace_manager import default_eris_home
 
@@ -334,6 +338,30 @@ class MentorInterventionLedger:
             self._append_evaluation_locked("decision", {**record, "allowed": True})
             self._save_locked()
             return decision
+
+    def record_role_selection(
+        self,
+        role: Mapping[str, Any],
+        *,
+        turn_id: str = "",
+        now: float | None = None,
+    ) -> None:
+        """V84: log role metadata để eval, tuyệt đối không lưu raw user text."""
+        if not isinstance(role, Mapping) or not bool(role.get("active", False)):
+            return
+        ts = float(now or time.time())
+        payload = {
+            "at": ts,
+            "turn_id": str(turn_id or "")[:120],
+            "primary_role": str(role.get("primary_role") or "")[:24],
+            "supporting_functions": [str(x)[:24] for x in (role.get("supporting_functions") or [])[:2]],
+            "reason": str(role.get("reason") or "")[:120],
+            "surface_cue": str(role.get("surface_cue") or "")[:40],
+            "mentor_intensity": str(role.get("mentor_intensity") or "")[:24],
+            "confidence": float(role.get("confidence", 0.0) or 0.0),
+        }
+        with self._lock:
+            self._append_evaluation_locked("role", payload)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -680,7 +708,7 @@ class EngineeringTeachingPolicy:
 
 
 class EngineeringMentorService:
-    """Facade V80/V80.1/V81/V82 dùng bởi Coordinator + public chat orchestration."""
+    """Facade V80→V84 dùng bởi Coordinator + public chat orchestration."""
 
     def __init__(
         self,
@@ -708,6 +736,13 @@ class EngineeringMentorService:
         self.learning = AdaptiveEngineeringLearning(path=learning_path, logger=logger)
         # V82 chỉ tư vấn tool/evidence, không sở hữu hay thực thi bất kỳ tool nào.
         self.tool_literacy = EngineeringToolLiteracy(path=tool_literacy_path, logger=logger)
+        # V83 là correlator stateless: chỉ nối CodingFlow + WorldState evidence.
+        self.cross_environment = CrossEnvironmentSupervisor()
+        self._last_cross_environment = CrossEnvironmentDirective()
+        # V84 không tạo persona/agent mới. Role orchestrator chỉ nói cho public writer
+        # biết response kỹ thuật này nên nghiêng về companion/mentor/supervisor.
+        self.role_orchestrator = CompanionMentorRoleOrchestrator()
+        self._last_role_directive = CompanionMentorRoleDirective()
         self._last_flow: dict[str, Any] = {}
         self._last_policy_decision = MentorDecision()
         self._last_decision = MentorDecision()
@@ -806,8 +841,20 @@ class EngineeringMentorService:
             self._last_turn_fingerprint = fingerprint
         return policy_decision
 
-    def prompt_context(self, user_text: str, *, turn_id: str = "", now: float | None = None) -> str:
-        """Directive ngắn cho public writer; không giả competence nếu confidence thấp."""
+    def prompt_context(
+        self,
+        user_text: str,
+        *,
+        turn_id: str = "",
+        now: float | None = None,
+        environment: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Directive ngắn cho public writer; không giả competence nếu confidence thấp.
+
+        ``environment`` phải là projection structured từ WorldState/EnvironmentAwareness,
+        không phải raw screenshot/OCR. V83 chỉ dùng nó để correlate với coding flow.
+        V84 chỉ điều phối delivery role; public writer vẫn là một Eris duy nhất.
+        """
         policy_decision = self.observe_user_turn(user_text, turn_id=turn_id, now=now)
         decision = self.ledger.gate(
             policy_decision, signals=policy_decision.user_signals, turn_id=turn_id, now=now
@@ -825,6 +872,13 @@ class EngineeringMentorService:
         with self._lock:
             self._last_decision = decision
         if not decision.relevant:
+            # V84: reset role projection cho turn hiện tại; snapshot không được
+            # giữ "mentor/supervisor active" từ một câu technical trước đó.
+            inactive_role = self.role_orchestrator.route(
+                user_text, decision=decision, flow={}, cross_environment={}, now=now
+            )
+            with self._lock:
+                self._last_role_directive = inactive_role
             return ""
         flow = self._relevant_flow(now=now)
         snapshot = self.model.snapshot()
@@ -855,13 +909,26 @@ class EngineeringMentorService:
         if learning_directive.active:
             self.learning.register_prompt(learning_directive, session_serial=session_serial, now=now)
 
-        # V82: chọn đúng một tool chính để user tự lấy evidence. Không execute tool,
-        # không tạo checklist dài, và không được claim tool đã chạy.
+        # V83: correlate flow code gần đây với environment hiện tại. Directive này
+        # chỉ là hypothesis/evidence bridge; tuyệt đối không được biến correlation
+        # thành claim "patch gây lỗi" nếu chưa reproduction/runtime evidence.
+        cross_environment = self.cross_environment.analyze(
+            user_text,
+            coding_flow=flow,
+            environment=environment or {},
+            now=now,
+        )
+        with self._lock:
+            self._last_cross_environment = cross_environment
+
+        # V82/V83: chọn đúng một tool chính để user tự lấy evidence. Explicit user
+        # intent và flow finding vẫn ưu tiên; cross-environment chỉ làm hint khi đủ tin.
         tool_directive = self.tool_literacy.plan(
             user_text,
             decision_mode=decision.mode,
             findings=decision.grounded_findings,
             recent_flow=flow,
+            environment_hint=cross_environment.to_dict() if cross_environment.active else None,
             compact=decision.verbosity == "compact",
             now=now,
         )
@@ -870,6 +937,20 @@ class EngineeringMentorService:
         tool_projection = self.tool_literacy.projection(
             [tool_directive.primary_tool, *tool_directive.supporting_tools] if tool_directive.active else []
         )
+
+        # V84: hợp nhất Companion/Mentor/Supervisor ở tầng delivery. Đây KHÔNG
+        # tạo thêm agent và không thay đổi authority; nó chỉ giúp một Eris biết
+        # nên mở lời/đổi stance tự nhiên thế nào trong technical conversation.
+        role_directive = self.role_orchestrator.route(
+            user_text,
+            decision=decision,
+            flow=flow,
+            cross_environment=cross_environment.to_dict(),
+            now=now,
+        )
+        with self._lock:
+            self._last_role_directive = role_directive
+        self.ledger.record_role_selection(role_directive.to_dict(), turn_id=turn_id, now=now)
 
         flow_summary = {
             "task_id": flow.get("task_id", ""),
@@ -893,16 +974,24 @@ class EngineeringMentorService:
             "warn": "Nói thẳng, có thể hơi gắt và tự nhiên: pattern hiện tại đang làm user phụ thuộc AI. Chỉ ra bằng chứng và cho một bài tập nhỏ cụ thể. Không xúc phạm nhân phẩm/user intelligence.",
         }.get(decision.mode, "")
         return (
-            "ENGINEERING_MENTOR_V82:\n"
+            "ENGINEERING_MENTOR_V84:\n"
             + json.dumps({
-                "role": "mentor_and_supervisor_not_coding_agent",
+                "role": "one_eris_companion_mentor_supervisor_not_coding_agent",
                 "decision": decision.to_dict(),
+                "role_orchestration": {
+                    "directive": role_directive.to_dict(),
+                    "rule": "Một response = một Eris. Role là stance nội bộ, không phải persona để tự giới thiệu hay chia section.",
+                },
                 "skill_projection": skill_projection,
                 "recent_coding_flow": flow_summary,
                 "adaptive_learning": {
                     "directive": learning_directive.to_dict(),
                     "projection": learning_projection,
                     "rule": "Tối đa hai teach-back/micro-practice trong một mentor session; self-report hiểu rồi không phải mastery evidence.",
+                },
+                "cross_environment": {
+                    "directive": cross_environment.to_dict(),
+                    "rule": "Chỉ nối coding-flow với structured WorldState khi cả hai còn tươi. Correlation không chứng minh causality; dùng nó để chọn bước kiểm chứng runtime tiếp theo.",
                 },
                 "tool_literacy": {
                     "directive": tool_directive.to_dict(),
@@ -914,6 +1003,7 @@ class EngineeringMentorService:
                 "delivery": {
                     "verbosity": decision.verbosity,
                     "rule": "Nếu compact, tối đa một ý dạy chính + một hành động cụ thể; không lặp lecture vừa nói.",
+                    "one_voice_rule": "Không viết Companion:/Mentor:/Supervisor:. Nếu đổi stance, chuyển tự nhiên trong cùng giọng Eris.",
                 },
                 "hard_boundaries": [
                     "Do not claim a skill weakness without evidence/confidence.",
@@ -928,6 +1018,11 @@ class EngineeringMentorService:
                     "Tool literacy is advisory only: never claim to have opened Problems, debugger, profiler, Git diff, tests, logs, or Godot Remote Scene unless there is explicit observation evidence.",
                     "Prefer existing IDE/engine/git/test tools over inventing a new Eris coding tool.",
                     "Recommend one primary tool for one evidence question; do not dump a generic tool checklist.",
+                    "Cross-environment evidence is correlation only; never claim that a recent patch caused a runtime symptom without direct reproduction evidence.",
+                    "Use WorldState/environment facts according to freshness/confidence and never promote task/activity interpretation to pixel-level fact.",
+                    "Companion/Mentor/Supervisor are internal functions, never separate speaking personas.",
+                    "Surface profanity or urgency can change opening style, but is not evidence for a psychological diagnosis or durable user trait.",
+                    "On ordinary coding discussion, stay companion-first unless explicit learning, verification, or grounded workflow risk justifies another stance.",
                 ],
             }, ensure_ascii=False, separators=(",", ":"))
         )
@@ -940,6 +1035,9 @@ class EngineeringMentorService:
                 "runtime": self.ledger.snapshot(),
                 "adaptive_learning": self.learning.snapshot(),
                 "tool_literacy": self.tool_literacy.snapshot(),
+                "last_cross_environment": self._last_cross_environment.to_dict(),
+                "role_orchestration": self.role_orchestrator.snapshot(),
+                "last_role_directive": self._last_role_directive.to_dict(),
                 "last_flow": dict(self._last_flow),
                 "last_policy_decision": self._last_policy_decision.to_dict(),
                 "last_decision": self._last_decision.to_dict(),

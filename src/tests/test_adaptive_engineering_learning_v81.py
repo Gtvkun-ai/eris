@@ -178,7 +178,7 @@ def test_v81_prompt_includes_adaptive_directive_but_keeps_coding_boundary(tmp_pa
         turn_id="t1",
         now=101.0,
     )
-    assert prompt.startswith("ENGINEERING_MENTOR_V82:")
+    assert prompt.startswith("ENGINEERING_MENTOR_V84:")
     assert '"adaptive_learning"' in prompt
     assert '"kind":"micro_practice"' in prompt
     assert "Do not seize GitPilot control" in prompt

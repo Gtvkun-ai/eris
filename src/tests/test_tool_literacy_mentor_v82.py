@@ -126,7 +126,7 @@ def test_v82_prompt_contains_one_primary_tool_and_keeps_advisory_boundary(tmp_pa
     prompt = mentor.prompt_context(
         "Chỉ tôi review task code này cho đúng.", turn_id="v82-1", now=101.0
     )
-    assert prompt.startswith("ENGINEERING_MENTOR_V82:")
+    assert prompt.startswith("ENGINEERING_MENTOR_V84:")
     assert '"tool_literacy"' in prompt
     assert '"tool_id":"git_diff"' in prompt
     assert "advisory only" in prompt
