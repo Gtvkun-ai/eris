@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://q4cv028dis08"
-path="res://.godot/imported/eris.svg-eceb068980e2bbb1cc04e5950488a3ff.ctex"
+path="res://.godot/imported/eris.svg-e4c7268d82bbdc3e75a9847dd324fdeb.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://src/vscode-extension/media/eris.svg"
-dest_files=["res://.godot/imported/eris.svg-eceb068980e2bbb1cc04e5950488a3ff.ctex"]
+source_file="res://eris-code/media/eris.svg"
+dest_files=["res://.godot/imported/eris.svg-e4c7268d82bbdc3e75a9847dd324fdeb.ctex"]
 
 [params]
 
