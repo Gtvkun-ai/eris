@@ -2,6 +2,8 @@
 
 ## 0.20.0 — V79 Coding Observation Spine
 
+- Release hardening: xóa source legacy `ErisClient` / `ErisServiceManager`; build sạch `dist/` trước mỗi compile.
+- VSIX packager dùng allowlist và chỉ nhận `dist/extension.js`, nên stale JS từ build cũ không thể lọt vào release.
 - Normalize GitPilot SSE thành `CodingObservation` nhỏ, có actor/task/workspace/tool/file/test/review evidence.
 - Thêm `phase_summary` explicit cho Explorer/Planner/Coder/Reviewer; không log hidden chain-of-thought.
 - Eris Link v2 nhận telemetry append-only tại `/v1/coding/observations`.

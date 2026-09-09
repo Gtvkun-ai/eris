@@ -16,6 +16,7 @@ from xml.sax.saxutils import escape, quoteattr
 ROOT = Path(__file__).resolve().parent
 PACKAGE = ROOT / "package.json"
 DIST = ROOT / "dist"
+DIST_ENTRY = DIST / "extension.js"
 MEDIA = ROOT / "media"
 
 # Chỉ đóng gói asset thực sự được extension sử dụng.
@@ -27,8 +28,21 @@ MEDIA_ALLOWLIST = {"eris.svg", "eris-chat.css", "eris-chat.js"}
 def main() -> int:
     if not PACKAGE.is_file():
         raise SystemExit("Thiếu package.json")
-    if not (DIST / "extension.js").is_file():
+    if not DIST_ENTRY.is_file():
         raise SystemExit("Thiếu dist/extension.js. Hãy chạy npm run compile trước.")
+
+    # Release invariant V79: dist chỉ được chứa bundle entry duy nhất. Nếu có file
+    # JS/map cũ từ kiến trúc trước thì fail sớm thay vì âm thầm nhét chúng vào VSIX.
+    unexpected_dist = [
+        path.relative_to(ROOT).as_posix()
+        for path in DIST.rglob("*")
+        if path.is_file() and path != DIST_ENTRY
+    ]
+    if unexpected_dist:
+        details = "\n  - ".join(sorted(unexpected_dist))
+        raise SystemExit(
+            "dist/ có artifact ngoài allowlist. Hãy chạy npm run compile để build sạch:\n  - " + details
+        )
 
     package = json.loads(PACKAGE.read_text(encoding="utf-8"))
     name = str(package.get("name") or "eris-vscode")
@@ -76,11 +90,9 @@ def main() -> int:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("extension.vsixmanifest", manifest)
         archive.write(PACKAGE, "extension/package.json")
-        # dist/ là mã đã compile nên đóng gói toàn bộ.
-        if DIST.exists():
-            for path in sorted(item for item in DIST.rglob("*") if item.is_file()):
-                rel = path.relative_to(ROOT).as_posix()
-                archive.write(path, f"extension/{rel}")
+        # V79 release hardening: VSIX chỉ mang bundle runtime duy nhất.
+        # Không đóng gói toàn bộ dist/ để stale JS từ kiến trúc cũ không thể quay lại.
+        archive.write(DIST_ENTRY, "extension/dist/extension.js")
 
         # media/ được allowlist rõ ràng để không vô tình mang UI/asset cũ vào VSIX.
         if MEDIA.exists():

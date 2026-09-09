@@ -4,6 +4,7 @@
 
 const esbuild = require('esbuild');
 const path = require('path');
+const fs = require('fs');
 
 const isWatch = process.argv.includes('--watch');
 const isProd = process.argv.includes('--production');
@@ -30,6 +31,12 @@ const buildOptions = {
 };
 
 async function main() {
+  // V79 release hardening: luôn dọn dist trước build thường để artifact cũ không thể
+  // lọt vào VSIX. Watch mode không xóa liên tục vì esbuild đang giữ context.
+  if (!isWatch) {
+    fs.rmSync(path.join(__dirname, 'dist'), { recursive: true, force: true });
+  }
+
   if (isWatch) {
     const ctx = await esbuild.context(buildOptions);
     await ctx.watch();
