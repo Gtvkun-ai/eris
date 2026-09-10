@@ -368,14 +368,16 @@ class IncomingProtocolRuntimeMixin:
 
 
     def _handle_capability_panel_request(self, msg: dict) -> None:
-        """V86 - trả snapshot thống kê năng lực cho panel Godot.
+        """V87 - snapshot + user control cho Capability Panel Desktop.
 
-        Endpoint UDP này chỉ READ. Panel không được tự ghi score hay sửa profile;
-        correction/reset vẫn phải đi qua trusted user-control của Mentor.
+        Đây là kênh trusted giữa UI Godot và runtime cùng máy. Eris Link HTTP vẫn
+        read-only: không có POST reset skill/follow goal từ process ngoài.
         """
         request_id = str(msg.get("request_id", "") or "")
+        action = str(msg.get("action", "snapshot") or "snapshot").strip().lower()
         mentor = getattr(self, "engineering_mentor_service", None)
         projection = getattr(self, "capability_projection_service", None)
+        controls = getattr(self, "development_control_service", None)
         if mentor is None or projection is None:
             self._send_runtime_json({
                 "type": "capability_panel_ack",
@@ -387,17 +389,68 @@ class IncomingProtocolRuntimeMixin:
                 "capability_panel": {},
             }, channel="capability_panel")
             return
+
+        status, message = "ok", "Đã cập nhật thống kê năng lực."
         try:
+            # Build một snapshot trước action để goal lấy baseline từ đúng số user
+            # đang nhìn thấy, không đọc private state bằng đường tắt.
+            before = projection.build(mentor.snapshot())
+            if controls is not None:
+                before = controls.decorate(before)
+
+            if action == "skill_feedback":
+                skill_id = str(msg.get("skill_id", "") or "").strip()
+                feedback = str(msg.get("feedback", "") or "").strip().lower()
+                ok = bool(getattr(mentor, "apply_panel_skill_feedback", lambda *_a, **_k: False)(skill_id, feedback))
+                if ok and controls is not None:
+                    controls.record_skill_feedback(skill_id, feedback)
+                if not ok:
+                    status, message = "error", "Không áp dụng được phản hồi kỹ năng."
+                else:
+                    labels = {
+                        "confirmed": "Đã ghi nhận: bạn thấy đánh giá này hợp lý.",
+                        "already_knew": "Đã ghi nhận: bạn đã biết phần này; ERIS không tự tăng điểm thành thạo.",
+                        "wrong": "Đã ghi nhận: ERIS có thể đánh giá sai và đã hạ độ tin cậy.",
+                        "reset": "Đã đặt lại estimate của kỹ năng này.",
+                    }
+                    message = labels.get(feedback, "Đã ghi nhận phản hồi.")
+
+            elif action == "follow_recommendation":
+                rec_id = str(msg.get("recommendation_id", "") or "").strip()
+                rec = next((x for x in before.get("de_xuat_dai_han", []) if isinstance(x, dict) and str(x.get("id") or "") == rec_id), None)
+                if controls is None or rec is None or controls.follow_recommendation(rec, before) is None:
+                    status, message = "error", "Không theo dõi được đề xuất này."
+                else:
+                    message = "Đã thêm vào mục tiêu đang theo dõi."
+
+            elif action == "stop_goal":
+                goal_id = str(msg.get("goal_id", "") or "").strip()
+                if controls is None or not controls.stop_goal(goal_id):
+                    status, message = "error", "Không dừng được mục tiêu này."
+                else:
+                    message = "Đã dừng theo dõi mục tiêu."
+
+            elif action == "reset_profile":
+                # Reset toàn bộ chỉ khi user bấm explicit trong Desktop; không mở qua HTTP.
+                mentor.reset_mentor_profile()
+                message = "Đã đặt lại mô hình kỹ năng kỹ thuật; các mục tiêu đang theo dõi vẫn được giữ."
+
+            elif action != "snapshot":
+                status, message = "error", "Thao tác Capability Panel không hợp lệ."
+
             payload = projection.build(mentor.snapshot())
-            status, message = "ok", "Đã cập nhật thống kê năng lực."
+            if controls is not None:
+                payload = controls.decorate(payload)
         except Exception as exc:
             payload = {}
-            status, message = "error", f"Không dựng được thống kê: {type(exc).__name__}"
+            status, message = "error", f"Không xử lý được Capability Panel: {type(exc).__name__}"
+
         self._send_runtime_json({
             "type": "capability_panel_ack",
             "parse_mode": "capability_panel_ack",
             "should_speak": False,
             "request_id": request_id,
+            "action": action,
             "status": status,
             "message": message,
             "capability_panel": payload,

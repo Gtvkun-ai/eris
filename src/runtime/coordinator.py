@@ -319,6 +319,17 @@ class RuntimeCoordinator(
             if callable(debug):
                 debug("[mentor-v86] capability projection unavailable: %s", exc)
 
+        # V87: state local-first cho correction/mục tiêu user chọn trong Capability Panel.
+        # Service này không gọi model/tool và không có quyền điều khiển GitPilot.
+        self.development_control_service = None
+        try:
+            from runtime.development_control import DevelopmentControlService
+            self.development_control_service = DevelopmentControlService(logger=logger)
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[mentor-v87] development control unavailable: %s", exc)
+
         # V79 Coding Observation Spine. Desktop chỉ nhận telemetry GitPilot và
         # tạo journal/flow findings; V80 chỉ đọc flow này để dạy user. Không khối
         # nào ở đây có authority để điều khiển task, approve tool hay sửa workspace.

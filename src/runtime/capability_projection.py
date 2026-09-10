@@ -85,6 +85,41 @@ def _confidence_label(value: float) -> str:
     return "Thấp"
 
 
+def _evidence_rows(raw: Mapping[str, Any]) -> list[dict[str, str]]:
+    """V87: chiếu evidence theo mô tả cố định, không lộ raw chat/source.
+
+    ``notes`` của skill model chỉ chứa các câu do runtime tự sinh + evidence_ref ngắn.
+    Dù vậy projection vẫn whitelist/translate để panel không vô tình trở thành nơi
+    dump internal state nếu format notes thay đổi sau này.
+    """
+    out: list[dict[str, str]] = []
+    translations = {
+        "User correction contradicted mentor/model estimate; confidence reduced.":
+            "Bạn đã sửa lại nhận định của ERIS; độ tin cậy của estimate đã được giảm.",
+        "User stated prior knowledge; treat as correction/self-report, not mastery proof.":
+            "Bạn cho biết đã biết phần này; ERIS coi đây là self-report, không tự tăng mức thành thạo.",
+    }
+    for note in list(raw.get("notes") or [])[-5:]:
+        text = " ".join(str(note or "").split())[:260]
+        if not text:
+            continue
+        ref = ""
+        if " [" in text and text.endswith("]"):
+            body, maybe_ref = text.rsplit(" [", 1)
+            text, ref = body, maybe_ref[:-1][:80]
+        allowed_user_notes = (
+            "User nêu hypothesis", "User đang trace", "User tự đề xuất hypothesis",
+            "User chủ động yêu cầu review", "User chủ động quan tâm validation",
+        )
+        safe = translations.get(
+            text,
+            text if (not text.startswith("User ") or text.startswith(allowed_user_notes))
+            else "Bằng chứng/correction kỹ thuật đã được ghi nhận.",
+        )
+        out.append({"mo_ta": safe[:220], "tham_chieu": ref})
+    return list(reversed(out))
+
+
 def _skill_view(skill_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     evidence = int(raw.get("evidence_count", 0) or 0)
     confidence = float(raw.get("confidence", 0.0) or 0.0)
@@ -97,6 +132,7 @@ def _skill_view(skill_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         "do_tin_cay": _confidence_label(confidence) if observed else "Chưa đủ dữ liệu",
         "so_bang_chung": evidence,
         "cap_nhat_luc": float(raw.get("last_observed_at", 0.0) or 0.0),
+        "bang_chung_gan_day": _evidence_rows(raw),
     }
 
 
@@ -214,32 +250,38 @@ class CapabilityProjectionService:
         if observed:
             weakest = min(observed, key=lambda x: int(x.get("phan_tram") or 101))
             recs.append({
+                "id": f"group-{str(weakest.get('id') or 'unknown')}",
                 "tieu_de": f"Củng cố {str(weakest.get('ten') or '').lower()}",
                 "uu_tien": "Cao",
                 "thoi_han": "2 tuần",
                 "ly_do": f"Đây là nhóm có estimate thấp nhất trong các nhóm đã đủ evidence ({weakest.get('phan_tram')}%).",
                 "thuc_hanh": "Chọn 2 task thật và tự nêu giả thuyết + evidence cần xem trước khi giao phần implementation cho AI.",
                 "dau_hieu_tien_bo": "Có thêm ít nhất 3 evidence độc lập mà không cần mentor nhắc bước đầu.",
+                "metric": {"kind": "group_evidence", "id": str(weakest.get("id") or ""), "target_delta": 3},
             })
         unknown = [t for t in tools if t.get("stage") == "unobserved"]
         preferred = next((t for t in unknown if t.get("id") in {"debugger", "profiler", "godot_remote_scene"}), None)
         if preferred:
             recs.append({
+                "id": f"tool-{str(preferred.get('id') or 'unknown')}",
                 "tieu_de": f"Tạo evidence thật với {preferred['ten']}",
                 "uu_tien": "Trung bình",
                 "thoi_han": "2–4 tuần",
                 "ly_do": "ERIS chưa có đủ dữ liệu để biết bạn vận hành công cụ này tới đâu; chưa đủ dữ liệu không đồng nghĩa kỹ năng yếu.",
                 "thuc_hanh": "Khi gặp đúng loại lỗi, tự dùng công cụ một lần và nói lại evidence bạn nhìn thấy.",
                 "dau_hieu_tien_bo": "Có ít nhất 2 lần sử dụng được quan sát với kết quả/evidence cụ thể.",
+                "metric": {"kind": "tool_demonstrated", "id": str(preferred.get("id") or ""), "target_delta": 2},
             })
         if int(ai.get("yeu_cau_thuc_thi_mu", 0) or 0) >= 3:
             recs.append({
+                "id": "ai-verification-ownership",
                 "tieu_de": "Giữ ownership của reasoning trước khi Execute",
                 "uu_tien": "Cao",
                 "thoi_han": "2 tuần",
                 "ly_do": f"30 ngày gần đây ghi nhận {int(ai.get('yeu_cau_thuc_thi_mu', 0) or 0)} lượt yêu cầu thực thi mà không kèm learning/review/hypothesis signal.",
                 "thuc_hanh": "Trước 3 task tiếp theo, tự viết một câu: lỗi có khả năng nằm ở layer nào và evidence nào sẽ bác bỏ giả thuyết đó.",
                 "dau_hieu_tien_bo": "Tỷ lệ task có grounded hypothesis hoặc verification signal tăng lên.",
+                "metric": {"kind": "ai_signal", "id": "chu_dong_kiem_chung", "target_delta": 3},
             })
         return recs[:3]
 

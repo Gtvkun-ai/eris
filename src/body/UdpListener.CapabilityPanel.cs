@@ -6,8 +6,8 @@ using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
-	// V86: panel read-only. Godot chỉ xin snapshot; tuyệt đối không tự ghi score
-	// hay biến estimate của Mentor thành "điểm thật" về người dùng.
+	// V87: panel thống kê + user control. UI không tự ghi score; mọi correction/reset
+	// chỉ gửi action có cấu trúc về runtime trusted channel để Mentor tự cập nhật belief.
 	private static readonly Vector2 CapabilityPanelPreferredSize = new(980f, 720f);
 	private static readonly Vector2 CapabilityPanelMinSize = new(860f, 620f);
 	private Panel _capabilityPanel;
@@ -96,6 +96,9 @@ public partial class UdpListener : Node2D
 		var refresh = CreateMemoryButton("Cập nhật", SendCapabilityPanelRequest, primary: false);
 		refresh.CustomMinimumSize = new Vector2(96f, 34f);
 		header.AddChild(refresh);
+		var resetAll = CreateMemoryButton("Đặt lại mô hình", ConfirmResetCapabilityProfile, primary: false, danger: true);
+		resetAll.CustomMinimumSize = new Vector2(126f, 34f);
+		header.AddChild(resetAll);
 		header.AddChild(CreateWindowControlCapsule(() => _capabilityPanel.Visible = false, CloseCapabilityPanel));
 
 		var note = CreateUiLabel("Đây là ước lượng của ERIS từ bằng chứng đã quan sát; không phải điểm thi hay đánh giá con người.", 11, MemoryInkSoft);
@@ -126,16 +129,20 @@ public partial class UdpListener : Node2D
 		_capabilityContent.AddChild(card);
 	}
 
-	private void SendCapabilityPanelRequest()
+	private void SendCapabilityPanelRequest() => SendCapabilityAction("snapshot");
+
+	private void SendCapabilityAction(string action, Dictionary<string, object> extra = null)
 	{
 		if (_chatSend == null) return;
 		_capabilityRequestId = $"capability-{Time.GetTicksMsec()}-{GD.Randi()}";
 		var payload = new Dictionary<string, object>
 		{
 			["type"] = "capability_panel_request",
-			["action"] = "snapshot",
+			["action"] = action,
 			["request_id"] = _capabilityRequestId,
 		};
+		if (extra != null)
+			foreach (KeyValuePair<string, object> pair in extra) payload[pair.Key] = pair.Value;
 		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
 		if (error != Error.Ok)
 		{
@@ -144,7 +151,7 @@ public partial class UdpListener : Node2D
 		}
 		_capabilityPending = true;
 		_capabilityRequestAtMs = Time.GetTicksMsec();
-		SetCapabilityStatus("Đang đọc thống kê năng lực...");
+		SetCapabilityStatus(action == "snapshot" ? "Đang đọc thống kê năng lực..." : "Đang cập nhật mô hình...");
 	}
 
 	private bool TryHandleCapabilityPanelPacket(string raw)
@@ -189,6 +196,18 @@ public partial class UdpListener : Node2D
 			foreach (JsonElement group in groups.EnumerateArray())
 				if (group.ValueKind == JsonValueKind.Object) _capabilityContent.AddChild(CreateCapabilityGroupCard(group));
 		}
+
+		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Mục tiêu đang theo dõi"));
+		if (panel.TryGetProperty("muc_tieu_hien_tai", out JsonElement goals) && goals.ValueKind == JsonValueKind.Array && goals.GetArrayLength() > 0)
+		{
+			foreach (JsonElement goal in goals.EnumerateArray())
+				if (goal.ValueKind == JsonValueKind.Object) _capabilityContent.AddChild(CreateDevelopmentGoalCard(goal));
+		}
+		else
+			_capabilityContent.AddChild(CreateUiLabel("Chưa theo dõi mục tiêu nào. Bạn có thể chọn một đề xuất dài hạn ở bên dưới.", 11, MemoryInkSoft));
+
+		if (panel.TryGetProperty("thong_ke_phat_trien_30_ngay", out JsonElement developmentStats) && developmentStats.ValueKind == JsonValueKind.Object)
+			_capabilityContent.AddChild(CreateDevelopmentStatsCard(developmentStats));
 
 		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Xu hướng 30 ngày"));
 		if (panel.TryGetProperty("xu_huong_30_ngay", out JsonElement trend) && trend.ValueKind == JsonValueKind.Array)
@@ -245,8 +264,27 @@ public partial class UdpListener : Node2D
 		{
 			foreach (JsonElement skill in skills.EnumerateArray())
 			{
+				string skillId = ReadJsonString(skill, "id");
 				string name = ReadJsonString(skill, "ten"); bool known = ReadJsonBool(skill, "da_du_bang_chung"); int pct = ReadJsonInt(skill, "phan_tram"); int ev = ReadJsonInt(skill, "so_bang_chung");
-				box.AddChild(CreateUiLabel($"• {name}: {(known ? pct + "%" : "Chưa đủ dữ liệu")} · {ev} bằng chứng", 10, MemoryInkSoft));
+				var skillBox = new VBoxContainer(); skillBox.AddThemeConstantOverride("separation", 3); box.AddChild(skillBox);
+				skillBox.AddChild(CreateUiLabel($"• {name}: {(known ? pct + "%" : "Chưa đủ dữ liệu")} · {ev} bằng chứng", 10, known ? MemoryInk : MemoryInkSoft));
+
+				if (skill.TryGetProperty("bang_chung_gan_day", out JsonElement evidenceRows) && evidenceRows.ValueKind == JsonValueKind.Array)
+				{
+					int shown = 0;
+					foreach (JsonElement evidence in evidenceRows.EnumerateArray())
+					{
+						if (shown++ >= 3 || evidence.ValueKind != JsonValueKind.Object) break;
+						string desc = ReadJsonString(evidence, "mo_ta");
+						if (!string.IsNullOrWhiteSpace(desc)) skillBox.AddChild(CreateUiLabel("   ↳ " + desc, 9, MemoryInkSoft));
+					}
+				}
+
+				var actions = new HBoxContainer(); actions.AddThemeConstantOverride("separation", 5); skillBox.AddChild(actions);
+				actions.AddChild(CreateCapabilityMiniButton("Đúng", () => SendSkillFeedback(skillId, "confirmed")));
+				actions.AddChild(CreateCapabilityMiniButton("Tôi đã biết", () => SendSkillFeedback(skillId, "already_knew")));
+				actions.AddChild(CreateCapabilityMiniButton("Đánh giá sai", () => SendSkillFeedback(skillId, "wrong")));
+				actions.AddChild(CreateCapabilityMiniButton("Đặt lại", () => SendSkillFeedback(skillId, "reset"), danger: true));
 			}
 		}
 		return card;
@@ -305,6 +343,81 @@ public partial class UdpListener : Node2D
 		var reason = CreateUiLabel("Lý do: " + ReadJsonString(rec, "ly_do"), 10, MemoryInkSoft); reason.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(reason);
 		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(rec, "thuc_hanh"), 10, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
 		var success = CreateUiLabel("Dấu hiệu tiến bộ: " + ReadJsonString(rec, "dau_hieu_tien_bo"), 10, MemoryInkSoft); success.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(success);
+		string recId = ReadJsonString(rec, "id");
+		if (!string.IsNullOrWhiteSpace(recId))
+		{
+			var follow = CreateCapabilityMiniButton("Theo dõi mục này", () => SendCapabilityAction("follow_recommendation", new Dictionary<string, object> { ["recommendation_id"] = recId }));
+			follow.CustomMinimumSize = new Vector2(138f, 28f);
+			box.AddChild(follow);
+		}
+		return card;
+	}
+
+	private void ConfirmResetCapabilityProfile()
+	{
+		if (_capabilityPanel == null) return;
+		var dialog = new ConfirmationDialog
+		{
+			Title = "Đặt lại mô hình năng lực",
+			DialogText = "Thao tác này đặt lại toàn bộ estimate kỹ năng kỹ thuật của ERIS. Lịch sử calibration và các mục tiêu đang theo dõi vẫn được giữ. Bạn có chắc không?",
+			OkButtonText = "Đặt lại",
+			CancelButtonText = "Hủy",
+			Size = new Vector2I(560, 220),
+		};
+		_capabilityPanel.AddChild(dialog);
+		dialog.Confirmed += () =>
+		{
+			SendCapabilityAction("reset_profile");
+			dialog.QueueFree();
+		};
+		dialog.Canceled += () => dialog.QueueFree();
+		dialog.PopupCentered();
+	}
+
+	private void SendSkillFeedback(string skillId, string feedback)
+	{
+		if (string.IsNullOrWhiteSpace(skillId)) return;
+		SendCapabilityAction("skill_feedback", new Dictionary<string, object>
+		{
+			["skill_id"] = skillId,
+			["feedback"] = feedback,
+		});
+	}
+
+	private Button CreateCapabilityMiniButton(string text, Action pressed, bool danger = false)
+	{
+		var button = CreateMemoryButton(text, pressed, primary: false, danger: danger);
+		button.CustomMinimumSize = new Vector2(92f, 26f);
+		button.AddThemeFontSizeOverride("font_size", 9);
+		return button;
+	}
+
+	private Control CreateDevelopmentGoalCard(JsonElement goal)
+	{
+		var card = CreateMemoryCard(new Color(0.975f, 0.985f, 1f, 0.96f), 14, new Color(0.34f, 0.52f, 0.86f));
+		var margin = CapabilityCardMargin(); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		string goalId = ReadJsonString(goal, "id");
+		box.AddChild(CreateUiLabel(ReadJsonString(goal, "tieu_de"), 13, MemoryInk));
+		int progress = ReadJsonInt(goal, "tien_do");
+		int gained = ReadJsonInt(goal, "da_them_bang_chung");
+		int target = ReadJsonInt(goal, "muc_tieu_bang_chung");
+		box.AddChild(CreateUiLabel($"Tiến độ evidence: {gained}/{target} · {progress}%", 10, MemoryInkSoft));
+		var bar = new ProgressBar { MinValue = 0, MaxValue = 100, Value = progress, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 7f) }; box.AddChild(bar);
+		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(goal, "thuc_hanh"), 10, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
+		if (!string.IsNullOrWhiteSpace(goalId))
+			box.AddChild(CreateCapabilityMiniButton("Dừng theo dõi", () => SendCapabilityAction("stop_goal", new Dictionary<string, object> { ["goal_id"] = goalId }), danger: true));
+		return card;
+	}
+
+	private Control CreateDevelopmentStatsCard(JsonElement stats)
+	{
+		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.96f), 12);
+		var margin = CapabilityCardMargin(); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Thống kê phát triển · 30 ngày", 11, MemoryInk));
+		box.AddChild(CreateUiLabel($"Mục tiêu hoàn thành: {ReadJsonInt(stats, "muc_tieu_hoan_thanh")} · Đang theo dõi: {ReadJsonInt(stats, "muc_tieu_dang_theo_doi")}", 10, MemoryInkSoft));
+		box.AddChild(CreateUiLabel($"Đã dừng: {ReadJsonInt(stats, "muc_tieu_da_dung")} · Lần bạn sửa đánh giá ERIS: {ReadJsonInt(stats, "lan_user_sua_danh_gia")}", 10, MemoryInkSoft));
 		return card;
 	}
 

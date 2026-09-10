@@ -1177,6 +1177,29 @@ class EngineeringMentorService:
         """In-process user control cho UI/chat layer đáng tin cậy; không expose qua Eris Link write API."""
         return self.model.reset_skill(skill_id)
 
+    def apply_panel_skill_feedback(self, skill_id: str, feedback: str, *, now: float | None = None) -> bool:
+        """V87 trusted control từ Capability Panel.
+
+        Nút panel chỉ sửa *belief* của ERIS. ``already_knew``/``wrong`` làm
+        giảm confidence, không tăng mastery; ``confirmed`` chỉ là xác nhận UI và
+        không tự thưởng điểm. HTTP Eris Link vẫn không expose method này.
+        """
+        skill = str(skill_id or "").strip()
+        action = str(feedback or "").strip().lower()
+        if skill not in self.model.skills:
+            return False
+        if action == "reset":
+            return self.reset_skill_estimate(skill)
+        if action == "already_knew":
+            self.model.apply_user_correction((skill,), kind="user_already_knew", evidence_ref="capability_panel:v87", now=now)
+            return True
+        if action == "wrong":
+            self.model.apply_user_correction((skill,), kind="user_corrected_eris", evidence_ref="capability_panel:v87", now=now)
+            return True
+        if action == "confirmed":
+            return True
+        return False
+
     def reset_mentor_profile(self) -> None:
         """Reset projection kỹ năng theo yêu cầu user; calibration history giữ riêng để audit mentor."""
         self.model.reset_all()
