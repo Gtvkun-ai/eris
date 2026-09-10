@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""V80/V80.1/V81/V82/V83/V84 - Engineering Mentor cho Eris Desktop.
+"""V80/V80.1/V81/V82/V83/V84/V85 - Engineering Mentor cho Eris Desktop.
 
 Mục tiêu của module này KHÔNG phải tạo thêm một coding agent.
 Nó chỉ làm bốn việc:
@@ -9,7 +9,8 @@ Nó chỉ làm bốn việc:
 4) V81 theo dõi learning evidence/teach-back nhẹ, không biến Eris thành LMS;
 5) V82 dạy user chọn đúng engineering tool/evidence mà không tự chạy tool;
 6) V83 nối CodingFlow với WorldState/environment để dạy cross-environment;
-7) V84 hợp nhất delivery Companion/Mentor/Supervisor thành một giọng Eris.
+7) V84 hợp nhất delivery Companion/Mentor/Supervisor thành một giọng Eris;
+8) V85 đóng feedback loop: outcome/calibration/profile audit, không thêm LLM judge.
 
 Boundary quan trọng:
 - không gọi tool coding;
@@ -37,6 +38,7 @@ from runtime.adaptive_engineering_learning import AdaptiveEngineeringLearning
 from runtime.cross_environment_supervisor import CrossEnvironmentSupervisor, CrossEnvironmentDirective
 from runtime.companion_mentor_orchestrator import CompanionMentorRoleDirective, CompanionMentorRoleOrchestrator
 from runtime.tool_literacy_mentor import EngineeringToolLiteracy
+from runtime.mentor_calibration import MentorCalibrationService, build_user_visible_mentor_profile
 from runtime.workspace_manager import default_eris_home
 
 _SCHEMA = "eris.engineering_mentor.v1"
@@ -95,6 +97,7 @@ class SkillEstimate:
     confidence: float = 0.10
     evidence_count: int = 0
     last_observed_at: float = 0.0
+    last_calibrated_at: float = 0.0
     notes: list[str] = field(default_factory=list)
 
     def clamp(self) -> None:
@@ -110,6 +113,7 @@ class SkillEstimate:
             "confidence": round(self.confidence, 4),
             "evidence_count": self.evidence_count,
             "last_observed_at": self.last_observed_at,
+            "last_calibrated_at": self.last_calibrated_at,
             "notes": list(self.notes),
         }
 
@@ -120,6 +124,7 @@ class SkillEstimate:
             confidence=float(data.get("confidence", 0.1) or 0.1),
             evidence_count=int(data.get("evidence_count", 0) or 0),
             last_observed_at=float(data.get("last_observed_at", 0.0) or 0.0),
+            last_calibrated_at=float(data.get("last_calibrated_at", 0.0) or 0.0),
             notes=list(data.get("notes") or []),
         )
         item.clamp()
@@ -551,9 +556,91 @@ class UserEngineeringSkillModel:
         item.confidence = min(1.0, item.confidence + 0.035)
         item.evidence_count += 1
         item.last_observed_at = ts
+        item.last_calibrated_at = ts
         suffix = f" [{evidence_ref[:80]}]" if evidence_ref else ""
         item.notes.append(note + suffix)
         item.clamp()
+
+    def decay_stale_confidence(self, *, now: float | None = None) -> None:
+        """V85: evidence cũ giữ level nhưng confidence decay chậm theo thời gian.
+
+        Half-life ~90 ngày. ``last_calibrated_at`` chống việc gọi snapshot nhiều lần
+        làm decay lặp trên cùng khoảng thời gian.
+        """
+        ts = float(now or time.time())
+        changed = False
+        with self._lock:
+            for item in self.skills.values():
+                anchor = max(float(item.last_calibrated_at or 0.0), float(item.last_observed_at or 0.0))
+                if anchor <= 0.0:
+                    item.last_calibrated_at = ts
+                    continue
+                elapsed = max(0.0, ts - anchor)
+                if elapsed < 24 * 3600.0:
+                    item.last_calibrated_at = max(item.last_calibrated_at, anchor)
+                    continue
+                factor = 0.5 ** (elapsed / (90.0 * 86400.0))
+                new_conf = max(0.05, item.confidence * factor)
+                if abs(new_conf - item.confidence) >= 1e-6:
+                    item.confidence = new_conf
+                    changed = True
+                item.last_calibrated_at = ts
+            if changed:
+                self.updated_at = max(self.updated_at, ts)
+                self._save_locked()
+
+    def apply_user_correction(
+        self,
+        skills: tuple[str, ...] | list[str],
+        *,
+        kind: str,
+        evidence_ref: str = "",
+        now: float | None = None,
+    ) -> None:
+        """User sửa Mentor => hạ confidence của estimate liên quan, không tự buff mastery.
+
+        Đây là correction của belief model, không phải proof user expert. Grounded
+        technical evidence ở cùng turn vẫn được observe_user_turn() cộng riêng.
+        """
+        ts = float(now or time.time())
+        targets = [str(x) for x in skills if str(x) in self.skills][:4]
+        if not targets:
+            return
+        with self._lock:
+            for name in targets:
+                item = self.skills[name]
+                penalty = 0.14 if kind == "user_corrected_eris" else 0.08
+                item.confidence = max(0.05, item.confidence - penalty)
+                item.last_calibrated_at = ts
+                suffix = f" [{str(evidence_ref)[:80]}]" if evidence_ref else ""
+                item.notes.append((
+                    "User correction contradicted mentor/model estimate; confidence reduced."
+                    if kind == "user_corrected_eris"
+                    else "User stated prior knowledge; treat as correction/self-report, not mastery proof."
+                ) + suffix)
+                item.clamp()
+            self.updated_at = ts
+            self._save_locked()
+
+    def reset_skill(self, skill_id: str) -> bool:
+        """Reset một skill projection theo user control; không đụng Living User memory."""
+        name = str(skill_id or "")
+        if name not in self.skills:
+            return False
+        with self._lock:
+            self.skills[name] = SkillEstimate()
+            self.updated_at = time.time()
+            self._save_locked()
+        return True
+
+    def reset_all(self) -> None:
+        """Reset toàn bộ engineering skill projection + overreliance, local-only."""
+        with self._lock:
+            self.skills = {name: SkillEstimate() for name in _SKILLS}
+            self.overreliance_risk = 0.0
+            self.recent_signals = []
+            self.updated_at = time.time()
+            self._save_locked()
 
     def _load(self) -> None:
         try:
@@ -708,7 +795,7 @@ class EngineeringTeachingPolicy:
 
 
 class EngineeringMentorService:
-    """Facade V80→V84 dùng bởi Coordinator + public chat orchestration."""
+    """Facade V80→V85 dùng bởi Coordinator + public chat orchestration."""
 
     def __init__(
         self,
@@ -718,6 +805,7 @@ class EngineeringMentorService:
         evaluation_path: Path | None = None,
         learning_path: Path | None = None,
         tool_literacy_path: Path | None = None,
+        calibration_path: Path | None = None,
         logger: Any = None,
     ) -> None:
         self.logger = logger
@@ -730,12 +818,15 @@ class EngineeringMentorService:
             evaluation_path = evaluation_path or path.with_name("engineering_mentor_evaluation.jsonl")
             learning_path = learning_path or path.with_name("engineering_learning.json")
             tool_literacy_path = tool_literacy_path or path.with_name("engineering_tool_literacy.json")
+            calibration_path = calibration_path or path.with_name("engineering_mentor_calibration.json")
         self.ledger = MentorInterventionLedger(
             path=runtime_path, evaluation_path=evaluation_path, logger=logger
         )
         self.learning = AdaptiveEngineeringLearning(path=learning_path, logger=logger)
         # V82 chỉ tư vấn tool/evidence, không sở hữu hay thực thi bất kỳ tool nào.
         self.tool_literacy = EngineeringToolLiteracy(path=tool_literacy_path, logger=logger)
+        # V85 chỉ đánh giá outcome observable của mentor; không gọi thêm model/agent.
+        self.calibration = MentorCalibrationService(path=calibration_path, logger=logger)
         # V83 là correlator stateless: chỉ nối CodingFlow + WorldState evidence.
         self.cross_environment = CrossEnvironmentSupervisor()
         self._last_cross_environment = CrossEnvironmentDirective()
@@ -807,6 +898,9 @@ class EngineeringMentorService:
                 return self._last_policy_decision
             prior = self._last_decision
 
+        # V85: confidence cũ tự decay theo thời gian. Level không tự tụt; chỉ độ
+        # chắc chắn giảm nếu lâu không có evidence mới.
+        self.model.decay_stale_confidence(now=ts)
         feedback = self.ledger.observe_feedback(
             user_text, prior_decision=prior, turn_id=turn_id, now=ts
         )
@@ -823,6 +917,18 @@ class EngineeringMentorService:
             evidence_ref=turn_id,
             now=ts,
         )
+        # V85 resolve intervention trước đó bằng feedback explicit. User correction
+        # có thể hạ confidence của skill estimate, nhưng không tự sửa level lên expert.
+        outcome = self.calibration.observe_user_response(
+            user_text, feedback=feedback, learning_events=learning_events, turn_id=turn_id, now=ts
+        )
+        if outcome is not None and outcome.kind in {"user_corrected_eris", "user_already_knew"}:
+            self.model.apply_user_correction(
+                outcome.focus_skills,
+                kind=outcome.kind,
+                evidence_ref=f"mentor_outcome:{outcome.intervention_id}",
+                now=ts,
+            )
         # V82 chỉ ghi tool-use demonstration khi user nói rõ đã dùng tool và thấy
         # evidence gì; nhắc tên debugger/diff trong câu hỏi không được tính mastery.
         self.tool_literacy.observe_user_turn(user_text, evidence_ref=turn_id, now=ts)
@@ -856,6 +962,17 @@ class EngineeringMentorService:
         V84 chỉ điều phối delivery role; public writer vẫn là một Eris duy nhất.
         """
         policy_decision = self.observe_user_turn(user_text, turn_id=turn_id, now=now)
+        calibration_directive = self.calibration.directive(now=now)
+        # Nếu nhiều feedback gần đây nói mentor gây phiền, V85 giảm proactive friction
+        # trước intervention gate. Explicit learning/verification vẫn không bị chặn.
+        explicit = "learning_intent" in policy_decision.user_signals or "verification_intent" in policy_decision.user_signals
+        if calibration_directive.reduce_proactive_friction and policy_decision.relevant and not explicit and policy_decision.mode not in {"warn"}:
+            policy_decision = MentorDecision(
+                relevant=False, mode="none", reason="mentor_calibration_reduced_friction",
+                focus_skills=policy_decision.focus_skills, grounded_findings=policy_decision.grounded_findings,
+                user_signals=policy_decision.user_signals, overreliance_risk=policy_decision.overreliance_risk,
+                suppression_reason="recent_mentor_annoyance",
+            )
         decision = self.ledger.gate(
             policy_decision, signals=policy_decision.user_signals, turn_id=turn_id, now=now
         )
@@ -951,6 +1068,18 @@ class EngineeringMentorService:
         with self._lock:
             self._last_role_directive = role_directive
         self.ledger.record_role_selection(role_directive.to_dict(), turn_id=turn_id, now=now)
+        calibration_intervention_id = str(turn_id or "")[:120]
+        if not calibration_intervention_id:
+            # Không dùng private API của ledger: fallback id chỉ cần local uniqueness.
+            material = f"{decision.reason}|{decision.mode}|{float(now or time.time()):.6f}"
+            calibration_intervention_id = hashlib.sha1(material.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        self.calibration.register_intervention(
+            intervention_id=calibration_intervention_id,
+            mode=decision.mode, reason=decision.reason, focus_skills=decision.focus_skills,
+            primary_role=role_directive.primary_role,
+            proactive=not ("learning_intent" in decision.user_signals or "verification_intent" in decision.user_signals),
+            now=now,
+        )
 
         flow_summary = {
             "task_id": flow.get("task_id", ""),
@@ -974,8 +1103,11 @@ class EngineeringMentorService:
             "warn": "Nói thẳng, có thể hơi gắt và tự nhiên: pattern hiện tại đang làm user phụ thuộc AI. Chỉ ra bằng chứng và cho một bài tập nhỏ cụ thể. Không xúc phạm nhân phẩm/user intelligence.",
         }.get(decision.mode, "")
         return (
+            # Giữ prefix V84 để không phá contract public-writer/test cũ; payload
+            # có ``release=V85`` và calibration block mới.
             "ENGINEERING_MENTOR_V84:\n"
             + json.dumps({
+                "release": "V85",
                 "role": "one_eris_companion_mentor_supervisor_not_coding_agent",
                 "decision": decision.to_dict(),
                 "role_orchestration": {
@@ -998,6 +1130,11 @@ class EngineeringMentorService:
                     "projection": tool_projection,
                     "rule": "Ưu tiên một tool chính để trả lời một câu hỏi evidence cụ thể; tối đa hai tool phụ. Dạy user nhìn evidence, không chạy tool thay user.",
                     "calibration_rule": "Nếu stage=unobserved/introduced, chỉ một bước mở/đọc tool cơ bản. Nếu stage=demonstrated/familiar, bỏ tutorial UI và chỉ nêu evidence/question cần kiểm chứng.",
+                },
+                "mentor_calibration": {
+                    "directive": calibration_directive.to_dict(),
+                    "metrics": self.calibration.snapshot().get("metrics", {}),
+                    "rule": "Nếu confidence_mode=cautious, nói dưới dạng hypothesis/evidence và chừa đường cho user sửa Eris. Feedback user là dữ kiện hiệu chỉnh, không phải tranh luận thắng-thua.",
                 },
                 "teaching_rule": rule,
                 "delivery": {
@@ -1023,9 +1160,26 @@ class EngineeringMentorService:
                     "Companion/Mentor/Supervisor are internal functions, never separate speaking personas.",
                     "Surface profanity or urgency can change opening style, but is not evidence for a psychological diagnosis or durable user trait.",
                     "On ordinary coding discussion, stay companion-first unless explicit learning, verification, or grounded workflow risk justifies another stance.",
+                    "When the user corrects Eris, acknowledge the correction and lower model confidence where appropriate; do not defend a weak estimate.",
+                    "Mentor outcome metrics are calibration signals, not scores of the user or proof that a lesson caused success.",
+                    "Do not infer ignored/helpful outcomes from topic changes; only explicit feedback or observable learning evidence may resolve an intervention.",
                 ],
             }, ensure_ascii=False, separators=(",", ":"))
         )
+
+    def mentor_profile(self, *, now: float | None = None) -> dict[str, Any]:
+        """V85 user-visible projection read-only: evidence/confidence rõ, không lộ notes."""
+        return build_user_visible_mentor_profile(
+            self.model.snapshot(), self.calibration.snapshot(), now=now
+        )
+
+    def reset_skill_estimate(self, skill_id: str) -> bool:
+        """In-process user control cho UI/chat layer đáng tin cậy; không expose qua Eris Link write API."""
+        return self.model.reset_skill(skill_id)
+
+    def reset_mentor_profile(self) -> None:
+        """Reset projection kỹ năng theo yêu cầu user; calibration history giữ riêng để audit mentor."""
+        self.model.reset_all()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -1035,6 +1189,8 @@ class EngineeringMentorService:
                 "runtime": self.ledger.snapshot(),
                 "adaptive_learning": self.learning.snapshot(),
                 "tool_literacy": self.tool_literacy.snapshot(),
+                "mentor_calibration": self.calibration.snapshot(),
+                "mentor_profile": self.mentor_profile(),
                 "last_cross_environment": self._last_cross_environment.to_dict(),
                 "role_orchestration": self.role_orchestrator.snapshot(),
                 "last_role_directive": self._last_role_directive.to_dict(),

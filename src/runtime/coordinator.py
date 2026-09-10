@@ -308,6 +308,17 @@ class RuntimeCoordinator(
             if callable(debug):
                 debug("[mentor-v80] optional engineering mentor unavailable: %s", exc)
 
+        # V86: read-model thống kê năng lực. Đây chỉ là projection từ Mentor state,
+        # không gọi model/tool và không có quyền điều khiển GitPilot.
+        self.capability_projection_service = None
+        try:
+            from runtime.capability_projection import CapabilityProjectionService
+            self.capability_projection_service = CapabilityProjectionService(logger=logger)
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[mentor-v86] capability projection unavailable: %s", exc)
+
         # V79 Coding Observation Spine. Desktop chỉ nhận telemetry GitPilot và
         # tạo journal/flow findings; V80 chỉ đọc flow này để dạy user. Không khối
         # nào ở đây có authority để điều khiển task, approve tool hay sửa workspace.

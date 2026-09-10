@@ -5,7 +5,8 @@ V79 giữ boundary rất cứng:
 - GET /v1/context: Desktop góp environment/project memory cho Eris Code.
 - POST /v1/coding/observations: Eris Code gửi observation GitPilot đã xảy ra.
 - GET /v1/coding/journal, /v1/coding/flow: đọc journal/snapshot để debug UI sau này.
-- GET /v1/mentor/state: đọc projection mentor V80 để audit cách Eris đang dạy.
+- GET /v1/mentor/state: đọc projection mentor V80+ để audit cách Eris đang dạy.
+- GET /v1/mentor/profile: V85 projection gọn, user-visible/evidence-backed.
 
 Không có endpoint task-control, approval, terminal hoặc workspace mutation. Vì vậy
 Eris Desktop có thể hiểu coding flow nhưng không trở thành coding brain thứ hai.
@@ -110,6 +111,19 @@ class ErisCodeObserverLink:
                         self._send(404, {"error": "engineering_mentor_unavailable"})
                         return
                     self._send(200, owner.mentor_provider())
+                    return
+                if parsed.path == "/v1/mentor/profile":
+                    # V85 vẫn read-only trên loopback. User correction/reset đi qua
+                    # trusted in-process UI/chat layer, không mở unauthenticated write API.
+                    if owner.mentor_provider is None:
+                        self._send(404, {"error": "engineering_mentor_unavailable"})
+                        return
+                    state = owner.mentor_provider()
+                    profile = dict(state.get("mentor_profile") or {}) if isinstance(state, dict) else {}
+                    if not profile:
+                        self._send(404, {"error": "mentor_profile_unavailable"})
+                        return
+                    self._send(200, profile)
                     return
                 self._send(404, {"error": "not_found"})
 

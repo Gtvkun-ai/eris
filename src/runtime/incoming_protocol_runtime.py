@@ -367,6 +367,43 @@ class IncomingProtocolRuntimeMixin:
         }, channel="memory_panel")
 
 
+    def _handle_capability_panel_request(self, msg: dict) -> None:
+        """V86 - trả snapshot thống kê năng lực cho panel Godot.
+
+        Endpoint UDP này chỉ READ. Panel không được tự ghi score hay sửa profile;
+        correction/reset vẫn phải đi qua trusted user-control của Mentor.
+        """
+        request_id = str(msg.get("request_id", "") or "")
+        mentor = getattr(self, "engineering_mentor_service", None)
+        projection = getattr(self, "capability_projection_service", None)
+        if mentor is None or projection is None:
+            self._send_runtime_json({
+                "type": "capability_panel_ack",
+                "parse_mode": "capability_panel_ack",
+                "should_speak": False,
+                "request_id": request_id,
+                "status": "unavailable",
+                "message": "Mentor chưa sẵn sàng.",
+                "capability_panel": {},
+            }, channel="capability_panel")
+            return
+        try:
+            payload = projection.build(mentor.snapshot())
+            status, message = "ok", "Đã cập nhật thống kê năng lực."
+        except Exception as exc:
+            payload = {}
+            status, message = "error", f"Không dựng được thống kê: {type(exc).__name__}"
+        self._send_runtime_json({
+            "type": "capability_panel_ack",
+            "parse_mode": "capability_panel_ack",
+            "should_speak": False,
+            "request_id": request_id,
+            "status": status,
+            "message": message,
+            "capability_panel": payload,
+        }, channel="capability_panel")
+
+
     def _handle_phase7_validation_control(self, msg: dict) -> None:
         """Control protocol nhỏ để chạy Phase 7 trên máy thật qua UDP 4243."""
 

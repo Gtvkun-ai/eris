@@ -135,7 +135,7 @@ class CompanionMentorRoleOrchestrator:
             surface_cue = "neutral"
 
         # 1) User chủ động muốn học: trả lời như thầy trước, không vòng vo bằng companion small-talk.
-        if explicit_learning or mode in {"explain", "guide"}:
+        if explicit_learning or reason == "candidate_misconception_needs_check" or (mode in {"explain", "guide"} and not explicit_verification):
             primary = "mentor"
             supporting = ["companion"]
             if has_flow or cross_active:
