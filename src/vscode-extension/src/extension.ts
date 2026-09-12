@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ErisChatPanel } from './chatPanel';
+import { CompanionWorkspaceObserver, registerExternalAgentObservationBridge } from './companionWorkspaceObserver';
 import { registerErisChatParticipant } from './chatParticipant';
 import { WorkspaceDiffProvider } from './diffProvider';
 import { ErisObserverBridge } from './erisObserverBridge';
@@ -25,11 +26,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const runtime = new GitPilotRuntimeManager(context);
   const terminalObserver = new TerminalContextObserver();
   const erisBridge = new ErisObserverBridge();
+  const companionObserver = new CompanionWorkspaceObserver(erisBridge);
+  registerExternalAgentObservationBridge(context, erisBridge);
   const client = new GitPilotClient(context, runtime, terminalObserver, erisBridge);
   const diffProvider = new WorkspaceDiffProvider();
   const chatPanel = new ErisChatPanel(context.extensionUri, client, context, terminalObserver, diffProvider);
 
-  context.subscriptions.push(runtime, client, terminalObserver, diffProvider, chatPanel);
+  context.subscriptions.push(runtime, client, terminalObserver, companionObserver, diffProvider, chatPanel);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(
     ErisChatPanel.viewType,
     chatPanel,

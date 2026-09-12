@@ -21,6 +21,7 @@ from runtime.workspace_manager import default_eris_home
 _SCHEMA = "eris.capability_panel.v1"
 _MIN_EVIDENCE = 2
 _MIN_CONFIDENCE = 0.16
+_MIN_GROUP_COVERAGE = 0.67
 
 _GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("debugging", "Gỡ lỗi", (
@@ -98,6 +99,8 @@ def _evidence_rows(raw: Mapping[str, Any]) -> list[dict[str, str]]:
             "Bạn đã sửa lại nhận định của ERIS; độ tin cậy của estimate đã được giảm.",
         "User stated prior knowledge; treat as correction/self-report, not mastery proof.":
             "Bạn cho biết đã biết phần này; ERIS coi đây là self-report, không tự tăng mức thành thạo.",
+        "Candidate misconception supplied counter-evidence; estimate softened.":
+            "Một heuristic kỹ thuật có dấu hiệu sai đã được ghi nhận như counter-evidence; estimate được hạ nhẹ thay vì gắn nhãn năng lực.",
     }
     for note in list(raw.get("notes") or [])[-5:]:
         text = " ".join(str(note or "").split())[:260]
@@ -122,8 +125,10 @@ def _evidence_rows(raw: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def _skill_view(skill_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     evidence = int(raw.get("evidence_count", 0) or 0)
+    independent = int(raw.get("independent_evidence_count", evidence) or 0)
+    counter = int(raw.get("counter_evidence_count", 0) or 0)
     confidence = float(raw.get("confidence", 0.0) or 0.0)
-    observed = evidence >= _MIN_EVIDENCE and confidence >= _MIN_CONFIDENCE
+    observed = independent >= _MIN_EVIDENCE and confidence >= _MIN_CONFIDENCE
     return {
         "id": skill_id,
         "ten": _SKILL_LABELS.get(skill_id, skill_id),
@@ -131,6 +136,8 @@ def _skill_view(skill_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         "phan_tram": _pct(float(raw.get("level", 0.5) or 0.5)) if observed else None,
         "do_tin_cay": _confidence_label(confidence) if observed else "Chưa đủ dữ liệu",
         "so_bang_chung": evidence,
+        "bang_chung_doc_lap": independent,
+        "counter_evidence": counter,
         "cap_nhat_luc": float(raw.get("last_observed_at", 0.0) or 0.0),
         "bang_chung_gan_day": _evidence_rows(raw),
     }
@@ -160,7 +167,9 @@ class CapabilityProjectionService:
         for group_id, title, members in _GROUPS:
             observed_members = [skill_views[x] for x in members if skill_views[x]["da_du_bang_chung"]]
             total_evidence = sum(int(skill_views[x]["so_bang_chung"]) for x in members)
-            if observed_members:
+            coverage = len(observed_members) / max(1, len(members))
+            enough_coverage = coverage >= _MIN_GROUP_COVERAGE
+            if observed_members and enough_coverage:
                 score = int(round(sum(int(x["phan_tram"]) for x in observed_members) / len(observed_members)))
                 conf_values = [float(skills_raw.get(x["id"], {}).get("confidence", 0.0) or 0.0) for x in observed_members]
                 confidence = sum(conf_values) / len(conf_values)
@@ -174,6 +183,13 @@ class CapabilityProjectionService:
                 "phan_tram": score,
                 "do_tin_cay": _confidence_label(confidence) if observed else "Chưa đủ dữ liệu",
                 "so_bang_chung": total_evidence,
+                "do_phu": round(coverage, 3),
+                "ky_nang_da_quan_sat": len(observed_members),
+                "tong_ky_nang": len(members),
+                "ghi_chu_do_phu": (
+                    f"Đã quan sát {len(observed_members)}/{len(members)} chiều kỹ năng; chưa hiển thị điểm nhóm."
+                    if observed_members and not enough_coverage else ""
+                ),
                 "ky_nang": [skill_views[x] for x in members],
             })
 
@@ -204,12 +220,14 @@ class CapabilityProjectionService:
         technical_turns = len(recent_signals)
         ai_stats = {
             "cua_so_ngay": 30,
+            "luot_ky_thuat_co_signal": technical_turns,
             "luot_ky_thuat_da_quan_sat": technical_turns,
             "tu_neu_gia_thuyet_co_evidence": signal_counts["grounded_hypothesis"],
             "chu_dong_kiem_chung": signal_counts["verification_intent"],
             "chu_dong_hoc_hoi": signal_counts["learning_intent"],
             "yeu_cau_thuc_thi_mu": signal_counts["blind_execution_request"],
             "rui_ro_phu_thuoc_ai": _pct(float(model.get("overreliance_risk", 0.0) or 0.0)),
+            "rui_ro_mat_ownership_reasoning": _pct(float(model.get("overreliance_risk", 0.0) or 0.0)),
         }
 
         calibration = dict(mentor_state.get("mentor_calibration") or {})
@@ -233,7 +251,7 @@ class CapabilityProjectionService:
         return {
             "schema": _SCHEMA,
             "tieu_de": "NĂNG LỰC KỸ THUẬT",
-            "ghi_chu": "Các phần trăm là ước lượng của ERIS dựa trên evidence, không phải điểm thi hay đánh giá con người.",
+            "ghi_chu": "Các phần trăm chỉ hiện khi đủ evidence độc lập và độ phủ; đây là estimate năng lực kỹ thuật, không phải điểm thi hay đánh giá con người.",
             "cap_nhat_luc": ts,
             "tong_bang_chung": total_evidence,
             "nhom_nang_luc": groups,

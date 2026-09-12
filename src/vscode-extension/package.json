@@ -1,8 +1,8 @@
 {
   "name": "eris-code",
   "displayName": "Eris Code",
-  "description": "Eris Code V79: VS Code shell mỏng dùng GitPilot làm coding brain; Eris Desktop quan sát coding flow qua telemetry append-only.",
-  "version": "0.20.0",
+  "description": "Eris Code V90: GitPilot coding brain tách biệt; Eris Desktop đồng hành qua Companion Observation Bridge độc lập agent.",
+  "version": "0.21.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -119,6 +119,11 @@
           "type": "boolean",
           "default": false,
           "description": "V79: bật Eris Link khi muốn Desktop đọc coding telemetry và góp project context. Opt-in; Desktop tắt/link tắt thì Eris Code vẫn chạy bình thường."
+        },
+        "erisCode.erisLink.observeWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "description": "V90: khi Eris Link bật, gửi metadata workspace read-only (file focus/save, diagnostics, terminal command result) để Eris đồng hành ngay cả khi coding agent tách biệt. Không gửi source content."
         },
         "erisCode.erisLink.endpoint": {
           "type": "string",

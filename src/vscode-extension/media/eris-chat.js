@@ -254,7 +254,7 @@ function renderSessions(){
     var label=active?active.title||NEW_SESSION_LABEL:'Eris';
     var status=active?String(active.status||'idle'):'idle';
     // Header chỉ giữ tên session. Trạng thái task đã có Activity/Plan bên dưới.
-    headerTitle.textContent=(label===NEW_SESSION_LABEL||!label)?'AI coding agent':label;
+    headerTitle.textContent=(label===NEW_SESSION_LABEL||!label)?'Eris Code':label;
     headerTitle.title=label||'Eris';
   }
   updateComposerState();
@@ -809,7 +809,7 @@ window.addEventListener('message',function(ev){
     // Backend chưa chạy là trạng thái dormant bình thường. Chỉ hiện status khi user
     // vừa giao task và client thực sự đang kết nối; không treo banner 'offline'.
     connection.classList.toggle('visible',connecting);connection.classList.toggle('connecting',connecting);
-    document.getElementById('connectionText').textContent=connecting?'Đang khởi động coding agent…':'Eris sẵn sàng';
+    document.getElementById('connectionText').textContent=connecting?'Đang kết nối GitPilot…':'GitPilot sẵn sàng';
     if(connected)connection.classList.remove('visible');
     return;
   }
@@ -823,7 +823,7 @@ window.addEventListener('message',function(ev){
   if(event.type==='thread.history'){renderHistory(event);return;}
   if(event.type==='task.detail'){if(event.task){catalogTasks=[...new Map([...catalogTasks,event.task].map(function(t){return[String(t&&t.task_id?t.task_id:''),t];})).values()];}return;}
   if(event.type==='message.accepted'){activeTaskId=String(event.taskId||activeTaskId);if(activeTaskId){taskModes.set(activeTaskId,pendingTaskMode||'auto');var acceptedEntry=taskGroups.get(activeTaskId);if(acceptedEntry){acceptedEntry.taskMode=taskModes.get(activeTaskId)||'auto';acceptedEntry.planEl.style.display=acceptedEntry.taskMode==='plan'?'':'none';}}pendingTaskMode='auto';updateComposerState();return;}
-  if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'Eris service error');return;}
+  if(event.type==='client.error'||event.type==='error'){showNotice(event.message||event.code||'GitPilot runtime error');return;}
   if(awaitingThreadHistory){deferredEvents.push(event);return;}
   renderEvent(event);
 });

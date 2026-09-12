@@ -1,0 +1,29 @@
+ERIS V90 — COMPANION OBSERVATION BRIDGE
+
+Mục tiêu:
+- Eris và GitPilot/coding agent vẫn tách quyền, nhưng Eris không còn mù workflow.
+- Eris hiểu được cách user đặt vấn đề trong coding extension, repo đang đổi gì, agent đang ở phase nào.
+
+Thay đổi chính:
+1. VS Code CompanionWorkspaceObserver độc lập GitPilot:
+   - editor focus
+   - save/create/delete/rename
+   - diagnostics count
+   - terminal command + exit status
+2. Mirror explicit user prompt thành `user_intent`.
+3. CodingObservation hỗ trợ source: gitpilot / workspace / user / external-agent.
+4. Adapter command cho coding extension khác: `erisCode.companion.observeExternalAgent`.
+5. Desktop CompanionWorkspaceInterpreter + endpoint read-only `/v1/companion/state`.
+6. Engineering Mentor nhận companion context và học từ `user_intent` external.
+7. Passive workspace event KHÔNG thay đổi skill estimate.
+8. Bounded telemetry queue chống backpressure khi Desktop offline.
+9. Backward migration cho ProjectTrajectory đọc journal V79 cũ thiếu `source`.
+10. Extension version: 0.21.0.
+
+Boundary giữ nguyên:
+- Eris không control GitPilot.
+- Eris không approve tool.
+- Eris không chạy terminal qua Link.
+- Eris không write workspace qua Link.
+- Không scrape hidden chain-of-thought.
+- Không gửi raw source chỉ để observation.

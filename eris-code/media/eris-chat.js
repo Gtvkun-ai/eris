@@ -254,7 +254,7 @@ function renderSessions(){
     var label=active?active.title||NEW_SESSION_LABEL:'Eris';
     var status=active?String(active.status||'idle'):'idle';
     // Header chỉ giữ tên session. Trạng thái task đã có Activity/Plan bên dưới.
-    headerTitle.textContent=(label===NEW_SESSION_LABEL||!label)?'AI coding agent':label;
+    headerTitle.textContent=(label===NEW_SESSION_LABEL||!label)?'Eris Code':label;
     headerTitle.title=label||'Eris';
   }
   updateComposerState();
@@ -809,7 +809,7 @@ window.addEventListener('message',function(ev){
     // Backend chưa chạy là trạng thái dormant bình thường. Chỉ hiện status khi user
     // vừa giao task và client thực sự đang kết nối; không treo banner 'offline'.
     connection.classList.toggle('visible',connecting);connection.classList.toggle('connecting',connecting);
-    document.getElementById('connectionText').textContent=connecting?'Đang khởi động coding agent…':'Eris sẵn sàng';
+    document.getElementById('connectionText').textContent=connecting?'Đang kết nối GitPilot…':'GitPilot sẵn sàng';
     if(connected)connection.classList.remove('visible');
     return;
   }

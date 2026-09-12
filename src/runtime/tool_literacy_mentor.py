@@ -280,6 +280,7 @@ class EngineeringToolLiteracy:
         decision_mode: str,
         findings: Sequence[str] = (),
         recent_flow: Mapping[str, Any] | None = None,
+        environment_hint: Mapping[str, Any] | None = None,
         compact: bool = False,
         now: float | None = None,
     ) -> ToolLiteracyDirective:
@@ -290,7 +291,21 @@ class EngineeringToolLiteracy:
         findings = tuple(str(x) for x in findings)
         flow = recent_flow or {}
 
-        issue_kind, primary, support, reason, confidence = self._infer(text, findings, flow)
+        # V83/V89 contract: explicit user intent / concrete flow finding wins.
+        # Environment correlation only fills the gap before the generic
+        # "changed_files -> git diff" fallback.
+        issue_kind, primary, support, reason, confidence = self._infer(text, findings, {})
+        hint = dict(environment_hint or {})
+        if not primary and bool(hint.get("active")):
+            hinted = str(hint.get("primary_tool_hint") or "")
+            if hinted in _TOOL_BY_ID:
+                primary = hinted
+                support = tuple(str(x) for x in (hint.get("supporting_tool_hints") or ()) if str(x) in _TOOL_BY_ID)[:2]
+                issue_kind = str(hint.get("correlation_kind") or "cross_environment")
+                reason = "fresh_environment_correlation_fills_evidence_gap"
+                confidence = max(0.55, min(0.95, float(hint.get("confidence", 0.0) or 0.0)))
+        if not primary:
+            issue_kind, primary, support, reason, confidence = self._infer(text, findings, flow)
         if not primary:
             return ToolLiteracyDirective()
         definition = _TOOL_BY_ID[primary]

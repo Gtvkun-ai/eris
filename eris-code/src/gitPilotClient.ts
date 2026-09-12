@@ -94,7 +94,7 @@ export class GitPilotClient implements vscode.Disposable {
     this.upsertTask(task);
     this.emitPersist(args.threadId, { type: 'message.user', threadId: args.threadId, taskId, payload: { content } });
     this.emitPersist(args.threadId, { type: 'message.accepted', threadId: args.threadId, taskId, payload: {} });
-    this.emitPersist(args.threadId, { type: 'activity.start', threadId: args.threadId, taskId, payload: { title: 'GitPilot', detail: 'Preparing coding team…' } });
+    this.emitPersist(args.threadId, { type: 'activity.start', threadId: args.threadId, taskId, payload: { title: 'GitPilot', detail: 'Đang chuẩn bị GitPilot…' } });
 
     try {
       await this.put('/api/permissions/mode', { mode: permissionMode });

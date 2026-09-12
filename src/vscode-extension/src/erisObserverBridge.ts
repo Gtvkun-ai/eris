@@ -4,15 +4,16 @@ import type { CodingObservation } from './codingObservation';
 /**
  * Optional Eris Link.
  *
- * V79 có hai luồng rất hẹp:
- * - Desktop -> Code: GET project/environment context (read-only).
- * - Code -> Desktop: POST coding telemetry append-only.
+ * Desktop -> Code: GET project/environment context (read-only).
+ * Code -> Desktop: POST observation append-only.
  *
- * Không có endpoint nào để Desktop điều khiển GitPilot, approve tool, chạy
- * terminal hay sửa workspace. Desktop tắt thì extension vẫn hoạt động bình thường.
+ * V90 mở observation ra workspace/user/external-agent nhưng boundary authority giữ
+ * nguyên: Desktop không điều khiển GitPilot, approve tool, chạy terminal hay sửa file.
  */
 export class ErisObserverBridge {
-  private publishTail: Promise<void> = Promise.resolve();
+  private readonly queue: CodingObservation[] = [];
+  private draining = false;
+  private static readonly MAX_QUEUE = 160;
 
   async readProjectContext(workspaceRoot: string): Promise<Record<string, unknown> | undefined> {
     if (!this.enabled()) return undefined;
@@ -28,7 +29,6 @@ export class ErisObserverBridge {
       const body = await response.json();
       return body && typeof body === 'object' ? body as Record<string, unknown> : undefined;
     } catch {
-      // Optional means optional: Eris Desktop đóng là trạng thái bình thường.
       return undefined;
     } finally {
       clearTimeout(timer);
@@ -36,14 +36,37 @@ export class ErisObserverBridge {
   }
 
   /**
-   * Đẩy observation theo thứ tự nhưng không block coding stream.
-   * Nếu Desktop tắt hoặc port bận, telemetry bị bỏ qua thay vì làm task fail.
+   * V90 bounded telemetry queue. Companion observation tuyệt đối không được tạo
+   * backpressure lên coding path khi Desktop đóng/mất port.
    */
   publishCodingObservation(observation: CodingObservation): void {
     if (!this.enabled()) return;
-    this.publishTail = this.publishTail
-      .catch(() => undefined)
-      .then(() => this.postObservation(observation));
+    if (this.queue.length >= ErisObserverBridge.MAX_QUEUE) {
+      // Ưu tiên giữ user intent + coding-agent lifecycle. Drop metadata workspace
+      // dễ tái tạo trước (focus/diagnostics/save) khi queue nghẽn.
+      const index = this.queue.findIndex((item) =>
+        item.source === 'eris-code/workspace'
+        && ['editor_focus', 'diagnostics', 'file_saved'].includes(item.event_type),
+      );
+      if (index >= 0) this.queue.splice(index, 1);
+      else this.queue.shift();
+    }
+    this.queue.push(observation);
+    void this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      while (this.queue.length) {
+        const observation = this.queue.shift();
+        if (!observation) continue;
+        await this.postObservation(observation);
+      }
+    } finally {
+      this.draining = false;
+    }
   }
 
   private async postObservation(observation: CodingObservation): Promise<void> {

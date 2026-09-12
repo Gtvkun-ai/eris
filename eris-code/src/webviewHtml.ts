@@ -41,7 +41,7 @@ export function renderChatWebviewHtml(webview: vscode.Webview, extensionUri: vsc
     <!-- Không coi backend chưa chạy là lỗi. Thanh này chỉ hiện lúc thực sự kết nối. -->
     <div id="connection" class="connection" role="status" aria-live="polite">
       <span class="connection-spinner" aria-hidden="true"></span>
-      <span id="connectionText">Đang khởi động Eris…</span>
+      <span id="connectionText">Đang kết nối GitPilot…</span>
       <button id="reconnect" type="button">Thử lại</button>
     </div>
 

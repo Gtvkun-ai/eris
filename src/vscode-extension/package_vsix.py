@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 PACKAGE = ROOT / "package.json"
 DIST = ROOT / "dist"
 DIST_ENTRY = DIST / "extension.js"
+SRC = ROOT / "src"
 MEDIA = ROOT / "media"
 
 # Chỉ đóng gói asset thực sự được extension sử dụng.
@@ -31,17 +32,18 @@ def main() -> int:
     if not DIST_ENTRY.is_file():
         raise SystemExit("Thiếu dist/extension.js. Hãy chạy npm run compile trước.")
 
-    # Release invariant V79: dist chỉ được chứa bundle entry duy nhất. Nếu có file
-    # JS/map cũ từ kiến trúc trước thì fail sớm thay vì âm thầm nhét chúng vào VSIX.
-    unexpected_dist = [
-        path.relative_to(ROOT).as_posix()
-        for path in DIST.rglob("*")
-        if path.is_file() and path != DIST_ENTRY
-    ]
-    if unexpected_dist:
-        details = "\n  - ".join(sorted(unexpected_dist))
+    # V90 vẫn ưu tiên bundle esbuild một-file. Tuy nhiên release packer cũng chấp
+    # nhận output CommonJS sạch từ `tsc` (hữu ích ở môi trường build không có native
+    # esbuild binary). Multi-file mode chỉ hợp lệ khi tập .js khớp CHÍNH XÁC tập
+    # source .ts, nên stale JS vẫn không thể lọt vào VSIX.
+    dist_js = sorted(path.relative_to(DIST) for path in DIST.rglob("*.js") if path.is_file())
+    expected_tsc_js = sorted(path.relative_to(SRC).with_suffix(".js") for path in SRC.rglob("*.ts") if path.is_file())
+    bundle_mode = dist_js == [Path("extension.js")]
+    tsc_mode = dist_js == expected_tsc_js
+    if not bundle_mode and not tsc_mode:
         raise SystemExit(
-            "dist/ có artifact ngoài allowlist. Hãy chạy npm run compile để build sạch:\n  - " + details
+            "dist/ không khớp bundle sạch hoặc tsc sạch. Hãy xóa dist rồi build lại.\n"
+            f"dist_js={len(dist_js)} expected_tsc_js={len(expected_tsc_js)}"
         )
 
     package = json.loads(PACKAGE.read_text(encoding="utf-8"))
@@ -90,9 +92,11 @@ def main() -> int:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("extension.vsixmanifest", manifest)
         archive.write(PACKAGE, "extension/package.json")
-        # V79 release hardening: VSIX chỉ mang bundle runtime duy nhất.
-        # Không đóng gói toàn bộ dist/ để stale JS từ kiến trúc cũ không thể quay lại.
-        archive.write(DIST_ENTRY, "extension/dist/extension.js")
+        if bundle_mode:
+            archive.write(DIST_ENTRY, "extension/dist/extension.js")
+        else:
+            for rel in dist_js:
+                archive.write(DIST / rel, f"extension/dist/{rel.as_posix()}")
 
         # media/ được allowlist rõ ràng để không vô tình mang UI/asset cũ vào VSIX.
         if MEDIA.exists():

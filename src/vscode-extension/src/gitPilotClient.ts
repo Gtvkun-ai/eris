@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import * as vscode from 'vscode';
 import { promisify } from 'node:util';
 import { captureIdeContext } from './contextBridge';
-import { fromGitPilotEvent, taskLifecycleObservation, type CodingActor } from './codingObservation';
+import { fromGitPilotEvent, taskLifecycleObservation, userIntentObservation, type CodingActor } from './codingObservation';
 import { ErisObserverBridge } from './erisObserverBridge';
 import { GitPilotRuntimeManager } from './gitPilotRuntimeManager';
 import { TerminalContextObserver } from './terminalObserver';
@@ -116,6 +116,10 @@ export class GitPilotClient implements vscode.Disposable {
     this.upsertTask(task);
     this.emitPersist(args.threadId, { type: 'message.user', threadId: args.threadId, taskId, payload: { content } });
     this.emitPersist(args.threadId, { type: 'message.accepted', threadId: args.threadId, taskId, payload: {} });
+    this.erisBridge.publishCodingObservation(userIntentObservation(content, {
+      taskId, sessionId: session.sessionId, threadId: args.threadId,
+      workspace: session.workspaceRoot, actor: 'user',
+    }));
     this.erisBridge.publishCodingObservation(taskLifecycleObservation('task_started', {
       taskId, sessionId: session.sessionId, threadId: args.threadId,
       workspace: session.workspaceRoot, actor: 'gitpilot',

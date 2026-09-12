@@ -1,54 +1,50 @@
-# Eris Link v2 — context + coding observation
+# Eris Link v2 — V90 companion observation
 
-V79 giữ Eris Desktop và Eris Code là **hai runtime độc lập**. Link chỉ là loopback interoperability boundary, không phải shared agent runtime.
+Eris Desktop và Eris Code là hai runtime độc lập. Link là interoperability boundary read-mostly, không phải shared agent runtime.
 
-## 1. Desktop -> Eris Code: context evidence
+## Desktop → Eris Code
 
 ```text
 GET /v1/context?workspace=<absolute-workspace-root>
 ```
 
-Eris Code có thể lấy environment/project memory rồi đưa vào task dưới dạng observation. Đây là evidence, không phải coding command.
+Chỉ cung cấp environment/project-memory context; không phải coding command.
 
-## 2. Eris Code -> Desktop: telemetry append-only
+## Eris Code → Desktop
 
 ```text
 POST /v1/coding/observations
 Content-Type: application/json
 ```
 
-Payload dùng schema `eris.coding.observation.v1` và chỉ chứa dữ kiện quan sát được:
+Schema vẫn backward-compatible `eris.coding.observation.v1`, nhưng V90 có các source rõ provenance:
 
-```json
-{
-  "schema": "eris.coding.observation.v1",
-  "source": "eris-code/gitpilot",
-  "task_id": "gp_...",
-  "session_id": "...",
-  "workspace": "C:/repo",
-  "actor": "explorer",
-  "event_type": "tool_started",
-  "tool": "Read local file",
-  "files": ["runtime/shadow.py"],
-  "at": 0
-}
+```text
+eris-code/gitpilot
+eris-code/workspace
+eris-code/user
+eris-code/external-agent
 ```
 
-Không gửi raw `read_file` result, terminal spam, hidden chain-of-thought hoặc provider secret. `phase_summary` chỉ là output explicit mà Explorer/Planner/Coder/Reviewer đã chủ động trả về.
+Các event V90 thêm: `workspace_session_started/ended`, `user_intent`, `editor_focus`, `file_saved`, `file_created`, `file_deleted`, `file_renamed`, `terminal_command`.
 
-## 3. Debug/read endpoints
+Không gửi raw `read_file` result, raw source, terminal spam, hidden chain-of-thought hoặc provider secret.
+
+## Read-only diagnostics
 
 ```text
 GET /v1/coding/journal?task_id=<id>&limit=120
 GET /v1/coding/flow?task_id=<id>
+GET /v1/companion/state?workspace=<root>
 GET /v1/mentor/state
+GET /v1/mentor/profile
 ```
 
-Các endpoint này chỉ đọc journal/snapshot trong Desktop. `mentor/state` là audit projection V80; không có API chỉnh skill hoặc ép teaching mode.
+`/v1/companion/state` trả projection nhỏ về workspace hiện tại; không có endpoint set/command tương ứng.
 
 ## Boundary bắt buộc
 
-Không tồn tại các route sau qua Eris Link:
+Không tồn tại qua Eris Link:
 
 ```text
 coding/control
@@ -58,4 +54,4 @@ coding/write-file
 coding/select-model
 ```
 
-Nếu Desktop tắt, Eris Code bỏ qua telemetry và GitPilot tiếp tục coding bình thường. Nếu Eris Code tắt, Desktop vẫn hoạt động như trước.
+Desktop tắt → telemetry best-effort bị bỏ qua và coding tiếp tục. Coding agent tắt/đổi agent → workspace observation vẫn cho Eris awareness cơ bản.

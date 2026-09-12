@@ -998,6 +998,22 @@ class AIChatOrchestrator:
             if str(part).strip()
         )
 
+        # V88 Project Trajectory Coach: chỉ inject khi user hỏi về roadmap/ưu tiên/
+        # hotspot/debt của project. Đây là analytics read-only từ CodingObservation,
+        # không phải coding command và không tự mở issue/sửa roadmap.
+        project_trajectory_context = ""
+        project_trajectory = getattr(host, "project_trajectory_service", None)
+        project_prompt = getattr(project_trajectory, "prompt_context", None)
+        if callable(project_prompt):
+            try:
+                project_trajectory_context = str(project_prompt(user_text, now=cycle_start) or "")
+            except Exception as exc:
+                host.logger.debug("[mentor-v88] project trajectory projection failed: %s", exc)
+        if project_trajectory_context:
+            discourse_context = "\n\n".join(
+                part for part in (discourse_context, project_trajectory_context) if str(part).strip()
+            )
+
         # V80 Engineering Mentor là discourse policy, KHÔNG phải grounding fact và
         # càng không phải coding authority. Nó chỉ nhìn evidence V79 + skill projection
         # rồi bảo public writer nên giải thích/hint/challenge ở mức nào.
@@ -1006,11 +1022,29 @@ class AIChatOrchestrator:
         mentor_prompt = getattr(engineering_mentor, "prompt_context", None)
         if callable(mentor_prompt):
             try:
+                # V83 đọc đúng canonical WorldState projection thay vì tự tạo một
+                # sensor/Godot observer mới. Nếu WorldState unavailable thì mentor
+                # vẫn chạy V80→V82 bình thường với environment rỗng.
+                mentor_environment = {}
+                try:
+                    from runtime.world_state import ensure_world_state_service
+                    mentor_environment = (
+                        ensure_world_state_service(host)
+                        .snapshot(now=cycle_start)
+                        .environment_compatibility_view(now=cycle_start)
+                    )
+                except Exception as env_exc:
+                    host.logger.debug("[mentor-v83] world-state projection unavailable: %s", env_exc)
                 engineering_mentor_context = str(
-                    mentor_prompt(user_text, turn_id=turn_id, now=cycle_start) or ""
+                    mentor_prompt(
+                        user_text,
+                        turn_id=turn_id,
+                        now=cycle_start,
+                        environment=mentor_environment,
+                    ) or ""
                 )
             except Exception as exc:
-                host.logger.debug("[mentor-v80] chat projection failed: %s", exc)
+                host.logger.debug("[mentor-v83] chat projection failed: %s", exc)
         if engineering_mentor_context:
             discourse_context = "\n\n".join(
                 part for part in (discourse_context, engineering_mentor_context) if str(part).strip()
@@ -1205,6 +1239,7 @@ class AIChatOrchestrator:
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
             "engineering_mentor_context": engineering_mentor_context,
+            "project_trajectory_context": project_trajectory_context,
             "conversation_handoff": handoff_state.to_dict(),
             "conversation_trajectory": trajectory_state.to_dict(),
             "conversation_courtesy": courtesy_runtime.runtime_context(now=cycle_start),

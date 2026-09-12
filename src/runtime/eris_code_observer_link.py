@@ -5,6 +5,7 @@ V79 giữ boundary rất cứng:
 - GET /v1/context: Desktop góp environment/project memory cho Eris Code.
 - POST /v1/coding/observations: Eris Code gửi observation GitPilot đã xảy ra.
 - GET /v1/coding/journal, /v1/coding/flow: đọc journal/snapshot để debug UI sau này.
+- GET /v1/companion/state: V90 projection workspace/user/agent hợp nhất, read-only.
 - GET /v1/mentor/state: đọc projection mentor V80+ để audit cách Eris đang dạy.
 - GET /v1/mentor/profile: V85 projection gọn, user-visible/evidence-backed.
 
@@ -31,6 +32,7 @@ class ErisCodeObserverLink:
         observation_sink: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         journal_provider: Callable[[str, str, int], list[dict[str, Any]]] | None = None,
         flow_provider: Callable[[str], dict[str, Any]] | None = None,
+        companion_provider: Callable[[str], dict[str, Any]] | None = None,
         mentor_provider: Callable[[], dict[str, Any]] | None = None,
         host: str = "127.0.0.1",
         port: int = 8767,
@@ -40,6 +42,7 @@ class ErisCodeObserverLink:
         self.observation_sink = observation_sink
         self.journal_provider = journal_provider
         self.flow_provider = flow_provider
+        self.companion_provider = companion_provider
         self.mentor_provider = mentor_provider
         self.host = host
         self.port = int(port)
@@ -70,6 +73,7 @@ class ErisCodeObserverLink:
                         "protocol": "eris.link.v2",
                         "coding_observation": owner.observation_sink is not None,
                         "engineering_mentor": owner.mentor_provider is not None,
+                        "companion_observation": owner.companion_provider is not None,
                     })
                     return
                 if parsed.path == "/v1/context":
@@ -103,6 +107,13 @@ class ErisCodeObserverLink:
                         self._send(400, {"error": "task_id_required"})
                         return
                     self._send(200, owner.flow_provider(task_id))
+                    return
+                if parsed.path == "/v1/companion/state":
+                    if owner.companion_provider is None:
+                        self._send(404, {"error": "companion_observation_unavailable"})
+                        return
+                    workspace = str(query.get("workspace", [""])[0] or "").strip()
+                    self._send(200, owner.companion_provider(workspace))
                     return
                 if parsed.path == "/v1/mentor/state":
                     # Read-only diagnostics: UI có thể xem Eris đang dựa vào evidence

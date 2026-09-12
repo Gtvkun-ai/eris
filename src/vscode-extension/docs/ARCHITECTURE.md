@@ -1,67 +1,62 @@
-# Kiến trúc Eris Code V79
+# Kiến trúc Eris Code V90
 
 ## Invariant
 
-1. GitPilot là coding owner duy nhất trong VS Code.
-2. Eris Desktop không phải dependency của extension.
-3. Extension không launch Eris Desktop.
-4. Local workspace đi qua GitPilot multi-agent SSE, không downgrade âm thầm sang direct LLM.
-5. Approval authority thuộc GitPilot `ApprovalGate`; extension chỉ render và forward quyết định user.
-6. V79 chỉ mirror **observable coding facts** sang Desktop; Desktop không có đường điều khiển task.
+1. GitPilot/coding agent vẫn là coding owner; Eris Desktop không có quyền sửa workspace hay approve tool.
+2. Eris Desktop không phải dependency của extension; Desktop tắt thì coding vẫn chạy.
+3. **Tách authority, không tách nhận thức**: Eris nhận observation từ agent + workspace + user intent.
+4. Passive workspace metadata không được tự suy thành năng lực hay authorship của user.
+5. Eris không cần phụ thuộc GitPilot cụ thể: agent khác có thể đẩy normalized event qua adapter command.
 
-## Module tối thiểu
-
-```text
-GitPilotClient
-GitPilotRuntimeManager
-CodingObservation normalizer
-TerminalContextObserver
-ErisObserverBridge (best-effort)
-ChatPanel / ChatParticipant
-```
-
-Không thêm Eris Planner, Eris Coder, Eris Reviewer, patch engine hay terminal agent.
-
-## Observation spine
+## Companion Observation Bridge
 
 ```text
-GitPilot AgentEventBus
-        ↓ SSE
-Eris Code
-        ↓ normalize + sanitize
-CodingObservation
-        ↓ best-effort loopback
-Eris Desktop
-        ↓
-CodingObservationService
-        ↓
-CodingFlowInterpreter + JSONL journal
+                         USER
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+       VS Code workspace          Coding agent
+   focus/save/diagnostics        GitPilot/agent khác
+       terminal result                │
+             │                         │
+             └──── Companion Observation ────┘
+                          │
+                    Eris Link v2
+                          │
+                    Eris Desktop
+                          │
+       ┌──────────────────┴─────────────────┐
+       │                                    │
+CodingFlowInterpreter          CompanionWorkspaceInterpreter
+(agent task quality)           (what is happening now)
+       │                                    │
+       └──────────── Engineering Mentor ────┘
 ```
 
-Các event quan trọng:
+## Eris nhìn thấy gì
+
+- `user_intent`: prompt user vừa gửi coding agent (redact + giới hạn độ dài);
+- agent task/phase/tool/file/test/reviewer telemetry nếu adapter có;
+- active editor path;
+- file save/create/delete/rename metadata;
+- diagnostics count;
+- terminal command + exit status ngắn;
+- current task/agent status.
+
+Eris **không** đọc raw source chỉ để quan sát, không scrape chain-of-thought và không coi save/focus là bằng chứng user tự viết code.
+
+## Hai lớp state
+
+`CodingFlowInterpreter` vẫn chỉ đánh giá task agent có evidence rõ như patch-before-inspection, retry cùng lỗi, thiếu verification/review. Workspace event không được phép tạo false finding.
+
+`CompanionWorkspaceInterpreter` trả projection `eris.companion.workspace.v1` để Eris biết user đang ở đâu, repo vừa đổi gì và agent đang ở trạng thái nào, kể cả khi không có GitPilot flow.
+
+## External-agent adapter
+
+Coding extension khác có thể gọi command nội bộ:
 
 ```text
-task_started
-phase_changed
-phase_summary
-tool_started / tool_finished
-file_changed
-approval_requested / approval_resolved
-test_result / diagnostics
-task_completed / failed / cancelled
+erisCode.companion.observeExternalAgent
 ```
 
-`phase_summary` là output explicit của specialist. V79 không scrape verbose CrewAI logs hoặc hidden chain-of-thought.
-
-## Flow findings hiện có
-
-Interpreter chỉ cảnh báo pattern có evidence tương đối chắc:
-
-- `patch_before_inspection`
-- `repeated_same_failure`
-- `repeated_test_failure`
-- `scope_expansion`
-- `no_structured_verification`
-- `review_not_observed`
-
-V79 **không tự hành động** dựa trên finding. V80 Mentor mới quyết định có nên giải thích/gợi ý/dạy user hay không.
+với normalized observation. Eris chỉ nhận telemetry; command này không cấp quyền điều khiển agent.

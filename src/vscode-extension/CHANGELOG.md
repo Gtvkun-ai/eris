@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.21.0 — V90 Companion Observation Bridge
+
+- Eris Desktop và coding agent vẫn tách runtime/authority, nhưng không còn tách nhận thức.
+- Thêm `CompanionWorkspaceObserver`: editor focus, file save/create/delete/rename, diagnostics và terminal command result. Không gửi raw source content.
+- Prompt user gửi coding agent được mirror riêng thành `user_intent`; đây là passive observation duy nhất được phép đi vào skill model.
+- Thêm nguồn telemetry `workspace`, `user`, `external-agent` bên cạnh `gitpilot`.
+- Thêm command bridge nội bộ `erisCode.companion.observeExternalAgent` để coding extension khác có thể phát normalized observation mà Eris không cần sở hữu/control agent đó.
+- Desktop dựng `eris.companion.workspace.v1`: active file, recent files/commands, diagnostics, current intent/task/agent status.
+- Mentor V90 đọc companion context và học từ explicit user intent trong coding extension; file save/focus/terminal không tự trở thành evidence skill.
+- Eris Link thêm read-only `GET /v1/companion/state`. Không thêm route control/approve/write.
+- Telemetry transport đổi sang bounded queue 160 event, ưu tiên user intent + agent lifecycle để Desktop OFF không tạo backpressure.
+- Project Trajectory V88 đọc backward-compatible journal V79 thiếu `source`; ingress mới vẫn yêu cầu source rõ ràng.
+
 ## 0.20.0 — V79 Coding Observation Spine
 
 - Release hardening: xóa source legacy `ErisClient` / `ErisServiceManager`; build sạch `dist/` trước mỗi compile.

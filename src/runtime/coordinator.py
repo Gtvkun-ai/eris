@@ -330,6 +330,17 @@ class RuntimeCoordinator(
             if callable(debug):
                 debug("[mentor-v87] development control unavailable: %s", exc)
 
+        # V88: analytics read-only cho sức khỏe project. Service chỉ đọc
+        # CodingObservation JSONL đã sanitize, không chạy tool và không sửa workspace.
+        self.project_trajectory_service = None
+        try:
+            from runtime.project_trajectory import ProjectTrajectoryService
+            self.project_trajectory_service = ProjectTrajectoryService(logger=logger)
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[mentor-v88] project trajectory unavailable: %s", exc)
+
         # V79 Coding Observation Spine. Desktop chỉ nhận telemetry GitPilot và
         # tạo journal/flow findings; V80 chỉ đọc flow này để dạy user. Không khối
         # nào ở đây có authority để điều khiển task, approve tool hay sửa workspace.
@@ -350,11 +361,27 @@ class RuntimeCoordinator(
                     recent_flows = coding_observer.recent_flows(limit=1)
                     if recent_flows:
                         mentor.observe_coding_flow(recent_flows[0])
+                    companion_snapshot = coding_observer.companion_snapshot()
+                    if companion_snapshot:
+                        mentor.observe_companion_context(companion_snapshot)
 
                 def _ingest_coding_observation(payload):
                     result = coding_observer.ingest(payload)
                     if mentor is not None:
-                        mentor.observe_coding_flow(result.get("flow") or {})
+                        flow = result.get("flow") or {}
+                        if flow:
+                            mentor.observe_coding_flow(flow)
+                        companion = result.get("companion") or {}
+                        if companion:
+                            mentor.observe_companion_context(companion)
+                        if str(result.get("event_type") or "") == "user_intent":
+                            text = str(payload.get("evidence") or "") if isinstance(payload, dict) else ""
+                            if text:
+                                mentor.observe_external_user_intent(
+                                    text,
+                                    evidence_ref=f"observer:{result.get('task_id', '')}:{payload.get('at', '')}",
+                                    now=float(payload.get("at") or time.time()),
+                                )
                     return result
 
                 port = int(os.environ.get("ERIS_CODE_OBSERVER_LINK_PORT", "8767") or "8767")
@@ -365,6 +392,7 @@ class RuntimeCoordinator(
                         task_id=task_id, workspace=workspace, limit=limit
                     ),
                     flow_provider=coding_observer.flow,
+                    companion_provider=lambda workspace: coding_observer.companion_snapshot(workspace=workspace),
                     mentor_provider=mentor.snapshot if mentor is not None else None,
                     port=port,
                     logger=logger,

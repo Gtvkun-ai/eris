@@ -11,6 +11,7 @@ Nó chỉ làm bốn việc:
 6) V83 nối CodingFlow với WorldState/environment để dạy cross-environment;
 7) V84 hợp nhất delivery Companion/Mentor/Supervisor thành một giọng Eris;
 8) V85 đóng feedback loop: outcome/calibration/profile audit, không thêm LLM judge.
+9) V90 nhận Companion Observation Bridge từ VS Code/workspace dù coding agent tách biệt.
 
 Boundary quan trọng:
 - không gọi tool coding;
@@ -99,11 +100,18 @@ class SkillEstimate:
     last_observed_at: float = 0.0
     last_calibrated_at: float = 0.0
     notes: list[str] = field(default_factory=list)
+    independent_evidence_count: int = 0
+    counter_evidence_count: int = 0
+    evidence_keys: list[str] = field(default_factory=list)
+    last_counter_evidence_at: float = 0.0
 
     def clamp(self) -> None:
         self.level = max(0.0, min(1.0, float(self.level)))
         self.confidence = max(0.0, min(1.0, float(self.confidence)))
         self.evidence_count = max(0, int(self.evidence_count))
+        self.independent_evidence_count = max(0, int(self.independent_evidence_count or self.evidence_count))
+        self.counter_evidence_count = max(0, int(self.counter_evidence_count))
+        self.evidence_keys = [str(x)[:64] for x in self.evidence_keys[-24:] if str(x).strip()]
         self.notes = [str(x)[:180] for x in self.notes[-8:] if str(x).strip()]
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,6 +120,10 @@ class SkillEstimate:
             "level": round(self.level, 4),
             "confidence": round(self.confidence, 4),
             "evidence_count": self.evidence_count,
+            "independent_evidence_count": self.independent_evidence_count,
+            "counter_evidence_count": self.counter_evidence_count,
+            "evidence_keys": list(self.evidence_keys),
+            "last_counter_evidence_at": self.last_counter_evidence_at,
             "last_observed_at": self.last_observed_at,
             "last_calibrated_at": self.last_calibrated_at,
             "notes": list(self.notes),
@@ -126,6 +138,10 @@ class SkillEstimate:
             last_observed_at=float(data.get("last_observed_at", 0.0) or 0.0),
             last_calibrated_at=float(data.get("last_calibrated_at", 0.0) or 0.0),
             notes=list(data.get("notes") or []),
+            independent_evidence_count=int(data.get("independent_evidence_count", data.get("evidence_count", 0)) or 0),
+            counter_evidence_count=int(data.get("counter_evidence_count", 0) or 0),
+            evidence_keys=list(data.get("evidence_keys") or []),
+            last_counter_evidence_at=float(data.get("last_counter_evidence_at", 0.0) or 0.0),
         )
         item.clamp()
         return item
@@ -446,6 +462,7 @@ class UserEngineeringSkillModel:
         self.path = path or (default_eris_home() / "mentor" / "engineering_skill_model.json")
         self.skills: dict[str, SkillEstimate] = {name: SkillEstimate() for name in _SKILLS}
         self.overreliance_risk: float = 0.0
+        self.last_risk_calibrated_at: float = 0.0
         self.recent_signals: list[dict[str, Any]] = []
         self.updated_at: float = 0.0
         self._lock = threading.RLock()
@@ -457,8 +474,9 @@ class UserEngineeringSkillModel:
                 "schema": _SCHEMA,
                 "updated_at": self.updated_at,
                 "overreliance_risk": round(self.overreliance_risk, 4),
+                "last_risk_calibrated_at": self.last_risk_calibrated_at,
                 "skills": {name: estimate.to_dict() for name, estimate in self.skills.items()},
-                "recent_signals": list(self.recent_signals[-20:]),
+                "recent_signals": list(self.recent_signals[-240:]),
             }
 
     def observe_user_turn(
@@ -487,6 +505,10 @@ class UserEngineeringSkillModel:
         has_hypothesis = any(marker in low for marker in _HYPOTHESIS_MARKERS)
         has_code_ref = bool(re.search(r"(?:[A-Za-z0-9_./\\-]+\.(?:py|ts|tsx|js|gd|cs|cpp|h|json|toml|ya?ml))\b", text, flags=re.I))
         has_symbol_ref = bool(re.search(r"\b[A-Za-z_][A-Za-z0-9_]{2,}(?:\.[A-Za-z_][A-Za-z0-9_]*)?\(\)?", text))
+        localization = coding_related and any(x in low for x in (" lỗi nằm ở ", " bug nằm ở ", " nằm trong ", " layer ", " module ", " file ")) and (has_code_ref or has_symbol_ref)
+        boundary_reasoning = coding_related and any(x in low for x in (" boundary ", " ownership ", " ranh giới ", " layer nào ", " chịu trách nhiệm ", " tách module ", " tách service "))
+        task_scoping = coding_related and any(x in low for x in (" scope ", " phạm vi ", " chỉ sửa ", " chỉ đụng ", " đừng đụng ", " file-change-only", " filechangeonly"))
+        ai_evidence_review = asks_review and any(x in low for x in (" ai ", " agent ", " gitpilot ", " evidence ", " bằng chứng ", " output "))
 
         if asks_learning and coding_related:
             signals.append("learning_intent")
@@ -498,6 +520,14 @@ class UserEngineeringSkillModel:
             signals.append("hypothesis")
         if blind_execute and coding_related and not (asks_review or asks_learning or has_hypothesis):
             signals.append("blind_execution_request")
+        if localization:
+            signals.append("failure_localization")
+        if boundary_reasoning:
+            signals.append("system_boundary_reasoning")
+        if task_scoping:
+            signals.append("task_scoping")
+        if ai_evidence_review:
+            signals.append("ai_evidence_review")
 
         with self._lock:
             if "grounded_hypothesis" in signals:
@@ -509,6 +539,14 @@ class UserEngineeringSkillModel:
                 self._reinforce("verification.diff_review", +0.022, evidence_ref, ts, "User chủ động yêu cầu review/verification.")
                 self._reinforce("verification.testing", +0.015, evidence_ref, ts, "User chủ động quan tâm validation.")
                 self.overreliance_risk = max(0.0, self.overreliance_risk - 0.07)
+            if "failure_localization" in signals:
+                self._reinforce("debugging.failure_localization", +0.028, evidence_ref, ts, "User khoanh vùng lỗi bằng reference kỹ thuật cụ thể.")
+            if "system_boundary_reasoning" in signals:
+                self._reinforce("architecture.system_boundaries", +0.024, evidence_ref, ts, "User reasoning về boundary/ownership của hệ thống.")
+            if "task_scoping" in signals:
+                self._reinforce("ai_operation.task_scoping", +0.024, evidence_ref, ts, "User chủ động khóa phạm vi thay đổi cho agent/task.")
+            if "ai_evidence_review" in signals:
+                self._reinforce("ai_operation.evidence_review", +0.025, evidence_ref, ts, "User yêu cầu evidence/review output của AI trước khi tin kết quả.")
             if "learning_intent" in signals:
                 # Hỏi để học không chứng minh user yếu và cũng không tự nâng skill.
                 self.overreliance_risk = max(0.0, self.overreliance_risk - 0.025)
@@ -523,7 +561,7 @@ class UserEngineeringSkillModel:
                     "signals": list(signals),
                     "evidence_ref": str(evidence_ref or "")[:160],
                 })
-                self.recent_signals = self.recent_signals[-40:]
+                self.recent_signals = self.recent_signals[-240:]
                 self.updated_at = ts
                 self._save_locked()
         return tuple(signals)
@@ -548,18 +586,57 @@ class UserEngineeringSkillModel:
 
     def _reinforce(self, skill: str, delta: float, evidence_ref: str, ts: float, note: str) -> None:
         item = self.skills.setdefault(skill, SkillEstimate())
-        # Diminishing return: estimate tiến chậm khi gần biên, tránh vài câu làm model "expert".
-        if delta >= 0:
-            item.level += delta * (1.0 - item.level)
-        else:
-            item.level += delta * item.level
-        item.confidence = min(1.0, item.confidence + 0.035)
-        item.evidence_count += 1
-        item.last_observed_at = ts
+        # V89: one turn/ref can contribute at most one independent evidence item per
+        # skill. Repeating the same claim no longer inflates confidence/counts.
+        raw_key = str(evidence_ref or f"anon:{int(ts // 86400)}")[:120]
+        evidence_key = hashlib.sha1(f"{skill}|{raw_key}".encode("utf-8", errors="ignore")).hexdigest()[:20]
+        independent = evidence_key not in item.evidence_keys
+        if independent:
+            if delta >= 0:
+                item.level += delta * (1.0 - item.level)
+            else:
+                item.level += delta * item.level
+            item.confidence = min(1.0, item.confidence + 0.035)
+            item.evidence_count += 1
+            item.independent_evidence_count += 1
+            item.evidence_keys.append(evidence_key)
+        item.last_observed_at = max(item.last_observed_at, ts)
         item.last_calibrated_at = ts
-        suffix = f" [{evidence_ref[:80]}]" if evidence_ref else ""
-        item.notes.append(note + suffix)
+        if independent:
+            suffix = f" [{evidence_ref[:80]}]" if evidence_ref else ""
+            item.notes.append(note + suffix)
         item.clamp()
+
+    def apply_counter_evidence(
+        self, skills: tuple[str, ...] | list[str], *, evidence_ref: str = "", now: float | None = None
+    ) -> None:
+        """V89 bridge from adaptive-learning misconception evidence into capability belief.
+
+        Counter-evidence is deliberately small: it lowers the estimate/confidence, but
+        never turns one wrong heuristic into a durable judgement about the user.
+        """
+        ts = float(now or time.time())
+        targets = [str(x) for x in skills if str(x) in self.skills][:4]
+        if not targets:
+            return
+        with self._lock:
+            for name in targets:
+                item = self.skills[name]
+                raw_key = str(evidence_ref or f"counter:{int(ts // 86400)}")[:120]
+                key = hashlib.sha1(f"counter|{name}|{raw_key}".encode("utf-8", errors="ignore")).hexdigest()[:20]
+                if key in item.evidence_keys:
+                    continue
+                item.evidence_keys.append(key)
+                item.counter_evidence_count += 1
+                item.level -= 0.035 * max(0.30, item.level)
+                item.confidence = max(0.05, item.confidence - 0.025)
+                item.last_counter_evidence_at = ts
+                item.last_calibrated_at = ts
+                suffix = f" [{str(evidence_ref)[:80]}]" if evidence_ref else ""
+                item.notes.append("Candidate misconception supplied counter-evidence; estimate softened." + suffix)
+                item.clamp()
+            self.updated_at = ts
+            self._save_locked()
 
     def decay_stale_confidence(self, *, now: float | None = None) -> None:
         """V85: evidence cũ giữ level nhưng confidence decay chậm theo thời gian.
@@ -585,6 +662,16 @@ class UserEngineeringSkillModel:
                     item.confidence = new_conf
                     changed = True
                 item.last_calibrated_at = ts
+            # V89: reasoning-ownership risk is recent behavior, not a permanent label.
+            risk_anchor = float(self.last_risk_calibrated_at or self.updated_at or ts)
+            risk_elapsed = max(0.0, ts - risk_anchor)
+            if risk_elapsed >= 24 * 3600.0 and self.overreliance_risk > 0.0:
+                risk_factor = 0.5 ** (risk_elapsed / (30.0 * 86400.0))
+                new_risk = max(0.0, self.overreliance_risk * risk_factor)
+                if abs(new_risk - self.overreliance_risk) >= 1e-6:
+                    self.overreliance_risk = new_risk
+                    changed = True
+            self.last_risk_calibrated_at = ts
             if changed:
                 self.updated_at = max(self.updated_at, ts)
                 self._save_locked()
@@ -638,6 +725,7 @@ class UserEngineeringSkillModel:
         with self._lock:
             self.skills = {name: SkillEstimate() for name in _SKILLS}
             self.overreliance_risk = 0.0
+            self.last_risk_calibrated_at = 0.0
             self.recent_signals = []
             self.updated_at = time.time()
             self._save_locked()
@@ -653,7 +741,8 @@ class UserEngineeringSkillModel:
                     if isinstance(skills.get(name), Mapping):
                         self.skills[name] = SkillEstimate.from_dict(skills[name])
             self.overreliance_risk = max(0.0, min(1.0, float(raw.get("overreliance_risk", 0.0) or 0.0)))
-            self.recent_signals = [dict(x) for x in (raw.get("recent_signals") or []) if isinstance(x, Mapping)][-40:]
+            self.last_risk_calibrated_at = float(raw.get("last_risk_calibrated_at", 0.0) or 0.0)
+            self.recent_signals = [dict(x) for x in (raw.get("recent_signals") or []) if isinstance(x, Mapping)][-240:]
             self.updated_at = float(raw.get("updated_at", 0.0) or 0.0)
         except Exception:
             return
@@ -835,6 +924,7 @@ class EngineeringMentorService:
         self.role_orchestrator = CompanionMentorRoleOrchestrator()
         self._last_role_directive = CompanionMentorRoleDirective()
         self._last_flow: dict[str, Any] = {}
+        self._last_companion_context: dict[str, Any] = {}
         self._last_policy_decision = MentorDecision()
         self._last_decision = MentorDecision()
         self._last_turn_id = ""
@@ -870,6 +960,82 @@ class EngineeringMentorService:
             self._last_flow = clean
         self.model.note_agent_flow(clean)
         self.learning.note_coding_flow(clean)
+
+    def observe_companion_context(self, context: Mapping[str, Any]) -> None:
+        """V90: giữ projection workspace nhỏ; metadata này không tự buff/debuff skill."""
+        if not isinstance(context, Mapping) or not context.get("workspace"):
+            return
+        commands = []
+        for raw in (context.get("recent_commands") or [])[:8]:
+            if not isinstance(raw, Mapping):
+                continue
+            commands.append({
+                "command": str(raw.get("command") or "")[:320],
+                "status": str(raw.get("status") or "")[:80],
+                "at": float(raw.get("at", 0.0) or 0.0),
+            })
+        diagnostics = context.get("diagnostics") if isinstance(context.get("diagnostics"), Mapping) else {}
+        clean = {
+            "schema": "eris.companion.workspace.v1",
+            "workspace": str(context.get("workspace") or "")[:520],
+            "session_id": str(context.get("session_id") or "")[:160],
+            "session_active": bool(context.get("session_active", False)),
+            "last_event_at": float(context.get("last_event_at", 0.0) or 0.0),
+            "active_file": str(context.get("active_file") or "")[:520],
+            "recent_files": [str(x)[:520] for x in (context.get("recent_files") or [])[:12]],
+            "recent_commands": commands,
+            "diagnostics": {
+                "files": [str(x)[:520] for x in (diagnostics.get("files") or [])[:4]],
+                "status": str(diagnostics.get("status") or "")[:80],
+                "errors": int(diagnostics.get("errors", 0) or 0),
+                "warnings": int(diagnostics.get("warnings", 0) or 0),
+                "at": float(diagnostics.get("at", 0.0) or 0.0),
+            } if diagnostics else {},
+            "current_intent": str(context.get("current_intent") or "")[:800],
+            "current_task_id": str(context.get("current_task_id") or "")[:160],
+            "agent_actor": str(context.get("agent_actor") or "")[:32],
+            "agent_status": str(context.get("agent_status") or "")[:80],
+            "sources": [str(x)[:64] for x in (context.get("sources") or [])[:8]],
+        }
+        with self._lock:
+            self._last_companion_context = clean
+
+    def observe_external_user_intent(
+        self, user_text: str, *, evidence_ref: str = "", now: float | None = None
+    ) -> tuple[str, ...]:
+        """Học từ câu user gửi trong coding extension mà không ép Eris phải trả lời chen vào.
+
+        Đây là điểm V90 quan trọng: Eris Desktop và GitPilot có thể tách UI/process,
+        nhưng skill model vẫn nhìn được *cách user đặt vấn đề* qua explicit user_intent.
+        Workspace metadata khác (save/focus/terminal) không đi qua method này.
+        """
+        text = " ".join(str(user_text or "").split()).strip()
+        if not text:
+            return ()
+        ts = float(now or time.time())
+        ref = str(evidence_ref or f"external:{int(ts * 1000)}")[:160]
+        self.model.decay_stale_confidence(now=ts)
+        signals = self.model.observe_user_turn(text, evidence_ref=ref, now=ts)
+        learning_events = self.learning.observe_user_turn(
+            text, signals=signals, feedback=(), evidence_ref=ref, now=ts
+        )
+        self.tool_literacy.observe_user_turn(text, evidence_ref=ref, now=ts)
+        if any(str(x).startswith("candidate_misconception:") for x in learning_events):
+            focus = self.learning.focus_skills_for_events(learning_events)
+            if focus:
+                self.model.apply_counter_evidence(focus, evidence_ref=f"learning:{ref}", now=ts)
+        return tuple(signals)
+
+    def _relevant_companion_context(self, *, now: float | None = None) -> dict[str, Any]:
+        ts = float(now or time.time())
+        with self._lock:
+            context = dict(self._last_companion_context)
+        if not context:
+            return {}
+        last = float(context.get("last_event_at", 0.0) or 0.0)
+        if last > 0.0 and 0.0 <= ts - last <= 30 * 60.0:
+            return context
+        return {}
 
     def _relevant_flow(self, *, now: float | None = None) -> dict[str, Any]:
         """Chỉ mang flow gần đây vào bài giảng; journal cũ không được giả làm context hiện tại."""
@@ -935,11 +1101,26 @@ class EngineeringMentorService:
         if any(str(x).startswith("candidate_misconception:") for x in learning_events):
             signals = tuple((*signals, "candidate_misconception"))
         flow = self._relevant_flow(now=ts)
+        companion_context = self._relevant_companion_context(now=ts)
         policy_decision = self.policy.decide(
             user_text, model=self.model, flow=flow, signals=signals, now=ts
         )
+        # V90: câu status ngắn như "nó sao rồi?" vẫn phải nối được với agent/workspace
+        # đang quan sát. Không suy skill từ context này; chỉ làm conversation relevant.
+        low = " ".join(str(user_text or "").split()).casefold()
+        if (
+            not policy_decision.relevant
+            and companion_context.get("current_task_id")
+            and str(companion_context.get("agent_status") or "") in {"running", "explorer", "planner", "coder", "reviewer", "validation"}
+            and any(marker in low for marker in _FLOW_REFERENCE_MARKERS)
+        ):
+            policy_decision = MentorDecision(
+                True, "discuss", "gentle", "companion_observed_active_coding_context",
+                (), (), tuple(signals), self.model.overreliance_risk,
+            )
         event_focus = self.learning.focus_skills_for_events(learning_events)
         if event_focus:
+            self.model.apply_counter_evidence(event_focus, evidence_ref=f"learning:{turn_id}", now=ts)
             policy_decision.focus_skills = tuple(dict.fromkeys((*policy_decision.focus_skills, *event_focus)))[:4]
         with self._lock:
             self._last_policy_decision = policy_decision
@@ -998,6 +1179,7 @@ class EngineeringMentorService:
                 self._last_role_directive = inactive_role
             return ""
         flow = self._relevant_flow(now=now)
+        companion_context = self._relevant_companion_context(now=now)
         snapshot = self.model.snapshot()
         skill_projection: dict[str, Any] = {}
         for name in decision.focus_skills:
@@ -1058,10 +1240,16 @@ class EngineeringMentorService:
         # V84: hợp nhất Companion/Mentor/Supervisor ở tầng delivery. Đây KHÔNG
         # tạo thêm agent và không thay đổi authority; nó chỉ giúp một Eris biết
         # nên mở lời/đổi stance tự nhiên thế nào trong technical conversation.
+        role_flow = flow
+        if not role_flow and companion_context.get("current_task_id"):
+            role_flow = {
+                "task_id": companion_context.get("current_task_id", ""),
+                "status": companion_context.get("agent_status", ""),
+            }
         role_directive = self.role_orchestrator.route(
             user_text,
             decision=decision,
-            flow=flow,
+            flow=role_flow,
             cross_environment=cross_environment.to_dict(),
             now=now,
         )
@@ -1116,6 +1304,13 @@ class EngineeringMentorService:
                 },
                 "skill_projection": skill_projection,
                 "recent_coding_flow": flow_summary,
+                "companion_workspace": {
+                    "context": companion_context,
+                    "rule": (
+                        "Dùng metadata này để biết user đang ở file/task nào và repo vừa có activity gì, kể cả khi coding agent tách biệt. "
+                        "Editor focus/file save/terminal command chỉ là observation, không chứng minh user tự viết code hay có skill tương ứng."
+                    ),
+                },
                 "adaptive_learning": {
                     "directive": learning_directive.to_dict(),
                     "projection": learning_projection,
@@ -1146,6 +1341,8 @@ class EngineeringMentorService:
                     "Do not claim a skill weakness without evidence/confidence.",
                     "Delegating to AI is not itself evidence of low competence.",
                     "Never invent tool actions, files, tests, or reviewer findings.",
+                    "Workspace observation proves activity, not authorship: a save/focus/terminal event may come from user, agent, formatter, or extension unless provenance is explicit.",
+                    "Only explicit user_intent may be fed into the user skill model; passive workspace metadata must not change skill estimates.",
                     "Do not seize GitPilot control; teach/discuss/interpret only.",
                     "Prefer one concrete next learning action over a long lecture.",
                     "If mentoring was suppressed by V80.1, say nothing mentor-specific and continue normal conversation.",
@@ -1218,6 +1415,7 @@ class EngineeringMentorService:
                 "role_orchestration": self.role_orchestrator.snapshot(),
                 "last_role_directive": self._last_role_directive.to_dict(),
                 "last_flow": dict(self._last_flow),
+                "last_companion_context": dict(self._last_companion_context),
                 "last_policy_decision": self._last_policy_decision.to_dict(),
                 "last_decision": self._last_decision.to_dict(),
             }

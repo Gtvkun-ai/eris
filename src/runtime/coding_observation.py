@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""V79: journal + interpreter read-only cho luồng coding GitPilot.
+"""V79/V90: coding journal + companion observation spine.
 
-Module này cố ý KHÔNG import AgentHarness/GitPilot và không có API điều khiển task.
-Nó chỉ nhận telemetry đã sanitize từ Eris Code, ghi journal nhỏ và suy ra các
-anti-pattern có bằng chứng rõ để V80 Mentor dùng làm nguyên liệu giảng dạy.
+V79 chỉ hiểu GitPilot task flow. V90 giữ nguyên contract đó nhưng bổ sung một
+workspace stream độc lập coding-agent để Eris biết user/repo đang diễn ra gì ngay
+cả khi GitPilot (hoặc agent khác) là extension/process tách biệt.
+
+Boundary cứng:
+- chỉ ingest telemetry allow-list đã xảy ra;
+- không có API điều khiển task/workspace;
+- workspace observation không đọc raw source content;
+- editor focus/file save/terminal event không tự được coi là bằng chứng năng lực.
 """
 from __future__ import annotations
 
@@ -20,8 +26,20 @@ from typing import Any, Mapping
 from runtime.workspace_manager import default_eris_home
 
 _SCHEMA = "eris.coding.observation.v1"
-_ALLOWED_ACTORS = {"explorer", "planner", "coder", "reviewer", "validation", "gitpilot", "unknown"}
+_ALLOWED_SOURCES = {
+    "eris-code/gitpilot",
+    "eris-code/workspace",
+    "eris-code/user",
+    "eris-code/external-agent",
+}
+_ALLOWED_ACTORS = {
+    "explorer", "planner", "coder", "reviewer", "validation", "gitpilot",
+    "user", "vscode", "external_agent", "unknown",
+}
 _ALLOWED_EVENTS = {
+    "workspace_session_started", "workspace_session_ended", "user_intent",
+    "editor_focus", "file_saved", "file_created", "file_deleted", "file_renamed",
+    "terminal_command",
     "task_started", "phase_changed", "plan_step", "phase_summary", "tool_started", "tool_finished",
     "file_changed", "approval_requested", "approval_resolved", "test_result",
     "diagnostics", "task_completed", "task_failed", "task_cancelled",
@@ -30,7 +48,6 @@ _ALLOWED_EVENTS = {
 
 def _text(value: Any, limit: int) -> str:
     clean = " ".join(str(value or "").replace("\x00", "").split())
-    # Sink cũng tự redact, không tin extension/local caller đã sanitize hoàn hảo.
     clean = re.sub(r"(?i)(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", clean)
     clean = re.sub(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>", clean)
     return clean[:limit]
@@ -44,6 +61,9 @@ def sanitize_coding_observation(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Allow-list schema; tuyệt đối không serialize raw prompt/source-code payload."""
     if str(payload.get("schema", "")) != _SCHEMA:
         raise ValueError("unsupported_schema")
+    source = _text(payload.get("source"), 64).lower()
+    if source not in _ALLOWED_SOURCES:
+        raise ValueError("unsupported_source")
     event_type = _text(payload.get("event_type"), 64).lower()
     if event_type not in _ALLOWED_EVENTS:
         raise ValueError("unsupported_event_type")
@@ -56,7 +76,7 @@ def sanitize_coding_observation(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     clean: dict[str, Any] = {
         "schema": _SCHEMA,
-        "source": "eris-code/gitpilot",
+        "source": source,
         "task_id": task_id,
         "session_id": _text(payload.get("session_id"), 160),
         "thread_id": _text(payload.get("thread_id"), 160),
@@ -95,6 +115,8 @@ class _TaskFlow:
     task_id: str
     workspace: str = ""
     actor: str = "unknown"
+    intent: str = ""
+    source: str = ""
     inspected_any: bool = False
     changed_files: set[str] = field(default_factory=set)
     tools_started: int = 0
@@ -119,7 +141,7 @@ class _TaskFlow:
 
 
 class CodingFlowInterpreter:
-    """Suy ra flow từ event observable; không đoán chain-of-thought của model."""
+    """Suy ra agent task flow từ event observable; không đoán chain-of-thought."""
 
     _READ_TOOL_MARKERS = ("read", "search", "list", "grep", "git diff", "git status", "git log")
 
@@ -128,14 +150,25 @@ class CodingFlowInterpreter:
         self._lock = threading.RLock()
 
     def observe(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        # Workspace-only events không phải một coding-agent task. Chúng được xử lý
+        # bởi CompanionWorkspaceInterpreter và tuyệt đối không được tạo finding
+        # kiểu patch_before_inspection cho thao tác save/focus bình thường.
+        kind = str(event.get("event_type") or "")
+        source = str(event.get("source") or "")
+        task_scoped = source in {"eris-code/gitpilot", "eris-code/external-agent", "eris-code/user"}
+        if not task_scoped:
+            return {}
+
         with self._lock:
             task_id = str(event["task_id"])
             state = self._tasks.setdefault(task_id, _TaskFlow(task_id=task_id))
             state.workspace = str(event.get("workspace") or state.workspace)
             state.actor = str(event.get("actor") or state.actor)
-            kind = str(event.get("event_type") or "")
+            state.source = source or state.source
             at = float(event.get("at") or time.time())
-            if kind == "task_started":
+            if kind == "user_intent":
+                state.intent = str(event.get("evidence") or "")[:800]
+            elif kind == "task_started":
                 state.started_at = state.started_at or at
                 state.status = "running"
             elif kind == "phase_changed" and state.actor == "reviewer":
@@ -160,18 +193,12 @@ class CodingFlowInterpreter:
                         evidence=str(event.get("evidence") or ""),
                     )
             elif kind == "file_changed":
-                for path in event.get("files", ()) or ():
-                    state.changed_files.add(str(path))
+                for item in event.get("files", ()) or ():
+                    state.changed_files.add(str(item))
                 if not state.inspected_any:
-                    state.finding(
-                        "patch_before_inspection",
-                        "Có thay đổi file trước khi journal thấy bước đọc/search repository.",
-                    )
+                    state.finding("patch_before_inspection", "Có thay đổi file trước khi journal thấy bước đọc/search repository.")
                 if len(state.changed_files) >= 8:
-                    state.finding(
-                        "scope_expansion",
-                        "Task đã chạm từ 8 file trở lên; nên kiểm tra lại scope và nguyên nhân lan rộng.",
-                    )
+                    state.finding("scope_expansion", "Task đã chạm từ 8 file trở lên; nên kiểm tra lại scope và nguyên nhân lan rộng.")
             elif kind == "test_result":
                 state.tests_seen += 1
                 failed = int((event.get("metrics") or {}).get("failed", 0) or 0)
@@ -211,6 +238,8 @@ class CodingFlowInterpreter:
                 "task_id": state.task_id,
                 "workspace": state.workspace,
                 "actor": state.actor,
+                "source": state.source,
+                "intent": state.intent,
                 "status": state.status,
                 "started_at": state.started_at,
                 "ended_at": state.ended_at,
@@ -234,14 +263,136 @@ class CodingFlowInterpreter:
             return [self.snapshot(item.task_id) for item in states[: max(1, min(int(limit), 20))]]
 
 
+@dataclass
+class _WorkspaceState:
+    workspace: str
+    session_id: str = ""
+    active_file: str = ""
+    recent_files: list[str] = field(default_factory=list)
+    recent_commands: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    current_intent: str = ""
+    current_task_id: str = ""
+    agent_actor: str = ""
+    agent_status: str = ""
+    sources: set[str] = field(default_factory=set)
+    last_event_at: float = 0.0
+    session_active: bool = False
+
+
+class CompanionWorkspaceInterpreter:
+    """Unified read-only projection của user/workspace/agent activity."""
+
+    def __init__(self) -> None:
+        self._workspaces: dict[str, _WorkspaceState] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _push_unique(items: list[str], value: str, limit: int = 12) -> None:
+        if not value:
+            return
+        try:
+            items.remove(value)
+        except ValueError:
+            pass
+        items.insert(0, value)
+        del items[limit:]
+
+    def observe(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        workspace = _path(event.get("workspace"))
+        if not workspace:
+            return {}
+        with self._lock:
+            state = self._workspaces.setdefault(workspace.lower(), _WorkspaceState(workspace=workspace))
+            state.workspace = workspace
+            state.session_id = str(event.get("session_id") or state.session_id)[:160]
+            state.last_event_at = float(event.get("at") or time.time())
+            source = str(event.get("source") or "")
+            if source:
+                state.sources.add(source)
+            kind = str(event.get("event_type") or "")
+            files = [str(x)[:520] for x in (event.get("files") or [])[:12]]
+
+            if kind == "workspace_session_started":
+                state.session_active = True
+            elif kind == "workspace_session_ended":
+                state.session_active = False
+            elif kind == "editor_focus" and files:
+                state.active_file = files[0]
+                self._push_unique(state.recent_files, files[0])
+            elif kind in {"file_saved", "file_created", "file_deleted", "file_renamed", "file_changed"}:
+                for item in files:
+                    self._push_unique(state.recent_files, item)
+            elif kind == "terminal_command":
+                record = {
+                    "command": str(event.get("command") or "")[:320],
+                    "status": str(event.get("status") or "")[:80],
+                    "at": state.last_event_at,
+                }
+                if record["command"]:
+                    state.recent_commands.insert(0, record)
+                    del state.recent_commands[8:]
+            elif kind == "diagnostics":
+                state.diagnostics = {
+                    "files": files[:4],
+                    "status": str(event.get("status") or "")[:80],
+                    "errors": int((event.get("metrics") or {}).get("errors", 0) or 0),
+                    "warnings": int((event.get("metrics") or {}).get("warnings", 0) or 0),
+                    "at": state.last_event_at,
+                }
+            elif kind == "user_intent":
+                state.current_intent = str(event.get("evidence") or "")[:800]
+                state.current_task_id = str(event.get("task_id") or "")[:160]
+            elif kind == "task_started":
+                state.current_task_id = str(event.get("task_id") or "")[:160]
+                state.agent_actor = str(event.get("actor") or "")[:32]
+                state.agent_status = "running"
+            elif kind == "phase_changed":
+                state.current_task_id = str(event.get("task_id") or state.current_task_id)[:160]
+                state.agent_actor = str(event.get("actor") or state.agent_actor)[:32]
+                state.agent_status = str(event.get("status") or "running")[:80]
+            elif kind in {"task_completed", "task_failed", "task_cancelled"}:
+                state.current_task_id = str(event.get("task_id") or state.current_task_id)[:160]
+                state.agent_actor = str(event.get("actor") or state.agent_actor)[:32]
+                state.agent_status = "completed" if kind == "task_completed" else "failed" if kind == "task_failed" else "cancelled"
+            return self.snapshot(workspace)
+
+    def snapshot(self, workspace: str = "") -> dict[str, Any]:
+        with self._lock:
+            state: _WorkspaceState | None = None
+            if workspace:
+                state = self._workspaces.get(_path(workspace).lower())
+            elif self._workspaces:
+                state = max(self._workspaces.values(), key=lambda item: item.last_event_at)
+            if state is None:
+                return {}
+            return {
+                "schema": "eris.companion.workspace.v1",
+                "workspace": state.workspace,
+                "session_id": state.session_id,
+                "session_active": state.session_active,
+                "last_event_at": state.last_event_at,
+                "active_file": state.active_file,
+                "recent_files": list(state.recent_files),
+                "recent_commands": [dict(x) for x in state.recent_commands],
+                "diagnostics": dict(state.diagnostics),
+                "current_intent": state.current_intent,
+                "current_task_id": state.current_task_id,
+                "agent_actor": state.agent_actor,
+                "agent_status": state.agent_status,
+                "sources": sorted(state.sources),
+            }
+
+
 class CodingObservationService:
-    """Append-only coding journal cho Desktop; bounded in-memory cache + JSONL."""
+    """Append-only coding journal + V90 companion projection."""
 
     def __init__(self, *, path: Path | None = None, logger: Any = None, memory_limit: int = 1200) -> None:
         self.path = path or (default_eris_home() / "logs" / "coding_observations.jsonl")
         self.logger = logger
         self.memory_limit = max(100, int(memory_limit))
         self.interpreter = CodingFlowInterpreter()
+        self.companion = CompanionWorkspaceInterpreter()
         self._recent: list[dict[str, Any]] = []
         self._lock = threading.RLock()
         self._load_tail()
@@ -254,7 +405,15 @@ class CodingObservationService:
                 del self._recent[: len(self._recent) - self.memory_limit]
             self._append(event)
             flow = self.interpreter.observe(event)
-        return {"accepted": True, "event_type": event["event_type"], "task_id": event["task_id"], "flow": flow}
+            companion = self.companion.observe(event)
+        return {
+            "accepted": True,
+            "event_type": event["event_type"],
+            "task_id": event["task_id"],
+            "source": event["source"],
+            "flow": flow,
+            "companion": companion,
+        }
 
     def recent(self, *, task_id: str = "", workspace: str = "", limit: int = 120) -> list[dict[str, Any]]:
         with self._lock:
@@ -272,8 +431,10 @@ class CodingObservationService:
     def recent_flows(self, *, workspace: str = "", limit: int = 8) -> list[dict[str, Any]]:
         return self.interpreter.recent_snapshots(workspace=workspace, limit=limit)
 
+    def companion_snapshot(self, *, workspace: str = "") -> dict[str, Any]:
+        return self.companion.snapshot(workspace)
+
     def _load_tail(self) -> None:
-        """Replay tail để Desktop restart vẫn hiểu task gần đây mà không cần raw chat."""
         try:
             with self.path.open("r", encoding="utf-8") as handle:
                 lines = list(deque(handle, maxlen=self.memory_limit))
@@ -289,6 +450,7 @@ class CodingObservationService:
                 continue
             self._recent.append(event)
             self.interpreter.observe(event)
+            self.companion.observe(event)
 
     def _append(self, event: Mapping[str, Any]) -> None:
         try:
@@ -305,6 +467,7 @@ class CodingObservationService:
 
 __all__ = [
     "CodingFlowInterpreter",
+    "CompanionWorkspaceInterpreter",
     "CodingObservationService",
     "sanitize_coding_observation",
 ]

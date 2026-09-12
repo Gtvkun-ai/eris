@@ -1,13 +1,39 @@
 /**
- * V79 - contract telemetry coding giữa Eris Code và Eris Desktop.
+ * V79/V90 - contract telemetry coding giữa Eris Code và Eris Desktop.
  *
- * Quan trọng: đây KHÔNG phải command protocol. Observation chỉ mô tả những gì
- * GitPilot đã làm/đã báo qua SSE. Không có field nào cho phép Desktop yêu cầu
- * Coder sửa file, chạy terminal hay tự approve tool.
+ * V90 mở contract ra khỏi GitPilot: Eris có thể quan sát workspace/user intent
+ * độc lập với coding agent. Đây vẫn KHÔNG phải command protocol; observation chỉ
+ * mô tả điều đã xảy ra. Desktop không có field/API để yêu cầu sửa file, chạy
+ * terminal hay tự approve tool.
  */
-export type CodingActor = 'explorer' | 'planner' | 'coder' | 'reviewer' | 'validation' | 'gitpilot' | 'unknown';
+export type CodingActor =
+  | 'explorer'
+  | 'planner'
+  | 'coder'
+  | 'reviewer'
+  | 'validation'
+  | 'gitpilot'
+  | 'user'
+  | 'vscode'
+  | 'external_agent'
+  | 'unknown';
+
+export type CodingObservationSource =
+  | 'eris-code/gitpilot'
+  | 'eris-code/workspace'
+  | 'eris-code/user'
+  | 'eris-code/external-agent';
 
 export type CodingObservationType =
+  | 'workspace_session_started'
+  | 'workspace_session_ended'
+  | 'user_intent'
+  | 'editor_focus'
+  | 'file_saved'
+  | 'file_created'
+  | 'file_deleted'
+  | 'file_renamed'
+  | 'terminal_command'
   | 'task_started'
   | 'phase_changed'
   | 'plan_step'
@@ -25,7 +51,7 @@ export type CodingObservationType =
 
 export interface CodingObservation {
   schema: 'eris.coding.observation.v1';
-  source: 'eris-code/gitpilot';
+  source: CodingObservationSource;
   task_id: string;
   session_id: string;
   thread_id: string;
@@ -67,7 +93,7 @@ export function actorFromStatus(status: unknown, fallback: CodingActor): CodingA
 
 function text(value: unknown, limit = 900): string {
   let output = String(value ?? '').replace(/\u0000/g, '').replace(/\r/g, '').trim();
-  // Không đẩy token/key tình cờ xuất hiện trong command hoặc lỗi vào Desktop journal.
+  // Không đẩy token/key tình cờ xuất hiện trong command, prompt hoặc lỗi vào Desktop journal.
   output = output
     .replace(/(api[_-]?key|token|authorization|password|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=<redacted>')
     .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer <redacted>');
@@ -97,10 +123,15 @@ function commandFrom(event: Record<string, any>): string | undefined {
   return clean || undefined;
 }
 
-function base(ctx: CodingObservationContext, eventType: CodingObservationType, actor = ctx.actor): CodingObservation {
+function base(
+  ctx: CodingObservationContext,
+  eventType: CodingObservationType,
+  actor = ctx.actor,
+  source: CodingObservationSource = 'eris-code/gitpilot',
+): CodingObservation {
   return {
     schema: 'eris.coding.observation.v1',
-    source: 'eris-code/gitpilot',
+    source,
     task_id: ctx.taskId,
     session_id: ctx.sessionId,
     thread_id: ctx.threadId,
@@ -109,6 +140,54 @@ function base(ctx: CodingObservationContext, eventType: CodingObservationType, a
     event_type: eventType,
     at: Date.now() / 1000,
   };
+}
+
+export function createCodingObservation(args: {
+  eventType: CodingObservationType;
+  source: CodingObservationSource;
+  taskId: string;
+  sessionId: string;
+  threadId?: string;
+  workspace: string;
+  actor: CodingActor;
+  files?: string[];
+  command?: string;
+  status?: string;
+  evidence?: string;
+  metrics?: Record<string, number | string | boolean>;
+}): CodingObservation {
+  const observation = base({
+    taskId: text(args.taskId, 160),
+    sessionId: text(args.sessionId, 160),
+    threadId: text(args.threadId ?? '', 160),
+    workspace: cleanPath(args.workspace),
+    actor: args.actor,
+  }, args.eventType, args.actor, args.source);
+  if (args.files?.length) {
+    observation.files = [...new Set(args.files.map(cleanPath).filter(Boolean))].slice(0, 12);
+  }
+  const command = text(args.command, 320);
+  if (command) observation.command = command;
+  const status = text(args.status, 80);
+  if (status) observation.status = status;
+  const evidence = text(args.evidence, args.eventType === 'phase_summary' ? 2600 : 800);
+  if (evidence) observation.evidence = evidence;
+  if (args.metrics) observation.metrics = { ...args.metrics };
+  return observation;
+}
+
+export function userIntentObservation(content: string, ctx: CodingObservationContext): CodingObservation {
+  return createCodingObservation({
+    eventType: 'user_intent',
+    source: 'eris-code/user',
+    taskId: ctx.taskId,
+    sessionId: ctx.sessionId,
+    threadId: ctx.threadId,
+    workspace: ctx.workspace,
+    actor: 'user',
+    // Đây là prompt công khai user vừa gửi coding agent, không phải hidden CoT.
+    evidence: text(content, 800),
+  });
 }
 
 /** Chuyển raw GitPilot SSE thành telemetry nhỏ, không chép raw file content. */

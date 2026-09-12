@@ -209,6 +209,15 @@ public partial class UdpListener : Node2D
 		if (panel.TryGetProperty("thong_ke_phat_trien_30_ngay", out JsonElement developmentStats) && developmentStats.ValueKind == JsonValueKind.Object)
 			_capabilityContent.AddChild(CreateDevelopmentStatsCard(developmentStats));
 
+		_capabilityContent.AddChild(CreateCapabilitySectionHeader("SỨC KHỎE DỰ ÁN · 30 NGÀY"));
+		if (panel.TryGetProperty("du_an_30_ngay", out JsonElement project) && project.ValueKind == JsonValueKind.Object)
+			_capabilityContent.AddChild(CreateProjectTrajectoryCard(project));
+		else
+			_capabilityContent.AddChild(CreateUiLabel("Chưa đủ CodingObservation để thống kê project.", 11, MemoryInkSoft));
+
+		if (panel.TryGetProperty("ghep_user_du_an", out JsonElement userProjectFit) && userProjectFit.ValueKind == JsonValueKind.Object)
+			_capabilityContent.AddChild(CreateUserProjectFitCard(userProjectFit));
+
 		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Xu hướng 30 ngày"));
 		if (panel.TryGetProperty("xu_huong_30_ngay", out JsonElement trend) && trend.ValueKind == JsonValueKind.Array)
 			_capabilityContent.AddChild(CreateTrendCard(trend));
@@ -289,6 +298,84 @@ public partial class UdpListener : Node2D
 		}
 		return card;
 	}
+
+\tprivate Control CreateProjectTrajectoryCard(JsonElement project)
+\t{
+\t\tvar card = CreateMemoryCard(new Color(0.975f, 0.99f, 0.985f, 0.97f), 14, new Color(0.28f, 0.56f, 0.46f));
+\t\tvar margin = CapabilityCardMargin(); card.AddChild(margin);
+\t\tvar box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 6); margin.AddChild(box);
+\t\tif (!project.TryGetProperty("tong_quan", out JsonElement summary) || summary.ValueKind != JsonValueKind.Object)
+\t\t{
+\t\t\tbox.AddChild(CreateUiLabel("Chưa đủ dữ liệu project.", 10, MemoryInkSoft));
+\t\t\treturn card;
+\t\t}
+\t\tint tasks = ReadJsonInt(summary, "task_da_quan_sat");
+\t\tbox.AddChild(CreateUiLabel($"Task đã quan sát: {tasks} · hoàn thành {ReadJsonInt(summary, "task_hoan_thanh")} · fail {ReadJsonInt(summary, "task_that_bai")}", 11, MemoryInk));
+\t\tbox.AddChild(CreateUiLabel($"Có thay đổi file: {ReadJsonInt(summary, "task_co_thay_doi_file")} · có test: {ReadJsonInt(summary, "task_co_test")} · test fail: {ReadJsonInt(summary, "task_co_test_fail")}", 10, MemoryInkSoft));
+\t\tint noVerify = ReadJsonInt(summary, "task_thieu_verification_co_cau_truc");
+\t\tif (noVerify > 0) box.AddChild(CreateUiLabel($"Thiếu verification có cấu trúc: {noVerify} task", 10, MemoryInkSoft));
+
+\t\tif (project.TryGetProperty("subsystem", out JsonElement subsystems) && subsystems.ValueKind == JsonValueKind.Array && subsystems.GetArrayLength() > 0)
+\t\t{
+\t\t\tbox.AddChild(CreateUiLabel("Subsystem nổi bật", 11, MemoryInk));
+\t\t\tint shown = 0;
+\t\t\tforeach (JsonElement item in subsystems.EnumerateArray())
+\t\t\t{
+\t\t\t\tif (shown++ >= 5 || item.ValueKind != JsonValueKind.Object) break;
+\t\t\t\tbox.AddChild(CreateUiLabel($"• {ReadJsonString(item, "ten")}: {ReadJsonInt(item, "so_task")} task · tín hiệu ổn định {ReadJsonString(item, "tin_hieu_on_dinh")}", 10, MemoryInkSoft));
+\t\t\t}
+\t\t}
+
+\t\tif (project.TryGetProperty("diem_nong", out JsonElement hotspots) && hotspots.ValueKind == JsonValueKind.Array && hotspots.GetArrayLength() > 0)
+\t\t{
+\t\t\tbox.AddChild(CreateUiLabel("Điểm nóng", 11, MemoryInk));
+\t\t\tint shown = 0;
+\t\t\tforeach (JsonElement item in hotspots.EnumerateArray())
+\t\t\t{
+\t\t\t\tif (shown++ >= 4 || item.ValueKind != JsonValueKind.Object) break;
+\t\t\t\tbox.AddChild(CreateUiLabel($"• {ReadJsonString(item, "file")}: {ReadJsonInt(item, "so_task_cham")} task chạm", 10, MemoryInkSoft));
+\t\t\t}
+\t\t\tbox.AddChild(CreateUiLabel("Tần suất sửa chỉ là tín hiệu quan sát; không đồng nghĩa code xấu.", 9, MemoryInkSoft));
+\t\t}
+
+\t\tif (project.TryGetProperty("no_ky_thuat_ung_vien", out JsonElement debts) && debts.ValueKind == JsonValueKind.Array && debts.GetArrayLength() > 0)
+\t\t{
+\t\t\tbox.AddChild(CreateUiLabel("Nợ kỹ thuật ứng viên", 11, MemoryInk));
+\t\t\tint shown = 0;
+\t\t\tforeach (JsonElement item in debts.EnumerateArray())
+\t\t\t{
+\t\t\t\tif (shown++ >= 4 || item.ValueKind != JsonValueKind.Object) break;
+\t\t\t\tvar label = CreateUiLabel($"[{ReadJsonString(item, "muc")}] {ReadJsonString(item, "tieu_de")}\n{ReadJsonString(item, "evidence")}", 10, MemoryInkSoft);
+\t\t\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
+\t\t\t}
+\t\t}
+
+\t\tif (project.TryGetProperty("uu_tien_de_xuat", out JsonElement priorities) && priorities.ValueKind == JsonValueKind.Array && priorities.GetArrayLength() > 0)
+\t\t{
+\t\t\tbox.AddChild(CreateUiLabel("Ưu tiên 2–4 tuần", 11, MemoryInk));
+\t\t\tint shown = 0;
+\t\t\tforeach (JsonElement item in priorities.EnumerateArray())
+\t\t\t{
+\t\t\t\tif (shown++ >= 3 || item.ValueKind != JsonValueKind.Object) break;
+\t\t\t\tvar label = CreateUiLabel($"{shown}. {ReadJsonString(item, "tieu_de")} · {ReadJsonString(item, "uu_tien")}\n{ReadJsonString(item, "ly_do")}", 10, MemoryInkSoft);
+\t\t\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
+\t\t\t}
+\t\t}
+\t\treturn card;
+\t}
+
+\tprivate Control CreateUserProjectFitCard(JsonElement fit)
+\t{
+\t\tvar card = CreateMemoryCard(new Color(0.985f, 0.985f, 1f, 0.96f), 12, new Color(0.38f, 0.48f, 0.78f));
+\t\tvar margin = CapabilityCardMargin(); card.AddChild(margin);
+\t\tvar box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+\t\tbox.AddChild(CreateUiLabel("BẠN × DỰ ÁN", 11, MemoryInk));
+\t\tbool enough = ReadJsonBool(fit, "co_du_lieu");
+\t\tstring note = enough ? ReadJsonString(fit, "goi_y") : ReadJsonString(fit, "ghi_chu");
+\t\tvar label = CreateUiLabel(string.IsNullOrWhiteSpace(note) ? "Chưa đủ dữ liệu để ghép năng lực với nhu cầu project." : note, 10, MemoryInkSoft);
+\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
+\t\treturn card;
+\t}
 
 	private Control CreateTrendCard(JsonElement trend)
 	{
