@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """V84 - Orchestrator hợp nhất Companion / Mentor / Supervisor.
 
+LƯU Ý SAU COMPANION CONSOLIDATION:
+Module này là LEGACY compatibility/test utility, KHÔNG còn nằm trong active delivery path.
+AdaptiveCompanion là owner duy nhất của stance/delivery. Không wire module này trở
+lại EngineeringMentor nếu không muốn tái tạo hai bộ não quyết cách nói.
+
 Module này KHÔNG phải agent mới và không sinh câu trả lời riêng.
 Nó chỉ tạo một directive nhỏ cho public writer để Eris giữ *một giọng nói* nhưng
 biết lúc nào nên:

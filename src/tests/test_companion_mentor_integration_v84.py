@@ -126,54 +126,53 @@ def test_role_change_is_metadata_not_forced_stickiness():
     assert second.metadata["role_changed_recently"] is True
 
 
-def test_mentor_prompt_v84_contains_one_voice_role_orchestration(tmp_path: Path):
+def test_v84_router_remains_legacy_utility_but_engineering_mentor_no_longer_uses_it_for_delivery(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow(code="patch_before_inspection", ended_at=100.0))
     prompt = mentor.prompt_context("dcm bug gì nữa vậy", turn_id="v84-1", now=101.0)
-    assert prompt.startswith("ENGINEERING_MENTOR_V84:")
+    assert prompt.startswith("ENGINEERING_EVIDENCE:")
     payload = json.loads(prompt.split("\n", 1)[1])
-    role = payload["role_orchestration"]["directive"]
-    assert role["primary_role"] == "companion"
-    assert role["supporting_functions"] == ["supervisor", "mentor"]
-    assert "Một response = một Eris" in payload["role_orchestration"]["rule"]
-    assert "Companion:/Mentor:/Supervisor:" in payload["delivery"]["one_voice_rule"]
-    assert payload["role"] == "one_eris_companion_mentor_supervisor_not_coding_agent"
+    assert payload["role"] == "technical_evidence_provider"
+    assert payload["delivery_owner"] == "adaptive_companion"
+    assert "role_orchestration" not in payload
 
 
-def test_explicit_teaching_prompt_v84_is_mentor_first(tmp_path: Path):
+def test_explicit_teaching_prompt_v84_is_learning_evidence_not_role_switch(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow(ended_at=100.0))
     prompt = mentor.prompt_context(
         "Chỉ tôi cách đọc call flow lỗi code này.", turn_id="v84-learn", now=101.0
     )
     payload = json.loads(prompt.split("\n", 1)[1])
-    assert payload["role_orchestration"]["directive"]["primary_role"] == "mentor"
     assert payload["decision"]["reason"] == "user_requested_learning"
+    assert payload["delivery_owner"] == "adaptive_companion"
+    assert "kind" in payload["adaptive_learning"]["directive"]
 
 
-def test_non_engineering_chat_does_not_inject_v84_role_layer(tmp_path: Path):
+def test_non_engineering_chat_does_not_inject_engineering_evidence(tmp_path: Path):
     mentor = _mentor(tmp_path)
     assert mentor.prompt_context("Hôm nay ăn gì?", turn_id="v84-normal", now=101.0) == ""
     assert mentor.snapshot()["last_role_directive"]["active"] is False
 
 
-def test_v84_snapshot_exposes_role_metadata_not_raw_user_text(tmp_path: Path):
+def test_snapshot_marks_v84_role_router_deprecated_without_raw_user_text(tmp_path: Path):
     mentor = _mentor(tmp_path)
     secret = "dcm bug gì nữa vậy KHONG_LUU_RAW_V84"
     mentor.observe_coding_flow(_flow(code="scope_expansion", ended_at=100.0))
     mentor.prompt_context(secret, turn_id="v84-private", now=101.0)
     snap = mentor.snapshot()
-    assert snap["role_orchestration"]["schema"] == "eris.companion_mentor_role.runtime.v1"
+    assert snap["role_orchestration"]["deprecated"] is True
+    assert snap["role_orchestration"]["delivery_owner"] == "adaptive_companion"
     assert "KHONG_LUU_RAW_V84" not in str(snap)
     audit = (tmp_path / "evaluation.jsonl").read_text(encoding="utf-8")
-    assert '"event":"role"' in audit
+    assert '"event":"decision"' in audit
     assert "KHONG_LUU_RAW_V84" not in audit
 
 
-def test_non_engineering_turn_clears_previous_role_projection(tmp_path: Path):
+def test_non_engineering_turn_keeps_legacy_role_projection_inactive(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow(ended_at=100.0))
     assert mentor.prompt_context("GitPilot xong chưa?", turn_id="tech", now=101.0)
-    assert mentor.snapshot()["last_role_directive"]["active"] is True
+    assert mentor.snapshot()["last_role_directive"]["active"] is False
     assert mentor.prompt_context("Hôm nay ăn gì?", turn_id="normal", now=102.0) == ""
     assert mentor.snapshot()["last_role_directive"]["active"] is False

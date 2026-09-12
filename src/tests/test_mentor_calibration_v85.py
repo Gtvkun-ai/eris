@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from runtime.adaptive_companion import AdaptiveCompanionService
 from runtime.engineering_mentor import EngineeringMentorService, UserEngineeringSkillModel
 from runtime.eris_code_observer_link import ErisCodeObserverLink
 from runtime.mentor_calibration import MentorCalibrationService, build_user_visible_mentor_profile
@@ -14,6 +15,40 @@ from runtime.mentor_calibration import MentorCalibrationService, build_user_visi
 def _mentor(tmp_path: Path) -> EngineeringMentorService:
     return EngineeringMentorService(path=tmp_path / "skills.json")
 
+
+
+
+class _CompanionOwner:
+    """Owner tối thiểu để test đúng pipeline delivery mới của Companion."""
+
+    def __init__(self, mentor: EngineeringMentorService) -> None:
+        self.engineering_mentor_service = mentor
+        self.life_horizon_manager = None
+        self.logger = None
+
+
+def _deliver_teaching_turn(
+    mentor: EngineeringMentorService,
+    tmp_path: Path,
+    *,
+    text: str = "Dạy tôi scope task code này từ gốc.",
+    turn_id: str = "i1",
+    now: float = 101.0,
+) -> AdaptiveCompanionService:
+    """Mô phỏng runtime thật: Mentor chuẩn bị evidence, Companion mới commit delivery.
+
+    V85 cũ từng ghi calibration ngay khi Mentor *đề xuất* dạy. Sau consolidation,
+    chỉ một intervention thật sự được Companion chọn mới được tính vào calibration.
+    """
+    assert mentor.prompt_context(text, turn_id=turn_id, now=now)
+    companion = AdaptiveCompanionService(
+        owner=_CompanionOwner(mentor),
+        state_path=tmp_path / "adaptive_companion_test.json",
+    )
+    directive = companion.observe_user_turn(text, turn_id=turn_id, now=now + 0.01)
+    assert directive.stance == "teach_guided"
+    assert directive.teaching_permission == "guided"
+    return companion
 
 def _flow(code: str, *, ended_at: float = 100.0) -> dict:
     return {
@@ -35,7 +70,7 @@ def _flow(code: str, *, ended_at: float = 100.0) -> dict:
 def test_calibration_helpful_outcome_uses_explicit_feedback_only(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow("scope_expansion"))
-    assert mentor.prompt_context("Task code này scope sao rồi?", turn_id="i1", now=101.0)
+    _deliver_teaching_turn(mentor, tmp_path)
     mentor.observe_user_turn("Ừ đúng rồi, tìm ra rồi.", turn_id="r1", now=102.0)
     snap = mentor.calibration.snapshot()
     assert snap["metrics"]["helpful"] == 1
@@ -45,7 +80,7 @@ def test_calibration_helpful_outcome_uses_explicit_feedback_only(tmp_path: Path)
 def test_topic_change_does_not_fake_ignored_or_helpful_outcome(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow("scope_expansion"))
-    assert mentor.prompt_context("Task code này scope sao rồi?", turn_id="i1", now=101.0)
+    _deliver_teaching_turn(mentor, tmp_path)
     mentor.observe_user_turn("Tối nay ăn gì?", turn_id="r1", now=102.0)
     snap = mentor.calibration.snapshot()
     assert snap["pending_count"] == 1
@@ -183,7 +218,7 @@ def test_mentor_profile_endpoint_is_read_only(tmp_path: Path):
 def test_calibration_persistence_never_contains_raw_user_text(tmp_path: Path):
     mentor = _mentor(tmp_path)
     mentor.observe_coding_flow(_flow("scope_expansion"))
-    mentor.prompt_context("Task code này scope sao rồi?", turn_id="i1", now=101.0)
+    _deliver_teaching_turn(mentor, tmp_path)
     secret = "Sai rồi, không phải vậy KHONG_LUU_RAW_V85"
     mentor.observe_user_turn(secret, turn_id="r1", now=102.0)
     raw = (tmp_path / "engineering_mentor_calibration.json").read_text(encoding="utf-8")
@@ -200,8 +235,11 @@ def test_v85_prompt_exposes_calibration_without_new_coding_authority(tmp_path: P
     assert "Do not seize GitPilot control" in prompt
 
 
-def test_explicit_verification_is_supervisor_first_after_v85_eval_fix(tmp_path: Path):
+def test_explicit_verification_stays_evidence_hint_after_delivery_moves_to_companion(tmp_path: Path):
     mentor = _mentor(tmp_path)
     prompt = mentor.prompt_context("Review diff và test code này giúp tôi.", turn_id="verify", now=101.0)
-    assert prompt
-    assert mentor.snapshot()["last_role_directive"]["primary_role"] == "supervisor"
+    assert prompt.startswith("ENGINEERING_EVIDENCE:")
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert payload["decision"]["reason"] == "user_requested_verification"
+    assert payload["delivery_owner"] == "adaptive_companion"
+    assert mentor.snapshot()["last_role_directive"]["active"] is False

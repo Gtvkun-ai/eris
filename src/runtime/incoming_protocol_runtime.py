@@ -378,7 +378,6 @@ class IncomingProtocolRuntimeMixin:
         mentor = getattr(self, "engineering_mentor_service", None)
         projection = getattr(self, "capability_projection_service", None)
         controls = getattr(self, "development_control_service", None)
-        project_trajectory = getattr(self, "project_trajectory_service", None)
         if mentor is None or projection is None:
             self._send_runtime_json({
                 "type": "capability_panel_ack",
@@ -396,8 +395,6 @@ class IncomingProtocolRuntimeMixin:
             # Build một snapshot trước action để goal lấy baseline từ đúng số user
             # đang nhìn thấy, không đọc private state bằng đường tắt.
             before = projection.build(mentor.snapshot())
-            if project_trajectory is not None:
-                before = project_trajectory.decorate(before)
             if controls is not None:
                 before = controls.decorate(before)
 
@@ -442,8 +439,6 @@ class IncomingProtocolRuntimeMixin:
                 status, message = "error", "Thao tác Capability Panel không hợp lệ."
 
             payload = projection.build(mentor.snapshot())
-            if project_trajectory is not None:
-                payload = project_trajectory.decorate(payload)
             if controls is not None:
                 payload = controls.decorate(payload)
         except Exception as exc:

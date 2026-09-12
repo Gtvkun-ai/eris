@@ -802,10 +802,14 @@ class AIChatOrchestrator:
         )
         from runtime.conversation_courtesy import ensure_conversation_courtesy
         from runtime.life_horizon import ensure_life_horizon_manager
+        from runtime.adaptive_companion import ensure_adaptive_companion_service
         courtesy_runtime = ensure_conversation_courtesy(host)
         courtesy_runtime.observe_user_turn(turn_ref=turn_id, now=cycle_start)
         life_horizon_manager = ensure_life_horizon_manager(host)
         life_horizon_manager.observe_user_turn(turn_ref=turn_id, now=cycle_start)
+        # V91: companion model sống cùng Desktop/conversation, không cần coding
+        # extension gửi telemetry. Nó chỉ quan sát foreground user turn ở đây.
+        adaptive_companion = ensure_adaptive_companion_service(host)
         # V76: cập nhật state cá thể/nhịp tương tác ngay khi user có turn.
         from runtime.persistent_individual import ensure_persistent_individual_runtime
         persistent_individual_runtime = ensure_persistent_individual_runtime(host)
@@ -986,45 +990,14 @@ class AIChatOrchestrator:
                 part for part in (discourse_context, arc_prompt) if str(part).strip()
             )
 
-        # Handoff là discourse authority bổ sung, không nhét vào grounding/evidence.
-        # Nó nói "đang nợ lượt nào / reaction có thể do ai gây ra", không nói
-        # current-world fact. Public writer nhận cùng object mà Subject/Neuro sẽ nhận.
-        discourse_context = "\n\n".join(
-            part for part in (
-                discourse_context,
-                handoff_runtime.prompt_context(),
-                life_horizon_manager.prompt_context(now=cycle_start),
-            )
-            if str(part).strip()
-        )
-
-        # V88 Project Trajectory Coach: chỉ inject khi user hỏi về roadmap/ưu tiên/
-        # hotspot/debt của project. Đây là analytics read-only từ CodingObservation,
-        # không phải coding command và không tự mở issue/sửa roadmap.
-        project_trajectory_context = ""
-        project_trajectory = getattr(host, "project_trajectory_service", None)
-        project_prompt = getattr(project_trajectory, "prompt_context", None)
-        if callable(project_prompt):
-            try:
-                project_trajectory_context = str(project_prompt(user_text, now=cycle_start) or "")
-            except Exception as exc:
-                host.logger.debug("[mentor-v88] project trajectory projection failed: %s", exc)
-        if project_trajectory_context:
-            discourse_context = "\n\n".join(
-                part for part in (discourse_context, project_trajectory_context) if str(part).strip()
-            )
-
-        # V80 Engineering Mentor là discourse policy, KHÔNG phải grounding fact và
-        # càng không phải coding authority. Nó chỉ nhìn evidence V79 + skill projection
-        # rồi bảo public writer nên giải thích/hint/challenge ở mức nào.
+        # Companion Consolidation: cập nhật technical evidence TRƯỚC khi Companion
+        # chọn delivery cho lượt hiện tại. Nhờ vậy correction/skill evidence của
+        # chính câu user này đi vào working model trước khi quyết peer/teach/skip.
         engineering_mentor_context = ""
         engineering_mentor = getattr(host, "engineering_mentor_service", None)
         mentor_prompt = getattr(engineering_mentor, "prompt_context", None)
         if callable(mentor_prompt):
             try:
-                # V83 đọc đúng canonical WorldState projection thay vì tự tạo một
-                # sensor/Godot observer mới. Nếu WorldState unavailable thì mentor
-                # vẫn chạy V80→V82 bình thường với environment rỗng.
                 mentor_environment = {}
                 try:
                     from runtime.world_state import ensure_world_state_service
@@ -1034,7 +1007,7 @@ class AIChatOrchestrator:
                         .environment_compatibility_view(now=cycle_start)
                     )
                 except Exception as env_exc:
-                    host.logger.debug("[mentor-v83] world-state projection unavailable: %s", env_exc)
+                    host.logger.debug("[mentor-evidence] world-state projection unavailable: %s", env_exc)
                 engineering_mentor_context = str(
                     mentor_prompt(
                         user_text,
@@ -1044,11 +1017,34 @@ class AIChatOrchestrator:
                     ) or ""
                 )
             except Exception as exc:
-                host.logger.debug("[mentor-v83] chat projection failed: %s", exc)
-        if engineering_mentor_context:
-            discourse_context = "\n\n".join(
-                part for part in (discourse_context, engineering_mentor_context) if str(part).strip()
+                host.logger.debug("[mentor-evidence] chat projection failed: %s", exc)
+
+        # Handoff/life horizon là continuity + goal context. AdaptiveCompanion chạy
+        # sau evidence update nhưng block của nó vẫn được đặt ĐẦU prompt để hard
+        # budget giữ đúng delivery authority.
+        companion_context = ""
+        try:
+            companion_context = str(
+                adaptive_companion.prompt_context(
+                    user_text, turn_id=turn_id, now=cycle_start
+                ) or ""
             )
+        except Exception as exc:
+            host.logger.debug("[adaptive-companion] prompt projection failed: %s", exc)
+
+        discourse_context = "\n\n".join(
+            part for part in (
+                companion_context,
+                discourse_context,
+                handoff_runtime.prompt_context(),
+                life_horizon_manager.prompt_context(now=cycle_start),
+                engineering_mentor_context,
+            )
+            if str(part).strip()
+        )
+
+        # Không tự inject ProjectTrajectory/CodingObservation. Eris hiểu project qua
+        # conversation/memory và evidence user chủ động đưa.
 
         # V39: mood sống phải tới được public writer. Personality chỉ là shape;
         # affective voice state mới là authority cho cường độ/hướng cảm xúc.
@@ -1239,7 +1235,6 @@ class AIChatOrchestrator:
             "engagement_context": engagement_context,
             "discourse_context": discourse_context,
             "engineering_mentor_context": engineering_mentor_context,
-            "project_trajectory_context": project_trajectory_context,
             "conversation_handoff": handoff_state.to_dict(),
             "conversation_trajectory": trajectory_state.to_dict(),
             "conversation_courtesy": courtesy_runtime.runtime_context(now=cycle_start),

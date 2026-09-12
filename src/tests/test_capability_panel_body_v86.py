@@ -6,11 +6,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_v86_body_panel_is_wired_into_desktop_menu_and_transport() -> None:
     listener = (ROOT / "body" / "UdpListener.cs").read_text(encoding="utf-8")
     panel = (ROOT / "body" / "UdpListener.CapabilityPanel.cs").read_text(encoding="utf-8")
-    assert '"Năng lực kỹ thuật"' in listener
+    assert '"Eris hiểu bạn"' in listener
     assert "InitializeCapabilityPanel();" in listener
     assert "TryHandleCapabilityPanelPacket(raw)" in listener
     assert "IsVisibleControlUnderMouse(_capabilityPanel" in listener
-    assert '"NĂNG LỰC KỸ THUẬT"' in panel
+    assert '"ERIS HIỂU BẠN THẾ NÀO"' in panel
     assert '"capability_panel_request"' in panel
     assert '"Chưa đủ dữ liệu"' in panel
     assert '"Đề xuất dài hạn"' in panel

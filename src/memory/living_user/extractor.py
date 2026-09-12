@@ -13,6 +13,7 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol
 
@@ -206,6 +207,27 @@ class UserProfileExtractor:
                 reason="Người dùng yêu cầu chú thích mã nguồn bằng tiếng Việt.",
             ))
 
+        # Companion Consolidation: những thứ user *đang học/đang làm* thuộc Living
+        # User Memory canonical, không thuộc AdaptiveCompanion. Đây chỉ là context
+        # hiện hành, tuyệt đối không được dùng như bằng chứng mastery/experience.
+        # Gắn expires_at để profile tự cũ đi nếu user không nhắc lại trong thời gian dài.
+        now = time.time()
+        for topic in _extract_learning_fragments(raw):
+            out.append(_op(
+                "learning.active_topics", topic, evidence_ids, UserMemoryScope(),
+                confidence=0.92, explicitness="explicit", cardinality="multi",
+                source="behavior_rule", reason="Người dùng nói rõ chủ đề mình đang học/tìm hiểu.",
+                metadata={"expires_at": now + 120.0 * 86400.0, "context_only": True},
+            ))
+
+        for activity in _extract_activity_fragments(raw):
+            out.append(_op(
+                "projects.current_activities", activity, evidence_ids, scope,
+                confidence=0.90, explicitness="explicit", cardinality="multi",
+                source="behavior_rule", reason="Người dùng nói rõ project/công việc mình đang làm.",
+                metadata={"expires_at": now + 120.0 * 86400.0, "context_only": True},
+            ))
+
         return tuple(out)
 
     def _parse_model_operations(
@@ -234,6 +256,38 @@ class UserProfileExtractor:
                 continue
             out.append(op)
         return out
+
+
+def _extract_learning_fragments(raw: str) -> tuple[str, ...]:
+    """Lấy explicit learning topic bảo thủ; không suy từ việc user chỉ hỏi kỹ thuật."""
+    fragments: list[str] = []
+    pattern = r"(?:tôi\s+)?(?:đang|muốn|định|cần)?\s*(?:học|tìm hiểu|luyện|learn(?:ing)?|study)\s+([^,!?;\n]+)"
+    for match in re.finditer(pattern, raw, flags=re.IGNORECASE):
+        value = compact_text(match.group(1), 180).strip(" .,:;!?-")
+        value = re.split(
+            r"\b(?:còn|nhưng|để\s+làm|và\s+đồ\s+án|và\s+đang\s+(?:làm|xây|code|phát\s+triển))\b",
+            value,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        if len(value) >= 2:
+            fragments.append(value)
+    return tuple(dict.fromkeys(fragments))[:4]
+
+
+def _extract_activity_fragments(raw: str) -> tuple[str, ...]:
+    """Lấy activity/project mà user tự nói đang làm; tránh biến mọi câu 'làm đi' thành project."""
+    fragments: list[str] = []
+    patterns = (
+        r"(?:đồ\s*án|project|dự\s*án)(?:\s+(?:hiện\s*tại|này|của\s+tôi))?[^,.!?;]{0,60}?(?:đang\s+làm|là|:)\s*([^,!?;\n]+)",
+        r"(?:tôi\s+)?đang\s+(?:làm|xây|code|phát\s+triển)\s+([^,!?;\n]+)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw, flags=re.IGNORECASE):
+            value = compact_text(match.group(1), 180).strip(" .,:;!?-")
+            if len(value) >= 2:
+                fragments.append(value)
+    return tuple(dict.fromkeys(fragments))[:4]
 
 
 def _op(

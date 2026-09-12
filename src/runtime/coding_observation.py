@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """V79/V90: coding journal + companion observation spine.
 
+LƯU Ý SAU COMPANION CONSOLIDATION:
+Đây là legacy journal/parser, không phải nguồn context cho Eris companion hiện tại.
+Normal Desktop startup không ingest stream này và skill model không học từ hidden
+extension telemetry. Giữ file để đọc/migrate journal cũ và test compatibility.
+
 V79 chỉ hiểu GitPilot task flow. V90 giữ nguyên contract đó nhưng bổ sung một
 workspace stream độc lập coding-agent để Eris biết user/repo đang diễn ra gì ngay
 cả khi GitPilot (hoặc agent khác) là extension/process tách biệt.

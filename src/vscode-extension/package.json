@@ -1,8 +1,8 @@
 {
   "name": "eris-code",
   "displayName": "Eris Code",
-  "description": "Eris Code V90: GitPilot coding brain tách biệt; Eris Desktop đồng hành qua Companion Observation Bridge độc lập agent.",
-  "version": "0.21.0",
+  "description": "Eris Code V91: GitPilot coding brain độc lập hoàn toàn với Eris Desktop.",
+  "version": "0.22.0",
   "publisher": "gtvk",
   "engines": {
     "vscode": "^1.100.0"
@@ -114,21 +114,6 @@
           "type": "string",
           "default": "feature_builder",
           "description": "Topology GitPilot dùng cho local workspace. feature_builder tương ứng Explorer → Planner → Coder → Reviewer (GitHub-only PR agent bị bỏ qua ở local mode)."
-        },
-        "erisCode.erisLink.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "V79: bật Eris Link khi muốn Desktop đọc coding telemetry và góp project context. Opt-in; Desktop tắt/link tắt thì Eris Code vẫn chạy bình thường."
-        },
-        "erisCode.erisLink.observeWorkspace": {
-          "type": "boolean",
-          "default": true,
-          "description": "V90: khi Eris Link bật, gửi metadata workspace read-only (file focus/save, diagnostics, terminal command result) để Eris đồng hành ngay cả khi coding agent tách biệt. Không gửi source content."
-        },
-        "erisCode.erisLink.endpoint": {
-          "type": "string",
-          "default": "http://127.0.0.1:8767/v1/context",
-          "description": "Eris Link v2 context endpoint. Extension không bao giờ launch Desktop; telemetry dùng cùng loopback origin."
         }
       }
     },
@@ -137,7 +122,7 @@
         "id": "gtvk.erisCode",
         "name": "eris-code",
         "fullName": "Eris Code",
-        "description": "GitPilot coding team trong VS Code; Eris Desktop chỉ là observer tùy chọn.",
+        "description": "GitPilot coding team độc lập trong VS Code.",
         "isSticky": true,
         "commands": [
           {

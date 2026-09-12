@@ -63,7 +63,7 @@ def test_user_intent_is_linked_to_agent_task_and_companion_context(tmp_path: Pat
     assert companion["agent_actor"] == "explorer"
 
 
-def test_external_user_intent_can_teach_skill_model_without_passive_workspace_inference(tmp_path: Path):
+def test_v90_external_intent_bridge_is_legacy_noop_after_companion_decoupling(tmp_path: Path):
     mentor = EngineeringMentorService(path=tmp_path / "skills.json")
     before = mentor.model.snapshot()["skills"]["architecture.system_boundaries"]["evidence_count"]
 
@@ -72,21 +72,19 @@ def test_external_user_intent_can_teach_skill_model_without_passive_workspace_in
         "last_event_at": 100.0,
         "active_file": "runtime/ai.py",
         "recent_files": ["runtime/ai.py"],
-        "current_task_id": "",
+        "current_task_id": "hidden-task",
         "sources": ["eris-code/workspace"],
     })
-    after_passive = mentor.model.snapshot()["skills"]["architecture.system_boundaries"]["evidence_count"]
-    assert after_passive == before
-
     signals = mentor.observe_external_user_intent(
         "Repo này sai boundary: target_sensor.gd phải chịu trách nhiệm perception; đừng đụng navigation, chỉ sửa file đó.",
         evidence_ref="observer:t1:1",
         now=200.0,
     )
-    assert "system_boundary_reasoning" in signals
-    assert "task_scoping" in signals
+
     after = mentor.model.snapshot()["skills"]["architecture.system_boundaries"]["evidence_count"]
-    assert after == before + 1
+    assert signals == ()
+    assert after == before
+    assert mentor.snapshot()["last_companion_context"] == {}
 
 
 def test_companion_context_is_exposed_read_only_over_loopback(tmp_path: Path):

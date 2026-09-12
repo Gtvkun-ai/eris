@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """V88 - Project Trajectory Coach: analytics read-only cho sức khỏe dự án.
 
+LƯU Ý SAU COMPANION CONSOLIDATION:
+Service này là LEGACY/manual analytics. Desktop không boot hoặc inject nó tự động nữa
+vì nguồn CodingObservation gắn với coding extension trái boundary companion độc lập.
+Chỉ dùng thủ công khi user chủ động yêu cầu phân tích journal cũ.
+
 Triết lý:
 - Không tạo project score giả khoa học.
 - File sửa nhiều chỉ là hotspot cần xem lại, KHÔNG đồng nghĩa code xấu.

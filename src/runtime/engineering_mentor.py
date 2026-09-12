@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""V80/V80.1/V81/V82/V83/V84/V85 - Engineering Mentor cho Eris Desktop.
+"""V80→V91 - Engineering Mentor evidence layer cho Eris Desktop.
 
 Mục tiêu của module này KHÔNG phải tạo thêm một coding agent.
 Nó chỉ làm bốn việc:
@@ -11,7 +11,7 @@ Nó chỉ làm bốn việc:
 6) V83 nối CodingFlow với WorldState/environment để dạy cross-environment;
 7) V84 hợp nhất delivery Companion/Mentor/Supervisor thành một giọng Eris;
 8) V85 đóng feedback loop: outcome/calibration/profile audit, không thêm LLM judge.
-9) V90 nhận Companion Observation Bridge từ VS Code/workspace dù coding agent tách biệt.
+9) Companion Consolidation: Mentor chỉ còn là evidence/learning provider; AdaptiveCompanion sở hữu delivery.
 
 Boundary quan trọng:
 - không gọi tool coding;
@@ -37,7 +37,7 @@ from typing import Any, Mapping
 
 from runtime.adaptive_engineering_learning import AdaptiveEngineeringLearning
 from runtime.cross_environment_supervisor import CrossEnvironmentSupervisor, CrossEnvironmentDirective
-from runtime.companion_mentor_orchestrator import CompanionMentorRoleDirective, CompanionMentorRoleOrchestrator
+from runtime.companion_mentor_orchestrator import CompanionMentorRoleDirective
 from runtime.tool_literacy_mentor import EngineeringToolLiteracy
 from runtime.mentor_calibration import MentorCalibrationService, build_user_visible_mentor_profile
 from runtime.workspace_manager import default_eris_home
@@ -919,9 +919,9 @@ class EngineeringMentorService:
         # V83 là correlator stateless: chỉ nối CodingFlow + WorldState evidence.
         self.cross_environment = CrossEnvironmentSupervisor()
         self._last_cross_environment = CrossEnvironmentDirective()
-        # V84 không tạo persona/agent mới. Role orchestrator chỉ nói cho public writer
-        # biết response kỹ thuật này nên nghiêng về companion/mentor/supervisor.
-        self.role_orchestrator = CompanionMentorRoleOrchestrator()
+        # Companion Consolidation: role router V84 không còn nằm trong active path.
+        # AdaptiveCompanion là owner duy nhất của stance/delivery. Field inactive
+        # này chỉ giữ compatibility cho snapshot/UI cũ trong một chu kỳ migration.
         self._last_role_directive = CompanionMentorRoleDirective()
         self._last_flow: dict[str, Any] = {}
         self._last_companion_context: dict[str, Any] = {}
@@ -929,6 +929,15 @@ class EngineeringMentorService:
         self._last_decision = MentorDecision()
         self._last_turn_id = ""
         self._last_turn_fingerprint = ""
+        # Hint delivery được đề xuất ở Mentor nhưng chỉ được commit khi
+        # AdaptiveCompanion xác nhận turn thật sự đang dạy/challenge.
+        self._pending_delivery_turn_id = ""
+        self._pending_learning_directive: Any = None
+        self._pending_tool_directive: Any = None
+        self._pending_session_serial = 0
+        self._pending_focus_skills: tuple[str, ...] = ()
+        self._pending_decision_mode = ""
+        self._pending_decision_reason = ""
         self._lock = threading.RLock()
 
     def observe_coding_flow(self, flow: Mapping[str, Any]) -> None:
@@ -962,79 +971,26 @@ class EngineeringMentorService:
         self.learning.note_coding_flow(clean)
 
     def observe_companion_context(self, context: Mapping[str, Any]) -> None:
-        """V90: giữ projection workspace nhỏ; metadata này không tự buff/debuff skill."""
-        if not isinstance(context, Mapping) or not context.get("workspace"):
-            return
-        commands = []
-        for raw in (context.get("recent_commands") or [])[:8]:
-            if not isinstance(raw, Mapping):
-                continue
-            commands.append({
-                "command": str(raw.get("command") or "")[:320],
-                "status": str(raw.get("status") or "")[:80],
-                "at": float(raw.get("at", 0.0) or 0.0),
-            })
-        diagnostics = context.get("diagnostics") if isinstance(context.get("diagnostics"), Mapping) else {}
-        clean = {
-            "schema": "eris.companion.workspace.v1",
-            "workspace": str(context.get("workspace") or "")[:520],
-            "session_id": str(context.get("session_id") or "")[:160],
-            "session_active": bool(context.get("session_active", False)),
-            "last_event_at": float(context.get("last_event_at", 0.0) or 0.0),
-            "active_file": str(context.get("active_file") or "")[:520],
-            "recent_files": [str(x)[:520] for x in (context.get("recent_files") or [])[:12]],
-            "recent_commands": commands,
-            "diagnostics": {
-                "files": [str(x)[:520] for x in (diagnostics.get("files") or [])[:4]],
-                "status": str(diagnostics.get("status") or "")[:80],
-                "errors": int(diagnostics.get("errors", 0) or 0),
-                "warnings": int(diagnostics.get("warnings", 0) or 0),
-                "at": float(diagnostics.get("at", 0.0) or 0.0),
-            } if diagnostics else {},
-            "current_intent": str(context.get("current_intent") or "")[:800],
-            "current_task_id": str(context.get("current_task_id") or "")[:160],
-            "agent_actor": str(context.get("agent_actor") or "")[:32],
-            "agent_status": str(context.get("agent_status") or "")[:80],
-            "sources": [str(x)[:64] for x in (context.get("sources") or [])[:8]],
-        }
-        with self._lock:
-            self._last_companion_context = clean
+        """LEGACY V90 no-op: Desktop không nhận workspace telemetry từ extension.
+
+        Giữ method để caller cũ không crash trong giai đoạn migration, nhưng dữ liệu
+        từ VS Code/GitPilot không được phép đi vào companion/skill state nữa.
+        """
+        return None
 
     def observe_external_user_intent(
         self, user_text: str, *, evidence_ref: str = "", now: float | None = None
     ) -> tuple[str, ...]:
-        """Học từ câu user gửi trong coding extension mà không ép Eris phải trả lời chen vào.
+        """LEGACY V90 no-op: không học user qua hidden extension bridge.
 
-        Đây là điểm V90 quan trọng: Eris Desktop và GitPilot có thể tách UI/process,
-        nhưng skill model vẫn nhìn được *cách user đặt vấn đề* qua explicit user_intent.
-        Workspace metadata khác (save/focus/terminal) không đi qua method này.
+        Muốn Eris hiểu một reasoning/task, user phải nói với Eris hoặc chủ động đưa
+        evidence qua kênh Eris. Đây là boundary tách rời bằng code, không chỉ bằng
+        convention rằng extension "hiện tại không gọi".
         """
-        text = " ".join(str(user_text or "").split()).strip()
-        if not text:
-            return ()
-        ts = float(now or time.time())
-        ref = str(evidence_ref or f"external:{int(ts * 1000)}")[:160]
-        self.model.decay_stale_confidence(now=ts)
-        signals = self.model.observe_user_turn(text, evidence_ref=ref, now=ts)
-        learning_events = self.learning.observe_user_turn(
-            text, signals=signals, feedback=(), evidence_ref=ref, now=ts
-        )
-        self.tool_literacy.observe_user_turn(text, evidence_ref=ref, now=ts)
-        if any(str(x).startswith("candidate_misconception:") for x in learning_events):
-            focus = self.learning.focus_skills_for_events(learning_events)
-            if focus:
-                self.model.apply_counter_evidence(focus, evidence_ref=f"learning:{ref}", now=ts)
-        return tuple(signals)
+        return ()
 
     def _relevant_companion_context(self, *, now: float | None = None) -> dict[str, Any]:
-        ts = float(now or time.time())
-        with self._lock:
-            context = dict(self._last_companion_context)
-        if not context:
-            return {}
-        last = float(context.get("last_event_at", 0.0) or 0.0)
-        if last > 0.0 and 0.0 <= ts - last <= 30 * 60.0:
-            return context
+        """Legacy compatibility: hidden workspace context is intentionally disabled."""
         return {}
 
     def _relevant_flow(self, *, now: float | None = None) -> dict[str, Any]:
@@ -1101,23 +1057,9 @@ class EngineeringMentorService:
         if any(str(x).startswith("candidate_misconception:") for x in learning_events):
             signals = tuple((*signals, "candidate_misconception"))
         flow = self._relevant_flow(now=ts)
-        companion_context = self._relevant_companion_context(now=ts)
         policy_decision = self.policy.decide(
             user_text, model=self.model, flow=flow, signals=signals, now=ts
         )
-        # V90: câu status ngắn như "nó sao rồi?" vẫn phải nối được với agent/workspace
-        # đang quan sát. Không suy skill từ context này; chỉ làm conversation relevant.
-        low = " ".join(str(user_text or "").split()).casefold()
-        if (
-            not policy_decision.relevant
-            and companion_context.get("current_task_id")
-            and str(companion_context.get("agent_status") or "") in {"running", "explorer", "planner", "coder", "reviewer", "validation"}
-            and any(marker in low for marker in _FLOW_REFERENCE_MARKERS)
-        ):
-            policy_decision = MentorDecision(
-                True, "discuss", "gentle", "companion_observed_active_coding_context",
-                (), (), tuple(signals), self.model.overreliance_risk,
-            )
         event_focus = self.learning.focus_skills_for_events(learning_events)
         if event_focus:
             self.model.apply_counter_evidence(event_focus, evidence_ref=f"learning:{turn_id}", now=ts)
@@ -1140,7 +1082,8 @@ class EngineeringMentorService:
 
         ``environment`` phải là projection structured từ WorldState/EnvironmentAwareness,
         không phải raw screenshot/OCR. V83 chỉ dùng nó để correlate với coding flow.
-        V84 chỉ điều phối delivery role; public writer vẫn là một Eris duy nhất.
+        Sau consolidation, method này chỉ dựng technical evidence/hint; quyền chọn
+        delivery/stance thuộc duy nhất AdaptiveCompanion.
         """
         policy_decision = self.observe_user_turn(user_text, turn_id=turn_id, now=now)
         calibration_directive = self.calibration.directive(now=now)
@@ -1170,27 +1113,26 @@ class EngineeringMentorService:
         with self._lock:
             self._last_decision = decision
         if not decision.relevant:
-            # V84: reset role projection cho turn hiện tại; snapshot không được
-            # giữ "mentor/supervisor active" từ một câu technical trước đó.
-            inactive_role = self.role_orchestrator.route(
-                user_text, decision=decision, flow={}, cross_environment={}, now=now
-            )
+            # Companion Consolidation: EngineeringMentor không còn tự route role.
+            # Giữ object inactive chỉ để snapshot cũ không vỡ khi UI/test đọc field.
             with self._lock:
-                self._last_role_directive = inactive_role
+                self._last_role_directive = CompanionMentorRoleDirective()
             return ""
         flow = self._relevant_flow(now=now)
-        companion_context = self._relevant_companion_context(now=now)
         snapshot = self.model.snapshot()
         skill_projection: dict[str, Any] = {}
         for name in decision.focus_skills:
             raw = dict((snapshot.get("skills") or {}).get(name) or {})
-            # Chỉ cho writer dùng level khi đã có ít nhất vài evidence và confidence đủ.
+            # Chỉ expose estimate khi evidence đủ. Companion sẽ quyết định dùng
+            # estimate này để nói như peer, dạy nhẹ hay bỏ qua phần nhập môn.
             if int(raw.get("evidence_count", 0) or 0) >= 2 and float(raw.get("confidence", 0.0) or 0.0) >= 0.16:
                 skill_projection[name] = {
                     "level": raw.get("level"),
                     "confidence": raw.get("confidence"),
                     "evidence_count": raw.get("evidence_count"),
+                    "independent_evidence_count": raw.get("independent_evidence_count", raw.get("evidence_count", 0)),
                 }
+
         runtime_snapshot = self.ledger.snapshot()
         session_serial = int(runtime_snapshot.get("session_serial", 0) or 0)
         learning_directive = self.learning.plan(
@@ -1205,12 +1147,12 @@ class EngineeringMentorService:
         learning_projection = self.learning.projection(
             [learning_directive.concept_id] if learning_directive.active else []
         )
-        if learning_directive.active:
-            self.learning.register_prompt(learning_directive, session_serial=session_serial, now=now)
+        # Chưa register_prompt ở đây: Mentor chỉ ĐỀ XUẤT learning hint.
+        # AdaptiveCompanion sẽ commit nếu delivery turn thật sự là teaching/challenge.
 
-        # V83: correlate flow code gần đây với environment hiện tại. Directive này
-        # chỉ là hypothesis/evidence bridge; tuyệt đối không được biến correlation
-        # thành claim "patch gây lỗi" nếu chưa reproduction/runtime evidence.
+        # Cross-environment vẫn giữ như EVIDENCE helper độc lập extension. Nó chỉ
+        # hoạt động khi có flow được cung cấp rõ + WorldState structured hiện tại;
+        # không tự đọc VS Code/GitPilot và không có quyền chọn stance/delivery.
         cross_environment = self.cross_environment.analyze(
             user_text,
             coding_flow=flow,
@@ -1220,8 +1162,9 @@ class EngineeringMentorService:
         with self._lock:
             self._last_cross_environment = cross_environment
 
-        # V82/V83: chọn đúng một tool chính để user tự lấy evidence. Explicit user
-        # intent và flow finding vẫn ưu tiên; cross-environment chỉ làm hint khi đủ tin.
+        # Tool literacy vẫn là evidence helper hợp lệ vì nó dạy cách tự kiểm chứng,
+        # nhưng không được tự đổi stance hay giả vờ đã mở tool. Không còn lấy hint
+        # từ VS Code/GitPilot bridge hoặc cross-environment telemetry.
         tool_directive = self.tool_literacy.plan(
             user_text,
             decision_mode=decision.mode,
@@ -1231,43 +1174,22 @@ class EngineeringMentorService:
             compact=decision.verbosity == "compact",
             now=now,
         )
-        if tool_directive.active:
-            self.tool_literacy.register_recommendation(tool_directive, now=now)
         tool_projection = self.tool_literacy.projection(
             [tool_directive.primary_tool, *tool_directive.supporting_tools] if tool_directive.active else []
         )
 
-        # V84: hợp nhất Companion/Mentor/Supervisor ở tầng delivery. Đây KHÔNG
-        # tạo thêm agent và không thay đổi authority; nó chỉ giúp một Eris biết
-        # nên mở lời/đổi stance tự nhiên thế nào trong technical conversation.
-        role_flow = flow
-        if not role_flow and companion_context.get("current_task_id"):
-            role_flow = {
-                "task_id": companion_context.get("current_task_id", ""),
-                "status": companion_context.get("agent_status", ""),
-            }
-        role_directive = self.role_orchestrator.route(
-            user_text,
-            decision=decision,
-            flow=role_flow,
-            cross_environment=cross_environment.to_dict(),
-            now=now,
-        )
+        # Calibration outcome vẫn được resolve trong observe_user_turn(), nhưng
+        # evidence provider KHÔNG tự ghi "intervention đã xảy ra". Việc đó thuộc
+        # AdaptiveCompanion sau khi nó thực sự cấp teaching/challenge permission.
         with self._lock:
-            self._last_role_directive = role_directive
-        self.ledger.record_role_selection(role_directive.to_dict(), turn_id=turn_id, now=now)
-        calibration_intervention_id = str(turn_id or "")[:120]
-        if not calibration_intervention_id:
-            # Không dùng private API của ledger: fallback id chỉ cần local uniqueness.
-            material = f"{decision.reason}|{decision.mode}|{float(now or time.time()):.6f}"
-            calibration_intervention_id = hashlib.sha1(material.encode("utf-8", errors="ignore")).hexdigest()[:16]
-        self.calibration.register_intervention(
-            intervention_id=calibration_intervention_id,
-            mode=decision.mode, reason=decision.reason, focus_skills=decision.focus_skills,
-            primary_role=role_directive.primary_role,
-            proactive=not ("learning_intent" in decision.user_signals or "verification_intent" in decision.user_signals),
-            now=now,
-        )
+            self._last_role_directive = CompanionMentorRoleDirective()
+            self._pending_delivery_turn_id = str(turn_id or "")[:120]
+            self._pending_learning_directive = learning_directive
+            self._pending_tool_directive = tool_directive
+            self._pending_session_serial = session_serial
+            self._pending_focus_skills = tuple(decision.focus_skills)
+            self._pending_decision_mode = str(decision.mode or "")
+            self._pending_decision_reason = str(decision.reason or "")
 
         flow_summary = {
             "task_id": flow.get("task_id", ""),
@@ -1277,92 +1199,116 @@ class EngineeringMentorService:
             "failed_test_runs": flow.get("failed_test_runs", 0),
             "reviewer_seen": flow.get("reviewer_seen", False),
             "findings": list(flow.get("findings") or [])[:8],
-            "phase_summaries": {
-                str(k): str(v)[:600] for k, v in dict(flow.get("phase_summaries") or {}).items()
-            },
         } if flow else {}
-        rule = {
-            "none": "Không áp mentor stance.",
-            "discuss": "Bàn luận như kỹ sư đồng hành; nếu user chỉ muốn giao việc thì không giảng đạo dài.",
-            "explain": "Giải thích cơ chế từ dễ đến sâu; chỉ rõ nên đọc layer/file/tool evidence nào trước.",
-            "guide": "Dạy theo từng bước debug/analysis; giải thích vì sao mỗi bước đáng làm, không làm hộ mọi suy luận.",
-            "hint": "Cho một hint đủ cụ thể để user tự lần tiếp; ưu tiên call-flow/evidence thay vì đáp án trọn gói.",
-            "challenge": "Yêu cầu user tự kiểm tra một mắt xích quan trọng trước khi tin patch; dùng flow finding làm lý do.",
-            "warn": "Nói thẳng, có thể hơi gắt và tự nhiên: pattern hiện tại đang làm user phụ thuộc AI. Chỉ ra bằng chứng và cho một bài tập nhỏ cụ thể. Không xúc phạm nhân phẩm/user intelligence.",
-        }.get(decision.mode, "")
+
+        # Đây là block EVIDENCE, không còn là một bộ não delivery thứ hai.
+        # Public writer phải lấy stance/teasing/depth từ ADAPTIVE_COMPANION_V91.
         return (
-            # Giữ prefix V84 để không phá contract public-writer/test cũ; payload
-            # có ``release=V85`` và calibration block mới.
-            "ENGINEERING_MENTOR_V84:\n"
+            "ENGINEERING_EVIDENCE:\n"
             + json.dumps({
-                "release": "V85",
-                "role": "one_eris_companion_mentor_supervisor_not_coding_agent",
+                "role": "technical_evidence_provider",
+                "delivery_owner": "adaptive_companion",
                 "decision": decision.to_dict(),
-                "role_orchestration": {
-                    "directive": role_directive.to_dict(),
-                    "rule": "Một response = một Eris. Role là stance nội bộ, không phải persona để tự giới thiệu hay chia section.",
-                },
                 "skill_projection": skill_projection,
-                "recent_coding_flow": flow_summary,
-                "companion_workspace": {
-                    "context": companion_context,
-                    "rule": (
-                        "Dùng metadata này để biết user đang ở file/task nào và repo vừa có activity gì, kể cả khi coding agent tách biệt. "
-                        "Editor focus/file save/terminal command chỉ là observation, không chứng minh user tự viết code hay có skill tương ứng."
-                    ),
+                "optional_recent_flow_evidence": flow_summary,
+                "cross_environment": {
+                    "authority": "evidence_only",
+                    "directive": cross_environment.to_dict(),
+                    "rule": "Correlation only: dùng để chọn bước kiểm chứng, không tự suy patch gây triệu chứng và không quyết định giọng nói.",
                 },
                 "adaptive_learning": {
                     "directive": learning_directive.to_dict(),
                     "projection": learning_projection,
-                    "rule": "Tối đa hai teach-back/micro-practice trong một mentor session; self-report hiểu rồi không phải mastery evidence.",
-                },
-                "cross_environment": {
-                    "directive": cross_environment.to_dict(),
-                    "rule": "Chỉ nối coding-flow với structured WorldState khi cả hai còn tươi. Correlation không chứng minh causality; dùng nó để chọn bước kiểm chứng runtime tiếp theo.",
+                    "rule": "Đây là learning hint/evidence; candidate misconception chỉ là giả thuyết cần kiểm tra, không phải nhãn user. Không tự biến turn thành bài học nếu Companion không cấp teaching permission.",
                 },
                 "tool_literacy": {
                     "directive": tool_directive.to_dict(),
                     "projection": tool_projection,
-                    "rule": "Ưu tiên một tool chính để trả lời một câu hỏi evidence cụ thể; tối đa hai tool phụ. Dạy user nhìn evidence, không chạy tool thay user.",
-                    "calibration_rule": "Nếu stage=unobserved/introduced, chỉ một bước mở/đọc tool cơ bản. Nếu stage=demonstrated/familiar, bỏ tutorial UI và chỉ nêu evidence/question cần kiểm chứng.",
+                    "rule": "Chỉ gợi ý cách lấy evidence. Không claim đã mở/chạy tool và không điều khiển coding extension.",
                 },
                 "mentor_calibration": {
                     "directive": calibration_directive.to_dict(),
                     "metrics": self.calibration.snapshot().get("metrics", {}),
-                    "rule": "Nếu confidence_mode=cautious, nói dưới dạng hypothesis/evidence và chừa đường cho user sửa Eris. Feedback user là dữ kiện hiệu chỉnh, không phải tranh luận thắng-thua.",
-                },
-                "teaching_rule": rule,
-                "delivery": {
-                    "verbosity": decision.verbosity,
-                    "rule": "Nếu compact, tối đa một ý dạy chính + một hành động cụ thể; không lặp lecture vừa nói.",
-                    "one_voice_rule": "Không viết Companion:/Mentor:/Supervisor:. Nếu đổi stance, chuyển tự nhiên trong cùng giọng Eris.",
+                    "rule": "Calibration dùng feedback user làm input để AdaptiveCompanion tự giảm/điều chỉnh teaching confidence; không tranh luận thắng-thua với correction.",
                 },
                 "hard_boundaries": [
-                    "Do not claim a skill weakness without evidence/confidence.",
+                    "AdaptiveCompanion is the only delivery/stance authority.",
+                    "EngineeringMentor may estimate skills and learning evidence but must not choose persona/role/teasing style.",
                     "Delegating to AI is not itself evidence of low competence.",
-                    "Never invent tool actions, files, tests, or reviewer findings.",
-                    "Workspace observation proves activity, not authorship: a save/focus/terminal event may come from user, agent, formatter, or extension unless provenance is explicit.",
-                    "Only explicit user_intent may be fed into the user skill model; passive workspace metadata must not change skill estimates.",
-                    "Do not seize GitPilot control; teach/discuss/interpret only.",
-                    "Prefer one concrete next learning action over a long lecture.",
-                    "If mentoring was suppressed by V80.1, say nothing mentor-specific and continue normal conversation.",
-                    "Never treat 'I understand' as proof of mastery; prefer retrieval/application evidence.",
-                    "Never call a candidate misconception a fact about the user; verify it with one short teach-back first.",
-                    "Adaptive learning never blocks GitPilot execution and never creates background homework notifications.",
-                    "Tool literacy is advisory only: never claim to have opened Problems, debugger, profiler, Git diff, tests, logs, or Godot Remote Scene unless there is explicit observation evidence.",
-                    "Prefer existing IDE/engine/git/test tools over inventing a new Eris coding tool.",
-                    "Recommend one primary tool for one evidence question; do not dump a generic tool checklist.",
-                    "Cross-environment evidence is correlation only; never claim that a recent patch caused a runtime symptom without direct reproduction evidence.",
-                    "Use WorldState/environment facts according to freshness/confidence and never promote task/activity interpretation to pixel-level fact.",
-                    "Companion/Mentor/Supervisor are internal functions, never separate speaking personas.",
-                    "Surface profanity or urgency can change opening style, but is not evidence for a psychological diagnosis or durable user trait.",
-                    "On ordinary coding discussion, stay companion-first unless explicit learning, verification, or grounded workflow risk justifies another stance.",
-                    "When the user corrects Eris, acknowledge the correction and lower model confidence where appropriate; do not defend a weak estimate.",
-                    "Mentor outcome metrics are calibration signals, not scores of the user or proof that a lesson caused success.",
-                    "Do not infer ignored/helpful outcomes from topic changes; only explicit feedback or observable learning evidence may resolve an intervention.",
+                    "Do not claim a skill weakness without evidence/confidence.",
+                    "Never invent files, tests, tool actions, reviewer findings, or workspace state.",
+                    "No coding-extension telemetry is required for mentor operation.",
+                    "Do not seize GitPilot control; discuss/teach/interpret only.",
+                    "Self-report of understanding is not mastery evidence; prefer retrieval/application evidence.",
+                    "Tool literacy is advisory only and never executes tools.",
+                    "Cross-environment evidence is correlation only and never becomes delivery authority.",
                 ],
             }, ensure_ascii=False, separators=(",", ":"))
         )
+
+    def note_companion_delivery(
+        self,
+        *,
+        turn_id: str,
+        stance: str,
+        teaching_permission: str,
+        reason: str = "",
+        now: float | None = None,
+    ) -> bool:
+        """Commit learning/calibration sau khi Companion đã chọn delivery.
+
+        Mentor có thể phát hiện teachable moment, nhưng chỉ Companion biết turn có
+        thật sự nên dạy/challenge hay không. Method này là handshake một chiều:
+        Companion -> evidence services. Nó không trả quyền chọn stance về Mentor.
+        """
+        ts = float(now or time.time())
+        ident = str(turn_id or "")[:120]
+        with self._lock:
+            pending_id = self._pending_delivery_turn_id
+            learning_directive = self._pending_learning_directive
+            tool_directive = self._pending_tool_directive
+            session_serial = self._pending_session_serial
+            focus_skills = self._pending_focus_skills
+            decision_mode = self._pending_decision_mode
+            decision_reason = self._pending_decision_reason
+            # Clear dù có commit hay không để hint turn cũ không rò sang turn sau.
+            self._pending_delivery_turn_id = ""
+            self._pending_learning_directive = None
+            self._pending_tool_directive = None
+            self._pending_session_serial = 0
+            self._pending_focus_skills = ()
+            self._pending_decision_mode = ""
+            self._pending_decision_reason = ""
+
+        if pending_id and ident and pending_id != ident:
+            return False
+        allowed = str(stance or "") in {"teach_light", "teach_guided", "challenge_light"}
+        if not allowed or str(teaching_permission or "") not in {"light", "guided", "challenge"}:
+            return False
+
+        if getattr(learning_directive, "active", False):
+            self.learning.register_prompt(learning_directive, session_serial=session_serial, now=ts)
+        if getattr(tool_directive, "active", False):
+            self.tool_literacy.register_recommendation(tool_directive, now=ts)
+
+        intervention_id = ident
+        if not intervention_id:
+            material = f"{decision_reason}|{decision_mode}|{ts:.6f}"
+            intervention_id = hashlib.sha1(material.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        self.calibration.register_intervention(
+            intervention_id=intervention_id,
+            mode={
+                "teach_light": "hint",
+                "teach_guided": "guide",
+                "challenge_light": "challenge",
+            }.get(str(stance or ""), decision_mode or "discuss"),
+            reason=str(reason or decision_reason),
+            focus_skills=focus_skills,
+            primary_role=str(stance or "adaptive_companion"),
+            proactive=str(stance or "") != "teach_guided",
+            now=ts,
+        )
+        return True
 
     def mentor_profile(self, *, now: float | None = None) -> dict[str, Any]:
         """V85 user-visible projection read-only: evidence/confidence rõ, không lộ notes."""
@@ -1412,7 +1358,12 @@ class EngineeringMentorService:
                 "mentor_calibration": self.calibration.snapshot(),
                 "mentor_profile": self.mentor_profile(),
                 "last_cross_environment": self._last_cross_environment.to_dict(),
-                "role_orchestration": self.role_orchestrator.snapshot(),
+                "role_orchestration": {
+                    "schema": "eris.companion_mentor_role.runtime.v1",
+                    "deprecated": True,
+                    "delivery_owner": "adaptive_companion",
+                    "note_vi": "V84 role router đã rời active path; xem AdaptiveCompanion directive.",
+                },
                 "last_role_directive": self._last_role_directive.to_dict(),
                 "last_flow": dict(self._last_flow),
                 "last_companion_context": dict(self._last_companion_context),

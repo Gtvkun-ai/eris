@@ -3,8 +3,6 @@ import { execFile } from 'node:child_process';
 import * as vscode from 'vscode';
 import { promisify } from 'node:util';
 import { captureIdeContext } from './contextBridge';
-import { fromGitPilotEvent, taskLifecycleObservation, userIntentObservation, type CodingActor } from './codingObservation';
-import { ErisObserverBridge } from './erisObserverBridge';
 import { GitPilotRuntimeManager } from './gitPilotRuntimeManager';
 import { TerminalContextObserver } from './terminalObserver';
 
@@ -14,7 +12,6 @@ type JsonRecord = Record<string, any>;
 type PermissionMode = 'normal' | 'auto' | 'plan';
 type GitPilotSession = { sessionId: string; workspaceRoot: string; mode: 'local_git' | 'folder' };
 type PendingApproval = { taskId: string; threadId: string; sessionId: string; requestId: string };
-type StreamObservationState = { actor: CodingActor };
 
 /**
  * Adapter mỏng giữa UI Eris Code và backend GitPilot.
@@ -41,7 +38,6 @@ export class GitPilotClient implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly runtime: GitPilotRuntimeManager,
     private readonly terminalObserver: TerminalContextObserver,
-    private readonly erisBridge: ErisObserverBridge,
   ) {}
 
   get connectionState(): ConnectionState { return this.state; }
@@ -116,14 +112,6 @@ export class GitPilotClient implements vscode.Disposable {
     this.upsertTask(task);
     this.emitPersist(args.threadId, { type: 'message.user', threadId: args.threadId, taskId, payload: { content } });
     this.emitPersist(args.threadId, { type: 'message.accepted', threadId: args.threadId, taskId, payload: {} });
-    this.erisBridge.publishCodingObservation(userIntentObservation(content, {
-      taskId, sessionId: session.sessionId, threadId: args.threadId,
-      workspace: session.workspaceRoot, actor: 'user',
-    }));
-    this.erisBridge.publishCodingObservation(taskLifecycleObservation('task_started', {
-      taskId, sessionId: session.sessionId, threadId: args.threadId,
-      workspace: session.workspaceRoot, actor: 'gitpilot',
-    }, 'GitPilot task started'));
     this.emitPersist(args.threadId, {
       type: 'activity.start', threadId: args.threadId, taskId,
       payload: { title: 'GitPilot', detail: 'Đang khởi động coding team…', status: 'running' },
@@ -132,8 +120,7 @@ export class GitPilotClient implements vscode.Disposable {
     try {
       const topology = String(vscode.workspace.getConfiguration('erisCode.gitpilot').get<string>('topology', 'feature_builder')).trim() || 'feature_builder';
       const ideContext = args.context ?? await captureIdeContext(this.terminalObserver);
-      const erisContext = await this.erisBridge.readProjectContext(session.workspaceRoot);
-      const message = this.composePrompt(content, ideContext, erisContext);
+      const message = this.composePrompt(content, ideContext);
 
       await this.streamTask({
         taskId,
@@ -164,10 +151,6 @@ export class GitPilotClient implements vscode.Disposable {
         type: 'message.assistant', threadId: args.threadId, taskId,
         payload: { content: `GitPilot lỗi: ${String(error)}` },
       });
-      this.erisBridge.publishCodingObservation(taskLifecycleObservation('task_failed', {
-        taskId, sessionId: session.sessionId, threadId: args.threadId,
-        workspace: session.workspaceRoot, actor: 'gitpilot',
-      }, String(error)));
       throw error;
     } finally {
       this.pending.delete(taskId);
@@ -214,10 +197,6 @@ export class GitPilotClient implements vscode.Disposable {
       this.pending.delete(taskId);
       this.finishTask(taskId, 'cancelled');
       const task = this.readTasks().find((item: any) => item.task_id === taskId);
-      this.erisBridge.publishCodingObservation(taskLifecycleObservation('task_cancelled', {
-        taskId, sessionId: String(sessionId ?? ''), threadId,
-        workspace: String(task?.metadata?.workspace ?? this.workspaceRoot()), actor: 'gitpilot',
-      }));
     }
     // V78 không tự quản lý changeset: workspace/checkpoint là trách nhiệm GitPilot.
     this.eventEmitter.fire({ type: 'task.control.ack', taskId, threadId, payload: { action, ok: true } });
@@ -264,7 +243,6 @@ export class GitPilotClient implements vscode.Disposable {
     let assistantText = '';
     let terminalError = '';
     let doneSummary = '';
-    const observationState: StreamObservationState = { actor: 'gitpilot' };
 
     while (true) {
       const { value, done } = await reader.read();
@@ -278,7 +256,7 @@ export class GitPilotClient implements vscode.Disposable {
           const raw = line.slice(5).trim();
           if (!raw) continue;
           const event = JSON.parse(raw) as JsonRecord;
-          const mapped = this.handleStreamEvent(args, event, observationState);
+          const mapped = this.handleStreamEvent(args, event);
           if (mapped.delta) assistantText += mapped.delta;
           if (mapped.error) terminalError = mapped.error;
           if (mapped.summary) doneSummary = mapped.summary;
@@ -290,7 +268,7 @@ export class GitPilotClient implements vscode.Disposable {
     if (buffer.trim().startsWith('data:')) {
       try {
         const event = JSON.parse(buffer.trim().slice(5).trim()) as JsonRecord;
-        const mapped = this.handleStreamEvent(args, event, observationState);
+        const mapped = this.handleStreamEvent(args, event);
         if (mapped.delta) assistantText += mapped.delta;
         if (mapped.error) terminalError = mapped.error;
       } catch { /* frame cuối không hoàn chỉnh thì bỏ qua */ }
@@ -307,17 +285,9 @@ export class GitPilotClient implements vscode.Disposable {
 
   private handleStreamEvent(args: {
     taskId: string; threadId: string; session: GitPilotSession; topology: string;
-  }, event: JsonRecord, observationState: StreamObservationState): { delta?: string; error?: string; summary?: string } {
+  }, event: JsonRecord): { delta?: string; error?: string; summary?: string } {
     const type = String(event.type ?? '');
 
-    // V79: normalize raw SSE thành observation nhỏ trước khi render UI. Đây là
-    // telemetry một chiều; Eris Desktop không có đường quay lại điều khiển task.
-    const normalized = fromGitPilotEvent(event, {
-      taskId: args.taskId, sessionId: args.session.sessionId, threadId: args.threadId,
-      workspace: args.session.workspaceRoot, actor: observationState.actor,
-    });
-    observationState.actor = normalized.actor;
-    if (normalized.observation) this.erisBridge.publishCodingObservation(normalized.observation);
 
     if (type === 'text_delta') {
       const text = String(event.text ?? '');
@@ -458,10 +428,10 @@ export class GitPilotClient implements vscode.Disposable {
     } catch { return undefined; }
   }
 
-  private composePrompt(content: string, ide: Record<string, unknown>, eris?: Record<string, unknown>): string {
-    // Chỉ đưa observation/project context cần cho task. Private user model của
-    // Eris Desktop không được đẩy sang coding provider mặc định.
-    const envelope = { source: 'eris-code', vscode_observation: ide, eris_observation: eris ?? null };
+  private composePrompt(content: string, ide: Record<string, unknown>): string {
+    // V91: prompt coding chỉ mang context VS Code do chính extension quan sát.
+    // Không đọc profile/context/telemetry từ Eris Desktop.
+    const envelope = { source: 'eris-code', vscode_observation: ide };
     const serialized = JSON.stringify(envelope);
     return `${content}\n\n<ide_observation>${serialized.slice(0, 24_000)}</ide_observation>`;
   }

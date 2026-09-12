@@ -1,3 +1,14 @@
+# Eris Code Architecture — V91
+
+## Boundary chính
+
+Eris Code là coding product độc lập. Runtime path chỉ gồm **VS Code ↔ Eris Code ↔ GitPilot**.
+Không có Eris Link, Desktop observer, project-context fetch từ Desktop hay telemetry push sang Desktop.
+Eris Desktop là companion riêng; nếu user muốn Eris xem code/diff/log thì user chủ động đưa chúng cho Eris qua kênh của Eris.
+
+
+## Ghi chú lịch sử / phần còn lại
+
 # Kiến trúc Eris Code V90
 
 ## Invariant

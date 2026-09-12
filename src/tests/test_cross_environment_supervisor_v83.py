@@ -163,8 +163,9 @@ def test_mentor_v83_uses_world_environment_to_bridge_generic_runtime_question(tm
         now=101.0,
         environment=_env(task_hint="runtime node transform collision"),
     )
-    assert prompt.startswith("ENGINEERING_MENTOR_V84:")
+    assert prompt.startswith("ENGINEERING_EVIDENCE:")
     payload = json.loads(prompt.split("\n", 1)[1])
+    assert payload["cross_environment"]["authority"] == "evidence_only"
     assert payload["cross_environment"]["directive"]["active"] is True
     assert payload["cross_environment"]["directive"]["primary_tool_hint"] == "godot_remote_scene"
     assert payload["tool_literacy"]["directive"]["primary"]["tool_id"] == "godot_remote_scene"

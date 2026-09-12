@@ -1,28 +1,117 @@
 {
-	"Version": 3,
-	"FileReferences": {
-		"Moc": "infj.moc3",
-		"Textures": [
-			"infj.1024/texture_00.png"
-		],
-		"Physics": "infj.physics3.json",
-		"DisplayInfo": "infj.cdi3.json"
-	},
-	"Groups": [
-		{
-			"Target": "Parameter",
-			"Name": "EyeBlink",
-			"Ids": [
-				"ParamEyeLOpen",
-				"ParamEyeROpen"
-			]
-		},
-		{
-			"Target": "Parameter",
-			"Name": "LipSync",
-			"Ids": [
-				"ParamMouthOpenY"
-			]
-		}
-	]
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "infj.moc3",
+    "Textures": [
+      "infj.1024/texture_00.png"
+    ],
+    "Physics": "infj.physics3.json",
+    "DisplayInfo": "infj.cdi3.json",
+    "Expressions": [
+      {
+        "Name": "calm",
+        "File": "expressions/calm.exp3.json"
+      },
+      {
+        "Name": "warm",
+        "File": "expressions/warm.exp3.json"
+      },
+      {
+        "Name": "dry",
+        "File": "expressions/dry.exp3.json"
+      },
+      {
+        "Name": "curious",
+        "File": "expressions/curious.exp3.json"
+      },
+      {
+        "Name": "focused",
+        "File": "expressions/focused.exp3.json"
+      },
+      {
+        "Name": "low",
+        "File": "expressions/low.exp3.json"
+      },
+      {
+        "Name": "skeptical",
+        "File": "expressions/skeptical.exp3.json"
+      },
+      {
+        "Name": "amused",
+        "File": "expressions/amused.exp3.json"
+      },
+      {
+        "Name": "concerned",
+        "File": "expressions/concerned.exp3.json"
+      },
+      {
+        "Name": "annoyed_soft",
+        "File": "expressions/annoyed_soft.exp3.json"
+      },
+      {
+        "Name": "surprised_soft",
+        "File": "expressions/surprised_soft.exp3.json"
+      }
+    ],
+    "Motions": {
+      "ErisAttention": [
+        {
+          "File": "motions/glance_left.motion3.json"
+        },
+        {
+          "File": "motions/glance_right.motion3.json"
+        },
+        {
+          "File": "motions/look_down_soft.motion3.json"
+        },
+        {
+          "File": "motions/look_up_soft.motion3.json"
+        },
+        {
+          "File": "motions/scan_short.motion3.json"
+        }
+      ],
+      "ErisThinking": [
+        {
+          "File": "motions/ponder_left.motion3.json"
+        },
+        {
+          "File": "motions/ponder_right.motion3.json"
+        }
+      ],
+      "ErisGesture": [
+        {
+          "File": "motions/tilt_left.motion3.json"
+        },
+        {
+          "File": "motions/tilt_right.motion3.json"
+        },
+        {
+          "File": "motions/shake_small.motion3.json"
+        }
+      ],
+      "ErisSettle": [
+        {
+          "File": "motions/settle.motion3.json"
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ]
 }

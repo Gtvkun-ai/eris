@@ -5,7 +5,7 @@
     "TotalInputCount": 2,
     "TotalOutputCount": 8,
     "VertexCount": 4,
-    "Fps": 60,
+    "Fps": 30,
     "EffectiveForces": {
       "Gravity": {
         "X": 0,
@@ -19,7 +19,7 @@
     "PhysicsDictionary": [
       {
         "Id": "PhysicsSetting1",
-        "Name": "Front hair - elegant follow"
+        "Name": "Hair / elegant soft follow"
       }
     ]
   },
@@ -41,7 +41,7 @@
             "Target": "Parameter",
             "Id": "ParamAngleZ"
           },
-          "Weight": 32,
+          "Weight": 44,
           "Type": "Angle",
           "Reflect": false
         }
@@ -54,7 +54,7 @@
           },
           "VertexIndex": 1,
           "Scale": 3.8,
-          "Weight": 100,
+          "Weight": 92,
           "Type": "Angle",
           "Reflect": false
         },
@@ -64,8 +64,8 @@
             "Id": "Param_Angle_Rotation3"
           },
           "VertexIndex": 2,
-          "Scale": 6.8,
-          "Weight": 100,
+          "Scale": 7.5,
+          "Weight": 92,
           "Type": "Angle",
           "Reflect": false
         },
@@ -75,8 +75,8 @@
             "Id": "Param_Angle_Rotation4"
           },
           "VertexIndex": 3,
-          "Scale": 8.2,
-          "Weight": 100,
+          "Scale": 8.5,
+          "Weight": 90,
           "Type": "Angle",
           "Reflect": false
         },
@@ -87,7 +87,7 @@
           },
           "VertexIndex": 3,
           "Scale": 4.2,
-          "Weight": 100,
+          "Weight": 86,
           "Type": "Angle",
           "Reflect": false
         },
@@ -97,8 +97,8 @@
             "Id": "Param_Angle_Rotation6"
           },
           "VertexIndex": 3,
-          "Scale": 3.8,
-          "Weight": 100,
+          "Scale": 4.6,
+          "Weight": 84,
           "Type": "Angle",
           "Reflect": false
         },
@@ -108,8 +108,8 @@
             "Id": "Param_Angle_Rotation7"
           },
           "VertexIndex": 3,
-          "Scale": 3.4,
-          "Weight": 100,
+          "Scale": 4.6,
+          "Weight": 82,
           "Type": "Angle",
           "Reflect": false
         },
@@ -120,7 +120,7 @@
           },
           "VertexIndex": 3,
           "Scale": 1.2,
-          "Weight": 100,
+          "Weight": 72,
           "Type": "Angle",
           "Reflect": false
         },
@@ -130,8 +130,8 @@
             "Id": "Param_Angle_Rotation9"
           },
           "VertexIndex": 3,
-          "Scale": 0.9,
-          "Weight": 100,
+          "Scale": 1.2,
+          "Weight": 70,
           "Type": "Angle",
           "Reflect": false
         }
@@ -152,9 +152,9 @@
             "X": 0,
             "Y": 10
           },
-          "Mobility": 0.9,
-          "Delay": 0.82,
-          "Acceleration": 0.94,
+          "Mobility": 0.88,
+          "Delay": 0.9,
+          "Acceleration": 0.92,
           "Radius": 10
         },
         {
@@ -162,9 +162,9 @@
             "X": 0,
             "Y": 20
           },
-          "Mobility": 0.84,
-          "Delay": 0.72,
-          "Acceleration": 0.88,
+          "Mobility": 0.82,
+          "Delay": 0.82,
+          "Acceleration": 0.86,
           "Radius": 10
         },
         {
@@ -172,22 +172,22 @@
             "X": 0,
             "Y": 30
           },
-          "Mobility": 0.78,
-          "Delay": 0.62,
-          "Acceleration": 0.82,
+          "Mobility": 0.76,
+          "Delay": 0.74,
+          "Acceleration": 0.8,
           "Radius": 10
         }
       ],
       "Normalization": {
         "Position": {
-          "Minimum": -30,
+          "Minimum": -10,
           "Default": 0,
           "Maximum": 10
         },
         "Angle": {
-          "Minimum": -12,
+          "Minimum": -10,
           "Default": 0,
-          "Maximum": 12
+          "Maximum": 10
         }
       }
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.0 — V91 Desktop Independence
+
+- Gỡ Eris Link/Companion Observation Bridge khỏi runtime extension.
+- GitPilotClient chỉ dùng VS Code context local; không đọc context từ Eris Desktop.
+- Không gửi user prompt, agent telemetry, file focus/save, diagnostics hay terminal result sang Desktop.
+- Eris Code chạy đầy đủ khi Eris Desktop tắt hoặc không được cài.
+- Companion/learning của Eris chuyển về Desktop và học từ conversation/context user chủ động cung cấp.
+
 ## 0.21.0 — V90 Companion Observation Bridge
 
 - Eris Desktop và coding agent vẫn tách runtime/authority, nhưng không còn tách nhận thức.

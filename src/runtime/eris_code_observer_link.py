@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Eris Link: context outbound + coding telemetry inbound trên loopback.
 
+LƯU Ý SAU COMPANION CONSOLIDATION:
+Đây là legacy/rollback transport. Coordinator không start link này trong normal runtime.
+Eris Code phải chạy độc lập và AdaptiveCompanion không nhận hidden telemetry từ đây.
+Không dùng module này làm dependency cho chức năng companion mới.
+
 V79 giữ boundary rất cứng:
 - GET /v1/context: Desktop góp environment/project memory cho Eris Code.
 - POST /v1/coding/observations: Eris Code gửi observation GitPilot đã xảy ra.

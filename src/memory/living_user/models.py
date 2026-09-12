@@ -421,6 +421,15 @@ class ProfileContextPacket:
         lines = [
             "USER CONTEXT (dùng để cá nhân hóa, không đọc lại như hồ sơ, không biến suy đoán thành sự thật):"
         ]
+        # Companion Consolidation: profile có thể nhớ self-report/inference về
+        # kinh nghiệm, nhưng đó KHÔNG phải mastery evidence. Nếu không khóa ở đây,
+        # writer có thể tự nhảy sang "user advanced" và bỏ qua AdaptiveCompanion.
+        if any(_is_competence_profile_path(item.path) for item in self.items):
+            lines.append(
+                "COMPETENCE BOUNDARY: các claim về experience/skill trong USER CONTEXT chỉ là context; "
+                "không được dùng để quyết định mức dạy, skip basics hay gắn nhãn trình độ. "
+                "Nếu runtime có evidence-based skill model, model đó mới là authority cho competence."
+            )
         for item in self.items:
             marker = "đã nói rõ" if item.explicitness == "explicit" else ("quan sát lặp lại" if item.explicitness == "observed" else "suy luận thận trọng")
             permission = {
@@ -445,6 +454,21 @@ class ProfileContextPacket:
             if action_text:
                 lines.append(action_text)
         return "\n".join(lines)
+
+
+def _is_competence_profile_path(path: str) -> bool:
+    """Nhận diện profile path mô tả năng lực để không lấn skill-evidence authority."""
+    normalized = normalize_path(path)
+    prefixes = (
+        "technical.experience",
+        "technical.skill",
+        "technical.competence",
+        "technical.proficiency",
+        "skills.",
+        "competence.",
+        "learning.mastery",
+    )
+    return any(normalized == prefix.rstrip(".") or normalized.startswith(prefix) for prefix in prefixes)
 
 
 @dataclass(slots=True)

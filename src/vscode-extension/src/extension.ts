@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
 import { ErisChatPanel } from './chatPanel';
-import { CompanionWorkspaceObserver, registerExternalAgentObservationBridge } from './companionWorkspaceObserver';
 import { registerErisChatParticipant } from './chatParticipant';
 import { WorkspaceDiffProvider } from './diffProvider';
-import { ErisObserverBridge } from './erisObserverBridge';
 import { GitPilotClient } from './gitPilotClient';
 import { GitPilotRuntimeManager } from './gitPilotRuntimeManager';
 import { runErisCodeSelfTest } from './selfTest';
@@ -18,21 +16,18 @@ async function revealSidebar(): Promise<void> {
 }
 
 /**
- * V78: Eris Code độc lập hoàn toàn với Eris Desktop.
- * Runtime bắt buộc duy nhất là GitPilot; Desktop chỉ có thể cung cấp context
- * read-only nếu user chủ động bật Eris Link.
+ * V91: Eris Code là sản phẩm coding độc lập thật sự.
+ * Runtime của extension chỉ biết VS Code + GitPilot; không mở bridge, không ping
+ * Eris Desktop và không cần Desktop tồn tại để bất kỳ chức năng coding nào chạy.
  */
 export function activate(context: vscode.ExtensionContext): void {
   const runtime = new GitPilotRuntimeManager(context);
   const terminalObserver = new TerminalContextObserver();
-  const erisBridge = new ErisObserverBridge();
-  const companionObserver = new CompanionWorkspaceObserver(erisBridge);
-  registerExternalAgentObservationBridge(context, erisBridge);
-  const client = new GitPilotClient(context, runtime, terminalObserver, erisBridge);
+  const client = new GitPilotClient(context, runtime, terminalObserver);
   const diffProvider = new WorkspaceDiffProvider();
   const chatPanel = new ErisChatPanel(context.extensionUri, client, context, terminalObserver, diffProvider);
 
-  context.subscriptions.push(runtime, client, terminalObserver, companionObserver, diffProvider, chatPanel);
+  context.subscriptions.push(runtime, client, terminalObserver, diffProvider, chatPanel);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(
     ErisChatPanel.viewType,
     chatPanel,

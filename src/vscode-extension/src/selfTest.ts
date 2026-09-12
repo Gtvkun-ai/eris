@@ -15,7 +15,7 @@ export async function runErisCodeSelfTest(
   const results: CheckResult[] = [];
   output.clear(); output.show(true);
   output.appendLine('=== ERIS CODE SELF TEST ===');
-  output.appendLine('Invariant: Eris Desktop is optional; V90 separates coding authority from companion observation.');
+  output.appendLine('Invariant V91: Eris Code chỉ phụ thuộc VS Code + GitPilot; Eris Desktop không nằm trong runtime path.');
 
   const check = async (name: string, fn: () => Promise<string> | string) => {
     try { const detail = await fn(); results.push({ name, ok: true, detail }); output.appendLine(`✓ ${name}: ${detail}`); }
@@ -37,15 +37,7 @@ export async function runErisCodeSelfTest(
     const workspace = data.workspace as Record<string, unknown> | undefined;
     return `${Array.isArray(workspace?.folders) ? workspace!.folders.length : 0} folder(s)`;
   });
-  await check('Companion observation', () => {
-    const cfg = vscode.workspace.getConfiguration('erisCode.erisLink');
-    const enabled = cfg.get<boolean>('enabled', false);
-    const observeWorkspace = cfg.get<boolean>('observeWorkspace', true);
-    if (!enabled) return 'Eris Link disabled; coding remains fully available, Desktop companion will not observe this workspace';
-    return observeWorkspace
-      ? 'Eris Link + workspace observation enabled (V90)'
-      : 'Eris Link enabled; workspace observation disabled by user';
-  });
+  await check('Desktop independence', () => 'Không có Eris Link/observer trong coding runtime V91');
 
   const failed = results.filter((item) => !item.ok).length;
   output.appendLine(`\nRESULT: ${results.length - failed}/${results.length} passed, ${failed} failed`);

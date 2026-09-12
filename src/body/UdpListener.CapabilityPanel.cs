@@ -6,14 +6,30 @@ using System.Text.Json;
 
 public partial class UdpListener : Node2D
 {
-	// V87: panel thống kê + user control. UI không tự ghi score; mọi correction/reset
-	// chỉ gửi action có cấu trúc về runtime trusted channel để Mentor tự cập nhật belief.
-	private static readonly Vector2 CapabilityPanelPreferredSize = new(980f, 720f);
-	private static readonly Vector2 CapabilityPanelMinSize = new(860f, 620f);
+	// Companion capability panel
+	// --------------------------
+	// Panel này KHÔNG phải bảng điểm hay dashboard quản trị. Nó chỉ trình bày
+	// working model mà ERIS đang dùng để chọn cách nói với user: phần nào có thể
+	// nói như technical peer, phần nào nên guided, và phần nào vẫn chưa đủ evidence.
+	// Toàn bộ correction/reset vẫn đi qua trusted runtime action; UI không tự sửa score.
+	private static readonly Vector2 CapabilityPanelPreferredSize = new(920f, 700f);
+	private static readonly Vector2 CapabilityPanelMinSize = new(820f, 600f);
+
+	private enum CapabilityViewMode
+	{
+		Overview,
+		Evidence,
+	}
+
 	private Panel _capabilityPanel;
 	private Button _contextCapabilityButton;
 	private VBoxContainer _capabilityContent;
 	private Label _capabilityStatus;
+	private Button _capabilityOverviewButton;
+	private Button _capabilityEvidenceButton;
+	private CapabilityViewMode _capabilityViewMode = CapabilityViewMode.Overview;
+	private JsonElement _capabilitySnapshot;
+	private bool _hasCapabilitySnapshot;
 	private string _capabilityRequestId = "";
 	private bool _capabilityPending;
 	private ulong _capabilityRequestAtMs;
@@ -64,14 +80,17 @@ public partial class UdpListener : Node2D
 	private void BuildCapabilityPanelUi()
 	{
 		if (_capabilityPanel == null) return;
+
+		// Tôn trọng visual language chủ đạo của ERIS Desktop: giấy sáng, hồng mềm,
+		// ink tím nâu và border mảnh. Không dựng dark dashboard riêng cho panel này.
 		_capabilityPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
 			BgColor = new Color(1f, 0.985f, 0.993f, 0.995f),
 			BorderColor = MemoryBorder,
-			BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
 			CornerRadiusTopLeft = 20, CornerRadiusTopRight = 20,
 			CornerRadiusBottomLeft = 20, CornerRadiusBottomRight = 20,
-			ShadowColor = new Color(0.55f, 0.10f, 0.30f, 0.20f), ShadowSize = 10,
+			ShadowColor = new Color(0.55f, 0.10f, 0.30f, 0.16f), ShadowSize = 9,
 		});
 		_capabilityPanel.ClipContents = true;
 
@@ -84,36 +103,98 @@ public partial class UdpListener : Node2D
 		_capabilityPanel.AddChild(margin);
 
 		var root = new VBoxContainer();
-		root.AddThemeConstantOverride("separation", 10);
+		root.AddThemeConstantOverride("separation", 9);
 		margin.AddChild(root);
 
 		var header = new HBoxContainer();
-		header.AddThemeConstantOverride("separation", 10);
+		header.AddThemeConstantOverride("separation", 9);
 		root.AddChild(header);
-		var title = CreateUiLabel("NĂNG LỰC KỸ THUẬT", 25, MemoryInk);
-		title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-		header.AddChild(title);
+		var titleBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		titleBox.AddThemeConstantOverride("separation", 1);
+		header.AddChild(titleBox);
+		titleBox.AddChild(CreateUiLabel("ERIS HIỂU BẠN THẾ NÀO", 23, MemoryInk));
+		var subtitle = CreateUiLabel("Working model, không phải bảng điểm.", 11, MemoryInkSoft);
+		titleBox.AddChild(subtitle);
+
 		var refresh = CreateMemoryButton("Cập nhật", SendCapabilityPanelRequest, primary: false);
-		refresh.CustomMinimumSize = new Vector2(96f, 34f);
+		refresh.CustomMinimumSize = new Vector2(88f, 32f);
 		header.AddChild(refresh);
-		var resetAll = CreateMemoryButton("Đặt lại mô hình", ConfirmResetCapabilityProfile, primary: false, danger: true);
-		resetAll.CustomMinimumSize = new Vector2(126f, 34f);
-		header.AddChild(resetAll);
 		header.AddChild(CreateWindowControlCapsule(() => _capabilityPanel.Visible = false, CloseCapabilityPanel));
 
-		var note = CreateUiLabel("Đây là ước lượng của ERIS từ bằng chứng đã quan sát; không phải điểm thi hay đánh giá con người.", 11, MemoryInkSoft);
+		var note = CreateUiLabel(
+			"Mỗi nhận định đều dựa trên evidence, coverage và độ chắc chắn. ERIS có thể hiểu sai — bạn luôn có quyền sửa lại.",
+			10, MemoryInkSoft);
 		note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		root.AddChild(note);
 
-		_capabilityStatus = CreateUiLabel("Chưa đọc dữ liệu.", 10, MemoryInkSoft);
-		root.AddChild(_capabilityStatus);
+		// Hai view thay cho một dashboard dài: mặt chính chỉ nói điều đáng biết;
+		// evidence/detail nằm sau một bước để panel vẫn có cảm giác companion.
+		var modeRow = new HBoxContainer();
+		modeRow.AddThemeConstantOverride("separation", 6);
+		root.AddChild(modeRow);
+		_capabilityOverviewButton = CreateCapabilityModeButton("Tổng quan", CapabilityViewMode.Overview);
+		_capabilityEvidenceButton = CreateCapabilityModeButton("Bằng chứng", CapabilityViewMode.Evidence);
+		modeRow.AddChild(_capabilityOverviewButton);
+		modeRow.AddChild(_capabilityEvidenceButton);
+		var modeSpacer = new Control { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		modeRow.AddChild(modeSpacer);
+		_capabilityStatus = CreateUiLabel("Chưa đọc dữ liệu.", 9, MemoryInkSoft);
+		modeRow.AddChild(_capabilityStatus);
+		UpdateCapabilityModeButtons();
 
-		var scroll = new ScrollContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		var scroll = new ScrollContainer
+		{
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+		};
 		root.AddChild(scroll);
 		_capabilityContent = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		_capabilityContent.AddThemeConstantOverride("separation", 12);
+		_capabilityContent.AddThemeConstantOverride("separation", 11);
 		scroll.AddChild(_capabilityContent);
 		RenderCapabilityEmpty();
+	}
+
+	private Button CreateCapabilityModeButton(string text, CapabilityViewMode mode)
+	{
+		var button = CreateMemoryButton(text, () => SetCapabilityViewMode(mode), primary: false);
+		button.CustomMinimumSize = new Vector2(96f, 30f);
+		button.AddThemeFontSizeOverride("font_size", 10);
+		return button;
+	}
+
+	private void SetCapabilityViewMode(CapabilityViewMode mode)
+	{
+		if (_capabilityViewMode == mode) return;
+		_capabilityViewMode = mode;
+		UpdateCapabilityModeButtons();
+		RenderCapabilitySnapshot();
+	}
+
+	private void UpdateCapabilityModeButtons()
+	{
+		StyleCapabilityModeButton(_capabilityOverviewButton, _capabilityViewMode == CapabilityViewMode.Overview);
+		StyleCapabilityModeButton(_capabilityEvidenceButton, _capabilityViewMode == CapabilityViewMode.Evidence);
+	}
+
+	private static void StyleCapabilityModeButton(Button button, bool selected)
+	{
+		if (button == null) return;
+		Color bg = selected ? new Color(1f, 0.91f, 0.96f) : new Color(1f, 0.985f, 0.993f, 0.45f);
+		Color border = selected ? MemoryPink : new Color(MemoryBorder.R, MemoryBorder.G, MemoryBorder.B, 0.52f);
+		var style = new StyleBoxFlat
+		{
+			BgColor = bg,
+			BorderColor = border,
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 9, CornerRadiusTopRight = 9,
+			CornerRadiusBottomLeft = 9, CornerRadiusBottomRight = 9,
+			ContentMarginLeft = 9, ContentMarginRight = 9,
+			ContentMarginTop = 4, ContentMarginBottom = 4,
+		};
+		button.AddThemeStyleboxOverride("normal", style);
+		button.AddThemeStyleboxOverride("hover", style);
+		button.AddThemeStyleboxOverride("pressed", style);
+		button.AddThemeColorOverride("font_color", selected ? MemoryInk : MemoryInkSoft);
 	}
 
 	private void RenderCapabilityEmpty()
@@ -121,11 +202,13 @@ public partial class UdpListener : Node2D
 		if (_capabilityContent == null) return;
 		foreach (Node child in _capabilityContent.GetChildren()) child.QueueFree();
 		var card = CreateMemoryCard(new Color(1f, 0.97f, 0.985f, 0.96f), 16);
-		var margin = CapabilityCardMargin();
+		var margin = CapabilityCardMargin(16, 14);
 		card.AddChild(margin);
-		var text = CreateUiLabel("Chưa có snapshot. Bấm “Cập nhật” để đọc mô hình năng lực hiện tại.", 13, MemoryInkSoft);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("ERIS chưa có snapshot để hình thành working model.", 14, MemoryInk));
+		var text = CreateUiLabel("Bấm “Cập nhật” để đọc evidence hiện tại. Không đủ dữ liệu thì panel sẽ nói thẳng là chưa rõ.", 11, MemoryInkSoft);
 		text.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		margin.AddChild(text);
+		box.AddChild(text);
 		_capabilityContent.AddChild(card);
 	}
 
@@ -151,7 +234,7 @@ public partial class UdpListener : Node2D
 		}
 		_capabilityPending = true;
 		_capabilityRequestAtMs = Time.GetTicksMsec();
-		SetCapabilityStatus(action == "snapshot" ? "Đang đọc thống kê năng lực..." : "Đang cập nhật mô hình...");
+		SetCapabilityStatus(action == "snapshot" ? "Đang đọc working model…" : "Đang cập nhật…");
 	}
 
 	private bool TryHandleCapabilityPanelPacket(string raw)
@@ -179,54 +262,100 @@ public partial class UdpListener : Node2D
 		catch (JsonException) { return false; }
 		catch (Exception ex)
 		{
-			SetCapabilityStatus($"Không đọc được thống kê: {ex.Message}", true);
+			SetCapabilityStatus($"Không đọc được working model: {ex.Message}", true);
 			return true;
 		}
 	}
 
 	private void ApplyCapabilitySnapshot(JsonElement panel)
 	{
+		// Clone để snapshot sống độc lập với JsonDocument của packet vừa parse.
+		_capabilitySnapshot = panel.Clone();
+		_hasCapabilitySnapshot = true;
+		RenderCapabilitySnapshot();
+	}
+
+	private void RenderCapabilitySnapshot()
+	{
 		if (_capabilityContent == null) return;
 		foreach (Node child in _capabilityContent.GetChildren()) child.QueueFree();
-		int total = ReadJsonInt(panel, "tong_bang_chung");
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader($"Tổng quan · {total} bằng chứng"));
+		if (!_hasCapabilitySnapshot || _capabilitySnapshot.ValueKind != JsonValueKind.Object)
+		{
+			RenderCapabilityEmpty();
+			return;
+		}
+		if (_capabilityViewMode == CapabilityViewMode.Overview)
+			RenderCapabilityOverview(_capabilitySnapshot);
+		else
+			RenderCapabilityEvidence(_capabilitySnapshot);
+	}
+
+	private void RenderCapabilityOverview(JsonElement panel)
+	{
+		_capabilityContent.AddChild(CreateCapabilitySummaryCard(panel));
+		_capabilityContent.AddChild(CreateCapabilitySectionHeader("ERIS ĐANG HIỂU BẠN"));
+
+		if (panel.TryGetProperty("nhom_nang_luc", out JsonElement groups) && groups.ValueKind == JsonValueKind.Array)
+		{
+			int index = 0;
+			foreach (JsonElement group in groups.EnumerateArray())
+			{
+				if (group.ValueKind != JsonValueKind.Object) continue;
+				_capabilityContent.AddChild(CreateCapabilityOverviewRow(group, index++));
+			}
+			_capabilityContent.AddChild(CreateCapabilityGuidanceCard(groups));
+		}
+
+		if (panel.TryGetProperty("muc_tieu_hien_tai", out JsonElement goals) && goals.ValueKind == JsonValueKind.Array && goals.GetArrayLength() > 0)
+		{
+			_capabilityContent.AddChild(CreateCapabilitySectionHeader("Mục tiêu đang theo dõi"));
+			int shown = 0;
+			foreach (JsonElement goal in goals.EnumerateArray())
+			{
+				if (shown++ >= 2 || goal.ValueKind != JsonValueKind.Object) break;
+				_capabilityContent.AddChild(CreateDevelopmentGoalCard(goal));
+			}
+		}
+
+		var why = CreateMemoryButton("Vì sao Eris nghĩ vậy?", () => SetCapabilityViewMode(CapabilityViewMode.Evidence), primary: false);
+		why.CustomMinimumSize = new Vector2(190f, 34f);
+		_capabilityContent.AddChild(why);
+	}
+
+	private void RenderCapabilityEvidence(JsonElement panel)
+	{
+		var intro = CreateCapabilitySoftCard(
+			"BẰNG CHỨNG & ĐỘ CHẮC CHẮN",
+			"Mỗi nhận định bên dưới cho biết coverage, confidence và evidence gần đây. Self-report/correction không tự biến thành mastery.",
+			MemoryPink);
+		_capabilityContent.AddChild(intro);
 
 		if (panel.TryGetProperty("nhom_nang_luc", out JsonElement groups) && groups.ValueKind == JsonValueKind.Array)
 		{
 			foreach (JsonElement group in groups.EnumerateArray())
 				if (group.ValueKind == JsonValueKind.Object) _capabilityContent.AddChild(CreateCapabilityGroupCard(group));
+
+			var unknown = CreateCapabilityUnknownCard(groups);
+			if (unknown != null) _capabilityContent.AddChild(unknown);
 		}
 
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Mục tiêu đang theo dõi"));
+		_capabilityContent.AddChild(CreateCapabilitySectionHeader("MỤC TIÊU & XU HƯỚNG"));
 		if (panel.TryGetProperty("muc_tieu_hien_tai", out JsonElement goals) && goals.ValueKind == JsonValueKind.Array && goals.GetArrayLength() > 0)
 		{
 			foreach (JsonElement goal in goals.EnumerateArray())
 				if (goal.ValueKind == JsonValueKind.Object) _capabilityContent.AddChild(CreateDevelopmentGoalCard(goal));
 		}
 		else
-			_capabilityContent.AddChild(CreateUiLabel("Chưa theo dõi mục tiêu nào. Bạn có thể chọn một đề xuất dài hạn ở bên dưới.", 11, MemoryInkSoft));
+			_capabilityContent.AddChild(CreateUiLabel("Chưa theo dõi mục tiêu phát triển nào.", 10, MemoryInkSoft));
 
 		if (panel.TryGetProperty("thong_ke_phat_trien_30_ngay", out JsonElement developmentStats) && developmentStats.ValueKind == JsonValueKind.Object)
 			_capabilityContent.AddChild(CreateDevelopmentStatsCard(developmentStats));
-
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader("SỨC KHỎE DỰ ÁN · 30 NGÀY"));
-		if (panel.TryGetProperty("du_an_30_ngay", out JsonElement project) && project.ValueKind == JsonValueKind.Object)
-			_capabilityContent.AddChild(CreateProjectTrajectoryCard(project));
-		else
-			_capabilityContent.AddChild(CreateUiLabel("Chưa đủ CodingObservation để thống kê project.", 11, MemoryInkSoft));
-
-		if (panel.TryGetProperty("ghep_user_du_an", out JsonElement userProjectFit) && userProjectFit.ValueKind == JsonValueKind.Object)
-			_capabilityContent.AddChild(CreateUserProjectFitCard(userProjectFit));
-
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Xu hướng 30 ngày"));
 		if (panel.TryGetProperty("xu_huong_30_ngay", out JsonElement trend) && trend.ValueKind == JsonValueKind.Array)
 			_capabilityContent.AddChild(CreateTrendCard(trend));
 
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Khả năng sử dụng công cụ"));
+		_capabilityContent.AddChild(CreateCapabilitySectionHeader("CÔNG CỤ & THÓI QUEN AI"));
 		if (panel.TryGetProperty("cong_cu", out JsonElement tools) && tools.ValueKind == JsonValueKind.Array)
 			_capabilityContent.AddChild(CreateToolStatsCard(tools));
-
-		_capabilityContent.AddChild(CreateCapabilitySectionHeader("Thói quen làm việc với AI · 30 ngày"));
 		if (panel.TryGetProperty("thoi_quen_ai_30_ngay", out JsonElement ai) && ai.ValueKind == JsonValueKind.Object)
 			_capabilityContent.AddChild(CreateAiStatsCard(ai));
 
@@ -237,204 +366,321 @@ public partial class UdpListener : Node2D
 				if (rec.ValueKind == JsonValueKind.Object) _capabilityContent.AddChild(CreateRecommendationCard(rec));
 		}
 		else
-		{
-			var label = CreateUiLabel("Chưa đủ dữ liệu để đưa đề xuất dài hạn đáng tin.", 12, MemoryInkSoft);
-			_capabilityContent.AddChild(label);
-		}
+			_capabilityContent.AddChild(CreateUiLabel("Chưa đủ dữ liệu để đưa đề xuất dài hạn đáng tin.", 10, MemoryInkSoft));
+
+		var resetAll = CreateMemoryButton("Đặt lại mô hình", ConfirmResetCapabilityProfile, primary: false, danger: true);
+		resetAll.CustomMinimumSize = new Vector2(140f, 32f);
+		_capabilityContent.AddChild(resetAll);
 	}
 
 	private Control CreateCapabilitySectionHeader(string text)
 	{
-		var label = CreateUiLabel(text, 16, MemoryInk);
-		label.CustomMinimumSize = new Vector2(0f, 30f);
+		var label = CreateUiLabel(text, 11, MemoryInkSoft);
+		label.CustomMinimumSize = new Vector2(0f, 24f);
 		return label;
+	}
+
+	private Control CreateCapabilitySummaryCard(JsonElement panel)
+	{
+		string strongest = "";
+		string uncertain = "";
+		int strongestScore = -1;
+		int lowestScore = 101;
+		string lowest = "";
+		int total = ReadJsonInt(panel, "tong_bang_chung");
+
+		if (panel.TryGetProperty("nhom_nang_luc", out JsonElement groups) && groups.ValueKind == JsonValueKind.Array)
+		{
+			foreach (JsonElement group in groups.EnumerateArray())
+			{
+				if (group.ValueKind != JsonValueKind.Object) continue;
+				string name = ReadJsonString(group, "ten");
+				if (!ReadJsonBool(group, "da_du_bang_chung"))
+				{
+					if (string.IsNullOrWhiteSpace(uncertain)) uncertain = name;
+					continue;
+				}
+				int score = ReadJsonInt(group, "phan_tram");
+				if (score > strongestScore) { strongestScore = score; strongest = name; }
+				if (score < lowestScore) { lowestScore = score; lowest = name; }
+			}
+		}
+
+		string summary;
+		if (string.IsNullOrWhiteSpace(strongest))
+			summary = "ERIS chưa có đủ evidence để giả định bạn mạnh/yếu ở mảng nào. Cứ làm việc bình thường; model sẽ rõ dần theo thời gian.";
+		else if (!string.IsNullOrWhiteSpace(uncertain))
+			summary = $"Evidence rõ nhất hiện ở {strongest}. {uncertain} vẫn là vùng chưa rõ, nên ERIS không được tự giả định trình độ ở đó.";
+		else if (!string.IsNullOrWhiteSpace(lowest) && !string.Equals(lowest, strongest, StringComparison.Ordinal))
+			summary = $"Evidence mạnh nhất hiện ở {strongest}; {lowest} vẫn đang phát triển hơn. ERIS nên thay đổi độ sâu giải thích theo từng mảng, không gắn một level chung cho bạn.";
+		else
+			summary = $"Evidence hiện tập trung ở {strongest}. ERIS sẽ dùng nó để chọn độ sâu giải thích, không dùng như điểm số con người.";
+
+		var card = CreateMemoryCard(new Color(1f, 0.95f, 0.978f, 0.98f), 17, MemoryPink);
+		var margin = CapabilityCardMargin(17, 14); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 6); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Working model, không phải bảng điểm", 16, MemoryInk));
+		var body = CreateUiLabel(summary, 12, MemoryInk); body.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(body);
+		box.AddChild(CreateUiLabel($"{total} evidence đã được ghi nhận · chỉ evidence độc lập/đủ confidence mới được dùng để kết luận.", 9, MemoryInkSoft));
+		return card;
+	}
+
+	private Control CreateCapabilityOverviewRow(JsonElement group, int index)
+	{
+		var wrap = new VBoxContainer();
+		wrap.AddThemeConstantOverride("separation", 4);
+		var row = new HBoxContainer(); row.AddThemeConstantOverride("separation", 8); wrap.AddChild(row);
+		var left = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		left.AddThemeConstantOverride("separation", 1); row.AddChild(left);
+		string name = ReadJsonString(group, "ten");
+		left.AddChild(CreateUiLabel(name, 13, MemoryInk));
+		left.AddChild(CreateUiLabel(CapabilityGroupDescription(ReadJsonString(group, "id")), 9, MemoryInkSoft));
+		string stage = CapabilityStageLabel(group);
+		row.AddChild(CreateCapabilityStageBadge(stage));
+
+		int observed = ReadJsonInt(group, "ky_nang_da_quan_sat");
+		int total = ReadJsonInt(group, "tong_ky_nang");
+		int evidence = ReadJsonInt(group, "so_bang_chung");
+		string confidence = ReadJsonString(group, "do_tin_cay");
+		string meta = stage == "Chưa rõ"
+			? $"Đã quan sát {observed}/{Mathf.Max(1, total)} chiều · {evidence} evidence · chưa đủ coverage để kết luận"
+			: $"{observed}/{Mathf.Max(1, total)} chiều · {evidence} evidence · confidence {confidence}";
+		var metaLabel = CreateUiLabel(meta, 9, MemoryInkSoft); metaLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; wrap.AddChild(metaLabel);
+
+		if (index >= 0)
+		{
+			var line = new HSeparator();
+			line.AddThemeColorOverride("separator", new Color(MemoryBorder.R, MemoryBorder.G, MemoryBorder.B, 0.32f));
+			wrap.AddChild(line);
+		}
+		return wrap;
+	}
+
+	private Control CreateCapabilityGuidanceCard(JsonElement groups)
+	{
+		string strong = "";
+		string guided = "";
+		int strongScore = -1;
+		int guidedScore = 101;
+		foreach (JsonElement group in groups.EnumerateArray())
+		{
+			if (group.ValueKind != JsonValueKind.Object) continue;
+			string name = ReadJsonString(group, "ten");
+			if (!ReadJsonBool(group, "da_du_bang_chung"))
+			{
+				if (string.IsNullOrWhiteSpace(guided)) guided = name;
+				continue;
+			}
+			int score = ReadJsonInt(group, "phan_tram");
+			if (score > strongScore) { strongScore = score; strong = name; }
+			if (score < guidedScore && string.IsNullOrWhiteSpace(guided)) { guidedScore = score; guided = name; }
+		}
+		string headline = string.IsNullOrWhiteSpace(strong)
+			? "Guided mặc định cho tới khi có evidence rõ hơn"
+			: $"Peer ở {strong}{(!string.IsNullOrWhiteSpace(guided) ? $" · Guided ở {guided}" : "")}";
+		return CreateCapabilitySoftCard(
+			"CÁCH ERIS NÊN NÓI",
+			headline + "\nKhông giảng lại thứ đã chứng minh. Chỉ challenge khi đúng phần bạn đang học hoặc reasoning đang bị outsource quá nhiều.",
+			new Color(0.66f, 0.42f, 0.86f));
 	}
 
 	private Control CreateCapabilityGroupCard(JsonElement group)
 	{
-		var card = CreateMemoryCard(new Color(1f, 0.985f, 0.993f, 0.97f), 14);
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 6); margin.AddChild(box);
-		string title = ReadJsonString(group, "ten");
-		bool observed = ReadJsonBool(group, "da_du_bang_chung");
-		int score = ReadJsonInt(group, "phan_tram");
-		string confidence = ReadJsonString(group, "do_tin_cay");
-		int evidence = ReadJsonInt(group, "so_bang_chung");
-		var row = new HBoxContainer(); box.AddChild(row);
-		var left = CreateUiLabel(title, 15, MemoryInk); left.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; row.AddChild(left);
-		row.AddChild(CreateUiLabel(observed ? $"{score}%" : "Chưa đủ dữ liệu", 14, observed ? MemoryPink : MemoryInkSoft));
-		box.AddChild(CreateUiLabel(observed ? $"Độ tin cậy: {confidence} · {evidence} bằng chứng" : $"{evidence} bằng chứng · cần thêm dữ liệu trước khi chấm %", 10, MemoryInkSoft));
-		if (observed)
-		{
-			var bar = new ProgressBar { MinValue = 0, MaxValue = 100, Value = score, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 8f) };
-			box.AddChild(bar);
-		}
+		string stage = CapabilityStageLabel(group);
+		Color accent = CapabilityStageAccent(stage);
+		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.96f), 14, accent);
+		var margin = CapabilityCardMargin(14, 11); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 7); margin.AddChild(box);
+
+		var header = new HBoxContainer(); header.AddThemeConstantOverride("separation", 8); box.AddChild(header);
+		var title = CreateUiLabel(ReadJsonString(group, "ten"), 14, MemoryInk); title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; header.AddChild(title);
+		header.AddChild(CreateCapabilityStageBadge(stage));
+		int observed = ReadJsonInt(group, "ky_nang_da_quan_sat");
+		int total = ReadJsonInt(group, "tong_ky_nang");
+		box.AddChild(CreateUiLabel($"Coverage {observed}/{Mathf.Max(1, total)} chiều · {ReadJsonInt(group, "so_bang_chung")} evidence · confidence {ReadJsonString(group, "do_tin_cay")}", 9, MemoryInkSoft));
+		string coverageNote = ReadJsonString(group, "ghi_chu_do_phu");
+		if (!string.IsNullOrWhiteSpace(coverageNote)) box.AddChild(CreateUiLabel(coverageNote, 9, MemoryInkSoft));
+
 		if (group.TryGetProperty("ky_nang", out JsonElement skills) && skills.ValueKind == JsonValueKind.Array)
 		{
 			foreach (JsonElement skill in skills.EnumerateArray())
 			{
+				if (skill.ValueKind != JsonValueKind.Object) continue;
 				string skillId = ReadJsonString(skill, "id");
-				string name = ReadJsonString(skill, "ten"); bool known = ReadJsonBool(skill, "da_du_bang_chung"); int pct = ReadJsonInt(skill, "phan_tram"); int ev = ReadJsonInt(skill, "so_bang_chung");
+				string name = ReadJsonString(skill, "ten");
+				bool known = ReadJsonBool(skill, "da_du_bang_chung");
+				int evidence = ReadJsonInt(skill, "so_bang_chung");
+				int independent = ReadJsonInt(skill, "bang_chung_doc_lap");
+				int counter = ReadJsonInt(skill, "counter_evidence");
+
 				var skillBox = new VBoxContainer(); skillBox.AddThemeConstantOverride("separation", 3); box.AddChild(skillBox);
-				skillBox.AddChild(CreateUiLabel($"• {name}: {(known ? pct + "%" : "Chưa đủ dữ liệu")} · {ev} bằng chứng", 10, known ? MemoryInk : MemoryInkSoft));
+				var skillHead = new HBoxContainer(); skillBox.AddChild(skillHead);
+				var skillTitle = CreateUiLabel(name, 10, known ? MemoryInk : MemoryInkSoft); skillTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill; skillHead.AddChild(skillTitle);
+				if (!known) skillHead.AddChild(CreateCapabilityStageBadge("Chưa rõ", compact: true));
+				skillBox.AddChild(CreateUiLabel($"{independent} evidence độc lập / {evidence} tổng{(counter > 0 ? $" · {counter} counter-evidence" : "")}", 8, MemoryInkSoft));
 
 				if (skill.TryGetProperty("bang_chung_gan_day", out JsonElement evidenceRows) && evidenceRows.ValueKind == JsonValueKind.Array)
 				{
 					int shown = 0;
-					foreach (JsonElement evidence in evidenceRows.EnumerateArray())
+					foreach (JsonElement evidenceRow in evidenceRows.EnumerateArray())
 					{
-						if (shown++ >= 3 || evidence.ValueKind != JsonValueKind.Object) break;
-						string desc = ReadJsonString(evidence, "mo_ta");
-						if (!string.IsNullOrWhiteSpace(desc)) skillBox.AddChild(CreateUiLabel("   ↳ " + desc, 9, MemoryInkSoft));
+						if (shown++ >= 2 || evidenceRow.ValueKind != JsonValueKind.Object) break;
+						string desc = ReadJsonString(evidenceRow, "mo_ta");
+						if (string.IsNullOrWhiteSpace(desc)) continue;
+						var evidenceLabel = CreateUiLabel("↳ " + desc, 9, MemoryInkSoft);
+						evidenceLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+						skillBox.AddChild(evidenceLabel);
 					}
 				}
 
 				var actions = new HBoxContainer(); actions.AddThemeConstantOverride("separation", 5); skillBox.AddChild(actions);
 				actions.AddChild(CreateCapabilityMiniButton("Đúng", () => SendSkillFeedback(skillId, "confirmed")));
 				actions.AddChild(CreateCapabilityMiniButton("Tôi đã biết", () => SendSkillFeedback(skillId, "already_knew")));
-				actions.AddChild(CreateCapabilityMiniButton("Đánh giá sai", () => SendSkillFeedback(skillId, "wrong")));
+				actions.AddChild(CreateCapabilityMiniButton("Đánh giá sai / sửa lại", () => SendSkillFeedback(skillId, "wrong")));
 				actions.AddChild(CreateCapabilityMiniButton("Đặt lại", () => SendSkillFeedback(skillId, "reset"), danger: true));
 			}
 		}
 		return card;
 	}
 
-\tprivate Control CreateProjectTrajectoryCard(JsonElement project)
-\t{
-\t\tvar card = CreateMemoryCard(new Color(0.975f, 0.99f, 0.985f, 0.97f), 14, new Color(0.28f, 0.56f, 0.46f));
-\t\tvar margin = CapabilityCardMargin(); card.AddChild(margin);
-\t\tvar box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 6); margin.AddChild(box);
-\t\tif (!project.TryGetProperty("tong_quan", out JsonElement summary) || summary.ValueKind != JsonValueKind.Object)
-\t\t{
-\t\t\tbox.AddChild(CreateUiLabel("Chưa đủ dữ liệu project.", 10, MemoryInkSoft));
-\t\t\treturn card;
-\t\t}
-\t\tint tasks = ReadJsonInt(summary, "task_da_quan_sat");
-\t\tbox.AddChild(CreateUiLabel($"Task đã quan sát: {tasks} · hoàn thành {ReadJsonInt(summary, "task_hoan_thanh")} · fail {ReadJsonInt(summary, "task_that_bai")}", 11, MemoryInk));
-\t\tbox.AddChild(CreateUiLabel($"Có thay đổi file: {ReadJsonInt(summary, "task_co_thay_doi_file")} · có test: {ReadJsonInt(summary, "task_co_test")} · test fail: {ReadJsonInt(summary, "task_co_test_fail")}", 10, MemoryInkSoft));
-\t\tint noVerify = ReadJsonInt(summary, "task_thieu_verification_co_cau_truc");
-\t\tif (noVerify > 0) box.AddChild(CreateUiLabel($"Thiếu verification có cấu trúc: {noVerify} task", 10, MemoryInkSoft));
+	private Control CreateCapabilityUnknownCard(JsonElement groups)
+	{
+		var unknown = new List<string>();
+		foreach (JsonElement group in groups.EnumerateArray())
+		{
+			if (group.ValueKind != JsonValueKind.Object || !group.TryGetProperty("ky_nang", out JsonElement skills) || skills.ValueKind != JsonValueKind.Array) continue;
+			foreach (JsonElement skill in skills.EnumerateArray())
+			{
+				if (skill.ValueKind != JsonValueKind.Object || ReadJsonBool(skill, "da_du_bang_chung")) continue;
+				unknown.Add(ReadJsonString(skill, "ten"));
+			}
+		}
+		if (unknown.Count == 0) return null;
+		var card = CreateMemoryCard(new Color(0.99f, 0.985f, 1f, 0.86f), 13, new Color(0.55f, 0.60f, 0.78f));
+		var margin = CapabilityCardMargin(13, 10); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("CHƯA BIẾT RÕ", 10, MemoryInkSoft));
+		box.AddChild(CreateUiLabel(string.Join(" · ", unknown.GetRange(0, Mathf.Min(unknown.Count, 5))), 10, MemoryInk));
+		box.AddChild(CreateUiLabel("Không có evidence đủ mạnh ≠ yếu. ERIS không được tự điền khoảng trống bằng phỏng đoán.", 9, MemoryInkSoft));
+		return card;
+	}
 
-\t\tif (project.TryGetProperty("subsystem", out JsonElement subsystems) && subsystems.ValueKind == JsonValueKind.Array && subsystems.GetArrayLength() > 0)
-\t\t{
-\t\t\tbox.AddChild(CreateUiLabel("Subsystem nổi bật", 11, MemoryInk));
-\t\t\tint shown = 0;
-\t\t\tforeach (JsonElement item in subsystems.EnumerateArray())
-\t\t\t{
-\t\t\t\tif (shown++ >= 5 || item.ValueKind != JsonValueKind.Object) break;
-\t\t\t\tbox.AddChild(CreateUiLabel($"• {ReadJsonString(item, "ten")}: {ReadJsonInt(item, "so_task")} task · tín hiệu ổn định {ReadJsonString(item, "tin_hieu_on_dinh")}", 10, MemoryInkSoft));
-\t\t\t}
-\t\t}
+	private Control CreateCapabilitySoftCard(string eyebrow, string bodyText, Color accent)
+	{
+		var card = CreateMemoryCard(new Color(1f, 0.985f, 0.993f, 0.94f), 14, accent);
+		var margin = CapabilityCardMargin(14, 11); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		box.AddChild(CreateUiLabel(eyebrow, 9, MemoryInkSoft));
+		var body = CreateUiLabel(bodyText, 11, MemoryInk); body.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(body);
+		return card;
+	}
 
-\t\tif (project.TryGetProperty("diem_nong", out JsonElement hotspots) && hotspots.ValueKind == JsonValueKind.Array && hotspots.GetArrayLength() > 0)
-\t\t{
-\t\t\tbox.AddChild(CreateUiLabel("Điểm nóng", 11, MemoryInk));
-\t\t\tint shown = 0;
-\t\t\tforeach (JsonElement item in hotspots.EnumerateArray())
-\t\t\t{
-\t\t\t\tif (shown++ >= 4 || item.ValueKind != JsonValueKind.Object) break;
-\t\t\t\tbox.AddChild(CreateUiLabel($"• {ReadJsonString(item, "file")}: {ReadJsonInt(item, "so_task_cham")} task chạm", 10, MemoryInkSoft));
-\t\t\t}
-\t\t\tbox.AddChild(CreateUiLabel("Tần suất sửa chỉ là tín hiệu quan sát; không đồng nghĩa code xấu.", 9, MemoryInkSoft));
-\t\t}
+	private static string CapabilityGroupDescription(string id) => id switch
+	{
+		"debugging" => "Định vị lỗi, trace luồng gọi, phân biệt root cause / symptom",
+		"architecture" => "Nhìn boundary, ownership và trách nhiệm giữa các phần",
+		"verification" => "Khóa kết luận bằng diff, test và evidence có mục tiêu",
+		"ai_operation" => "Khoanh scope và review output của coding agent",
+		_ => "Evidence kỹ thuật đã quan sát",
+	};
 
-\t\tif (project.TryGetProperty("no_ky_thuat_ung_vien", out JsonElement debts) && debts.ValueKind == JsonValueKind.Array && debts.GetArrayLength() > 0)
-\t\t{
-\t\t\tbox.AddChild(CreateUiLabel("Nợ kỹ thuật ứng viên", 11, MemoryInk));
-\t\t\tint shown = 0;
-\t\t\tforeach (JsonElement item in debts.EnumerateArray())
-\t\t\t{
-\t\t\t\tif (shown++ >= 4 || item.ValueKind != JsonValueKind.Object) break;
-\t\t\t\tvar label = CreateUiLabel($"[{ReadJsonString(item, "muc")}] {ReadJsonString(item, "tieu_de")}\n{ReadJsonString(item, "evidence")}", 10, MemoryInkSoft);
-\t\t\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
-\t\t\t}
-\t\t}
+	private static string CapabilityStageLabel(JsonElement row)
+	{
+		if (!ReadJsonBool(row, "da_du_bang_chung")) return "Chưa rõ";
+		int score = ReadJsonInt(row, "phan_tram");
+		if (score >= 72) return "Mạnh";
+		if (score >= 58) return "Đang phát triển";
+		return "Đang học";
+	}
 
-\t\tif (project.TryGetProperty("uu_tien_de_xuat", out JsonElement priorities) && priorities.ValueKind == JsonValueKind.Array && priorities.GetArrayLength() > 0)
-\t\t{
-\t\t\tbox.AddChild(CreateUiLabel("Ưu tiên 2–4 tuần", 11, MemoryInk));
-\t\t\tint shown = 0;
-\t\t\tforeach (JsonElement item in priorities.EnumerateArray())
-\t\t\t{
-\t\t\t\tif (shown++ >= 3 || item.ValueKind != JsonValueKind.Object) break;
-\t\t\t\tvar label = CreateUiLabel($"{shown}. {ReadJsonString(item, "tieu_de")} · {ReadJsonString(item, "uu_tien")}\n{ReadJsonString(item, "ly_do")}", 10, MemoryInkSoft);
-\t\t\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
-\t\t\t}
-\t\t}
-\t\treturn card;
-\t}
+	private static Color CapabilityStageAccent(string stage) => stage switch
+	{
+		"Mạnh" => new Color(0.34f, 0.62f, 0.50f),
+		"Đang phát triển" => new Color(0.82f, 0.62f, 0.26f),
+		"Đang học" => new Color(0.40f, 0.56f, 0.82f),
+		_ => new Color(0.58f, 0.53f, 0.68f),
+	};
 
-\tprivate Control CreateUserProjectFitCard(JsonElement fit)
-\t{
-\t\tvar card = CreateMemoryCard(new Color(0.985f, 0.985f, 1f, 0.96f), 12, new Color(0.38f, 0.48f, 0.78f));
-\t\tvar margin = CapabilityCardMargin(); card.AddChild(margin);
-\t\tvar box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
-\t\tbox.AddChild(CreateUiLabel("BẠN × DỰ ÁN", 11, MemoryInk));
-\t\tbool enough = ReadJsonBool(fit, "co_du_lieu");
-\t\tstring note = enough ? ReadJsonString(fit, "goi_y") : ReadJsonString(fit, "ghi_chu");
-\t\tvar label = CreateUiLabel(string.IsNullOrWhiteSpace(note) ? "Chưa đủ dữ liệu để ghép năng lực với nhu cầu project." : note, 10, MemoryInkSoft);
-\t\tlabel.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(label);
-\t\treturn card;
-\t}
+	private Control CreateCapabilityStageBadge(string stage, bool compact = false)
+	{
+		Color accent = CapabilityStageAccent(stage);
+		var panel = new PanelContainer();
+		panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+		{
+			BgColor = new Color(accent.R, accent.G, accent.B, 0.10f),
+			BorderColor = new Color(accent.R, accent.G, accent.B, 0.36f),
+			BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 10, CornerRadiusTopRight = 10,
+			CornerRadiusBottomLeft = 10, CornerRadiusBottomRight = 10,
+			ContentMarginLeft = compact ? 7 : 9,
+			ContentMarginRight = compact ? 7 : 9,
+			ContentMarginTop = compact ? 2 : 3,
+			ContentMarginBottom = compact ? 2 : 3,
+		});
+		var label = CreateUiLabel(stage, compact ? 8 : 9, accent);
+		panel.AddChild(label);
+		return panel;
+	}
 
 	private Control CreateTrendCard(JsonElement trend)
 	{
-		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.96f), 14);
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.92f), 13);
+		var margin = CapabilityCardMargin(13, 9); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Xu hướng 30 ngày", 10, MemoryInk));
 		foreach (JsonElement row in trend.EnumerateArray())
 		{
 			string id = ReadJsonString(row, "id");
 			string name = id switch { "debugging" => "Gỡ lỗi", "architecture" => "Kiến trúc", "verification" => "Kiểm chứng", "ai_operation" => "Vận hành AI", _ => id };
 			string label = ReadJsonString(row, "nhan");
 			string text = label == "Chưa đủ lịch sử" ? $"{name}: Chưa đủ lịch sử" : $"{name}: {ReadJsonInt(row, "delta"):+#;-#;0}% · {label}";
-			box.AddChild(CreateUiLabel(text, 10, label == "Chưa đủ lịch sử" ? MemoryInkSoft : MemoryInk));
+			box.AddChild(CreateUiLabel(text, 9, label == "Chưa đủ lịch sử" ? MemoryInkSoft : MemoryInk));
 		}
 		return card;
 	}
 
 	private Control CreateToolStatsCard(JsonElement tools)
 	{
-		var card = CreateMemoryCard(new Color(0.985f, 0.975f, 1f, 0.96f), 14);
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		var card = CreateMemoryCard(new Color(0.985f, 0.975f, 1f, 0.92f), 13);
+		var margin = CapabilityCardMargin(13, 9); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Khả năng sử dụng công cụ", 10, MemoryInk));
 		foreach (JsonElement tool in tools.EnumerateArray())
 		{
 			string name = ReadJsonString(tool, "ten"); string stage = ReadJsonString(tool, "muc_do"); int count = ReadJsonInt(tool, "so_lan_chung_minh");
-			box.AddChild(CreateUiLabel($"{name}  —  {stage}{(count > 0 ? $" · {count} lần có evidence" : "")}", 10, stage == "Chưa đủ dữ liệu" ? MemoryInkSoft : MemoryInk));
+			box.AddChild(CreateUiLabel($"{name} — {stage}{(count > 0 ? $" · {count} lần có evidence" : "")}", 9, stage == "Chưa đủ dữ liệu" ? MemoryInkSoft : MemoryInk));
 		}
 		return card;
 	}
 
 	private Control CreateAiStatsCard(JsonElement ai)
 	{
-		var card = CreateMemoryCard(new Color(1f, 0.97f, 0.985f, 0.96f), 14);
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
-		box.AddChild(CreateUiLabel($"Lượt kỹ thuật đã quan sát: {ReadJsonInt(ai, "luot_ky_thuat_da_quan_sat")}", 11, MemoryInk));
-		box.AddChild(CreateUiLabel($"Tự nêu giả thuyết có evidence: {ReadJsonInt(ai, "tu_neu_gia_thuyet_co_evidence")}", 10, MemoryInkSoft));
-		box.AddChild(CreateUiLabel($"Chủ động kiểm chứng: {ReadJsonInt(ai, "chu_dong_kiem_chung")}", 10, MemoryInkSoft));
-		box.AddChild(CreateUiLabel($"Chủ động học hỏi: {ReadJsonInt(ai, "chu_dong_hoc_hoi")}", 10, MemoryInkSoft));
-		box.AddChild(CreateUiLabel($"Yêu cầu thực thi mù: {ReadJsonInt(ai, "yeu_cau_thuc_thi_mu")}", 10, MemoryInkSoft));
-		box.AddChild(CreateUiLabel($"Chỉ số rủi ro phụ thuộc AI: {ReadJsonInt(ai, "rui_ro_phu_thuoc_ai")}% (không phải điểm năng lực)", 10, MemoryInkSoft));
+		var card = CreateMemoryCard(new Color(1f, 0.97f, 0.985f, 0.92f), 13);
+		var margin = CapabilityCardMargin(13, 9); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Thói quen làm việc với AI · 30 ngày", 10, MemoryInk));
+		box.AddChild(CreateUiLabel($"Lượt kỹ thuật có signal: {ReadJsonInt(ai, "luot_ky_thuat_da_quan_sat")}", 9, MemoryInk));
+		box.AddChild(CreateUiLabel($"Hypothesis có evidence: {ReadJsonInt(ai, "tu_neu_gia_thuyet_co_evidence")} · Chủ động kiểm chứng: {ReadJsonInt(ai, "chu_dong_kiem_chung")}", 9, MemoryInkSoft));
+		box.AddChild(CreateUiLabel($"Chủ động học hỏi: {ReadJsonInt(ai, "chu_dong_hoc_hoi")} · Yêu cầu thực thi mù: {ReadJsonInt(ai, "yeu_cau_thuc_thi_mu")}", 9, MemoryInkSoft));
+		box.AddChild(CreateUiLabel($"Rủi ro mất ownership reasoning: {ReadJsonInt(ai, "rui_ro_mat_ownership_reasoning")}% (không phải điểm năng lực)", 9, MemoryInkSoft));
 		return card;
 	}
 
 	private Control CreateRecommendationCard(JsonElement rec)
 	{
-		var card = CreateMemoryCard(new Color(0.985f, 0.965f, 1f, 0.94f), 14, new Color(0.64f, 0.38f, 0.88f));
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
+		var card = CreateMemoryCard(new Color(0.985f, 0.965f, 1f, 0.92f), 13, new Color(0.64f, 0.38f, 0.88f));
+		var margin = CapabilityCardMargin(13, 10); card.AddChild(margin);
 		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
-		box.AddChild(CreateUiLabel(ReadJsonString(rec, "tieu_de"), 13, MemoryInk));
-		box.AddChild(CreateUiLabel($"Ưu tiên: {ReadJsonString(rec, "uu_tien")} · Thời hạn: {ReadJsonString(rec, "thoi_han")}", 10, MemoryPink));
-		var reason = CreateUiLabel("Lý do: " + ReadJsonString(rec, "ly_do"), 10, MemoryInkSoft); reason.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(reason);
-		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(rec, "thuc_hanh"), 10, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
-		var success = CreateUiLabel("Dấu hiệu tiến bộ: " + ReadJsonString(rec, "dau_hieu_tien_bo"), 10, MemoryInkSoft); success.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(success);
+		box.AddChild(CreateUiLabel(ReadJsonString(rec, "tieu_de"), 12, MemoryInk));
+		box.AddChild(CreateUiLabel($"Ưu tiên: {ReadJsonString(rec, "uu_tien")} · Thời hạn: {ReadJsonString(rec, "thoi_han")}", 9, MemoryPink));
+		var reason = CreateUiLabel("Lý do: " + ReadJsonString(rec, "ly_do"), 9, MemoryInkSoft); reason.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(reason);
+		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(rec, "thuc_hanh"), 9, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
+		var success = CreateUiLabel("Dấu hiệu tiến bộ: " + ReadJsonString(rec, "dau_hieu_tien_bo"), 9, MemoryInkSoft); success.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(success);
 		string recId = ReadJsonString(rec, "id");
 		if (!string.IsNullOrWhiteSpace(recId))
 		{
 			var follow = CreateCapabilityMiniButton("Theo dõi mục này", () => SendCapabilityAction("follow_recommendation", new Dictionary<string, object> { ["recommendation_id"] = recId }));
-			follow.CustomMinimumSize = new Vector2(138f, 28f);
+			follow.CustomMinimumSize = new Vector2(138f, 27f);
 			box.AddChild(follow);
 		}
 		return card;
@@ -474,24 +720,24 @@ public partial class UdpListener : Node2D
 	private Button CreateCapabilityMiniButton(string text, Action pressed, bool danger = false)
 	{
 		var button = CreateMemoryButton(text, pressed, primary: false, danger: danger);
-		button.CustomMinimumSize = new Vector2(92f, 26f);
-		button.AddThemeFontSizeOverride("font_size", 9);
+		button.CustomMinimumSize = new Vector2(text.Length > 10 ? 102f : 82f, 25f);
+		button.AddThemeFontSizeOverride("font_size", 8);
 		return button;
 	}
 
 	private Control CreateDevelopmentGoalCard(JsonElement goal)
 	{
-		var card = CreateMemoryCard(new Color(0.975f, 0.985f, 1f, 0.96f), 14, new Color(0.34f, 0.52f, 0.86f));
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 5); margin.AddChild(box);
+		var card = CreateMemoryCard(new Color(0.975f, 0.985f, 1f, 0.94f), 13, new Color(0.34f, 0.52f, 0.86f));
+		var margin = CapabilityCardMargin(13, 10); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
 		string goalId = ReadJsonString(goal, "id");
-		box.AddChild(CreateUiLabel(ReadJsonString(goal, "tieu_de"), 13, MemoryInk));
+		box.AddChild(CreateUiLabel(ReadJsonString(goal, "tieu_de"), 12, MemoryInk));
 		int progress = ReadJsonInt(goal, "tien_do");
 		int gained = ReadJsonInt(goal, "da_them_bang_chung");
 		int target = ReadJsonInt(goal, "muc_tieu_bang_chung");
-		box.AddChild(CreateUiLabel($"Tiến độ evidence: {gained}/{target} · {progress}%", 10, MemoryInkSoft));
-		var bar = new ProgressBar { MinValue = 0, MaxValue = 100, Value = progress, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 7f) }; box.AddChild(bar);
-		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(goal, "thuc_hanh"), 10, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
+		box.AddChild(CreateUiLabel($"Evidence mới: {gained}/{target} · {progress}%", 9, MemoryInkSoft));
+		var bar = new ProgressBar { MinValue = 0, MaxValue = 100, Value = progress, ShowPercentage = false, CustomMinimumSize = new Vector2(0f, 5f) }; box.AddChild(bar);
+		var practice = CreateUiLabel("Thực hành: " + ReadJsonString(goal, "thuc_hanh"), 9, MemoryInkSoft); practice.AutowrapMode = TextServer.AutowrapMode.WordSmart; box.AddChild(practice);
 		if (!string.IsNullOrWhiteSpace(goalId))
 			box.AddChild(CreateCapabilityMiniButton("Dừng theo dõi", () => SendCapabilityAction("stop_goal", new Dictionary<string, object> { ["goal_id"] = goalId }), danger: true));
 		return card;
@@ -499,20 +745,20 @@ public partial class UdpListener : Node2D
 
 	private Control CreateDevelopmentStatsCard(JsonElement stats)
 	{
-		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.96f), 12);
-		var margin = CapabilityCardMargin(); card.AddChild(margin);
-		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 4); margin.AddChild(box);
-		box.AddChild(CreateUiLabel("Thống kê phát triển · 30 ngày", 11, MemoryInk));
-		box.AddChild(CreateUiLabel($"Mục tiêu hoàn thành: {ReadJsonInt(stats, "muc_tieu_hoan_thanh")} · Đang theo dõi: {ReadJsonInt(stats, "muc_tieu_dang_theo_doi")}", 10, MemoryInkSoft));
-		box.AddChild(CreateUiLabel($"Đã dừng: {ReadJsonInt(stats, "muc_tieu_da_dung")} · Lần bạn sửa đánh giá ERIS: {ReadJsonInt(stats, "lan_user_sua_danh_gia")}", 10, MemoryInkSoft));
+		var card = CreateMemoryCard(new Color(1f, 0.99f, 0.995f, 0.90f), 12);
+		var margin = CapabilityCardMargin(12, 8); card.AddChild(margin);
+		var box = new VBoxContainer(); box.AddThemeConstantOverride("separation", 3); margin.AddChild(box);
+		box.AddChild(CreateUiLabel("Thống kê phát triển · 30 ngày", 9, MemoryInk));
+		box.AddChild(CreateUiLabel($"Hoàn thành: {ReadJsonInt(stats, "muc_tieu_hoan_thanh")} · Đang theo dõi: {ReadJsonInt(stats, "muc_tieu_dang_theo_doi")} · Đã dừng: {ReadJsonInt(stats, "muc_tieu_da_dung")}", 8, MemoryInkSoft));
+		box.AddChild(CreateUiLabel($"Lần bạn sửa đánh giá ERIS: {ReadJsonInt(stats, "lan_user_sua_danh_gia")}", 8, MemoryInkSoft));
 		return card;
 	}
 
-	private static MarginContainer CapabilityCardMargin()
+	private static MarginContainer CapabilityCardMargin(int horizontal = 14, int vertical = 10)
 	{
 		var margin = new MarginContainer();
-		margin.AddThemeConstantOverride("margin_left", 14); margin.AddThemeConstantOverride("margin_right", 14);
-		margin.AddThemeConstantOverride("margin_top", 10); margin.AddThemeConstantOverride("margin_bottom", 10);
+		margin.AddThemeConstantOverride("margin_left", horizontal); margin.AddThemeConstantOverride("margin_right", horizontal);
+		margin.AddThemeConstantOverride("margin_top", vertical); margin.AddThemeConstantOverride("margin_bottom", vertical);
 		return margin;
 	}
 
@@ -522,7 +768,7 @@ public partial class UdpListener : Node2D
 		if (Time.GetTicksMsec() - _capabilityRequestAtMs > 6500UL)
 		{
 			_capabilityPending = false;
-			SetCapabilityStatus("Brain chưa trả lời; thử bấm Cập nhật lại.", true);
+			SetCapabilityStatus("Brain chưa trả lời; thử Cập nhật lại.", true);
 		}
 	}
 
