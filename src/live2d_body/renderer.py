@@ -9,6 +9,7 @@ vừa không hiểu đủ mapping vừa dễ kéo hai con ngươi vào nhau.
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,17 @@ from .parameter_profile import INFJ_PARAMETER_PROFILE
 from .stage_state import Live2DStageState
 from .udp_receiver import Live2DStageReceiver
 from .window_bridge import DesktopWindowBridge, WindowGeometry
+
+
+_NON_INTERACTIVE_HIT_PART_IDS = frozenset(
+    {
+        "artmesh_skinning",
+        "artmesh0_skinning",
+        "1(skinning)",
+        "2(skinning)",
+        "trong",
+    }
+)
 
 
 class Live2DDependencyError(RuntimeError):
@@ -74,6 +86,8 @@ class Live2DRenderer:
         self._last_speaking = False
         self._last_stage_event_type = ""
         self._mouth_probe_times: list[float] = []
+        # --- Idle sway (Neuro-like procedural animation) ---
+        self._sway_t: float = 0.0  # thời gian tích luỹ riêng cho sway
 
     def run(self) -> None:
         glfw, live2d = _load_dependencies()
@@ -236,9 +250,19 @@ class Live2DRenderer:
                 gaze = self._update_gaze(geometry, dt)
 
                 model.Update()
+                self._sway_t += dt
+                sway = self._compute_idle_sway(self._sway_t, snapshot.speaking)
                 parameters = dict(snapshot.parameters)
                 if "ParamAngleX" in self.available_parameters:
-                    parameters["ParamAngleX"] = parameters.get("ParamAngleX", 0.0) + gaze.head_x_degrees
+                    parameters["ParamAngleX"] = (
+                        parameters.get("ParamAngleX", 0.0)
+                        + gaze.head_x_degrees
+                        + sway["angle_x"]
+                    )
+                if "ParamAngleZ" in self.available_parameters:
+                    parameters["ParamAngleZ"] = (
+                        parameters.get("ParamAngleZ", 0.0) + sway["angle_z"]
+                    )
                 for parameter_id, value in parameters.items():
                     if parameter_id in self.available_parameters:
                         model.SetParameterValue(
@@ -521,15 +545,30 @@ class Live2DRenderer:
             self._set_mouse_passthrough(glfw, window, True)
             return
 
-        hit = self._model_hit_test(model, local_x, local_y)
+        hit = self._model_hit_test(
+            model,
+            local_x,
+            local_y,
+            window_width=geometry.width,
+            window_height=geometry.height,
+        )
         self._set_mouse_passthrough(glfw, window, not hit)
 
     @staticmethod
-    def _model_hit_test(model: Any, x: float, y: float) -> bool:
+    def _model_hit_test(
+        model: Any,
+        x: float,
+        y: float,
+        *,
+        window_width: int | float | None = None,
+        window_height: int | float | None = None,
+    ) -> bool:
         """Prefer precise drawable hit testing; degrade safely on older live2d-py."""
+        saw_hit_parts = False
         try:
             parts = model.HitPart(float(x), float(y))
-            if parts:
+            saw_hit_parts = bool(parts)
+            if Live2DRenderer._hit_parts_block_mouse(parts):
                 return True
         except Exception:
             pass
@@ -542,7 +581,52 @@ class Live2DRenderer:
                     return True
             except Exception:
                 continue
+        if saw_hit_parts:
+            return False
+        return Live2DRenderer._fallback_model_body_hit_test(
+            x,
+            y,
+            window_width=window_width,
+            window_height=window_height,
+        )
+
+    @staticmethod
+    def _hit_parts_block_mouse(parts: Any) -> bool:
+        for part in parts or ():
+            part_id = str(part).strip().lower()
+            if part_id and part_id not in _NON_INTERACTIVE_HIT_PART_IDS:
+                return True
         return False
+
+    @staticmethod
+    def _fallback_model_body_hit_test(
+        x: float,
+        y: float,
+        *,
+        window_width: int | float | None,
+        window_height: int | float | None,
+    ) -> bool:
+        if not window_width or not window_height:
+            return False
+        width = float(window_width)
+        height = float(window_height)
+        if width <= 0.0 or height <= 0.0:
+            return False
+        nx = float(x) / width
+        ny = float(y) / height
+        if nx < 0.0 or ny < 0.0 or nx > 1.0 or ny > 1.0:
+            return False
+
+        def inside_ellipse(cx: float, cy: float, rx: float, ry: float) -> bool:
+            dx = (nx - cx) / rx
+            dy = (ny - cy) / ry
+            return dx * dx + dy * dy <= 1.0
+
+        return (
+            inside_ellipse(0.50, 0.23, 0.20, 0.17)
+            or inside_ellipse(0.50, 0.53, 0.27, 0.34)
+            or inside_ellipse(0.50, 0.78, 0.23, 0.18)
+        )
 
     def _update_window_drag(self, glfw: Any, window: Any) -> None:
         if not self._dragging_window:
@@ -581,7 +665,13 @@ class Live2DRenderer:
         if (
             0.0 <= local_x < geometry.width
             and 0.0 <= local_y < geometry.height
-            and self._model_hit_test(model, local_x, local_y)
+            and self._model_hit_test(
+                model,
+                local_x,
+                local_y,
+                window_width=geometry.width,
+                window_height=geometry.height,
+            )
         ):
             return False
 
@@ -655,6 +745,34 @@ class Live2DRenderer:
         glfw.set_framebuffer_size_callback(window, on_framebuffer_size)
         glfw.set_key_callback(window, on_key)
         glfw.set_mouse_button_callback(window, on_mouse_button)
+
+    @staticmethod
+    def _compute_idle_sway(t: float, speaking: bool) -> dict[str, float]:
+        """Sinh dao động sine nhỏ để model trông có sức sống (Neuro-like sway).
+
+        - AngleZ (nghiêng đầu): sóng chậm ~0.18 Hz, biên độ ±1.4 deg idle / ±0.7 deg khi nói.
+        - AngleX (xoay trái/phải): sóng siêu chậm ~0.07 Hz, biên độ ±0.8 deg.
+          Kết hợp 2 sóng lệch pha nhau tạo chuyển động Lissajous nhỏ — trông
+          tự nhiên hơn dao động đơn thuần.
+        Khi đang nói, biên độ giảm 50% để không lấn át lipsync.
+        """
+        # Hệ số biên độ: giảm khi speaking để ưu tiên lipsync
+        amp = 0.5 if speaking else 1.0
+
+        # --- AngleZ: drift nghiêng đầu trái/phải ---
+        # Hai sóng cộng lại → không lặp đều đặn → trông sinh động hơn
+        z = (
+            math.sin(2 * math.pi * 0.18 * t) * 1.4
+            + math.sin(2 * math.pi * 0.11 * t + 1.1) * 0.5
+        ) * amp
+
+        # --- AngleX: drift xoay trái/phải siêu nhỏ ---
+        x = (
+            math.sin(2 * math.pi * 0.07 * t + 0.7) * 0.8
+            + math.sin(2 * math.pi * 0.13 * t + 2.3) * 0.3
+        ) * amp
+
+        return {"angle_z": z, "angle_x": x}
 
 
 def run_renderer(config: Live2DBodyConfig) -> None:

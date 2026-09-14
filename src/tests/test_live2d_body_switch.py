@@ -31,6 +31,21 @@ def test_stage_state_tracks_speech_lifecycle() -> None:
     assert state.advance(1 / 60).speaking is False
 
 
+def test_godot_stage_control_text_is_allowed_to_reach_speech_bubble() -> None:
+    body_dir = Path(__file__).resolve().parents[1] / "body"
+    parser_source = (body_dir / "UdpDecisionParser.cs").read_text(encoding="utf-8")
+    listener_source = (body_dir / "UdpListener.cs").read_text(encoding="utf-8")
+
+    assert "display_text" in parser_source
+    assert 'TryReadFirstString(root, out string stageText, "display_text", "tts_text")' not in parser_source
+    assert 'TryReadFirstString(root, out string stageText, "display_text")' in parser_source
+    assert "IsStageSpeechEnvelope" in parser_source
+    assert "TryApplyControlEnvelopeSpeech(payload)" in listener_source
+    control_index = listener_source.index("if (payload.IsControlEnvelope)")
+    bridge_index = listener_source.index("TryApplyControlEnvelopeSpeech(payload)")
+    assert bridge_index < control_index
+
+
 def test_right_click_request_targets_godot_context_menu() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -303,6 +318,45 @@ def test_live2d_model_hit_test_passes_through_empty_alpha_area() -> None:
     assert Live2DRenderer._model_hit_test(FakeModel(), 15.0, 20.0) is False
 
 
+def test_live2d_model_hit_test_ignores_generic_skinning_parts() -> None:
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeModel:
+        def HitPart(self, _x: float, _y: float):
+            return ["ArtMesh_Skinning", "ArtMesh0_Skinning", "trong"]
+
+        def HitTest(self, _name: str, _x: float, _y: float) -> bool:
+            return False
+
+    assert Live2DRenderer._model_hit_test(FakeModel(), 40.0, 60.0) is False
+
+
+def test_live2d_model_hit_test_uses_body_fallback_when_sdk_returns_no_parts() -> None:
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeModel:
+        def HitPart(self, _x: float, _y: float):
+            return []
+
+        def HitTest(self, _name: str, _x: float, _y: float) -> bool:
+            return False
+
+    assert Live2DRenderer._model_hit_test(
+        FakeModel(),
+        260.0,
+        477.0,
+        window_width=520,
+        window_height=900,
+    ) is True
+    assert Live2DRenderer._model_hit_test(
+        FakeModel(),
+        30.0,
+        30.0,
+        window_width=520,
+        window_height=900,
+    ) is False
+
+
 def test_live2d_glfw_passthrough_toggles_only_on_state_change() -> None:
     from live2d_body.renderer import Live2DRenderer
 
@@ -331,19 +385,84 @@ def test_live2d_glfw_passthrough_toggles_only_on_state_change() -> None:
     ]
 
 
-def test_godot_overlay_uses_dynamic_window_passthrough_not_merged_hitbox() -> None:
+def test_godot_overlay_uses_region_passthrough_not_full_window_capture() -> None:
     source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
-    assert "DisplayServer.WindowFlags.MousePassthrough" in source
+    live2d_source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.Live2D.cs").read_text(encoding="utf-8")
+    assert "[Export] public bool EnableDesktopOverlayWindow = true;" in source
+    assert "[Export] public bool KeepWindowAlwaysOnTop = true;" in source
+    assert "[Export] public bool UseBorderlessWindow = true;" in source
+    assert "[Export] public bool UseTransparentWindow = true;" in source
+    assert "[Export] public bool FillScreenOverlay = true;" in source
     assert "DisplayServer.MouseGetPosition()" in source
-    assert "IsMouseOverInteractiveOverlay" in source
-    assert "TryForwardStaleOverlayMouseDown" in source
-    assert "NativeMouseReplay.TryReplayButtonDown" in source
+    assert "ApplyMouseCaptureRect" in source
+    assert "TryGetInteractivePanelCaptureRect" in source
+    assert "TryBuildCharacterMouseCaptureRect" in source
+    assert "MergeVisibleControlRect" in source
+    assert "ApplyLive2DMousePassthrough" in live2d_source
     assert "DisplayServer.ScreenGetUsableRect" in source
     scene = (Path(__file__).resolve().parents[1] / "body" / "udpListener.tscn").read_text(encoding="utf-8")
     root_block = scene.split('[node name="Control" type="Control" parent="CanvasLayer"', 1)[1].split("[node", 1)[0]
     assert "mouse_filter = 2" in root_block
-    assert "MergeInteractivePanelRects" not in source
-    assert "TryBuildCharacterMouseCaptureRect" not in source
+    assert "NativeOverlayMousePassthrough" not in source
+    assert "ConfigureSafeWindowedMode" not in source
+
+
+def test_windows_overlay_uses_native_global_clickthrough_without_clipping_rendering() -> None:
+    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    update_body = source.split("private void UpdateMousePassthrough()", 1)[1].split("private void ApplyFullMouseCapture()", 1)[0]
+
+    assert "WS_EX_LAYERED" in source
+    assert "WS_EX_TRANSPARENT" in source
+    assert "WindowGetNativeHandle(DisplayServer.HandleType.WindowHandle)" in source
+    assert "RuntimeInformation.IsOSPlatform(OSPlatform.Windows)" in update_body
+    assert "ApplyWindowsGlobalMousePassthrough" in update_body
+    # Windows must leave the polygon path before ApplyMouseCaptureRect, otherwise
+    # Godot clips the transparent overlay to the input polygon.
+    assert update_body.index("ApplyWindowsGlobalMousePassthrough") < update_body.index("ApplyMouseCaptureRect")
+
+
+def test_godot_overlay_does_not_use_offscreen_polygon_passthrough() -> None:
+    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    assert "DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>())" in source
+    assert "OverlayClickThroughPolygon" not in source
+    assert "RectToPassthroughPolygon" not in source
+
+
+def test_godot_overlay_defaults_to_desktop_overlay_mode() -> None:
+    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    assert "[Export] public bool EnableDesktopOverlayWindow = true;" in source
+    assert "[Export] public bool KeepWindowAlwaysOnTop = true;" in source
+    assert "[Export] public bool UseBorderlessWindow = true;" in source
+    assert "[Export] public bool UseTransparentWindow = true;" in source
+    assert "[Export] public bool FillScreenOverlay = true;" in source
+    assert "DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false)" in source
+
+
+def test_opening_chat_panel_hides_speech_bubbles_first() -> None:
+    source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    body = source.split("private void ToggleChatPanel()", 1)[1].split("private void CloseChatPanel()", 1)[0]
+    assert "HideAllSpeechBubbles();" in body
+    assert "_bubbleHideAtMs = 0;" in body
+    assert body.index("HideAllSpeechBubbles();") < body.index("_chatPanel.Visible = true;")
+
+
+def test_transient_overlays_do_not_expand_mouse_capture_regions() -> None:
+    body_source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.cs").read_text(encoding="utf-8")
+    live2d_source = (Path(__file__).resolve().parents[1] / "body" / "UdpListener.Live2D.cs").read_text(encoding="utf-8")
+
+    character_capture = body_source.split("private bool TryBuildCharacterMouseCaptureRect", 1)[1].split(
+        "private static bool IsVisibleControlUnderMouse",
+        1,
+    )[0]
+    live2d_capture = live2d_source.split("private bool ApplyLive2DMousePassthrough()", 1)[1].split(
+        "private void ShutdownLive2DMode()",
+        1,
+    )[0]
+
+    for decorative_overlay in ("ActiveSpeechBubble()", "_runtimePresenceIndicator", "_tutorPanel"):
+        assert decorative_overlay not in character_capture
+    for decorative_overlay in ("Live2DSpeechBubbleControl()", "_runtimePresenceIndicator", "_tutorPanel"):
+        assert decorative_overlay not in live2d_capture
 
 
 def test_live2d_stale_mouse_press_is_replayed_below_window() -> None:

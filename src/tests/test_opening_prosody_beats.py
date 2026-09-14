@@ -94,3 +94,36 @@ def test_stage_output_keeps_vietnamese_bubble_when_tts_is_japanese(monkeypatch) 
     assert [item.display_text for item in frames] == ["Anh về rồi à.", "Facebook có gì đáng chú ý không?"]
     assert [item.tts_text for item in frames] == ["おかえり。", "Facebookで何か気になる？"]
     assert [item.memory_text for item in frames] == ["Anh về rồi à.", "Facebook có gì đáng chú ý không?"]
+
+
+def test_stage_output_generic_split_keeps_display_and_tts_surfaces_separate(monkeypatch) -> None:
+    from runtime.stage_contracts import StageFrame
+    from runtime.stage_output import StageOutputPipeline
+    import runtime.tts_engine as tts_engine
+
+    # Force the generic logical-segmentation path (not the ElevenLabs fast path).
+    monkeypatch.setattr(tts_engine, "_tts_provider", lambda: "edge")
+    frame = StageFrame(
+        turn_id="t-generic-bilingual",
+        display_text="Đây là câu tiếng Việt đầu tiên đủ dài. Đây là câu tiếng Việt thứ hai đủ dài.",
+        tts_text="これは最初の長い日本語の文章です。 これは二番目の長い日本語の文章です。",
+        memory_text="Đây là câu tiếng Việt đầu tiên đủ dài. Đây là câu tiếng Việt thứ hai đủ dài.",
+    )
+
+    from types import SimpleNamespace
+
+    profile = SimpleNamespace(logical_segment_tts=True, min_split_chars=24, max_tts_segments=8)
+    frames = StageOutputPipeline(profile=profile).frames_for_tts(frame)
+
+    assert [item.tts_text for item in frames] == [
+        "これは最初の長い日本語の文章です。",
+        "これは二番目の長い日本語の文章です。",
+    ]
+    assert [item.display_text for item in frames] == [
+        "Đây là câu tiếng Việt đầu tiên đủ dài.",
+        "Đây là câu tiếng Việt thứ hai đủ dài.",
+    ]
+    assert [item.memory_text for item in frames] == [
+        "Đây là câu tiếng Việt đầu tiên đủ dài.",
+        "Đây là câu tiếng Việt thứ hai đủ dài.",
+    ]

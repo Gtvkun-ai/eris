@@ -429,6 +429,20 @@ public partial class UdpListener
 		}
 	}
 
+	private bool ApplyLive2DMousePassthrough()
+	{
+		if (!_isLive2DMode)
+			return false;
+
+		Rect2 interactiveRect = new(new Vector2(-8f, -8f), Vector2.One);
+		bool hasInteractiveRect = false;
+
+		if (!hasInteractiveRect)
+			interactiveRect = new Rect2(new Vector2(-8f, -8f), Vector2.One);
+
+		return ApplyMouseCaptureRect(interactiveRect);
+	}
+
 	private void ShutdownLive2DMode()
 	{
 		_isLive2DMode = false;

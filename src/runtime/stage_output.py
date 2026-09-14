@@ -399,6 +399,12 @@ class StageOutputPipeline:
         if len(segments) <= 1:
             return (frame,)
 
+        # display_text / memory_text là surface riêng với TTS. Đặc biệt khi
+        # bubble dùng tiếng Việt còn giọng dùng tiếng Nhật, tuyệt đối không lấy
+        # transcript TTS để ghi đè UI/memory chỉ vì TTS vừa bị chia segment.
+        display_segments = self.segmenter.split(frame.display_text)
+        memory_segments = self.segmenter.split(frame.memory_text)
+
         frames: list[StageFrame] = []
         for index, segment in enumerate(segments):
             plan = self.prosody.plan(
@@ -407,13 +413,23 @@ class StageOutputPipeline:
                 style_hint=frame.prosody_style,
                 notes_hint=frame.prosody_notes,
             )
+            display_text = (
+                display_segments[index]
+                if index < len(display_segments)
+                else frame.display_text if index == 0 else ""
+            )
+            memory_text = (
+                memory_segments[index]
+                if index < len(memory_segments)
+                else frame.memory_text if index == 0 else ""
+            )
             frames.append(
                 replace(
                     frame,
                     segment_id=index,
-                    display_text=segment,
+                    display_text=display_text,
                     tts_text=segment,
-                    memory_text=segment,
+                    memory_text=memory_text,
                     prosody_style=plan.style,
                     prosody_notes=plan.director_notes,
                     delivery=self._segment_delivery(frame.delivery, index=index, count=len(segments)),

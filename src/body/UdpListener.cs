@@ -54,6 +54,8 @@ public partial class UdpListener : Node2D
 	private BodyAudioController _audio;
 	private string _ttsBodyAudioTurnId = "";
 	private int _ttsBodyAudioSegmentCount = 1;
+	private string _lastSpeechBubbleText = "";
+	private ulong _lastSpeechBubbleTextAtMs = 0;
 	private ErisProcessManager _processes;
 	private UdpDecisionParser _decisionParser = new();
 
@@ -485,20 +487,84 @@ public partial class UdpListener : Node2D
 			DisplayServer.WindowSetPosition(screenPos);
 		}
 
-		// Không dùng mouse_passthrough_polygon làm hitbox tổng nữa. Trên Windows,
-		// vùng ngoài polygon có thể không được vẽ, nên việc Merge bubble/indicator với
-		// nhân vật từng tạo ra một hình chữ nhật rất lớn và chặn click ở khoảng trống.
-		// Giữ polygon rỗng để toàn overlay luôn được render, rồi đổi cờ
-		// MousePassthrough theo vị trí con trỏ ở UpdateMousePassthrough().
-		DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
 		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false);
-		_overlayMousePassthroughActive = false;
-		UpdateMousePassthrough();
+		if (EnableMousePassthrough)
+			UpdateMousePassthrough();
+		else
+			ApplyFullMouseCapture();
 	}
 
-	private bool _overlayMousePassthroughActive = false;
+	private bool _passthroughFullCapture = true;
+	private Rect2 _passthroughLastRect = new(Vector2.Zero, Vector2.Zero);
+	private bool _windowsNativePassthroughInitialized = false;
+	private bool? _windowsNativePassthroughEnabled = null;
+	private bool _windowsNativePassthroughFailureLogged = false;
 	private ulong _staleOverlayReplayGuardUntilMs = 0;
 	private string _shutdownReason = "unknown tree exit";
+
+	private static class NativeWindowPassthrough
+	{
+		private const int GwlExStyle = -20;
+		private const long WS_EX_LAYERED = 0x00080000L;
+		private const long WS_EX_TRANSPARENT = 0x00000020L;
+
+		[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+		private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+		[DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+		private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr newLong);
+
+		[DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+		private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+		[DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+		private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int newLong);
+
+		private static long GetExtendedStyle(IntPtr hWnd)
+		{
+			return IntPtr.Size == 8
+				? GetWindowLongPtr64(hWnd, GwlExStyle).ToInt64()
+				: GetWindowLong32(hWnd, GwlExStyle);
+		}
+
+		private static void SetExtendedStyle(IntPtr hWnd, long style)
+		{
+			if (IntPtr.Size == 8)
+				SetWindowLongPtr64(hWnd, GwlExStyle, new IntPtr(style));
+			else
+				SetWindowLong32(hWnd, GwlExStyle, unchecked((int)style));
+		}
+
+		public static bool TrySet(bool passthrough)
+		{
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				return false;
+
+			try
+			{
+				long rawHandle = DisplayServer.WindowGetNativeHandle(DisplayServer.HandleType.WindowHandle);
+				if (rawHandle == 0)
+					return false;
+
+				IntPtr hWnd = new(rawHandle);
+				long style = GetExtendedStyle(hWnd);
+				long nextStyle = passthrough
+					? style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+					: style & ~WS_EX_TRANSPARENT;
+				if (nextStyle != style)
+					SetExtendedStyle(hWnd, nextStyle);
+				return true;
+			}
+			catch (DllNotFoundException)
+			{
+				return false;
+			}
+			catch (EntryPointNotFoundException)
+			{
+				return false;
+			}
+		}
+	}
 
 	private static class NativeMouseReplay
 	{
@@ -547,7 +613,7 @@ public partial class UdpListener : Node2D
 	{
 		if (!EnableDesktopOverlayWindow
 			|| !EnableMousePassthrough
-			|| _overlayMousePassthroughActive
+			|| !_passthroughFullCapture
 			|| !mouseEvent.Pressed
 			|| _draggingPanel != null
 			|| _isDraggingCharacter)
@@ -567,7 +633,7 @@ public partial class UdpListener : Node2D
 		// trước còn capture. Nhả overlay trước rồi phát lại đúng mouse-down xuống
 		// ứng dụng phía dưới. Guard ngắn tránh synthetic event tự lặp nếu driver
 		// áp dụng window flag chậm.
-		SetOverlayMousePassthrough(true);
+		UpdateMousePassthrough();
 		_staleOverlayReplayGuardUntilMs = now + 80UL;
 		return NativeMouseReplay.TryReplayButtonDown(mouseEvent.ButtonIndex);
 	}
@@ -591,14 +657,7 @@ public partial class UdpListener : Node2D
 
 		if (!EnableMousePassthrough)
 		{
-			SetOverlayMousePassthrough(false);
-			return;
-		}
-
-		// Khi đang kéo, phải giữ capture đến lúc nhận được mouse release.
-		if (_draggingPanel != null || _isDraggingCharacter)
-		{
-			SetOverlayMousePassthrough(false);
+			ApplyFullMouseCapture();
 			return;
 		}
 
@@ -606,52 +665,158 @@ public partial class UdpListener : Node2D
 		Vector2I screenMouse = DisplayServer.MouseGetPosition();
 		Vector2 mouse = new(screenMouse.X - windowPos.X, screenMouse.Y - windowPos.Y);
 
-		bool shouldCapture = IsMouseOverInteractiveOverlay(mouse);
-
-		// Nếu một control Eris đã nhận mouse-down, đừng bật xuyên chuột giữa chừng
-		// khi user kéo con trỏ ra ngoài control; nếu không mouse-up có thể rơi xuống app dưới.
-		if (!shouldCapture && !_overlayMousePassthroughActive
-			&& (Input.IsMouseButtonPressed(MouseButton.Left)
-				|| Input.IsMouseButtonPressed(MouseButton.Right)
-				|| Input.IsMouseButtonPressed(MouseButton.Middle)))
+		// Windows dùng polygon passthrough như một window-shape: phần nằm ngoài
+		// polygon có thể không được paint. Bubble/panel/canvas transient vì thế
+		// bị cắt hoặc nhấp nháy khi vùng capture đổi. Trên Windows ta chỉ toggle
+		// hit-testing native; toàn bộ overlay vẫn luôn được render đầy đủ.
+		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 		{
-			shouldCapture = true;
+			bool mustCapture = _draggingPanel != null
+				|| _isDraggingCharacter
+				|| IsMouseOverInteractiveOverlay(mouse);
+			if (ApplyWindowsGlobalMousePassthrough(!mustCapture))
+				return;
 		}
 
-		SetOverlayMousePassthrough(!shouldCapture);
-	}
+		// Fallback cho platform khác (hoặc WinAPI không khả dụng). Khi đang kéo,
+		// phải giữ capture đến lúc nhận được mouse release.
+		if (_draggingPanel != null || _isDraggingCharacter)
+		{
+			ApplyFullMouseCapture();
+			return;
+		}
 
-	private void SetOverlayMousePassthrough(bool passthrough)
-	{
-		if (_overlayMousePassthroughActive == passthrough)
+		Rect2 panelRect = default;
+		bool hasPanelRect = false;
+		MergeInteractivePanelRects(ref panelRect, ref hasPanelRect);
+		if (hasPanelRect)
+		{
+			ApplyMouseCaptureRect(panelRect);
+			return;
+		}
+
+		if (ApplyLive2DMousePassthrough())
 			return;
 
-		// Polygon để rỗng: khi passthrough=false, cửa sổ nhận chuột bình thường;
-		// khi passthrough=true, cờ WindowFlags.MousePassthrough cho chuột xuyên toàn bộ
-		// nhưng không cắt mất phần render trong suốt của overlay.
+		if (TryBuildCharacterMouseCaptureRect(out Rect2 rect))
+			ApplyMouseCaptureRect(rect);
+	}
+
+	private bool ApplyWindowsGlobalMousePassthrough(bool passthrough)
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			return false;
+
+		if (!_windowsNativePassthroughInitialized)
+		{
+			// Xoá region shape cũ đúng một lần. Sau điểm này Windows không được
+			// quay lại polygon nữa, nếu không paint clipping sẽ xuất hiện lại.
+			DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
+			DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false);
+			_windowsNativePassthroughInitialized = true;
+			_passthroughLastRect = new Rect2(Vector2.Zero, Vector2.Zero);
+		}
+
+		if (_windowsNativePassthroughEnabled == passthrough)
+		{
+			_passthroughFullCapture = !passthrough;
+			return true;
+		}
+
+		if (!NativeWindowPassthrough.TrySet(passthrough))
+		{
+			if (!_windowsNativePassthroughFailureLogged)
+			{
+				_windowsNativePassthroughFailureLogged = true;
+				RunLogger.LogErr("[Overlay] Win32 global mouse passthrough unavailable; falling back to Godot region passthrough.");
+			}
+			return false;
+		}
+
+		_windowsNativePassthroughEnabled = passthrough;
+		_passthroughFullCapture = !passthrough;
+		return true;
+	}
+
+	private void ApplyFullMouseCapture()
+	{
+		// Nếu đang ở native Windows mode, gỡ WS_EX_TRANSPARENT trước. Không
+		// được early-return theo cache cũ vì style native mới là nguồn sự thật.
+		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+			&& ApplyWindowsGlobalMousePassthrough(false))
+			return;
+
+		if (_passthroughFullCapture)
+			return;
+
 		DisplayServer.WindowSetMousePassthrough(Array.Empty<Vector2>());
-		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, passthrough);
-		_overlayMousePassthroughActive = passthrough;
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false);
+		_passthroughFullCapture = true;
+	}
+
+	private bool ApplyMouseCaptureRect(Rect2 rect)
+	{
+		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
+			return false;
+
+		bool unchanged =
+			!_passthroughFullCapture
+			&& _passthroughLastRect.Position.DistanceTo(rect.Position) < 2f
+			&& _passthroughLastRect.Size.DistanceTo(rect.Size) < 2f;
+		if (unchanged)
+			return true;
+
+		var region = new[]
+		{
+			rect.Position,
+			rect.Position + new Vector2(rect.Size.X, 0f),
+			rect.Position + rect.Size,
+			rect.Position + new Vector2(0f, rect.Size.Y),
+		};
+		DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.MousePassthrough, false);
+		DisplayServer.WindowSetMousePassthrough(region);
+		_passthroughFullCapture = false;
+		_passthroughLastRect = rect;
+		return true;
+	}
+
+	private bool TryGetInteractivePanelCaptureRect(Vector2 mouse, out Rect2 rect)
+	{
+		// Chỉ mở khoá panel đang ở dưới con trỏ. Không merge tất cả panel visible,
+		// vì khoảng trống giữa chúng phải tiếp tục click xuyên xuống desktop.
+		if (TryGetVisibleControlMouseRect(_chatPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_characterContextMenu, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_emotionPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_privateMindPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_settingsPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_memoryPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_capabilityPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect))
+			return true;
+
+		// Tutor panel là decoration (MouseFilter.Ignore); chỉ nút Ẩn cần nhận click.
+		if (TryGetVisibleControlMouseRect(_tutorHideButton, mouse, out rect))
+			return true;
+
+		rect = default;
+		return false;
+	}
+
+	private void MergeInteractivePanelRects(ref Rect2 aggregate, ref bool hasRect)
+	{
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _chatPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _characterContextMenu, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _emotionPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _privateMindPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _settingsPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
 	}
 
 	private bool IsMouseOverInteractiveOverlay(Vector2 mouse)
 	{
-		// Các panel thật sự tương tác. Kiểm tra từng rect riêng, tuyệt đối không Merge
-		// thành bounding box vì khoảng trống giữa hai panel phải click xuyên.
-		if (IsVisibleControlUnderMouse(_chatPanel, mouse)
-			|| IsVisibleControlUnderMouse(_characterContextMenu, mouse)
-			|| IsVisibleControlUnderMouse(_emotionPanel, mouse)
-			|| IsVisibleControlUnderMouse(_privateMindPanel, mouse)
-			|| IsVisibleControlUnderMouse(_settingsPanel, mouse)
-			|| IsVisibleControlUnderMouse(_memoryPanel, mouse)
-			|| IsVisibleControlUnderMouse(_capabilityPanel, mouse)
-			|| IsVisibleControlUnderMouse(_conversationHistoryPanel, mouse))
-		{
-			return true;
-		}
-
-		// Tutor panel là decoration (MouseFilter.Ignore); chỉ nút Ẩn cần nhận click.
-		if (IsVisibleControlUnderMouse(_tutorHideButton, mouse))
+		if (TryGetInteractivePanelCaptureRect(mouse, out _))
 			return true;
 
 		// Live2D chạy trong cửa sổ renderer riêng và tự nhận input. Godot overlay
@@ -669,11 +834,57 @@ public partial class UdpListener : Node2D
 		return characterRect.HasPoint(mouse);
 	}
 
+	private bool TryBuildCharacterMouseCaptureRect(out Rect2 rect)
+	{
+		rect = default;
+		if (_body == null)
+			return false;
+
+		float pad = 12f;
+		Vector2 tl = _body.GlobalPosition - _spriteHalfSize - new Vector2(pad, pad);
+		Vector2 size = _spriteHalfSize * 2f + new Vector2(pad * 2f, pad * 2f);
+		rect = new Rect2(tl, size);
+
+		return true;
+	}
+
 	private static bool IsVisibleControlUnderMouse(Control control, Vector2 mouse)
 	{
 		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
 			return false;
 		return IsMouseOverControl(control, mouse);
+	}
+
+	private static bool TryGetVisibleControlMouseRect(Control control, Vector2 mouse, out Rect2 rect)
+	{
+		rect = default;
+		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
+			return false;
+
+		rect = control.GetGlobalRect();
+		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
+			return false;
+		return rect.HasPoint(mouse);
+	}
+
+	private static void MergeVisibleControlRect(ref Rect2 aggregate, ref bool hasRect, Control control, float grow = 0f)
+	{
+		if (control == null || !GodotObject.IsInstanceValid(control) || !control.Visible || !control.IsVisibleInTree())
+			return;
+
+		Rect2 rect = control.GetGlobalRect();
+		if (rect.Size.X <= 0f || rect.Size.Y <= 0f)
+			return;
+		if (grow > 0f)
+			rect = rect.Grow(grow);
+
+		if (hasRect)
+			aggregate = aggregate.Merge(rect);
+		else
+		{
+			aggregate = rect;
+			hasRect = true;
+		}
 	}
 
 	public override void _ExitTree()
@@ -1290,6 +1501,8 @@ public partial class UdpListener : Node2D
 		{
 			_bodyAutonomy?.RecordUserInteraction();
 			MarkChatActivity();
+			HideAllSpeechBubbles();
+			_bubbleHideAtMs = 0;
 			UpdateChatPanelLayout();
 			_chatPanel.Visible = true;
 			UpdateMousePassthrough();
@@ -3901,18 +4114,19 @@ public partial class UdpListener : Node2D
 	}
 
 	private void ApplyTypewriterEffect(string text){
-		if (_textTween != null && _textTween.IsValid())
-		{
-			_textTween.Kill();
-		}
-
 		text ??= "";
 
 		// Câu rỗng = không có gì để đọc → ẩn bong bóng luôn.
 		if (string.IsNullOrWhiteSpace(text))
 		{
+			if (_textTween != null && _textTween.IsValid())
+			{
+				_textTween.Kill();
+			}
 			HideAllSpeechBubbles();
 			_bubbleHideAtMs = 0;
+			_lastSpeechBubbleText = "";
+			_lastSpeechBubbleTextAtMs = 0;
 			if (_label != null)
 				_label.Text = "";
 			if (_live2DSpeechLabel != null)
@@ -3920,6 +4134,25 @@ public partial class UdpListener : Node2D
 			if (_live2DSpeechStatus != null)
 				_live2DSpeechStatus.Text = "";
 			return;
+		}
+
+		string normalizedText = text.Trim();
+		ulong nowMs = Time.GetTicksMsec();
+		Control existingBubble = ActiveSpeechBubble();
+		if (existingBubble != null
+			&& existingBubble.Visible
+			&& string.Equals(normalizedText, _lastSpeechBubbleText, StringComparison.Ordinal)
+			&& _lastSpeechBubbleTextAtMs > 0
+			&& nowMs - _lastSpeechBubbleTextAtMs < 15000)
+		{
+			return;
+		}
+		_lastSpeechBubbleText = normalizedText;
+		_lastSpeechBubbleTextAtMs = nowMs;
+
+		if (_textTween != null && _textTween.IsValid())
+		{
+			_textTween.Kill();
 		}
 
 		RecordConversationAssistantMessage(text);
@@ -4390,6 +4623,7 @@ public partial class UdpListener : Node2D
 		else if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 
+		TryApplyControlEnvelopeSpeech(payload);
 		if (payload.IsControlEnvelope)
 			return;
 
@@ -4404,6 +4638,19 @@ public partial class UdpListener : Node2D
 
 		if ((payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
 			ApplyTypewriterEffect(payload.Text);
+	}
+
+	private bool TryApplyControlEnvelopeSpeech(UdpDecisionPayload payload)
+	{
+		if (!payload.IsControlEnvelope
+			|| !payload.ShouldSpeak
+			|| !payload.HasTextField
+			|| string.IsNullOrWhiteSpace(payload.Text))
+		{
+			return false;
+		}
+		ApplyTypewriterEffect(payload.Text);
+		return true;
 	}
 
 	private bool TryHandleTtsEvent(string raw)

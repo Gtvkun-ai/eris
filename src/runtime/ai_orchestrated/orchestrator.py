@@ -29,6 +29,7 @@ from runtime.reply_obligation import enforce_reply_obligation
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
 from runtime.runtime_status import emit_runtime_status
+from runtime.world_state import attach_world_state_projection
 from runtime.chess.surface import (
     authoritative_chess_answer_text,
     chess_move_question,

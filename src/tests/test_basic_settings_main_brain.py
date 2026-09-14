@@ -238,8 +238,116 @@ def test_send_decision_to_body_releases_text_when_tts_never_starts(monkeypatch) 
     owner.stage_dispatcher = _Dispatcher()
     owner.current_stage_user_text = ""
     owner.last_ai_intention_plan = None
+    owner.memory_state = None
 
     owner._send_decision_to_body(_Decision(), channel="chat")
     time.sleep(0.35)
 
     assert any(message.get("text") == "bubble text" for message in owner.transport.messages)
+
+
+def test_send_decision_to_body_emits_stage_text_before_waiting_for_tts(monkeypatch) -> None:
+    from runtime.coordinator import RuntimeCoordinator
+
+    monkeypatch.setenv("ERIS_TTS_SYNC_TEXT", "1")
+    monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "30")
+    monkeypatch.setattr(
+        "runtime.runtime_settings_store.runtime_text",
+        lambda section, key, default=None: "ja" if (section, key) == ("tts", "language") else default,
+    )
+
+    class _Transport:
+        def __init__(self):
+            self.messages = []
+
+        def send_json(self, payload):
+            self.messages.append(payload)
+
+    class _StageFrame:
+        language_hint = "ja"
+
+        def __init__(self):
+            self.display_text = "bubble text"
+            self.memory_text = "bubble text"
+            self.tts_text = "bubble text"
+            self.emotion = "neutral"
+            self.motion = "stand"
+            self.actions = ()
+            self.prosody_style = "neutral"
+            self.prosody_notes = ""
+            self.delivery = {}
+            self.stage_act = {}
+            self.show_plan = {}
+            self.speech_contract = {}
+            self.body_timeline = {}
+            self.interruptible = True
+            self.body_only = False
+            self.source = "test"
+            self.speech_act = ""
+            self.preset_id = ""
+            self.audio_asset = ""
+            self.turn_id = "turn-chat"
+            self.segment_id = 0
+
+        def to_payload_patch(self):
+            return {"display_text": self.display_text, "stage": {"segment_count": 1, "protocol": "eris.stage", "protocol_version": 1}}
+
+    class _StageBuilder:
+        language_hint = "ja"
+
+        def build(self, *_args, **_kwargs):
+            return _StageFrame()
+
+    class _StageBus:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, event):
+            self.events.append(event.to_payload())
+            return True
+
+    class _Dispatcher:
+        def dispatch_tts(self, *_args, **_kwargs):
+            return True
+
+    class _Decision:
+        text = "ignored"
+        should_speak = True
+        parse_mode = ""
+        intent = "chat"
+        director_trace_id = ""
+
+        def to_payload(self):
+            return {"text": "ignored", "should_speak": True, "stage": {}}
+
+    owner = object.__new__(RuntimeCoordinator)
+    owner.logger = logging.getLogger("test")
+    owner.transport = _Transport()
+    owner.ai_runtime_enabled = False
+    owner.ai_state_reducer = None
+    owner._stage_channel_blocked = lambda _channel: False
+    owner._build_body_bias_payload = lambda: {}
+    owner._private_mind_digest_for_payload = lambda: {}
+    owner._private_life_digest_for_payload = lambda: {}
+    owner._build_emotion_debug_payload = lambda: {}
+    owner._build_depth_v2_block = lambda **_kwargs: {}
+    owner._record_public_turn = lambda *args, **kwargs: None
+    owner._get_runtime_provider = lambda _name: SimpleNamespace(engine=SimpleNamespace(_ok=True))
+    owner.subconscious_runtime_enabled = False
+    owner.stage_event_bus = _StageBus()
+    owner.stage_frame_builder = _StageBuilder()
+    owner.stage_output_pipeline = SimpleNamespace(frames_for_tts=lambda frame: (frame,))
+    owner.stage_dispatcher = _Dispatcher()
+    owner.current_stage_user_text = ""
+    owner.last_ai_intention_plan = None
+    owner.memory_state = None
+
+    owner._send_decision_to_body(_Decision(), channel="chat")
+
+    assert any(
+        event.get("protocol") == "eris.stage"
+        and event.get("type") == "stage_segment"
+        and event.get("display_text") == "bubble text"
+        for event in owner.stage_event_bus.events
+    )
+    assert not any(message.get("text") == "bubble text" for message in owner.transport.messages)

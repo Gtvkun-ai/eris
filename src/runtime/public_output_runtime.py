@@ -366,10 +366,10 @@ class PublicOutputRuntimeMixin:
             nonlocal stage_payload_sent
             if stage_payload_sent:
                 return
-            stage_payload_sent = True
             bus = getattr(self, "stage_event_bus", None)
             if bus is None:
                 return
+            stage_payload_sent = True
             # Cập nhật khí sắc nền trước emotion của câu nói. Event chỉ chứa vector
             # số, không mang nội dung private mind. Khi câu kết thúc, biểu cảm tạm
             # thời sẽ tan dần về state này thay vì reset cứng thành mặt mannequin.
@@ -595,6 +595,9 @@ class PublicOutputRuntimeMixin:
         # cảm xúc/nhật ký vẫn phải hiện ngay chứ không đứng nhìn spinner như một
         # nghi thức tôn giáo của UI bất đồng bộ.
         send_panel_payload()
+        # Show the committed public surface immediately; TTS playback can lag or
+        # fail independently, but chat should not look stuck after text exists.
+        send_stage_protocol_segments()
         if not sync_text:
             # Chế độ legacy: text hiện ngay, audio tới sau.
             send_text_payload("immediate")

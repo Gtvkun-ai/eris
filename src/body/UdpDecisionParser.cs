@@ -278,6 +278,7 @@ public sealed class UdpDecisionParser
 			string protocol = root.TryGetProperty("protocol", out var protocolElement) && protocolElement.ValueKind == JsonValueKind.String
 				? protocolElement.GetString() ?? ""
 				: "";
+			bool stageSpeechEnvelope = IsStageSpeechEnvelope(protocol, envelopeType);
 			isControlEnvelope = string.Equals(protocol, "eris.stage", StringComparison.OrdinalIgnoreCase)
 				|| envelopeType.StartsWith("maintenance_", StringComparison.Ordinal)
 				|| envelopeType.StartsWith("settings_", StringComparison.Ordinal)
@@ -286,7 +287,7 @@ public sealed class UdpDecisionParser
 				// nhưng Godot body không còn Agent Console UI nên chỉ coi chúng là control traffic.
 				|| string.Equals(envelopeType, "agent_event", StringComparison.Ordinal)
 				|| envelopeType.EndsWith("_ack", StringComparison.Ordinal);
-			if (isControlEnvelope)
+			if (isControlEnvelope && !stageSpeechEnvelope)
 				shouldSpeak = false;
 
 			if (BodyBias.TryFromJson(root, out bodyBias))
@@ -300,6 +301,14 @@ public sealed class UdpDecisionParser
 			if (root.TryGetProperty("text", out var t))
 			{
 				text = t.GetString() ?? "";
+				hasTextField = true;
+			}
+			// eris.stage có hai surface độc lập: display_text cho bubble và
+			// tts_text cho giọng. Không fallback sang tts_text ở UI, nếu không
+			// một segment giọng Nhật không có display sẽ ghi đè bubble tiếng Việt.
+			else if (stageSpeechEnvelope && TryReadFirstString(root, out string stageText, "display_text"))
+			{
+				text = stageText;
 				hasTextField = true;
 			}
 			if (root.TryGetProperty("should_speak", out var ss) && ss.ValueKind == JsonValueKind.False)
@@ -381,6 +390,28 @@ public sealed class UdpDecisionParser
 			BodyTimeline = bodyTimeline,
 			HasBodyTimeline = hasBodyTimeline,
 		};
+	}
+
+	private static bool IsStageSpeechEnvelope(string protocol, string envelopeType)
+	{
+		if (!string.Equals(protocol, "eris.stage", StringComparison.OrdinalIgnoreCase))
+			return false;
+		return envelopeType is "stage_segment" or "audio_playback_started" or "speaking";
+	}
+
+	private static bool TryReadFirstString(JsonElement root, out string text, params string[] propertyNames)
+	{
+		foreach (string propertyName in propertyNames)
+		{
+			if (root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String)
+			{
+				text = value.GetString() ?? "";
+				return true;
+			}
+		}
+
+		text = "";
+		return false;
 	}
 
 	private static bool TryReadPrivateMindDebugJson(JsonElement root, out string json)

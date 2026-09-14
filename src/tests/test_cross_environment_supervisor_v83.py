@@ -190,3 +190,4 @@ def test_orchestrator_passes_canonical_world_state_projection_to_mentor():
     assert "environment_compatibility_view" in text
     assert "environment=mentor_environment" in text
     assert "ensure_world_state_service" in text
+    assert "from runtime.world_state import attach_world_state_projection" in text

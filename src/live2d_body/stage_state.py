@@ -56,15 +56,29 @@ class ExpressionTarget:
     angle_z: float = 0.0
     eye_open_left: float = 1.0
     eye_open_right: float = 1.0
+    # Params mới từ moc3 v2
+    mouth_corner_l: float = 0.0
+    mouth_corner_r: float = 0.0
+    lip_press: float = 0.0
+    tongue: float = 0.0
 
     def parameters(self) -> dict[str, float]:
-        return {
+        params = {
             "ParamMouthForm": self.mouth_form,
             "ParamBrowLAngle": self.brow_left,
             "ParamBrowRAngle": self.brow_right,
             "ParamAngleX": self.angle_x,
             "ParamAngleZ": self.angle_z,
         }
+        if self.mouth_corner_l != 0.0:
+            params["ParamErisMouthCornerL"] = self.mouth_corner_l
+        if self.mouth_corner_r != 0.0:
+            params["ParamErisMouthCornerR"] = self.mouth_corner_r
+        if self.lip_press != 0.0:
+            params["ParamErisLipPress"] = self.lip_press
+        if self.tongue != 0.0:
+            params["ParamErisTongue"] = self.tongue
+        return params
 
     @classmethod
     def from_affect_pose(cls, pose: AffectPose) -> "ExpressionTarget":
@@ -88,6 +102,10 @@ class ExpressionTarget:
             angle_z=self.angle_z + (other.angle_z - self.angle_z) * ratio,
             eye_open_left=self.eye_open_left + (other.eye_open_left - self.eye_open_left) * ratio,
             eye_open_right=self.eye_open_right + (other.eye_open_right - self.eye_open_right) * ratio,
+            mouth_corner_l=self.mouth_corner_l + (other.mouth_corner_l - self.mouth_corner_l) * ratio,
+            mouth_corner_r=self.mouth_corner_r + (other.mouth_corner_r - self.mouth_corner_r) * ratio,
+            lip_press=self.lip_press + (other.lip_press - self.lip_press) * ratio,
+            tongue=self.tongue + (other.tongue - self.tongue) * ratio,
         )
 
 
@@ -198,6 +216,18 @@ _EMOTION_TARGETS: dict[str, ExpressionTarget] = {
         eye_open_left=1.0,
         eye_open_right=1.0,
     ),
+    "teasing": ExpressionTarget(
+        mouth_form=0.08,
+        brow_left=0.08,
+        brow_right=0.08,
+        angle_x=-1.2,
+        angle_z=-0.6,
+        eye_open_left=0.72,
+        eye_open_right=0.72,
+        mouth_corner_l=0.12,
+        mouth_corner_r=0.12,
+        tongue=1.0,
+    ),
 }
 
 _EMOTION_ALIASES = {
@@ -209,6 +239,8 @@ _EMOTION_ALIASES = {
     "sad": "quiet_low",
     "sad_distant": "distant",
     "thinking_soft": "thinking",
+    "tease": "teasing",
+    "tongue": "teasing",
 }
 
 _MOTION_OFFSETS: dict[str, dict[str, float]] = {
@@ -233,6 +265,11 @@ _PARAMETER_RESPONSE = {
     "ParamBrowRAngle": 6.5,
     "ParamAngleX": 5.2,
     "ParamAngleZ": 5.0,
+    "ParamErisMouthCornerL": 6.0,
+    "ParamErisMouthCornerR": 6.0,
+    "ParamErisLipPress": 5.5,
+    # Lưỡi: chuyển nhanh khi ra, về chậm hơn để không bị flash
+    "ParamErisTongue": 8.0,
 }
 
 

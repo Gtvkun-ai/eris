@@ -77,6 +77,11 @@
 			"Name": "Mouth Open"
 		},
 		{
+			"Id": "ParamErisTongue",
+			"GroupId": "",
+			"Name": "ParamErisTongue "
+		},
+		{
 			"Id": "ParamBreath",
 			"GroupId": "",
 			"Name": "Breath"
