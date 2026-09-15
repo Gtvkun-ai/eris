@@ -70,6 +70,26 @@ from .self_context import build_autonomous_self_context
 _LOG = logging.getLogger(__name__)
 
 
+def _foreground_hard_deadline_seconds() -> float:
+    """Ngân sách remote tuyệt đối cho một user turn foreground.
+
+    V96 không áp deadline này lên TTS playback: text/voice vẫn giữ sync theo
+    speech pipeline. Nó chỉ chặn các model call/rewrite/fallback khỏi cộng dồn
+    thành hàng phút khi provider lỗi.
+    """
+
+    raw = str(os.getenv("ERIS_FOREGROUND_HARD_DEADLINE_SEC", "") or "").strip()
+    try:
+        if raw:
+            value = float(raw)
+        else:
+            from runtime.runtime_settings_store import runtime_float
+            value = runtime_float("chat", "foreground_hard_deadline_seconds", default=20.0)
+    except (TypeError, ValueError, ImportError):
+        value = 20.0
+    return max(5.0, min(45.0, float(value)))
+
+
 def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> None:
     logger = getattr(host, "logger", None)
     method = getattr(logger, "debug", None)
@@ -507,10 +527,20 @@ class AIChatOrchestrator:
         # PDF annotation, pages 7 and 19-20: a user turn is a cancellation
         # scope. Entering it preempts queued optional lanes and prevents new
         # background requests from competing with the public reply.
-        from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+        from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
 
         scope = f"user_turn:{int(float(cycle_start) * 1000)}:{id(self):x}"
-        with GLOBAL_INFERENCE_BROKER.user_turn(scope):
+        hard_deadline_at = float(cycle_start) + _foreground_hard_deadline_seconds()
+        # V96: toàn bộ model work của một user turn dùng CHUNG một deadline.
+        # Writer, claim rewrite và provider fallback chỉ được ăn phần còn lại;
+        # không tầng con nào được tự tạo thêm 90 giây sau khi tầng trước đã chậm.
+        with GLOBAL_INFERENCE_BROKER.user_turn(scope), inference_context(
+            "chat_main",
+            deadline_at=hard_deadline_at,
+            cancel_scope=scope,
+            optional=False,
+            metadata={"foreground_hard_deadline_v96": True},
+        ):
             preempt_background = getattr(self.host, "_preempt_background_for_chat", None)
             if callable(preempt_background):
                 try:

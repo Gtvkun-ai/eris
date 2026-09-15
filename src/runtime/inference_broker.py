@@ -280,6 +280,14 @@ def inference_context(
         )
     if actual_deadline is None:
         actual_deadline = parent.deadline_at
+    elif parent.deadline_at is not None:
+        # V96: deadline con không được "reset đồng hồ" của user turn cha.
+        # Trước đây fallback có thể xin thêm 90s rồi sống lâu hơn foreground,
+        # tạo ra lượt chat treo hàng phút dù writer ban đầu chỉ xin vài chục giây.
+        try:
+            actual_deadline = min(float(actual_deadline), float(parent.deadline_at))
+        except (TypeError, ValueError):
+            actual_deadline = parent.deadline_at
     merged_metadata = dict(parent.metadata)
     merged_metadata.update(dict(metadata or {}))
     context = InferenceContext(

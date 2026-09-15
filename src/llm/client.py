@@ -4,6 +4,7 @@ import os
 import logging
 import hashlib
 import math
+import time
 
 from llm.token_budget import (
     detect_provider as _detect_provider,
@@ -847,34 +848,84 @@ class OpenAICompatibleClient:
 class ChainedFallbackClient:
     """Gộp nhiều client dự phòng thành MỘT, thử lần lượt cho tới khi có cái chạy.
 
-    Dùng làm ``fallback_client`` của LlmService: khi main (OpenRouter) chết, service
-    gọi client này MỘT lần; bên trong nó thử Groq (pool 8 key) trước, hỏng thì sang
-    Gemini/open-model (pool 7 key). Mỗi sub-client tự xoay key trong pool của nó khi 429,
-    nên đây là tầng "đổi NHÀ CUNG CẤP" sau khi đã vắt cạn pool của nhà trước.
-
-    Giao diện trùng OpenAICompatibleClient/GeminiClient (chỉ cần create_chat_completion)
-    nên không phải đụng vào logic failover của service.
+    V96 bổ sung hai invariant runtime:
+    - toàn chain dùng chung health state để outage không biến thành retry storm;
+    - mọi tier dùng phần deadline còn lại, tuyệt đối không reset đồng hồ foreground.
     """
 
-    def __init__(self, clients, logger=None):
+    def __init__(self, clients, logger=None, *, health_registry=None, health_key: str = ""):
         self._clients = [c for c in (clients or []) if c is not None]
         if not self._clients:
             raise ValueError("ChainedFallbackClient can it nhat mot client.")
         self._logger = logger or logging.getLogger("LLM")
         first = self._clients[0]
-        # Mượn thuộc tính của client đầu để log/route (cap token) hoạt động như cũ.
         self.base_url = getattr(first, "base_url", "")
         self.model_name = getattr(first, "model_name", "")
         self.key_pool = getattr(first, "key_pool", None)
+        if health_registry is None:
+            from runtime.provider_health import GLOBAL_REMOTE_LLM_HEALTH
+            health_registry = GLOBAL_REMOTE_LLM_HEALTH
+        self._provider_health = health_registry
+        # V96: health là global registry nhưng key phải theo role. Executive token
+        # hỏng không được kéo companion/chat còn khỏe xuống OFFLINE theo.
+        explicit_health_key = str(health_key or "").strip().lower()
+        worker_role = str(getattr(first, "worker_role", "") or "").strip().lower()
+        derived_health_key = f"remote_llm:{worker_role}" if worker_role else "remote_llm"
+        self._provider_health_key = explicit_health_key or derived_health_key
 
     def create_chat_completion(self, **kwargs):
+        from runtime.provider_health import ProviderUnavailableFast
+
+        parent_ctx = current_inference_context()
+        lane = str(getattr(parent_ctx, "lane", "transport") or "transport").strip().lower()
+        permit = self._provider_health.acquire(self._provider_health_key, lane=lane)
+        if not permit.allowed:
+            raise ProviderUnavailableFast(
+                f"provider_health:{self._provider_health_key}:{permit.state.value}:{permit.reason}"
+            )
+
+        requested_timeout = kwargs.get("timeout")
+        try:
+            requested_budget = float(requested_timeout) if requested_timeout is not None else math.inf
+        except (TypeError, ValueError):
+            requested_budget = math.inf
+        if requested_budget <= 0.0:
+            requested_budget = math.inf
+
+        parent_deadline = getattr(parent_ctx, "deadline_at", None)
+        if parent_deadline is not None and math.isfinite(float(parent_deadline)):
+            parent_remaining = max(0.05, float(parent_deadline) - time.time())
+            chain_budget = min(requested_budget, parent_remaining)
+        else:
+            chain_budget = requested_budget
+        chain_started = time.monotonic()
+
         last_error: Exception | None = None
         for idx, client in enumerate(self._clients):
+            elapsed = max(0.0, time.monotonic() - chain_started)
+            remaining_budget = (
+                max(0.05, chain_budget - elapsed)
+                if math.isfinite(chain_budget)
+                else None
+            )
+            if remaining_budget is not None and remaining_budget <= 0.051:
+                last_error = TimeoutError("foreground provider chain deadline exhausted")
+                break
+
             client_url = str(getattr(client, "base_url", "") or "")
             is_ds2api = "api.deepseek.com" not in client_url.lower() and (
                 "6011" in client_url or "localhost" in client_url or "127.0.0.1" in client_url
             )
             call_kwargs = dict(kwargs)
+
+            requested = call_kwargs.get("timeout")
+            try:
+                requested_value = float(requested) if requested is not None else math.inf
+            except (TypeError, ValueError):
+                requested_value = math.inf
+            if requested_value <= 0.0:
+                requested_value = math.inf
+
             if is_ds2api:
                 worker_role = str(getattr(client, "worker_role", "") or "").strip().lower()
                 executive_lane = worker_role == "executive"
@@ -888,34 +939,22 @@ class ChainedFallbackClient:
                 except (TypeError, ValueError):
                     failfast = default_failfast
                 failfast = max(1.0, min(300.0, failfast))
-                requested = call_kwargs.get("timeout")
-                if requested is None:
-                    call_kwargs["timeout"] = failfast
-                else:
-                    try:
-                        requested_value = float(requested)
-                        if executive_lane:
-                            call_kwargs["timeout"] = min(requested_value, failfast)
-                        elif os.environ.get("ERIS_DS2API_STRICT_TIMEOUT", "0") in {"1", "true"}:
-                            call_kwargs["timeout"] = min(requested_value, failfast)
-                        else:
-                            call_kwargs["timeout"] = max(requested_value, failfast)
-                    except (TypeError, ValueError):
-                        call_kwargs["timeout"] = failfast
+                timeout_value = min(requested_value, failfast)
+            else:
+                timeout_value = min(requested_value, 90.0)
+
+            if remaining_budget is not None:
+                timeout_value = min(timeout_value, remaining_budget)
+            if not math.isfinite(timeout_value):
+                timeout_value = 90.0
+            call_kwargs["timeout"] = max(0.05, float(timeout_value))
+
             try:
                 if idx == 0:
-                    return client.create_chat_completion(**call_kwargs)
-                parent_ctx = current_inference_context()
-                requested_timeout = float(call_kwargs.get("timeout", 90.0) or 90.0)
-                # Tier dự phòng (Official API/Groq/Gemini): cho phép timeout tối đa
-                # 90s để tránh ReadTimeout khi API chậm. Tối thiểu 5s để không
-                # block vô hạn nếu caller truyền timeout rất nhỏ.
-                fallback_timeout = max(5.0, min(90.0, requested_timeout))
-                call_kwargs["timeout"] = fallback_timeout
-                # DeepSeek v4-flash/v4-pro bật Extended Thinking mặc định. Nếu
-                # max_tokens quá nhỏ, reasoning tokens ăn hết budget → content
-                # trống → "Empty output content received from provider". Bump lên
-                # tối thiểu 2048 cho mọi fallback tier gọi DeepSeek Official.
+                    result = client.create_chat_completion(**call_kwargs)
+                    self._provider_health.record_success(self._provider_health_key)
+                    return result
+
                 fallback_client_url = str(getattr(client, "base_url", "") or "")
                 fallback_is_official_deepseek = "api.deepseek.com" in fallback_client_url.lower()
                 if fallback_is_official_deepseek:
@@ -925,14 +964,35 @@ class ChainedFallbackClient:
                             call_kwargs["max_tokens"] = max(int(orig_max), 2048)
                         except (TypeError, ValueError):
                             call_kwargs["max_tokens"] = 2048
+
+                # V96: nested context vẫn giữ metadata/priority của parent và
+                # inference_context sẽ clamp deadline con vào deadline cha.
                 with inference_context(
                     parent_ctx.lane,
-                    timeout_seconds=fallback_timeout,
+                    timeout_seconds=call_kwargs["timeout"],
                     optional=parent_ctx.optional,
                     priority=parent_ctx.priority,
+                    cancel_scope=parent_ctx.cancel_scope,
+                    metadata=dict(getattr(parent_ctx, "metadata", {}) or {}),
                 ):
-                    return client.create_chat_completion(**call_kwargs)
+                    result = client.create_chat_completion(**call_kwargs)
+                self._provider_health.record_degraded_success(
+                    self._provider_health_key,
+                    reason=f"fallback_tier_{idx + 1}_used",
+                )
+                return result
             except Exception as exc:  # noqa: BLE001 - thử nhà kế tiếp
+                # V96: policy/cancellation của broker KHÔNG phải provider failure.
+                # Nếu user turn đang active hoặc deadline đã hết, dừng chain ngay
+                # và giữ health nguyên trạng thay vì tự đầu độc thành OFFLINE.
+                try:
+                    from runtime.inference_broker import InferenceRejected
+                    control_plane_reject = isinstance(exc, InferenceRejected)
+                except Exception:
+                    control_plane_reject = False
+                if control_plane_reject:
+                    raise
+
                 last_error = exc
                 if is_ds2api:
                     self._logger.warning(
@@ -948,9 +1008,19 @@ class ChainedFallbackClient:
                         exc,
                     )
                 continue
+
         if last_error is not None:
+            # Tất cả tier đều hỏng: đây mới là bằng chứng đủ mạnh để đặt chain
+            # OFFLINE. Từ đây background fail-fast và foreground chờ half-open probe.
+            self._provider_health.record_failure(
+                self._provider_health_key,
+                last_error,
+                hard=True,
+            )
             raise last_error
-        raise RuntimeError("ChainedFallbackClient khong co client kha dung.")
+        error = RuntimeError("ChainedFallbackClient khong co client kha dung.")
+        self._provider_health.record_failure(self._provider_health_key, error, hard=True)
+        raise error
 
 
 class GeminiClient:
