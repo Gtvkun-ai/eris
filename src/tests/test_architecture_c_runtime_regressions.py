@@ -357,15 +357,15 @@ def test_japanese_localizer_default_timeout_requires_open_model_hygiene_friendly
     assert _localizer_timeout_seconds() == 60.0
 
 
-def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypatch) -> None:
+def test_tts_worker_honors_prelocalized_owner_without_second_model_call(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 
     class _Localizer:
         def __init__(self) -> None:
-            self.strict = False
+            self.called = False
 
-        def localize(self, _text: str, **kwargs) -> str:
-            self.strict = bool(kwargs.get("strict"))
+        def localize(self, _text: str, **_kwargs) -> str:
+            self.called = True
             return "話すことがなくても、無理に話さなくていいよ。"
 
     worker = tts_engine._TtsWorker.__new__(tts_engine._TtsWorker)
@@ -379,10 +379,10 @@ def test_tts_worker_relocalizes_even_when_upstream_claims_prelocalized(monkeypat
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
     text, localized, language = worker._resolve_main_transcript(request, request.text)
-    assert worker._localizer.strict is True
-    assert localized is True
-    assert language == "ja"
-    assert "話" in text
+    assert worker._localizer.called is False
+    assert text == request.text
+    assert localized is False
+    assert language == "vi"
 
 
 def test_tts_localizer_uses_speech_model_when_no_override(monkeypatch) -> None:

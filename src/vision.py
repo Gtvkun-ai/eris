@@ -7,6 +7,7 @@ import urllib.request
 import urllib.parse
 import msvcrt
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from actions import ActionExecutor
 from app_logging import configure_logging, get_logger
@@ -352,16 +353,79 @@ class AttentionOverseer:
 
         return procs
 
+    def _start_one_ds2api(
+        self,
+        *,
+        port: int,
+        first_port: int,
+        port_index: int,
+        binary: str,
+        ds2api_dir: str,
+        creationflags: int,
+    ):
+        """Start + health-check một Whale2API instance.
+
+        Hàm này độc lập theo port để bootstrap có thể chạy song song. Trước đây
+        mỗi port chờ health 2-3 giây rồi mới tới port kế tiếp, khiến 6 worker cộng
+        dồn hơn 15 giây dù chúng hoàn toàn không phụ thuộc nhau.
+        """
+
+        try:
+            res = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=1.0)
+            if getattr(res, "status", None) == 200:
+                self.logger.info("DS2API port %d: already running, reuse.", port)
+                return None
+        except Exception:
+            pass
+
+        self.logger.info("Starting Whale2API instance on port %d from %s...", port, binary)
+        try:
+            env = os.environ.copy()
+            env["PORT"] = str(port)
+            if port != first_port:
+                try:
+                    base_ui_port = int(env.get("POOL_UI_PORT", "5010"))
+                    env["POOL_UI_PORT"] = str(base_ui_port + port_index)
+                except (ValueError, TypeError):
+                    pass
+            proc = subprocess.Popen(
+                [binary],
+                cwd=ds2api_dir,
+                env=env,
+                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            started = False
+            for _ in range(12):
+                time.sleep(0.5)
+                try:
+                    hc = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2.0)
+                    if getattr(hc, "status", None) == 200:
+                        started = True
+                        break
+                except Exception:
+                    continue
+            if started:
+                self.logger.info(
+                    "DS2API daemon started and passed inference health check on port %d (PID=%s).",
+                    port, getattr(proc, "pid", "?"),
+                )
+            else:
+                self.logger.warning(
+                    "DS2API daemon spawned (PID=%s) on port %d, but inference health check on /v1/models timed out.",
+                    getattr(proc, "pid", "?"), port,
+                )
+            return proc
+        except Exception as exc:
+            self.logger.error("Failed to start DS2API instance on port %d: %s", port, exc)
+            return None
+
     def _start_ds2api_daemons(self, project_root: str) -> list:
-        """Start một hoặc nhiều Whale2API instance, mỗi cái trên một port riêng.
+        """Start Whale2API workers song song theo port.
 
-        Cấu hình qua env:
-            ERIS_DS2API_PORTS=6011,6012,6013,6014,6015   (seed mặc định: 6015)
-
-        Mỗi instance nhận PORT override qua environment, dùng chung binary và
-        database (.db) từ ds2api_dir. Circuit breaker của mỗi worker role đã
-        được tách theo provider_circuit_id = base_url#role → fault isolation
-        tự nhiên giữa các port.
+        Các role là process độc lập nên không có lý do health-check tuần tự.
+        Bootstrap chỉ chờ worker chậm nhất thay vì cộng thời gian của mọi worker.
         """
 
         enabled = os.environ.get("ERIS_DS2API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -374,7 +438,6 @@ class AttentionOverseer:
             self.logger.warning("ERIS_DS2API_ENABLED=1 but whale2api.exe not found at %s", binary)
             return []
 
-        # Đọc danh sách port từ env, fallback về 6011 đơn để tương thích cũ.
         raw_ports = os.environ.get("ERIS_DS2API_PORTS", os.environ.get("ERIS_DS2API_PORT", "6011")).strip()
         ports: list[int] = []
         for chunk in raw_ports.replace(";", ",").split(","):
@@ -386,11 +449,8 @@ class AttentionOverseer:
                     self.logger.warning("ERIS_DS2API_PORTS: bo qua gia tri khong hop le '%s'", chunk)
         if not ports:
             ports = [6011]
-        ports = list(dict.fromkeys(ports))  # dedup, giữ thứ tự
+        ports = list(dict.fromkeys(ports))
 
-        # Random-chat seed có DS2API instance riêng. Dù config cũ chỉ liệt kê
-        # 6011-6014, runtime vẫn bổ sung cổng local của role seed khi reservoir
-        # được bật. Đây là fault isolation thật, không phải alias role trên giấy.
         seed_reservoir_enabled = str(
             os.environ.get("ERIS_RANDOM_CHAT_SEED_RESERVOIR_ENABLED", "1") or "1"
         ).strip().lower() not in {"0", "false", "no", "off", "disabled", "none"}
@@ -409,64 +469,31 @@ class AttentionOverseer:
                 ports.append(seed_port)
                 self.logger.info("DS2API seed port %d appended for background reservoir.", seed_port)
 
-        procs: list = []
         creationflags = 0x08000000 if os.name == "nt" else 0
-
-        for port in ports:
-            # Nếu port đã có process đang nghe → reuse, không start mới.
-            already_running = False
-            try:
-                res = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3.0)
-                if getattr(res, "status", None) == 200:
-                    already_running = True
-            except Exception:
-                pass
-
-            if already_running:
-                self.logger.info("DS2API port %d: already running, reuse.", port)
-                continue
-
-            self.logger.info("Starting Whale2API instance on port %d from %s...", port, binary)
-            try:
-                # Truyền PORT qua env của subprocess; các biến khác kế thừa từ
-                # process hiện tại (đã được apply_secrets_to_environ nạp đầy đủ).
-                env = os.environ.copy()
-                env["PORT"] = str(port)
-                # Pool UI của các instance phụ chạy trên cổng khác để không xung đột.
-                # Instance đầu tiên giữ nguyên POOL_UI_PORT từ .env.
-                if port != ports[0]:
-                    try:
-                        base_ui_port = int(env.get("POOL_UI_PORT", "5010"))
-                        env["POOL_UI_PORT"] = str(base_ui_port + ports.index(port))
-                    except (ValueError, TypeError):
-                        pass
-                proc = subprocess.Popen(
-                    [binary],
-                    cwd=ds2api_dir,
-                    env=env,
+        procs: list = []
+        first_port = ports[0]
+        # Tối đa 8 thread; hiện runtime có 6 port. Mỗi task chỉ spawn process và
+        # polling localhost, không chia sẻ mutable state ngoài logger.
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(ports))), thread_name_prefix="DS2API-Boot") as executor:
+            futures = [
+                executor.submit(self._start_one_ds2api,
+                    port=port,
+                    first_port=first_port,
+                    port_index=index,
+                    binary=binary,
+                    ds2api_dir=ds2api_dir,
                     creationflags=creationflags,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
                 )
-                # Health-check với tối đa 6 giây.
-                started = False
-                for _ in range(12):
-                    time.sleep(0.5)
-                    try:
-                        hc = urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2.0)
-                        if getattr(hc, "status", None) == 200:
-                            started = True
-                            break
-                    except Exception:
-                        continue
-                if started:
-                    self.logger.info("DS2API daemon started and passed inference health check on port %d (PID=%s).", port, getattr(proc, "pid", "?"))
-                else:
-                    self.logger.warning("DS2API daemon spawned (PID=%s) on port %d, but inference health check on /v1/models timed out.", getattr(proc, "pid", "?"), port)
-                procs.append(proc)
-            except Exception as exc:
-                self.logger.error("Failed to start DS2API instance on port %d: %s", port, exc)
-
+                for index, port in enumerate(ports)
+            ]
+            for future in as_completed(futures):
+                try:
+                    proc = future.result()
+                except Exception as exc:
+                    self.logger.error("Unexpected DS2API bootstrap worker error: %s", exc)
+                    continue
+                if proc is not None:
+                    procs.append(proc)
         return procs
 
     def stop(self, reason: str = ""):

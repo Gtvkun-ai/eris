@@ -31,19 +31,17 @@ def test_stage_state_tracks_speech_lifecycle() -> None:
     assert state.advance(1 / 60).speaking is False
 
 
-def test_godot_stage_control_text_is_allowed_to_reach_speech_bubble() -> None:
+def test_godot_stage_control_events_never_drive_public_speech_bubble() -> None:
     body_dir = Path(__file__).resolve().parents[1] / "body"
     parser_source = (body_dir / "UdpDecisionParser.cs").read_text(encoding="utf-8")
     listener_source = (body_dir / "UdpListener.cs").read_text(encoding="utf-8")
 
-    assert "display_text" in parser_source
-    assert 'TryReadFirstString(root, out string stageText, "display_text", "tts_text")' not in parser_source
-    assert 'TryReadFirstString(root, out string stageText, "display_text")' in parser_source
-    assert "IsStageSpeechEnvelope" in parser_source
-    assert "TryApplyControlEnvelopeSpeech(payload)" in listener_source
-    control_index = listener_source.index("if (payload.IsControlEnvelope)")
-    bridge_index = listener_source.index("TryApplyControlEnvelopeSpeech(payload)")
-    assert bridge_index < control_index
+    # eris.stage carries choreography/lifecycle metadata only. Public bubble text
+    # is released by the normal body payload at audio_start (or timeout/failure).
+    assert 'TryReadFirstString(root, out string stageText, "display_text")' not in parser_source
+    assert "IsStageSpeechEnvelope" not in parser_source
+    assert "TryApplyControlEnvelopeSpeech(payload)" not in listener_source
+    assert "private bool TryApplyControlEnvelopeSpeech" not in listener_source
 
 
 def test_right_click_request_targets_godot_context_menu() -> None:

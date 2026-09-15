@@ -2494,10 +2494,10 @@ class _TtsWorker:
     ) -> tuple[str, bool, str]:
         """Khóa transcript theo language contract trước khi gọi provider audio.
 
-        ``prelocalized=True`` chỉ là metadata từ upstream, không phải bằng chứng.
-        Nếu contract là Nhật mà localizer lỗi, mặc định vẫn phát transcript gốc
-        thay vì im lặng. Có thể khôi phục strict fail-closed bằng
-        ERIS_TTS_FAIL_OPEN_ON_LOCALIZATION_ERROR=0.
+        ``prelocalized=True`` nghĩa là canonical UtteranceSpec đã chốt speech
+        surface. TTS không gọi model dịch lần hai trên critical path. Nếu transcript
+        không khớp contract Nhật, engine hạ language theo chính transcript và phát
+        ngay. Localizer chỉ còn dành cho legacy/non-prelocalized request.
         """
 
         language_hint = self._request_language(req)
@@ -2506,6 +2506,19 @@ class _TtsWorker:
             return text_to_speak, bool(req.prelocalized), language_hint
         if _contains_japanese_chars(text_to_speak):
             return text_to_speak, True, "ja"
+        if req.prelocalized:
+            # Canonical UtteranceSpec đã có quyền sở hữu speech surface. Nếu model
+            # lỡ trả transcript không phải tiếng Nhật, TTS không được mở thêm một
+            # LLM-localizer 60s ở critical path. Hạ language theo transcript gốc
+            # và phát ngay; lượt sau model có thể sửa surface, còn UI không bị
+            # đứng chờ một bản dịch thứ hai rồi mới nghe thấy giọng.
+            fallback_language = _fallback_language_for_transcript(text_to_speak)
+            logger.warning(
+                "[TTS] prelocalized transcript không khớp contract ja; "
+                "bypass runtime localizer và phát theo language=%s.",
+                fallback_language,
+            )
+            return text_to_speak, False, fallback_language
         if not _prelocalize_japanese_enabled():
             if _speech_contract_fail_open_enabled():
                 logger.warning("[TTS] JP localization disabled; audio degraded to source transcript.")

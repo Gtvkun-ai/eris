@@ -4623,7 +4623,9 @@ public partial class UdpListener : Node2D
 		else if (payload.HasExplicitMotion)
 			_motion.ApplyCommand(payload.MotionCommand, _body.Position, GetViewportRect().Size);
 
-		TryApplyControlEnvelopeSpeech(payload);
+		// eris.stage chỉ mang lifecycle/choreography. Bubble public chỉ được nhả
+		// bởi body payload chuẩn tại audio_start/timeout/failure; không để stage
+		// event (có cả tts_text Nhật) chen vào và tạo text thứ hai.
 		if (payload.IsControlEnvelope)
 			return;
 
@@ -4640,18 +4642,6 @@ public partial class UdpListener : Node2D
 			ApplyTypewriterEffect(payload.Text);
 	}
 
-	private bool TryApplyControlEnvelopeSpeech(UdpDecisionPayload payload)
-	{
-		if (!payload.IsControlEnvelope
-			|| !payload.ShouldSpeak
-			|| !payload.HasTextField
-			|| string.IsNullOrWhiteSpace(payload.Text))
-		{
-			return false;
-		}
-		ApplyTypewriterEffect(payload.Text);
-		return true;
-	}
 
 	private bool TryHandleTtsEvent(string raw)
 	{
