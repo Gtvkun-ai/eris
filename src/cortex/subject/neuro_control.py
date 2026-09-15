@@ -539,6 +539,42 @@ class NeuroActionSelector:
         boundary = 0.0 if committed_family else _clamp01(appraisal.boundary_pressure)
         interruption = 0.0 if committed_family else _clamp01(appraisal.interruption_cost)
         review_confidence = _clamp01(appraisal.confidence)
+
+        # Chú thích VI: ExpressionCommitment giữ *nội dung muốn nói*, nhưng không
+        # nên ép phát ngay khi slow semantic critic vừa đo được motive/continuity/
+        # evidence đều rất yếu. Đây là DEFER một tick, không DROP commitment.
+        # User silence/busy không tham gia threshold này, nên triết lý V67 về
+        # self-owned expression vẫn giữ nguyên; chỉ semantic support của chính ý
+        # định mới có quyền trì hoãn nó.
+        silence_family = tuple(
+            index for index, candidate in enumerate(frame.coalitions)
+            if str(getattr(candidate, "action_kind", "") or "").strip().lower() == "silence"
+        )
+        defer_weak_commitment = False
+        semantic_authority_defer = False
+        commitment_support = 1.0
+        if committed_family and silence_family and review_confidence >= 0.55:
+            supports: list[float] = []
+            for index in committed_family:
+                item = metrics.get(index)
+                if item is None:
+                    continue
+                motive = _clamp01(item.motive_validity, 0.5)
+                continuity = _clamp01(item.continuity_fit, 0.5)
+                epistemic = _clamp01(item.epistemic_support, 0.5)
+                supports.append(0.40 * motive + 0.25 * continuity + 0.35 * epistemic)
+            if supports:
+                commitment_support = max(supports)
+                # V95: semantic critic không còn chỉ là một chút score seasoning.
+                # Khi confidence đủ dùng và *chính motive/evidence của commitment*
+                # quá yếu, critic có authority DEFER public speech một tick. Đây
+                # không phải DROP desire: ExpressionCommitment vẫn còn upstream và
+                # V94 proposal lifecycle quyết khi nào evidence mới cho phép thử lại.
+                # Threshold 0.36 tái tạo đúng run 14:36 (confidence=0.62, support≈0.23)
+                # mà V94 bỏ lọt vì yêu cầu confidence >= 0.65.
+                semantic_authority_defer = commitment_support < 0.36
+                defer_weak_commitment = commitment_support < 0.42
+
         merged_scores: list[float] = []
         for index, candidate in enumerate(frame.coalitions):
             score = float(baseline.scores[index])
@@ -596,10 +632,30 @@ class NeuroActionSelector:
                     + 0.05 * interruption
                     + 0.05 * (reversible - 0.5)
                 )
+            if defer_weak_commitment:
+                if index in committed_family:
+                    # Penalty đủ lớn để reviewer thật sự có khả năng DEFER thay
+                    # vì log nói “nên im” nhưng utility vẫn ép phát như run 13:24.
+                    score -= 0.22 + 0.25 * max(0.0, 0.38 - commitment_support)
+                elif index in silence_family:
+                    score += 0.08 * review_confidence
             merged_scores.append(score)
 
         scores = tuple(merged_scores)
-        eligible = committed_family or tuple(range(len(scores)))
+        if semantic_authority_defer:
+            # V95 authority order: semantic critic được quyền DEFER một public
+            # commitment semantic-unsupported; Neuro vẫn là bên chọn action cuối
+            # nhưng chỉ trong non-speech escape family còn hợp lệ. Surface không
+            # bao giờ nhìn thấy motive này nên không thể vô tình hồi sinh nó.
+            non_speech_family = tuple(
+                index for index, candidate in enumerate(frame.coalitions)
+                if str(getattr(candidate, "action_kind", "") or "").strip().lower() in {"silence", "body_only"}
+            )
+            eligible = non_speech_family or silence_family
+        elif defer_weak_commitment:
+            eligible = tuple(dict.fromkeys((*committed_family, *silence_family)))
+        else:
+            eligible = committed_family or tuple(range(len(scores)))
         order = sorted(eligible, key=lambda idx: (-scores[idx], idx))
         winner_index = order[0]
         runner_index = order[1] if len(order) > 1 else winner_index
@@ -618,7 +674,15 @@ class NeuroActionSelector:
             requires_deliberation=False,
             parallel_review_recommended=False,
             reason=(
-                ("semantic_critique_committed:" if committed_family else "semantic_merge:")
+                (
+                    "semantic_critique_deferred_commitment:v95_authority:"
+                    if semantic_authority_defer
+                    else (
+                        "semantic_critique_deferred_commitment:"
+                        if defer_weak_commitment
+                        else ("semantic_critique_committed:" if committed_family else "semantic_merge:")
+                    )
+                )
                 + (_compact(appraisal.reason, 240) or "slow_appraisal")
             ),
             broadcast=baseline.broadcast,

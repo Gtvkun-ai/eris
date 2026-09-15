@@ -233,6 +233,21 @@ class MindLoop:
         commit remains authoritative unless review structurally invalidates it
         (proposal/coalition disappears or conflict becomes effectively hard).
         """
+        # V95: review lock chỉ được bảo toàn semantic identity nếu motive vẫn
+        # hợp lệ theo lifecycle hiện tại. Cognitive review không được hồi sinh một
+        # ``resume_shared_goal`` vừa bị goal lifecycle suspend/expire.
+        try:
+            from runtime.semantic_authority_v95 import validate_autonomous_motives
+            validated = validate_autonomous_motives(frame)
+            if validated.changed:
+                valid_coalition_ids = {item.coalition_id for item in validated.frame.coalitions}
+                if prior.selected_coalition_id not in valid_coalition_ids:
+                    return None
+        except Exception:
+            # Validator là safety/authority refinement; adapter thiếu typed context
+            # không được làm MindLoop crash. Executive sẽ kiểm lại trước commit.
+            pass
+
         proposal = next(
             (item for item in frame.proposals if item.proposal_id == prior.selected_proposal_ref),
             None,

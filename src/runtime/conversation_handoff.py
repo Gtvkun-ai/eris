@@ -22,6 +22,8 @@ import re
 import time
 from typing import Any, Mapping, Sequence
 
+from runtime.public_causal_receipt import PublicCausalReceipt, normalize_semantic_owner
+
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
     try:
@@ -110,7 +112,14 @@ class ConversationHandoff:
     last_user_turn_index: int = 0
     last_assistant_turn_index: int = 0
     unresolved_intent: str = ""
+    unresolved_intent_owner: str = "unknown"
     pending_shared_goal: str = ""
+    pending_shared_goal_owner: str = "unknown"
+    # V93: provenance public gần nhất để ERIS không phải đoán ngược lý do mình nói.
+    last_public_semantic_owner: str = "unknown"
+    last_public_trigger_owner: str = "unknown"
+    last_public_causal_receipt: Mapping[str, Any] = field(default_factory=dict)
+    self_explanation_requested: bool = False
     next_move_owner: str = "none"  # eris | user | shared | none
     user_stance: str = "unknown"
     eris_commitment: str = ""
@@ -135,7 +144,13 @@ class ConversationHandoff:
             "last_user_turn_index": int(self.last_user_turn_index),
             "last_assistant_turn_index": int(self.last_assistant_turn_index),
             "unresolved_intent": _compact(self.unresolved_intent, 520),
+            "unresolved_intent_owner": normalize_semantic_owner(self.unresolved_intent_owner),
             "pending_shared_goal": _compact(self.pending_shared_goal, 520),
+            "pending_shared_goal_owner": normalize_semantic_owner(self.pending_shared_goal_owner),
+            "last_public_semantic_owner": normalize_semantic_owner(self.last_public_semantic_owner),
+            "last_public_trigger_owner": normalize_semantic_owner(self.last_public_trigger_owner),
+            "last_public_causal_receipt": dict(self.last_public_causal_receipt or {}),
+            "self_explanation_requested": bool(self.self_explanation_requested),
             "next_move_owner": self.next_move_owner,
             "user_stance": self.user_stance,
             "eris_commitment": _compact(self.eris_commitment, 320),
@@ -153,9 +168,16 @@ class ConversationHandoff:
 
     def prompt_context(self) -> str:
         data = self.to_dict()
+        receipt = dict(self.last_public_causal_receipt or {})
+        receipt_block = (
+            "\nPUBLIC_CAUSAL_RECEIPT_V93 (authoritative public-safe provenance):\n"
+            + json.dumps(receipt, ensure_ascii=False, separators=(",", ":"))
+            if receipt else ""
+        )
         return (
             "CONVERSATION_HANDOFF_V71 (authoritative discourse state, not a memory guess):\n"
             + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            + receipt_block
             + "\nRules: preserve unfinished user requests and ERIS self-commitments across chat/autonomous turns. "
               "Causal hypotheses are hypotheses, not facts. When self_caused_reaction_probability is high, "
               "first consider whether the user's reaction is to ERIS's immediately preceding public move; "
@@ -163,7 +185,10 @@ class ConversationHandoff:
               "When topic_closed=true, the previous topic is a public boundary: do not revive it from old concerns/material. "
               "If ERIS opens a fresh topic, bridge the turn naturally before the new content (for example a brief 'à mà', "
               "'nói chuyện khác chút', or another non-template transition appropriate to the language). Prefer a light, "
-              "specific user-directed question when user-model uncertainty is useful, rather than another self-monologue."
+              "specific user-directed question when user-model uncertainty is useful, rather than another self-monologue. "
+              "V93 ownership rule: semantic_owner/trigger_owner/receipt are provenance, not suggestions. Không được đảo chủ thể "
+              "(ví dụ thought của ERIS thành lời user đã nói). Nếu self_explanation_requested=true, explain the previous ERIS move "
+              "from PUBLIC_CAUSAL_RECEIPT_V93; if receipt is weak/unknown, admit uncertainty instead of inventing a motive."
         )
 
 
@@ -217,7 +242,9 @@ class ConversationHandoffRuntime:
             last_user_text=last_user or self._state.last_user_text,
             last_assistant_text=last_assistant or self._state.last_assistant_text,
             pending_shared_goal=pending,
+            pending_shared_goal_owner=("shared" if pending else self._state.pending_shared_goal_owner),
             unresolved_intent=pending or self._state.unresolved_intent,
+            unresolved_intent_owner=("shared" if pending else self._state.unresolved_intent_owner),
             next_move_owner="eris" if pending else self._state.next_move_owner,
             continuity_pressure=max(self._state.continuity_pressure, 0.82 if pending else 0.0),
             source_refs=tuple(dict.fromkeys((*self._state.source_refs, "startup:continuity_prime"))),
@@ -229,6 +256,7 @@ class ConversationHandoffRuntime:
         self,
         goal_text: Any,
         *,
+        semantic_owner: Any = "shared",
         evidence_refs: Sequence[Any] = (),
         now: float | None = None,
     ) -> ConversationHandoff:
@@ -241,6 +269,11 @@ class ConversationHandoffRuntime:
         goal = _compact(goal_text, 520)
         refs = tuple(_compact(item, 180) for item in evidence_refs if _compact(item, 180))
         prior = self._state
+        owner_tag = normalize_semantic_owner(semantic_owner, default="shared")
+        # V93: self/environment thought không phải shared debt. Không xóa goal cũ
+        # nếu một projection nội sinh đi ngang qua; chỉ từ chối promotion mới.
+        if goal and owner_tag not in {"user", "shared"}:
+            return prior
         if goal:
             unresolved = prior.unresolved_intent
             owner = prior.next_move_owner
@@ -256,7 +289,9 @@ class ConversationHandoffRuntime:
                 revision=prior.revision + 1,
                 updated_at=current,
                 pending_shared_goal=goal,
+                pending_shared_goal_owner=owner_tag,
                 unresolved_intent=unresolved,
+                unresolved_intent_owner=(owner_tag if unresolved == goal else prior.unresolved_intent_owner),
                 next_move_owner=owner,
                 continuity_pressure=pressure,
                 source_refs=tuple(dict.fromkeys((*prior.source_refs, *refs, "runtime:shared_goal"))),
@@ -274,7 +309,9 @@ class ConversationHandoffRuntime:
                 revision=prior.revision + 1,
                 updated_at=current,
                 pending_shared_goal="",
+                pending_shared_goal_owner="unknown",
                 unresolved_intent=unresolved,
+                unresolved_intent_owner=("unknown" if not unresolved else prior.unresolved_intent_owner),
                 next_move_owner=owner,
                 continuity_pressure=pressure,
             )
@@ -313,6 +350,19 @@ class ConversationHandoffRuntime:
             "em nói", "bạn nói", "câu em", "câu bạn", "câu vừa", "lời em", "lời bạn",
             "you said", "what you said", "your question", "your sentence",
         ))
+        # V93: câu hỏi về ý định/lý do của chính ERIS phải được nối vào
+        # causal receipt gần nhất, không suy diễn từ prose hoặc memory chung.
+        self_explanation_requested = bool(
+            self._state.last_public_causal_receipt
+            and (
+                _contains_any(user, (
+                    "tại sao em", "sao em lại", "vì sao em", "tại sao bạn", "sao bạn lại",
+                    "vì sao bạn", "em đang muốn nói gì", "bạn đang muốn nói gì",
+                    "why did you", "why are you saying", "what were you trying to say",
+                ))
+                or (direct_assistant_reference and _contains_any(user, ("tại sao", "sao", "vì sao", "why")))
+            )
+        )
         reaction_signal = bool(confusion or self_deprecation or bored)
         complexity = _assistant_complexity(previous)
         has_previous = bool(previous)
@@ -398,14 +448,22 @@ class ConversationHandoffRuntime:
             stance = "engaged"
 
         unresolved = self._state.unresolved_intent
+        unresolved_owner = self._state.unresolved_intent_owner
         next_owner = self._state.next_move_owner
         pressure = self._state.continuity_pressure
-        if repair_needed:
+        if self_explanation_requested:
+            unresolved = "explain_previous_eris_public_motive_from_receipt"
+            unresolved_owner = "eris"
+            next_owner = "eris"
+            pressure = max(0.92, pressure)
+        elif repair_needed:
             unresolved = "repair_or_clarify_previous_eris_move"
+            unresolved_owner = "eris"
             next_owner = "eris"
             pressure = max(0.92, pressure)
         elif topic_closure:
             unresolved = ""
+            unresolved_owner = "unknown"
             next_owner = "eris"
             pressure = max(0.70, pressure)
         elif user:
@@ -427,6 +485,8 @@ class ConversationHandoffRuntime:
                 int(previous_assistant_turn_index or 0), self._state.last_assistant_turn_index
             ),
             unresolved_intent=unresolved,
+            unresolved_intent_owner=unresolved_owner,
+            self_explanation_requested=self_explanation_requested,
             next_move_owner=next_owner,
             user_stance=stance,
             topic_closed=bool(topic_closure),
@@ -450,6 +510,7 @@ class ConversationHandoffRuntime:
         turn_ref: str = "",
         turn_index: int = 0,
         speech_act: str = "",
+        causal_receipt: PublicCausalReceipt | Mapping[str, Any] | None = None,
         now: float | None = None,
     ) -> ConversationHandoff:
         current = float(now if now is not None else time.time())
@@ -457,6 +518,12 @@ class ConversationHandoffRuntime:
         if not text:
             return self._state
         prior = self._state
+        if isinstance(causal_receipt, PublicCausalReceipt):
+            receipt_payload = causal_receipt.to_dict()
+        elif isinstance(causal_receipt, Mapping):
+            receipt_payload = PublicCausalReceipt.from_mapping(causal_receipt).to_dict()
+        else:
+            receipt_payload = {}
         repaired = prior.repair_needed and str(speech_act or "").strip().lower() in {
             "causal_repair", "clarify", "clarification", "repair", "self_clarification",
             "answer", "continuation",
@@ -467,6 +534,10 @@ class ConversationHandoffRuntime:
         # đề, chứ không đẩy quả bóng ngược cho user như thể open-loop biến mất.
         pending_after_repair = bool(repaired and prior.pending_shared_goal)
         act = str(speech_act or "").strip().lower()
+        explained_self = bool(
+            prior.self_explanation_requested
+            and act in {"self_explanation", "causal_repair", "clarify", "clarification", "answer", "continuation"}
+        )
         fresh_move_after_closure = bool(
             prior.topic_closed
             and act in {
@@ -474,13 +545,19 @@ class ConversationHandoffRuntime:
                 "ask_genuine_question", "relationship_continuity_bid",
             }
         )
-        if fresh_move_after_closure:
+        if explained_self:
+            next_owner = "user"
+            next_pressure = max(0.28, prior.continuity_pressure * 0.62)
+            next_unresolved = ""
+            next_unresolved_owner = "unknown"
+        elif fresh_move_after_closure:
             # The closure did its job: ERIS has now crossed the bridge into a fresh
             # conversational beat. Keep the old material/urge boundary in their own
             # runtimes, but stop treating every later turn as "still closing".
             next_owner = "user"
             next_pressure = min(0.36, max(0.18, prior.continuity_pressure * 0.42))
             next_unresolved = ""
+            next_unresolved_owner = "unknown"
         elif prior.topic_closed and not repaired:
             # Closing acknowledgement completes ERIS's immediate obligation, but the
             # boundary remains active until a genuinely fresh public move or a new
@@ -489,6 +566,7 @@ class ConversationHandoffRuntime:
             next_owner = "shared"
             next_pressure = min(0.42, max(0.22, prior.continuity_pressure * 0.55))
             next_unresolved = ""
+            next_unresolved_owner = "unknown"
         elif repaired:
             next_owner = "eris" if pending_after_repair else "user"
             next_pressure = (
@@ -497,10 +575,12 @@ class ConversationHandoffRuntime:
                 else max(0.35, prior.continuity_pressure * 0.66)
             )
             next_unresolved = prior.pending_shared_goal if pending_after_repair else ""
+            next_unresolved_owner = prior.pending_shared_goal_owner if pending_after_repair else "unknown"
         else:
             next_owner = prior.next_move_owner
             next_pressure = prior.continuity_pressure
             next_unresolved = prior.unresolved_intent
+            next_unresolved_owner = prior.unresolved_intent_owner
 
         self._state = replace(
             prior,
@@ -516,6 +596,17 @@ class ConversationHandoffRuntime:
             continuity_pressure=next_pressure,
             repair_needed=False if repaired else prior.repair_needed,
             unresolved_intent=next_unresolved,
+            unresolved_intent_owner=next_unresolved_owner,
+            self_explanation_requested=False if explained_self else prior.self_explanation_requested,
+            last_public_semantic_owner=(
+                normalize_semantic_owner(receipt_payload.get("semantic_owner", "unknown"))
+                if receipt_payload else prior.last_public_semantic_owner
+            ),
+            last_public_trigger_owner=(
+                normalize_semantic_owner(receipt_payload.get("trigger_owner", "unknown"))
+                if receipt_payload else prior.last_public_trigger_owner
+            ),
+            last_public_causal_receipt=(receipt_payload or prior.last_public_causal_receipt),
             self_caused_reaction_probability=(prior.self_caused_reaction_probability if not repaired else max(0.25, prior.self_caused_reaction_probability * 0.72)),
             source_refs=tuple(dict.fromkeys((*prior.source_refs, *((turn_ref,) if turn_ref else ())))),
         )
@@ -551,6 +642,38 @@ class ConversationHandoffRuntime:
         Proposal mô tả *việc cần làm*, không viết câu public. Surface vẫn sở hữu wording.
         """
         state = self._state
+        if state.self_explanation_requested and state.last_public_causal_receipt and state.next_move_owner == "eris":
+            receipt = dict(state.last_public_causal_receipt or {})
+            confidence = max(0.70, float(receipt.get("confidence", 0.0) or 0.0))
+            return {
+                "proposal_id": f"handoff-self-explanation:{state.revision}",
+                "action_kind": "speak",
+                "arguments": {
+                    "semantic_target": (
+                        "Explain ERIS's immediately previous public move from PUBLIC_CAUSAL_RECEIPT_V93. "
+                        "Preserve semantic_owner and trigger_owner exactly; do not claim the user said/thought something "
+                        "that the receipt attributes to ERIS. If provenance is weak, say so."
+                    ),
+                    "semantic_content": json.dumps(receipt, ensure_ascii=False, separators=(",", ":")),
+                    "speech_act": "self_explanation",
+                    "candidate_kind": "conversation_repair",
+                    "source_owner": "conversation_handoff",
+                    "handoff_revision": state.revision,
+                    "skill_id": "dialogue",
+                },
+                "supporting_need_ids": ("coherence", "continuity"),
+                "expected_need_relief": 0.94,
+                "expected_action_efficacy": 0.94,
+                "expected_epistemic_value": 0.78,
+                "value_congruence": 0.92,
+                "substrate_cost": 0.04,
+                "uncertainty": max(0.06, 1.0 - confidence),
+                "project_contribution": 0.0,
+                "historical_success": 0.72,
+                "commitment_conflict": 0.0,
+                "evidence_refs": tuple(receipt.get("evidence_refs", ()) or ())[:8] or ("public-causal-receipt:v93",),
+                "need_effects": {"coherence": 0.92, "continuity": 0.82},
+            }
         if not state.repair_needed or state.next_move_owner != "eris":
             return None
         if state.self_caused_reaction_probability < 0.62 and state.user_stance != "confused":

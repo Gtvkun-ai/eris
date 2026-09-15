@@ -34,6 +34,27 @@ _CHROMIUM_PROCESSES = {"chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"}
 _NATIVE_ENRICH_SOURCES = {"winevent", "foreground_reconcile"}
 
 
+def should_emit_semantic_wake(
+    *,
+    now_mono: float,
+    last_wake_at: float,
+    duplicate_signature: bool,
+    chat_mode: bool,
+    min_interval_seconds: float,
+) -> bool:
+    """Gate nhỏ cho wake side-effect; semantic WorldState vẫn luôn được cập nhật.
+
+    Chú thích VI: event storm UIA/foreground có thể đổi signature liên tục dù user
+    đang chat. Wake autonomous lúc đó chỉ tranh worker; state mới đã nằm trong
+    WorldState nên foreground chat vẫn đọc được ngay, không mất thông tin.
+    """
+
+    if duplicate_signature or chat_mode:
+        return False
+    gap = max(0.0, float(now_mono) - float(last_wake_at or 0.0))
+    return bool(float(last_wake_at or 0.0) <= 0.0 or gap >= max(0.0, float(min_interval_seconds)))
+
+
 class SemanticEnvironmentWorker:
     """Consumer duy nhất cho structured semantic path của DesktopSemanticRuntime.
 
@@ -90,6 +111,9 @@ class SemanticEnvironmentWorker:
         # autonomous loop 4-5 lần cho cùng một thay đổi.
         self._last_semantic_wake_signature = ""
         self._last_semantic_wake_at = 0.0
+        # Chú thích VI: wake chỉ là side-effect để đánh thức cognition, không phải
+        # đường truyền dữ liệu. Debounce 1.2s giảm event storm mà không làm cũ WorldState.
+        self._semantic_wake_min_interval_seconds = 1.2
 
     @staticmethod
     def _semantic_wake_signature(situation: UserSituation) -> str:
@@ -444,7 +468,14 @@ class SemanticEnvironmentWorker:
                 now_mono = time.monotonic()
                 wake_signature = self._semantic_wake_signature(situation)
                 duplicate_wake = wake_signature == self._last_semantic_wake_signature
-                if not duplicate_wake:
+                emit_wake = should_emit_semantic_wake(
+                    now_mono=now_mono,
+                    last_wake_at=self._last_semantic_wake_at,
+                    duplicate_signature=duplicate_wake,
+                    chat_mode=bool(getattr(self.host, "chat_mode", False)),
+                    min_interval_seconds=self._semantic_wake_min_interval_seconds,
+                )
+                if emit_wake:
                     self._last_semantic_wake_signature = wake_signature
                     self._last_semantic_wake_at = now_mono
                     try:

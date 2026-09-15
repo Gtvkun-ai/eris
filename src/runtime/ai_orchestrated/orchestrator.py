@@ -26,6 +26,7 @@ from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.affective_voice_state import project_affective_voice_state
 from runtime.reply_obligation import enforce_reply_obligation
+from runtime.cognition.normalization import normalize_vi
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
 from runtime.runtime_status import emit_runtime_status
@@ -89,6 +90,47 @@ def _merge_previous_public_context(grounding_context: str, previous_public_conte
         if part.strip()
     )
 
+
+
+def _assistant_intent_probe(user_text: str) -> bool:
+    """User đang hỏi ý định/lý do phía sau chính phát ngôn của Eris."""
+    text = normalize_vi(user_text)
+    markers = (
+        "tai sao ban", "sao ban lai", "tai sao em", "sao em lai",
+        "ban dang muon noi gi", "em dang muon noi gi", "ban dinh sao",
+        "em dinh sao", "y la sao ban", "y la sao em", "y ban la gi", "y em la gi",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _deterministic_fail_closed_chat_repair(
+    *,
+    user_text: str,
+    previous_assistant_text: str = "",
+    violation_codes: tuple[str, ...] | list[str] = (),
+) -> str:
+    """Surface tối thiểu có nghĩa khi model rewrite không vượt grounding gate.
+
+    Chú thích VI: direct user turn không được biến thành “đợi 30 giây rồi im”.
+    Hàm này chỉ nói về giới hạn/ý định của chính Eris, không thêm fact môi trường,
+    ký ức hay cảm xúc của user nên an toàn để dùng sau fail-closed.
+    """
+    violations = {str(item or "").strip().upper() for item in tuple(violation_codes or ())}
+    if previous_assistant_text and _assistant_intent_probe(user_text):
+        return (
+            "Không có một kế hoạch ngầm nào phía sau. Câu trả lời vừa rồi đã diễn giải xa hơn "
+            "mức căn cứ của cuộc trò chuyện; tôi nên giải thích đúng điều mình vừa nói thay vì "
+            "gán thêm ý đồ hoặc trạng thái cho bạn."
+        )
+    if "UNGROUNDED_PERCEPTION_OR_ACTION_CLAIM" in violations:
+        return (
+            "Tôi chưa có đủ bằng chứng hiện tại để khẳng định phần đó mà không đoán. "
+            "Tôi sẽ giữ câu trả lời ở đúng những gì đã có căn cứ."
+        )
+    return (
+        "Câu trả lời vừa tạo đã vượt quá phạm vi căn cứ của lượt này. "
+        "Tôi không nên phát phần suy diễn đó như một điều chắc chắn."
+    )
 
 
 class _ChatLatencyTrace:
@@ -1287,6 +1329,7 @@ class AIChatOrchestrator:
         _initiative_ctx = _initiative_ctx if isinstance(_initiative_ctx, Mapping) else {}
         handoff_state = handoff_runtime.refresh_shared_goal(
             _initiative_ctx.get("active_goal_text", ""),
+            semantic_owner=_initiative_ctx.get("active_goal_owner", "unknown"),
             evidence_refs=tuple(_initiative_ctx.get("active_goal_evidence_refs", ()) or ()),
             now=cycle_start,
         )
@@ -1810,6 +1853,35 @@ class AIChatOrchestrator:
                     assistant_meta_extra=assistant_discourse_meta,
                     idempotency_key=_chat_commit_idempotency_key(host, turn_id),
                 )
+                if public_text:
+                    try:
+                        from runtime.public_causal_receipt import build_receipt_from_plan
+                        _receipt = build_receipt_from_plan(
+                            chat_plan, channel="chat",
+                            speech_act=str(getattr(deterministic_decision, "speech_act", "") or "answer"),
+                            now=time.time(),
+                        )
+                        _ledger = host._ensure_session_turn_ledger()
+                        _turns = _ledger.assistant_turns()
+                        _turn = _turns[-1] if _turns else None
+                        if _turn is not None:
+                            _ledger.merge_turn_meta(_turn.index, {
+                                "causal_receipt": _receipt.to_dict(),
+                                "semantic_owner": _receipt.semantic_owner,
+                            })
+                        if isinstance(assistant_meta, dict):
+                            assistant_meta["causal_receipt"] = _receipt.to_dict()
+                            assistant_meta["semantic_owner"] = _receipt.semantic_owner
+                        handoff_runtime.observe_assistant_commit(
+                            public_text,
+                            turn_ref=(f"session-turn:{_turn.index}" if _turn is not None else turn_id),
+                            turn_index=(int(_turn.index) if _turn is not None else 0),
+                            speech_act=str(getattr(deterministic_decision, "speech_act", "") or "answer"),
+                            causal_receipt=_receipt,
+                            now=time.time(),
+                        )
+                    except Exception as exc:
+                        host.logger.debug("[public causal receipt v93] deterministic chat degraded: %s", exc)
                 host.last_user_text_for_semantics = user_text
                 recent_history = tuple(host._chat_history_for_llm(limit=8))
                 observer_state = mind_state.to_dict()
@@ -1980,29 +2052,58 @@ class AIChatOrchestrator:
                         "You may express a non-embodied preference as self_preference, but do not invent physical lived history."
                     )
                 # Grounding là safety/integrity boundary: đã biết claim không có
-                # evidence thì không được phát nguyên văn. Thử wording-only đúng
-                # một lần; semantic frame/assistant act vẫn giữ nguyên authority.
-                retry_payload = host.ai_model_router.generate_public_reply(
-                    chat_history=history,
-                    user_text=user_message,
-                    memory_context=compiled_context.memory,
-                    grounding_context=compiled_context.grounding,
-                    relationship_context=compiled_context.relationship,
-                    personality_context=compiled_context.personality,
-                    interrupt_context=compiled_context.interrupt,
-                    engagement_context=compiled_context.engagement,
-                    routing_context=compiled_context.routing,
-                    discourse_context=compiled_context.discourse,
-                    use_escalation=use_escalation,
-                    reasoning_effort=reasoning_effort,
-                    thinking_mode=thinking_mode,
-                    allow_fallback=False,
-                    language_hint=_runtime_language(),
-                    speech_language_hint=_runtime_speech_language(),
-                    planned_intention=chat_plan,
-                    retry_instruction=retry_instruction,
-                    locked_semantic_frame=typed_frame.to_dict() if typed_frame is not None else payload.get("semantic_frame", {}),
+                # evidence thì không được phát nguyên văn. Với câu hỏi về chính ý
+                # định/phát ngôn của Eris và lỗi chỉ là claim-domain, repair local
+                # ngay để không tốn thêm một vòng model dài rồi vẫn im. Các lỗi
+                # perception/environment thật sự vẫn rewrite + revalidate như cũ.
+                local_claim_repair = bool(
+                    violation_codes == ["CLAIM_DOMAIN_OUTSIDE_INTENT"]
+                    and _assistant_intent_probe(user_message)
                 )
+                if local_claim_repair:
+                    from runtime.utterance_spec import degrade_surface_payload
+                    local_text = _deterministic_fail_closed_chat_repair(
+                        user_text=user_message,
+                        previous_assistant_text=previous_assistant_for_repair,
+                        violation_codes=violation_codes,
+                    )
+                    retry_payload = degrade_surface_payload(
+                        payload,
+                        text=local_text,
+                        language=_runtime_language(),
+                        reason="claim_domain_self_intent_local_repair",
+                        performance_preset="repair",
+                        should_speak=True,
+                    )
+                    retry_payload["claim_manifest"] = [{
+                        "domain": "internal_state",
+                        "claim": "ERIS narrows its own prior intent instead of attributing unsupported state to the user.",
+                        "evidence_refs": [],
+                    }]
+                else:
+                    # Với claim perception/action thật sự, vẫn cho writer một lần
+                    # sửa wording để không làm yếu grounding boundary.
+                    retry_payload = host.ai_model_router.generate_public_reply(
+                        chat_history=history,
+                        user_text=user_message,
+                        memory_context=compiled_context.memory,
+                        grounding_context=compiled_context.grounding,
+                        relationship_context=compiled_context.relationship,
+                        personality_context=compiled_context.personality,
+                        interrupt_context=compiled_context.interrupt,
+                        engagement_context=compiled_context.engagement,
+                        routing_context=compiled_context.routing,
+                        discourse_context=compiled_context.discourse,
+                        use_escalation=use_escalation,
+                        reasoning_effort=reasoning_effort,
+                        thinking_mode=thinking_mode,
+                        allow_fallback=False,
+                        language_hint=_runtime_language(),
+                        speech_language_hint=_runtime_speech_language(),
+                        planned_intention=chat_plan,
+                        retry_instruction=retry_instruction,
+                        locked_semantic_frame=typed_frame.to_dict() if typed_frame is not None else payload.get("semantic_frame", {}),
+                    )
                 retry_text = str(retry_payload.get("text", "") or "").strip() if isinstance(retry_payload, Mapping) else ""
                 retry_verdict = evaluate_grounded_surface(
                     grounding_engine, retry_text, report=grounding_report
@@ -2049,11 +2150,29 @@ class AIChatOrchestrator:
                         ",".join(violation_codes),
                     )
                 else:
-                    # Retry hỏng vẫn fail closed. Im một lượt tốt hơn phát một
-                    # claim mà runtime vừa chứng minh là không có căn cứ.
-                    payload["text"] = ""
-                    payload["speech_text"] = ""
-                    payload["should_speak"] = False
+                    # Retry hỏng vẫn fail closed về FACT, nhưng direct user turn
+                    # không được biến thành public silence. Surface deterministic
+                    # này không thêm fact môi trường/ký ức. display và speech dùng
+                    # cùng một text, giữ đúng invariant bubble <-> TTS.
+                    from runtime.utterance_spec import degrade_surface_payload
+                    fail_closed_text = _deterministic_fail_closed_chat_repair(
+                        user_text=user_message,
+                        previous_assistant_text=previous_assistant_for_repair,
+                        violation_codes=violation_codes,
+                    )
+                    payload = degrade_surface_payload(
+                        payload,
+                        text=fail_closed_text,
+                        language=_runtime_language(),
+                        reason="fail_closed_direct_chat_repair",
+                        performance_preset="repair",
+                        should_speak=True,
+                    )
+                    payload["claim_manifest"] = [{
+                        "domain": "self_capability",
+                        "claim": "ERIS reports that it is withholding an unsupported claim.",
+                        "evidence_refs": [],
+                    }]
                     payload["grounding_risk"] = {
                         "allowed": False,
                         "violations": violation_codes,
@@ -2061,10 +2180,10 @@ class AIChatOrchestrator:
                             item.to_dict() if callable(getattr(item, "to_dict", None)) else str(item)
                             for item in grounding_annotations
                         ],
-                        "policy": "fail_closed_after_rewrite",
+                        "policy": "fail_closed_with_direct_chat_repair",
                     }
                     host.logger.warning(
-                        "[cortex v2 gate] turn=%s violations=%s; suppressed after failed rewrite",
+                        "[cortex v2 gate] turn=%s violations=%s; degraded to deterministic repair",
                         turn_seq,
                         ",".join(violation_codes),
                     )
@@ -2272,11 +2391,30 @@ class AIChatOrchestrator:
                 if _ledger_turns:
                     _assistant_turn_index = int(_ledger_turns[-1].index)
                 _assistant_ref = (f"session-turn:{_assistant_turn_index}" if _assistant_turn_index else turn_id)
+                from runtime.public_causal_receipt import build_receipt_from_plan
+                _causal_receipt = build_receipt_from_plan(
+                    chat_plan,
+                    channel="chat",
+                    speech_act=_assistant_act_value,
+                    now=time.time(),
+                )
+                if _assistant_turn_index:
+                    host._ensure_session_turn_ledger().merge_turn_meta(
+                        _assistant_turn_index,
+                        {
+                            "causal_receipt": _causal_receipt.to_dict(),
+                            "semantic_owner": _causal_receipt.semantic_owner,
+                        },
+                    )
+                if isinstance(assistant_meta, dict):
+                    assistant_meta["causal_receipt"] = _causal_receipt.to_dict()
+                    assistant_meta["semantic_owner"] = _causal_receipt.semantic_owner
                 handoff_runtime.observe_assistant_commit(
                     public_text,
                     turn_ref=_assistant_ref,
                     turn_index=_assistant_turn_index,
                     speech_act=_assistant_act_value,
+                    causal_receipt=_causal_receipt,
                     now=time.time(),
                 )
                 _individual_receipt = persistent_individual_runtime.observe_assistant_commit(
@@ -2783,6 +2921,20 @@ class AIAutonomousOrchestrator:
             host._append_chat_history("assistant", memory_text, invalid=False)
             if len(host.chat_history) > 32:
                 host.chat_history = host.chat_history[-32:]
+        try:
+            from runtime.public_causal_receipt import build_receipt_from_plan
+            from .contracts import IntentionPlan
+            _auto_plan_payload = dict(getattr(decision, "autonomous_plan", {}) or {})
+            _auto_plan_for_receipt = IntentionPlan.from_mapping(_auto_plan_payload, channel="autonomous")
+            _auto_causal_receipt = build_receipt_from_plan(
+                _auto_plan_for_receipt,
+                channel=str(channel or "autonomous"),
+                speech_act=str(getattr(decision, "speech_act", "") or ""),
+                now=time.time(),
+            )
+        except Exception as exc:
+            host.logger.debug("[public causal receipt v93] autonomous build degraded: %s", exc)
+            _auto_causal_receipt = None
         meta = {
             "architecture": AI_RUNTIME_VERSION,
             "channel": channel,
@@ -2793,6 +2945,8 @@ class AIAutonomousOrchestrator:
             # from punctuation or remembered in a parallel follow-up state machine.
             "speech_act": str(getattr(decision, "speech_act", "") or ""),
             "autonomous_plan": dict(getattr(decision, "autonomous_plan", {}) or {}),
+            "causal_receipt": (_auto_causal_receipt.to_dict() if _auto_causal_receipt is not None else {}),
+            "semantic_owner": (_auto_causal_receipt.semantic_owner if _auto_causal_receipt is not None else "unknown"),
             "performance_context": dict(getattr(decision, "performance_context", {}) or {}),
         }
         _autonomous_assistant_turn = None
@@ -2814,6 +2968,7 @@ class AIAutonomousOrchestrator:
                 turn_ref=_auto_turn_ref,
                 turn_index=_auto_turn_index,
                 speech_act=_auto_speech_act,
+                causal_receipt=_auto_causal_receipt,
                 now=time.time(),
             )
             from runtime.persistent_individual import ensure_persistent_individual_runtime

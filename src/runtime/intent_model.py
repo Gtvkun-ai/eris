@@ -64,6 +64,64 @@ _AWARENESS_VERBS = (
 )
 
 
+_ENTITY_STATUS_MARKERS = (
+    "dang bi sao", "bi sao", "sao the", "sao vay", "bi gi",
+    "co loi gi", "loi gi", "co van de gi", "van de gi", "on khong",
+    "what is wrong", "what's wrong", "having trouble", "is it okay",
+)
+_ENTITY_STATUS_STOPWORDS = frozenset({
+    "dang", "bi", "sao", "the", "vay", "gi", "co", "loi", "van", "de",
+    "on", "khong", "hien", "tai", "nay", "kia", "do", "no", "app",
+    "ung", "dung", "cua", "toi", "tui", "ban", "em", "anh", "chi",
+    "what", "is", "wrong", "with", "having", "trouble", "it", "okay",
+})
+
+
+def looks_like_entity_status_question(user_text: str) -> bool:
+    """Nhận diện *shape* hỏi trạng thái, chưa tự kết luận đó là môi trường hiện tại.
+
+    Chú thích VI: bước này cố ý không chứa tên GitPilot/VS Code. Entity chỉ được
+    bind ở bước kế tiếp với nhãn thật từ WorldState, tránh biến mọi câu “X bị sao”
+    thành yêu cầu nhìn máy tính.
+    """
+
+    normalized = normalize_vi(user_text)
+    return bool(normalized and _contains_any(normalized, _ENTITY_STATUS_MARKERS))
+
+
+def matches_current_environment_entity_status(
+    user_text: str,
+    environment_labels: tuple[str, ...] | list[str],
+) -> bool:
+    """Bind câu hỏi trạng thái vào entity thật đang hiện diện trong WorldState.
+
+    Chỉ trả True khi (1) câu có dạng status/health và (2) ít nhất một token có
+    nghĩa của user xuất hiện trong app/process/window/task hiện tại. Vì vậy
+    “docker bị sao thế” không tự route vào môi trường nếu máy đang ở GitPilot.
+    """
+
+    normalized = normalize_vi(user_text)
+    if not looks_like_entity_status_question(normalized):
+        return False
+    query_tokens = {
+        token for token in re.findall(r"[a-z0-9_#+.\-]+", normalized)
+        if len(token) >= 3 and token not in _ENTITY_STATUS_STOPWORDS
+    }
+    if not query_tokens:
+        return False
+    for raw_label in tuple(environment_labels or ()):
+        label = normalize_vi(raw_label)
+        if not label:
+            continue
+        label_tokens = set(re.findall(r"[a-z0-9_#+.\-]+", label))
+        compact_label = re.sub(r"[^a-z0-9]+", "", label)
+        for token in query_tokens:
+            compact_token = re.sub(r"[^a-z0-9]+", "", token)
+            if token in label_tokens or (len(compact_token) >= 4 and compact_token in compact_label):
+                return True
+    return False
+
+
 def _contains_any(text: str, markers: tuple[str, ...] | list[str]) -> bool:
     return any(marker and marker in text for marker in markers)
 
@@ -151,4 +209,9 @@ def normalize_intent(user_text: str) -> IntentFrame:
     return IntentFrame(normalized_text=normalized)
 
 
-__all__ = ["IntentFrame", "normalize_intent"]
+__all__ = [
+    "IntentFrame",
+    "looks_like_entity_status_question",
+    "matches_current_environment_entity_status",
+    "normalize_intent",
+]

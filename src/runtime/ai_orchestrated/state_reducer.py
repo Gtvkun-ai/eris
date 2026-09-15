@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Mapping, Sequence
 
 from runtime.diagnostic_logging import safe_log
+from runtime.goal_lifecycle import GoalLifecycleRecord, active_goal_records, reconcile_goal_records
 
 from .contracts import (
     AppraisalState,
@@ -278,12 +279,37 @@ class StateReducer:
             personality = state.personality
             identity = state.identity
 
-        loops = list(state.open_loops)
-        if observation.open_loop and observation.confidence >= 0.65:
-            loops = [x for x in loops if x.casefold() != observation.open_loop.casefold()]
-            loops.append(observation.open_loop)
-        if observation.relationship_meaning in {"repair_accepted", "closure"} and loops:
-            loops = loops[-7:]
+        # V94: goal user/shared có lifecycle typed. ``open_loops`` không còn là
+        # source of truth vì một string không thể biết nó đã stale/suspended hay
+        # được user xác nhận lại ở turn nào. V93 ownership vẫn là hard boundary:
+        # open-loop của ERIS không được promotion vào goal public.
+        loop_owner = str(getattr(observation, "open_loop_owner", "unknown") or "unknown").strip().lower()
+        goal_records = tuple(state.goal_records or ())
+        if not goal_records and state.open_loops:
+            # Migration mềm cho snapshot V93: coi open-loop cũ là shared ACTIVE,
+            # sau đó lifecycle mới sẽ tự decay nếu không còn evidence.
+            seed_now = state.updated_at if state.updated_at > 0.0 else now
+            goal_records = tuple(
+                GoalLifecycleRecord.create(
+                    text, owner="shared", now=seed_now,
+                    turn_seq=state.last_applied_turn_seq,
+                    evidence_refs=("legacy-open-loop:v93",),
+                )
+                for text in state.open_loops[-8:]
+                if str(text or "").strip()
+            )
+        goal_records = reconcile_goal_records(
+            goal_records,
+            open_loop=observation.open_loop,
+            owner=loop_owner,
+            event_kind=observation.event_kind,
+            relationship_meaning=observation.relationship_meaning,
+            confidence=observation.confidence,
+            turn_seq=observation.turn_seq,
+            evidence_refs=observation.evidence,
+            now=now,
+        )
+        loops = [item.text for item in active_goal_records(goal_records)]
 
         candidates = list(state.memory_candidates)
         if observation.memory_worthy and observation.memory_candidate and observation.confidence >= 0.68:
@@ -311,6 +337,7 @@ class StateReducer:
             latest_observation=observation.to_dict(),
             latest_intention=state.latest_intention,
             open_loops=tuple(loops[-8:]),
+            goal_records=tuple(goal_records[-8:]),
             memory_candidates=tuple(candidates),
             updated_at=now,
         )

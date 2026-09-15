@@ -424,13 +424,52 @@ class ChatCycleMixin:
         )
         return bool(resolution.references_screen)
 
-    def _looks_like_deep_environment_request(self, user_text: str) -> bool:
-        """Typed current-environment intent; no per-caller keyword list."""
+    def _chat_current_environment_labels(self, snapshot=None) -> tuple[str, ...]:
+        """Lấy identity/semantic labels của foreground hiện tại từ canonical WorldState."""
+        labels: list[str] = []
+        payload = self._chat_snapshot_machine_context(snapshot)
+        for key in ("active_app", "active_window", "active_window_title", "window_title", "process_name"):
+            value = str(payload.get(key, "") or "").strip()
+            if value:
+                labels.append(value)
         try:
-            from runtime.intent_model import normalize_intent
+            from runtime.environment_awareness import ensure_environment_awareness_hub
+            from runtime.world_state import ensure_world_state_service
+            ensure_environment_awareness_hub(self).refresh(
+                machine_snapshot=snapshot, now=time.time(), source="direct_chat_entity_bind"
+            )
+            world = ensure_world_state_service(self).refresh_from_host(now=time.time())
+            env = world.environment_compatibility_view(now=time.time())
+            for key in (
+                "focused_app", "focused_process", "focused_object",
+                "activity", "task_hint", "phase", "last_action", "last_outcome",
+            ):
+                value = str(env.get(key, "") or "").strip()
+                if value and value.casefold() not in {"unknown", "none"}:
+                    labels.append(value)
+        except Exception as exc:
+            self.logger.debug("[deep environment chat] entity labels unavailable: %s", exc)
+        return tuple(dict.fromkeys(labels))
+
+    def _looks_like_deep_environment_request(self, user_text: str, snapshot=None) -> bool:
+        """Typed intent + entity binding cho câu hỏi trạng thái foreground hiện tại."""
+        try:
+            from runtime.intent_model import (
+                looks_like_entity_status_question,
+                matches_current_environment_entity_status,
+                normalize_intent,
+            )
             intent = normalize_intent(user_text)
             self.current_world_intent = intent
-            return bool(intent.environment_sufficient and intent.operation == "inspect_current_state")
+            if bool(intent.environment_sufficient and intent.operation == "inspect_current_state"):
+                return True
+            # Chú thích VI: câu “X đang bị sao thế?” không chứa marker màn hình.
+            # Chỉ bind nó vào Deep Environment khi X khớp app/process/window/task
+            # thật đang active; tuyệt đối không hardcode GitPilot hay tên IDE.
+            if looks_like_entity_status_question(user_text):
+                labels = self._chat_current_environment_labels(snapshot)
+                return matches_current_environment_entity_status(user_text, labels)
+            return False
         except Exception:
             return False
 
@@ -505,7 +544,7 @@ class ChatCycleMixin:
                 "kind": "deep_environment_task",
                 "tags": ["runtime_state", "deep_environment", "world_state", "interpretation", "task_state"],
             })
-        if facts and self._looks_like_deep_environment_request(user_text):
+        if facts and self._looks_like_deep_environment_request(user_text, snapshot):
             self.logger.info(
                 "[deep environment chat] world_revision=%d env_revision=%d facts=%d app=%s task=%s phase=%s age=%.1fs",
                 int(getattr(world, "revision", 0) or 0), int(env.get("revision", 0) or 0), len(facts),
@@ -515,7 +554,7 @@ class ChatCycleMixin:
         return tuple(facts)
 
     def _deep_environment_can_answer(self, user_text: str, snapshot=None) -> bool:
-        if not self._looks_like_deep_environment_request(user_text):
+        if not self._looks_like_deep_environment_request(user_text, snapshot):
             return False
         facts = self._chat_deep_environment_grounding_facts(snapshot, user_text)
         if not facts:

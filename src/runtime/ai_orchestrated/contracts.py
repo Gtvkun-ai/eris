@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from .semantic_contracts import ActivitySemantics, DiscourseFrame, TurnSemantics
+from runtime.goal_lifecycle import GoalLifecycleRecord
 
 from .identity import (
     Activation,
@@ -183,6 +184,8 @@ class CognitiveObservation:
     value_choice: ValueChoice = field(default_factory=ValueChoice)
     discourse: DiscourseFrame = field(default_factory=DiscourseFrame)
     open_loop: str = ""
+    # V93: owner của open-loop là provenance, không được đoán lại từ prose.
+    open_loop_owner: str = "unknown"
     memory_candidate: str = ""
     evidence: tuple[str, ...] = ()
     notes: str = ""
@@ -261,6 +264,18 @@ class CognitiveObservation:
                 if item.key and item.strength > 0.0
             )
 
+        # V93: autonomous observer có thể sinh open-loop về chính ERIS. Nếu không
+        # gắn owner ở đây, state reducer sẽ vô tình nâng thought nội sinh thành
+        # shared goal của user. Fail-closed qua helper typed, không đọc pronoun.
+        try:
+            from runtime.public_causal_receipt import infer_open_loop_owner
+            open_loop_owner = infer_open_loop_owner(
+                event_kind=data.get("event_kind", "chat"),
+                explicit_owner=data.get("open_loop_owner", ""),
+            )
+        except Exception:
+            open_loop_owner = "eris" if str(data.get("event_kind", "")).lower() == "autonomous" else "shared"
+
         return cls(
             turn_id=str(turn_id or f"turn-{turn_seq}"),
             turn_seq=max(0, int(turn_seq or 0)),
@@ -309,6 +324,7 @@ class CognitiveObservation:
                 data.get("discourse") if isinstance(data.get("discourse"), Mapping) else {}
             ),
             open_loop=compact(data.get("open_loop", ""), 180),
+            open_loop_owner=open_loop_owner,
             memory_candidate=compact(data.get("memory_candidate", ""), 260),
             evidence=evidence,
             notes=compact(data.get("notes", ""), 220),
@@ -351,6 +367,13 @@ class IntentionPlan:
     tool_intent: str = ""
     tool_input: str = ""
     evidence_refs: tuple[str, ...] = ()
+    # V93: provenance causal public-safe; không chứa chain-of-thought.
+    semantic_owner: str = "unknown"
+    trigger_owner: str = "unknown"
+    source_kind: str = ""
+    source_ref: str = ""
+    why_now: str = ""
+    user_triggered: bool = False
     semantics: TurnSemantics = field(default_factory=TurnSemantics)
     activity: ActivitySemantics = field(default_factory=ActivitySemantics)
     notes: str = ""
@@ -382,6 +405,18 @@ class IntentionPlan:
             refs = tuple(compact(x, 120) for x in raw_refs[:5] if compact(x, 120))
         else:
             refs = ()
+        try:
+            from runtime.public_causal_receipt import normalize_semantic_owner
+        except Exception:
+            normalize_semantic_owner = lambda value, default="unknown": str(value or default).lower()  # type: ignore
+        provenance = data.get("provenance") if isinstance(data.get("provenance"), Mapping) else {}
+        is_chat = str(channel or "").lower() == "chat"
+        semantic_owner = normalize_semantic_owner(
+            provenance.get("semantic_owner", data.get("semantic_owner", "shared" if is_chat else "unknown"))
+        )
+        trigger_owner = normalize_semantic_owner(
+            provenance.get("trigger_owner", data.get("trigger_owner", "user" if is_chat else "unknown"))
+        )
         return cls(
             plan_id=compact(data.get("plan_id", ""), 80) or f"plan-{int(time.time() * 1000)}",
             created_at=time.time(),
@@ -402,6 +437,12 @@ class IntentionPlan:
             tool_intent=compact(data.get("tool_intent", ""), 80),
             tool_input=compact(data.get("tool_input", ""), 1200),
             evidence_refs=refs,
+            semantic_owner=semantic_owner,
+            trigger_owner=trigger_owner,
+            source_kind=compact(provenance.get("source_kind", data.get("source_kind", "user_turn" if is_chat else "")), 100),
+            source_ref=compact(provenance.get("source_ref", data.get("source_ref", "current_user_turn" if is_chat else "")), 180),
+            why_now=compact(provenance.get("why_now", data.get("why_now", "current user turn requires a response" if is_chat else "")), 360),
+            user_triggered=bool(provenance.get("user_triggered", data.get("user_triggered", is_chat))),
             semantics=TurnSemantics.from_mapping(
                 data.get("semantics") if isinstance(data.get("semantics"), Mapping) else {
                     "turn_kind": data.get("turn_kind", "other"),
@@ -429,6 +470,14 @@ class IntentionPlan:
         payload = asdict(self)
         payload["semantics"] = self.semantics.to_dict()
         payload["activity"] = self.activity.to_dict()
+        payload["provenance"] = {
+            "semantic_owner": self.semantic_owner,
+            "trigger_owner": self.trigger_owner,
+            "source_kind": self.source_kind,
+            "source_ref": self.source_ref,
+            "why_now": self.why_now,
+            "user_triggered": self.user_triggered,
+        }
         payload["semantic_signature"] = self.semantic_signature
         payload["version"] = AI_RUNTIME_VERSION
         return payload
@@ -446,6 +495,9 @@ class RuntimeMindState:
     latest_observation: Mapping[str, Any] = field(default_factory=dict)
     latest_intention: Mapping[str, Any] = field(default_factory=dict)
     open_loops: tuple[str, ...] = ()
+    # V94: canonical lifecycle của goal user/shared. ``open_loops`` chỉ còn là
+    # compatibility projection của các record ACTIVE, không còn là source of truth.
+    goal_records: tuple[GoalLifecycleRecord, ...] = ()
     memory_candidates: tuple[Mapping[str, Any], ...] = ()
     updated_at: float = 0.0
 
@@ -454,6 +506,12 @@ class RuntimeMindState:
         data = payload or {}
         raw_loops = data.get("open_loops", ())
         loops = tuple(compact(x, 180) for x in raw_loops[-8:] if compact(x, 180)) if isinstance(raw_loops, Sequence) and not isinstance(raw_loops, str) else ()
+        raw_goal_records = data.get("goal_records", ())
+        goal_records = tuple(
+            GoalLifecycleRecord.from_mapping(item)
+            for item in raw_goal_records[-8:]
+            if isinstance(item, Mapping)
+        ) if isinstance(raw_goal_records, Sequence) and not isinstance(raw_goal_records, str) else ()
         raw_candidates = data.get("memory_candidates", ())
         candidates = tuple(dict(x) for x in raw_candidates[-12:] if isinstance(x, Mapping)) if isinstance(raw_candidates, Sequence) and not isinstance(raw_candidates, str) else ()
         relationship = RelationshipState.from_mapping(
@@ -482,6 +540,7 @@ class RuntimeMindState:
             latest_observation=dict(data.get("latest_observation", {})) if isinstance(data.get("latest_observation"), Mapping) else {},
             latest_intention=dict(data.get("latest_intention", {})) if isinstance(data.get("latest_intention"), Mapping) else {},
             open_loops=loops,
+            goal_records=goal_records,
             memory_candidates=candidates,
             updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
         )
@@ -499,6 +558,7 @@ class RuntimeMindState:
             "latest_observation": dict(self.latest_observation),
             "latest_intention": dict(self.latest_intention),
             "open_loops": list(self.open_loops),
+            "goal_records": [item.to_dict() for item in self.goal_records],
             "memory_candidates": [dict(x) for x in self.memory_candidates],
             "updated_at": self.updated_at,
         }

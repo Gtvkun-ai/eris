@@ -32,6 +32,7 @@ from cortex.subject.neuro_control import (
 from runtime.life_horizon import ensure_life_horizon_manager
 from runtime.horizon_arbiter import HorizonArbiter
 from runtime.review_lock import ReviewLock
+from runtime.semantic_authority_v95 import validate_autonomous_motives
 from runtime.interaction_ecology import classify_interaction_mode, response_expectation_for_mode
 
 from actions.capability_registry import (
@@ -1263,6 +1264,11 @@ class ExecutiveCortex:
         payload = self._subject_deliberation_payload(
             frame, selection, user_text="", snapshot=snapshot, mode=mode
         )
+        choice_contract = (
+            f"This runtime frame contains exactly {len(frame.coalitions)} ephemeral choices indexed "
+            f"0..{max(0, len(frame.coalitions) - 1)}. Appraise exactly those choices once. "
+            "Do not discuss, reinterpret, or invent a different schema/contract size in reason. "
+        )
         system = (
             "You are ERIS's slow semantic appraisal lane for autonomous action. You do NOT choose an action and you do "
             "NOT return a winner. Appraise every ephemeral choice_index on bounded dimensions only; local Neuro will merge "
@@ -1290,7 +1296,9 @@ class ExecutiveCortex:
             "Write the JSON reason and semantic_commitments in natural Vietnamese so runtime traces stay readable; do not switch to Chinese. "
             "semantic_commitments are meaning constraints "
             "for the final chosen action, never public wording. cognitive_requests may use only verify_evidence, reduce_intrusion, "
-            "preserve_continuity, estimate_capability, inspect_dissent. Return exactly one JSON object."
+            "preserve_continuity, estimate_capability, inspect_dissent. "
+            + choice_contract
+            + "Return exactly one JSON object."
         )
         try:
             raw = self.invoke_structured(
@@ -1673,13 +1681,36 @@ class ExecutiveCortex:
         except Exception as exc:
             self._log("debug", "[life-horizon-v74] arbiter degraded: %s", exc)
 
+        autonomous_mode = str(mode or "").startswith("autonomous")
+        if autonomous_mode:
+            # V95: lifecycle validity đứng *trước* utility competition. Một motive
+            # stale/self-owned không được quyền sống sót chỉ vì pressure/score cao.
+            # Validator chỉ loại coalition public-speech sai lifecycle; silence và
+            # body_only luôn còn làm escape family cho Neuro.
+            validation = validate_autonomous_motives(frame)
+            if validation.changed:
+                self._log(
+                    "info",
+                    "[semantic authority v95] motive_rejected count=%s reasons=%s",
+                    len(validation.rejections),
+                    [
+                        {
+                            "coalition": item.coalition_id,
+                            "speech_act": item.speech_act,
+                            "code": item.code,
+                            "detail": item.detail,
+                        }
+                        for item in validation.rejections
+                    ],
+                )
+                frame = validation.frame
+
         selection = self._neuro_selector.select(frame)
         self._log_neuro_selection("neuro-fast", frame, selection, mode=mode)
 
         # Autonomous social speech gets a slow semantic appraisal before public
         # commit when the fast winner wants to speak. The model does not vote; it
         # supplies bounded measurements and local Neuro re-ranks exactly once.
-        autonomous_mode = str(mode or "").startswith("autonomous")
         semantic_review_needed = bool(
             autonomous_mode and self._autonomous_semantic_review_needed(frame, selection)
         )

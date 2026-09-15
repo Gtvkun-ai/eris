@@ -19,6 +19,7 @@ from cortex.subject.initiative_control import InitiativeArbiter, InitiativeContr
 from cortex.subject.existential_desire import ExistentialDesireDeriver
 from cortex.subject.environment_meaning import EnvironmentMeaningDeriver, EnvironmentMeaningKind
 from cortex.subject.expression_commitment import commitment_payload
+from runtime.proposal_lifecycle import ensure_proposal_lifecycle_runtime
 
 
 def _clamp01(value: Any, default: float = 0.0) -> float:
@@ -122,18 +123,46 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     # đang dang dở" thật của runtime, không phải model tự bịa một project để có cớ
     # chủ động. Nếu không có open-loop, contribution_signal vẫn bằng 0.
     active_goal_text = ""
+    active_goal_owner = "unknown"
+    active_goal_id = ""
+    active_goal_state = ""
     active_goal_refs: tuple[str, ...] = ()
     reducer = getattr(host, "ai_state_reducer", None)
     reducer_snapshot = getattr(reducer, "snapshot", None)
     if callable(reducer_snapshot):
         try:
             mind_state = reducer_snapshot()
-            loops = tuple(str(item or "").strip() for item in (getattr(mind_state, "open_loops", ()) or ()) if str(item or "").strip())
-            if loops:
-                active_goal_text = " ".join(loops[0].split())[:320]
-                active_goal_refs = ("runtime-mind:open_loop:0",)
+            # V94: ưu tiên GoalLifecycleRecord typed. ``open_loops`` chỉ là mirror
+            # compatibility và không có đủ dữ liệu để reset proposal backoff khi
+            # user xác nhận goal ở một turn mới.
+            goal_records = tuple(getattr(mind_state, "goal_records", ()) or ())
+            active_record = next((
+                item for item in goal_records
+                if str(getattr(item, "state", "") or "") == "active"
+                and str(getattr(item, "owner", "") or "") in {"user", "shared"}
+                and str(getattr(item, "text", "") or "").strip()
+            ), None)
+            if active_record is not None:
+                active_goal_text = " ".join(str(getattr(active_record, "text", "") or "").split())[:320]
+                active_goal_owner = str(getattr(active_record, "owner", "shared") or "shared")
+                active_goal_id = str(getattr(active_record, "goal_id", "") or "")
+                active_goal_state = "active"
+                confirm_turn = max(0, int(getattr(active_record, "last_confirmed_turn_seq", 0) or 0))
+                refs = tuple(str(item) for item in (getattr(active_record, "evidence_refs", ()) or ()) if str(item or "").strip())
+                active_goal_refs = tuple(dict.fromkeys((*refs, f"goal-lifecycle:{active_goal_id}:turn:{confirm_turn}")))[:12]
+            else:
+                # Migration fallback cho state chưa qua reducer V94.
+                loops = tuple(str(item or "").strip() for item in (getattr(mind_state, "open_loops", ()) or ()) if str(item or "").strip())
+                if loops:
+                    active_goal_text = " ".join(loops[0].split())[:320]
+                    active_goal_owner = "shared"
+                    active_goal_state = "legacy_active"
+                    active_goal_refs = ("runtime-mind:open_loop:0",)
         except Exception:
             active_goal_text = ""
+            active_goal_owner = "unknown"
+            active_goal_id = ""
+            active_goal_state = ""
             active_goal_refs = ()
 
     # V75: Courtesy/Trajectory đã có state typed cho câu hỏi đang chờ. Nếu user
@@ -399,6 +428,10 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         # đóng góp. V66 expression owner quyết định nói/defer theo self-rhythm.
         "contribution_signal": 0.68 if active_goal_text else 0.0,
         "active_goal_text": active_goal_text,
+        # V94: owner/state/id lấy trực tiếp từ GoalLifecycleRecord typed.
+        "active_goal_owner": active_goal_owner if active_goal_text else "unknown",
+        "active_goal_id": active_goal_id,
+        "active_goal_state": active_goal_state,
         "active_goal_evidence_refs": active_goal_refs,
         # Giữ timestamp startup/user cho observability và semantic context, nhưng
         # chúng không còn là speech veto.
@@ -737,6 +770,44 @@ def coalesce_contact_probe_affordances(
         if index == keep_index or index not in redundant
     )
 
+
+def filter_affordances_by_proposal_lifecycle(
+    host: Any,
+    affordances: Sequence[Any],
+    *,
+    now: float,
+) -> tuple[Any, ...]:
+    """V94: loại proposal đang backoff trước khi dựng Subject/Neuro frame.
+
+    Đây không phải speech veto mới. Nó chỉ ngăn *cùng một proposal + cùng evidence*
+    quay lại competition ngay sau khi Neuro vừa chọn silence. Evidence đổi thì
+    ``ProposalLifecycleRuntime`` mở lại ngay.
+    """
+    runtime = ensure_proposal_lifecycle_runtime(host)
+    output: list[Any] = []
+    logger = getattr(host, "logger", None)
+    log_info = getattr(logger, "info", None)
+    for affordance in tuple(affordances or ()):
+        candidate = getattr(affordance, "candidate", None)
+        if candidate is None or not bool(getattr(candidate, "available", True)):
+            output.append(affordance)
+            continue
+        eligibility = runtime.allow_affordance(affordance, now=now)
+        if eligibility.allowed:
+            output.append(affordance)
+            continue
+        if callable(log_info):
+            try:
+                log_info(
+                    "[proposal lifecycle v94] deferred affordance=%s reason=%s retry_in=%.1fs",
+                    str(getattr(affordance, "affordance_id", "") or ""),
+                    eligibility.reason,
+                    max(0.0, float(eligibility.next_eligible_at) - float(now)),
+                )
+            except Exception:
+                pass
+    return tuple(output)
+
 def build_subject_initiative_affordances(
     subject_service: Any,
     *,
@@ -815,4 +886,5 @@ __all__ = [
     "build_initiative_runtime_context",
     "build_subject_initiative_affordances",
     "coalesce_contact_probe_affordances",
+    "filter_affordances_by_proposal_lifecycle",
 ]

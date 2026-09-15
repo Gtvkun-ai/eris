@@ -53,7 +53,9 @@ from runtime.subject_initiative_runtime import (
     build_initiative_runtime_context,
     build_subject_initiative_affordances,
     coalesce_contact_probe_affordances,
+    filter_affordances_by_proposal_lifecycle,
 )
+from runtime.proposal_lifecycle import ensure_proposal_lifecycle_runtime
 
 
 def environment_social_gate(situation: UserSituation | None) -> dict[str, Any]:
@@ -118,6 +120,14 @@ class SelfTurnBundle:
     # Public ledger revision captured before deliberation. It is an MVCC-style
     # generation token, not another lifecycle flag.
     public_revision: int
+
+    @property
+    def now(self) -> float:
+        # Chú thích VI: trước V92 timestamp nằm trực tiếp trên bundle; sau khi
+        # tách PerceptionBundle, một số consumer hậu commit vẫn đọc context.now.
+        # Giữ property tương thích tại boundary để refactor không làm self-turn
+        # crash sau khi đã nói/TTS xong. Nguồn thời gian duy nhất vẫn là perception.
+        return float(self.perception.now)
 
 
 class SelfTurnPipeline:
@@ -439,6 +449,7 @@ class SelfTurnPipeline:
             handoff_runtime = ensure_conversation_handoff_runtime(host)
             handoff_state = handoff_runtime.refresh_shared_goal(
                 initiative_runtime_context.get("active_goal_text", ""),
+                semantic_owner=initiative_runtime_context.get("active_goal_owner", "unknown"),
                 evidence_refs=tuple(initiative_runtime_context.get("active_goal_evidence_refs", ()) or ()),
                 now=now,
             )
@@ -664,6 +675,11 @@ class SelfTurnPipeline:
             unique_affordances.append(affordance)
         affordances = unique_affordances
 
+        # V94: Neuro chọn silence là một outcome có nghĩa. Cùng proposal + cùng
+        # evidence không được quay lại frame sau 4-5 giây chỉ vì scheduler tick.
+        # Evidence mới sẽ reset backoff ngay trong runtime lifecycle.
+        affordances = list(filter_affordances_by_proposal_lifecycle(host, affordances, now=now))
+
         # V44 giữ đúng một authority projection cho policy. Tập affordance còn
         # phải đi qua content-first shaping ở dưới, nên nếu tính cost tại đây rồi
         # tính lại lần nữa ta sẽ có hai ảnh chụp policy cho cùng một tick.
@@ -822,6 +838,22 @@ class SelfTurnPipeline:
                 except Exception:
                     pass
                 subject_decision = None
+
+        # V94: nếu Subject/Neuro đã chọn SILENCE/BODY_ONLY, các speech affordance
+        # trong frame vừa bị từ chối cần nhận lifecycle receipt ngay tại đây. Nếu
+        # không, scheduler sẽ materialize lại đúng chúng ở tick sau dù không có
+        # evidence mới. Đây chỉ defer proposal, không sửa motive/goal upstream.
+        if subject_decision is not None and str(getattr(subject_decision, "proposed_action", "") or "").lower() in {"silence", "body_only"}:
+            try:
+                proposal_lifecycle = ensure_proposal_lifecycle_runtime(host)
+                for _affordance in tuple(affordances or ()):
+                    proposal_lifecycle.note_affordance_outcome(
+                        _affordance,
+                        outcome="body_only" if str(getattr(subject_decision, "proposed_action", "") or "").lower() == "body_only" else "silence",
+                        now=now,
+                    )
+            except Exception as exc:
+                host.logger.debug("[proposal lifecycle v94] subject silence receipt failed: %s", exc)
 
         if subject_decision is not None and executive is not None:
             try:
@@ -2275,11 +2307,22 @@ class SelfTurnPipeline:
             "result": "body_only" if body_only else "silence",
             "body_only": body_only,
         }, now=context.perception.now)
+        result_kind = "body_only" if body_only else "silence"
         self._record_result(
             plan,
-            result="body_only" if body_only else "silence",
+            result=result_kind,
             gate_reason=gate_reason,
         )
+        # V94: hồi báo silence/body-only vào proposal lifecycle để tick kế tiếp
+        # không dựng lại đúng proposal cũ. Đây là backoff cơ học, không làm mất
+        # motive/goal ở Subject Core.
+        if str(getattr(getattr(plan, "semantics", None), "speech_act", "") or "").lower() != "silence":
+            try:
+                ensure_proposal_lifecycle_runtime(self.host).note_plan_outcome(
+                    plan, outcome=result_kind, now=context.perception.now
+                )
+            except Exception as exc:
+                self.host.logger.debug("[proposal lifecycle v94] silence receipt failed: %s", exc)
         self.host.logger.info(
             "[ai autonomous] silence kind=%s act=%s conf=%.2f importance=%.2f gate=%s body_only=%s",
             plan.semantics.turn_kind,
@@ -2596,10 +2639,22 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason="no_public_text")
             self._defer_claimed_continuation(plan, reason="no_public_text", seconds=0.75)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
+            try:
+                ensure_proposal_lifecycle_runtime(host).note_plan_outcome(
+                    plan, outcome="no_public_text", now=context.perception.now
+                )
+            except Exception as exc:
+                host.logger.debug("[proposal lifecycle v94] no-text receipt failed: %s", exc)
             host._sleep_interruptible(10)
             return True
 
         host.last_autonomous_spoken_at = time.time()
+        try:
+            ensure_proposal_lifecycle_runtime(host).note_plan_outcome(
+                plan, outcome="spoken", now=host.last_autonomous_spoken_at
+            )
+        except Exception as exc:
+            host.logger.debug("[proposal lifecycle v94] spoken receipt failed: %s", exc)
         host._note_autonomous_spoken()
         # Cập nhật sau commit thành công để avoid_text của lượt sau luôn tránh
         # câu autonomous vừa nói, kể cả khi chat reply đã overwrite host.last_text.

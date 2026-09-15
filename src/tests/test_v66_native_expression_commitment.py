@@ -102,7 +102,7 @@ def test_committed_speech_family_excludes_silence_from_neuro_vote():
     assert result.probabilities[1] == 0.0
 
 
-def test_semantic_critic_cannot_revoke_committed_action_family():
+def test_semantic_critic_can_defer_weak_committed_expression_without_dropping_it():
     commitment = commitment_payload(
         origin="expression_urge", source_id="urge:v66", semantic_target="ý mới của Eris",
         pressure=0.8, freshness=0.9, persistence=0.9,
@@ -128,8 +128,11 @@ def test_semantic_critic_cannot_revoke_committed_action_family():
         reason="model_thinks_quiet_is_safer",
     )
     merged = selector.merge_semantic_appraisal(frame, baseline, appraisal)
-    assert merged.winner_index == 0
-    assert merged.reason.startswith("semantic_critique_committed:")
+    # Slow semantic review may DEFER a weak/unsupported expression by choosing
+    # silence for this tick. The underlying ExpressionCommitment remains in its
+    # store and may surface later when motive/evidence becomes strong enough.
+    assert merged.winner_index == 1
+    assert merged.reason.startswith("semantic_critique_deferred_commitment:")
 
 
 def test_explicit_runtime_boundary_releases_commitment_lock():

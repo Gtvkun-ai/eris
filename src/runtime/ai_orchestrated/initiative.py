@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.workspace_manager import default_eris_home
+from runtime.public_causal_receipt import infer_candidate_semantic_owner, infer_candidate_trigger_owner
 from runtime.chess.surface import ChessSurfaceState
 from .contracts import IntentionPlan
 from .cognitive_blackboard import TypedCognitiveBlackboard
@@ -505,6 +506,16 @@ class InitiativeController:
             "tool_intent": "",
             "tool_input": "",
             "evidence_refs": list(refs),
+            # V93: provenance đi cùng intention plan để public commit không phải
+            # đoán lại từ câu chữ đã surface. Đây là metadata, không phải nội dung.
+            "provenance": {
+                "semantic_owner": infer_candidate_semantic_owner(candidate),
+                "trigger_owner": infer_candidate_trigger_owner(candidate),
+                "source_kind": str(candidate.source or candidate.source_kind or kind),
+                "source_ref": str(candidate.anchor_id or subject_key or candidate.idempotency_key or ""),
+                "why_now": str(candidate.eris_motive_why_now or candidate.reason or ""),
+                "user_triggered": infer_candidate_trigger_owner(candidate) == "user",
+            },
             "activity": activity_payload,
             "semantics": {
                 "turn_kind": turn_kind,
