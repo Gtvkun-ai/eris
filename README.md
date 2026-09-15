@@ -111,8 +111,7 @@ src/llm/               model clients, routing, key pool
 src/memory/            memory engine
 body/                  Godot/C# body UI
 browser_extension/     browser bridge
-tests/                 root regression tests
-src/tests/             source-tree regression tests
+src/tests/             Python regression tests
 ```
 
 ## Test Profiles
@@ -126,7 +125,7 @@ Smoke:
 Custom pytest target:
 
 ```powershell
-.\.venv\Scripts\python.exe .\run_tests.py tests\test_deepseek_provider.py
+.\.venv\Scripts\python.exe .\run_tests.py src\tests\test_deepseek_provider.py
 ```
 
 Full root suite:

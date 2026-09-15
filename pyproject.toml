@@ -12,6 +12,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+agent = [
+  "langgraph>=1.1",
+  "langgraph-checkpoint-sqlite>=3.0",
+  "langchain-core>=0.3",
+  "websockets>=14,<18",
+]
+semantic = [
+  "lancedb",
+  "pyarrow",
+  "sentence-transformers",
+  "tree-sitter",
+  "tree-sitter-python",
+  "tree-sitter-javascript",
+  "tree-sitter-typescript",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
@@ -22,7 +37,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = [
   "actions*", "config*", "core*", "cortex*", "domain*", "llm*",
   "memory*", "models*", "parser_grounding*", "runtime*", "screen*",

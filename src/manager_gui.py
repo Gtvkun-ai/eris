@@ -38,7 +38,7 @@ class Action:
 
 
 CORE_ACTIONS = [
-    Action("Runtime", "Start Eris", "run_eris.bat", note="Main launcher"),
+    Action("Runtime", "Start Eris", "run_eris.vbs", kind="vbs", note="Silent main launcher"),
     Action("Runtime", "Runtime only", "run_runtime.bat"),
     Action("Runtime", "Smoke test", "run_smoke_test.bat"),
     Action("Runtime", "User guide", "open_user_guide.bat", note="Vietnamese non-dev guide"),
@@ -61,7 +61,8 @@ CORE_ACTIONS = [
 def app_root() -> Path:
     def looks_like_eris_root(path: Path) -> bool:
         return (
-            (path / "run_eris.bat").exists()
+            (path / "run_eris.vbs").exists()
+            or (path / "run_eris.bat").exists()
             or (path / "src" / "manager_gui.py").exists()
             or (path / "config" / "secrets.json").exists()
             or (path / "config" / "secrets.example.json").exists()
@@ -287,7 +288,7 @@ class ErisManager(tk.Tk):
             ("ElevenLabs DB", self.root_dir / "config" / "elevenlabs_pool.db"),
             ("Portable Python", self.root_dir / "python" / "python.exe"),
             ("Live2D requirements", self.root_dir / "requirements-live2d.txt"),
-            ("Eris launcher", self.root_dir / "run_eris.bat"),
+            ("Eris launcher", self.root_dir / "run_eris.vbs"),
             ("Eris executable", self.root_dir / "Eris.exe"),
         ]
         lines = []
@@ -566,6 +567,8 @@ class ErisManager(tk.Tk):
             self.run_python(path)
         elif action.kind == "exe":
             self.run_exe(path)
+        elif action.kind == "vbs":
+            self.run_vbs(path)
         else:
             self.run_bat(path)
 
@@ -604,6 +607,12 @@ class ErisManager(tk.Tk):
         if path.name.lower() == "poolui.exe" and path.parent.name.lower() == "whale2api":
             env.setdefault("POOL_UI_ADMIN_TOKEN", "123456")
         subprocess.Popen([str(path)], cwd=path.parent, env=env)
+        self.log_insert(f"Started: {shorten(path, self.root_dir)}")
+
+    def run_vbs(self, path: Path) -> None:
+        if not self._can_run(path):
+            return
+        subprocess.Popen(["wscript.exe", str(path)], cwd=path.parent)
         self.log_insert(f"Started: {shorten(path, self.root_dir)}")
 
     def run_python(self, path: Path) -> None:

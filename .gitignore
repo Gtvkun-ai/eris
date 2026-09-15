@@ -31,6 +31,7 @@ config/
 !/config/SECRETS_SETUP.md
 !/config/secrets.example.json
 memory_core/
+data/subject_core/capability_keyring/
 
 # Runtime state and generated output
 logs/
@@ -63,6 +64,7 @@ tools/reference-repos/
 tools/whale2api/*.exe
 tools/whale2api/accounts.csv
 tools/whale2api/accounts.template.csv
+tools/whale2api/*.password.translation
 tools/whale2api/data/
 
 # cline-bridge build artifacts (node_modules + compiled dist)

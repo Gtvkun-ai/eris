@@ -7,18 +7,18 @@ WORKDIR = os.path.dirname(os.path.abspath(__file__))
 PYTEST_BASE_ARGS = ["--tb=line", "-q", "--no-header"]
 PROFILE_TARGETS = {
     "smoke": [
-        "tests/test_runtime_readiness_v18.py",
-        "tests/test_runtime_diagnostics_v14.py",
-        "tests/test_policy_settings_and_supervisor.py",
-        "tests/test_deepseek_provider.py",
-        "tests/test_basic_settings_main_brain.py",
+        "src/tests/test_runtime_readiness_v18.py",
+        "src/tests/test_runtime_diagnostics_v14.py",
+        "src/tests/test_policy_settings_and_supervisor.py",
+        "src/tests/test_deepseek_provider.py",
+        "src/tests/test_basic_settings_main_brain.py",
     ],
     "humanness": [
-        "tests/test_eris_humanness_suite.py",
-        "tests/test_eris_pathology_scenarios.py",
-        "tests/test_voice_policy.py",
-        "tests/test_liveliness_output_filter.py",
-        "tests/test_relationship_warmth_trigger.py",
+        "src/tests/test_eris_humanness_suite.py",
+        "src/tests/test_eris_pathology_scenarios.py",
+        "src/tests/test_voice_policy.py",
+        "src/tests/test_liveliness_output_filter.py",
+        "src/tests/test_relationship_warmth_trigger.py",
     ],
 }
 
@@ -30,7 +30,7 @@ def _run_humanness_transcript() -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     src_dir = os.path.join(WORKDIR, "src")
-    tests_dir = os.path.join(WORKDIR, "tests")
+    tests_dir = os.path.join(WORKDIR, "src", "tests")
     for candidate in (src_dir, tests_dir):
         if candidate not in sys.path:
             sys.path.insert(0, candidate)
@@ -54,7 +54,7 @@ def _run_humanness_transcript() -> int:
 
 def _build_pytest_command(argv: list[str]) -> tuple[str, list[str]]:
     if not argv:
-        return "full", [sys.executable, "-m", "pytest", "tests/", *PYTEST_BASE_ARGS]
+        return "full", [sys.executable, "-m", "pytest", "src/tests/", *PYTEST_BASE_ARGS]
 
     profile = argv[0].strip().lower()
     if profile in PROFILE_TARGETS:
