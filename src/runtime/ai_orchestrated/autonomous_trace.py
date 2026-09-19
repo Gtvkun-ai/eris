@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Trace JSONL nhỏ cho autonomous replay/debug.
+"""Public-turn trace JSONL dùng chung cho chat, autonomous và TTS.
 
-Cố ý không ghi OCR text hay private context. Chỉ ghi semantic key, attention trigger, delta và
-hash/event key để có thể replay nhịp mà không biến log thành kho rò rỉ màn hình.
+V97 hợp nhất trace public về một schema. Tên module ``autonomous_trace`` được
+ giữ để import cũ không gãy, nhưng source of truth mới là ``PublicTurnTraceStore``.
+Trace chỉ chứa provenance/decision metadata public-safe; tuyệt đối không ghi raw
+prompt, OCR text, private mind hay nội dung câu trả lời.
 """
 from __future__ import annotations
 
@@ -15,15 +17,24 @@ from typing import Any, Mapping
 from runtime.workspace_manager import default_eris_home
 
 
-class AutonomousTraceStore:
+class PublicTurnTraceStore:
+    """Store thống nhất cho vòng đời một public turn.
+
+    Một ``trace_id`` đi xuyên input/candidate/authority/public_commit/TTS/outcome.
+    ``compact_trace`` dựng một dòng dễ đọc để debug mà không phải ghép 20 log line.
+    """
+
+    SCHEMA = "eris.public_turn.trace.v97"
+
     def __init__(self, *, path: Path | None = None, logger: Any | None = None) -> None:
+        # Giữ filename cũ để upgrade không làm mất lịch sử/debug tooling.
         self.path = path or (default_eris_home() / "logs" / "autonomous_trace.jsonl")
         self.logger = logger
         self._lock = threading.RLock()
 
     def append(self, event: str, payload: Mapping[str, Any] | None = None, *, now: float | None = None) -> None:
         record = {
-            "schema": "eris.autonomous.trace.v4",
+            "schema": self.SCHEMA,
             "at": float(time.time() if now is None else now),
             "event": str(event or "unknown")[:80],
             **self._sanitize(payload or {}),
@@ -33,52 +44,156 @@ class AutonomousTraceStore:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 with self.path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+            if self._is_terminal(record):
+                self._emit_compact_terminal(str(record.get("trace_id") or ""))
         except Exception as exc:
             if self.logger is not None:
                 try:
-                    self.logger.debug("[autonomous trace] write failed: %s", exc)
+                    self.logger.debug("[public trace v97] write failed: %s", exc)
                 except Exception:
                     pass
 
-    def recent(self, *, limit: int = 80) -> list[dict[str, Any]]:
+    def recent(self, *, limit: int = 80, trace_id: str = "") -> list[dict[str, Any]]:
         try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()[-max(1, int(limit)):]
+            lines = self.path.read_text(encoding="utf-8").splitlines()[-max(1, int(limit) * 4):]
         except Exception:
             return []
         output: list[dict[str, Any]] = []
+        wanted = str(trace_id or "").strip()
         for line in lines:
             try:
                 item = json.loads(line)
             except Exception:
                 continue
-            if isinstance(item, dict):
-                output.append(item)
-        return output
+            if not isinstance(item, dict):
+                continue
+            if wanted and str(item.get("trace_id") or "") != wanted:
+                continue
+            output.append(item)
+        return output[-max(1, int(limit)):]
+
+    def compact_trace(self, trace_id: str) -> dict[str, Any]:
+        """Nén trace thành một record causal dễ đọc, không suy diễn từ prose."""
+        wanted = str(trace_id or "").strip()
+        result: dict[str, Any] = {
+            "schema": "eris.public_turn.compact.v97",
+            "trace_id": wanted,
+            "channel": "",
+            "turn_id": "",
+            "semantic_owner": "unknown",
+            "trigger_owner": "unknown",
+            "source_kind": "",
+            "goal_state": "",
+            "proposal_source": "",
+            "proposal_kind": "",
+            "authority_action": "",
+            "authority_reason": "",
+            "motive": "",
+            "speech_act": "",
+            "public_committed": False,
+            "tts_status": "not_started",
+            "outcome": "pending",
+        }
+        for item in self.recent(limit=160, trace_id=wanted):
+            # Chuẩn hóa vocabulary legacy ngay lúc đọc trace. Production V97
+            # ghi tên mới, nhưng event V96 trong cùng file vẫn debug được.
+            if item.get("candidate_source") and not item.get("proposal_source"):
+                item["proposal_source"] = item.get("candidate_source")
+            if item.get("candidate_kind") and not item.get("proposal_kind"):
+                item["proposal_kind"] = item.get("candidate_kind")
+            if item.get("governor_action") and not item.get("authority_action"):
+                item["authority_action"] = item.get("governor_action")
+            if item.get("event") in {"initiative_decision", "executive_decision"} and item.get("reason") and not item.get("authority_reason"):
+                item["authority_reason"] = item.get("reason")
+            for key in (
+                "channel", "turn_id", "semantic_owner", "trigger_owner", "source_kind",
+                "goal_state", "proposal_source", "proposal_kind", "authority_action",
+                "authority_reason", "motive", "speech_act",
+            ):
+                value = item.get(key)
+                if value not in (None, ""):
+                    result[key] = value
+            if bool(item.get("public_committed", False)):
+                result["public_committed"] = True
+            tts_event = str(item.get("tts_event") or "").lower()
+            if tts_event == "audio_start":
+                result["tts_status"] = "started"
+            elif tts_event == "audio_done":
+                result["tts_status"] = "done"
+            elif tts_event in {"audio_failed", "audio_localization_failed"}:
+                result["tts_status"] = "failed"
+            elif tts_event == "audio_cancelled":
+                result["tts_status"] = "cancelled"
+            outcome = str(item.get("outcome") or "").strip().lower()
+            if outcome:
+                result["outcome"] = outcome
+        return result
+
+    @staticmethod
+    def _is_terminal(record: Mapping[str, Any]) -> bool:
+        if str(record.get("event") or "") == "outcome":
+            return str(record.get("outcome") or "").lower() in {
+                "delivered", "failed", "cancelled", "cancelled_before_commit"
+            }
+        return False
+
+    def _emit_compact_terminal(self, trace_id: str) -> None:
+        if not trace_id:
+            return
+        compact = self.compact_trace(trace_id)
+        if self.logger is not None:
+            try:
+                self.logger.info(
+                    "[public trace v97] trace=%s channel=%s semantic=%s trigger=%s goal=%s proposal=%s/%s authority=%s commit=%s tts=%s outcome=%s",
+                    compact.get("trace_id", ""), compact.get("channel", ""),
+                    compact.get("semantic_owner", "unknown"), compact.get("trigger_owner", "unknown"),
+                    compact.get("goal_state", ""), compact.get("proposal_source", ""),
+                    compact.get("proposal_kind", ""), compact.get("authority_action", ""),
+                    int(bool(compact.get("public_committed"))), compact.get("tts_status", ""),
+                    compact.get("outcome", ""),
+                )
+            except Exception:
+                pass
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.log(
+                "public_turn_trace",
+                tags={"channel": compact.get("channel", "") or "unknown", "outcome": compact.get("outcome", "pending")},
+                fields=compact,
+                status="ok" if compact.get("outcome") == "delivered" else str(compact.get("outcome") or "pending"),
+            )
+        except Exception:
+            pass
 
     def _sanitize(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        # V97: allow-list field public-safe duy nhất. Nếu field không ở đây thì
+        # nó không được ghi. Cách này an toàn hơn blacklist raw prompt/text.
         allowed = {
             "turn_seq", "semantic_signature", "turn_kind", "speech_act", "importance",
             "intrusion_risk", "confidence", "screen_delta", "activity_session_id",
             "mechanical_event_keys", "discourse_mode", "reply_expected", "initiative_reason",
             "trigger_reason", "has_public_seed", "result", "body_only", "evidence_count",
-            "reason", "activity_kind", "motion_hint",
-            # Chuỗi event công khai. Chỉ ID/enum, không ghi raw prompt/private text.
-            "trace_id", "stage", "owner", "candidate_source", "candidate_kind",
-            "governor_action", "surface_status", "tts_event", "outcome",
-            "turn_id", "generation_epoch", "claim_token", "idempotency_key",
-            "anchor", "action", "candidate", "speech_intent_owner",
+            "reason", "activity_kind", "motion_hint", "trace_id", "stage", "owner",
+            "candidate_source", "candidate_kind", "governor_action", "surface_status",
+            "tts_event", "outcome", "turn_id", "generation_epoch", "claim_token",
+            "idempotency_key", "anchor", "action", "speech_intent_owner",
+            # V97 causal/authority vocabulary dùng chung cho chat + autonomous.
+            "channel", "semantic_owner", "trigger_owner", "source_kind", "source_ref",
+            "goal_state", "goal_owner", "proposal_source", "proposal_kind",
+            "proposal_id", "authority_action", "authority_reason", "authority_owner",
+            "motive", "why_now", "user_triggered", "public_committed", "provider_state",
         }
         clean: dict[str, Any] = {}
         for key, value in payload.items():
             if key not in allowed:
                 continue
-            if isinstance(value, (str, int, float, bool)) or value is None:
+            if isinstance(value, str):
+                clean[key] = value[:360]
+            elif isinstance(value, (int, float, bool)) or value is None:
                 clean[key] = value
             elif isinstance(value, (list, tuple)):
                 clean[key] = [str(item)[:80] for item in value[:8]]
             elif isinstance(value, Mapping):
-                # Chỉ giữ metadata phẳng đã allow-list; tuyệt đối không serialize
-                # toàn candidate/blackboard vì trace không phải bãi rác prompt.
                 clean[key] = {
                     str(k)[:48]: str(v)[:120]
                     for k, v in list(value.items())[:12]
@@ -87,29 +202,49 @@ class AutonomousTraceStore:
         return clean
 
 
-_GLOBAL_TRACE_STORE: AutonomousTraceStore | None = None
+# Compatibility aliases: tooling/test cũ vẫn import được nhưng production V97
+# nên dùng tên public-turn để tránh ngộ nhận trace chỉ thuộc autonomous lane.
+AutonomousTraceStore = PublicTurnTraceStore
+
+_GLOBAL_TRACE_STORE: PublicTurnTraceStore | None = None
 _GLOBAL_TRACE_LOCK = threading.RLock()
 
 
-def autonomous_trace_store(*, logger: Any | None = None) -> AutonomousTraceStore:
-    """Một store dùng chung để mọi stage ghi cùng trace_id."""
+def public_turn_trace_store(*, logger: Any | None = None) -> PublicTurnTraceStore:
     global _GLOBAL_TRACE_STORE
     with _GLOBAL_TRACE_LOCK:
         if _GLOBAL_TRACE_STORE is None:
-            _GLOBAL_TRACE_STORE = AutonomousTraceStore(logger=logger)
+            _GLOBAL_TRACE_STORE = PublicTurnTraceStore(logger=logger)
         elif logger is not None and _GLOBAL_TRACE_STORE.logger is None:
             _GLOBAL_TRACE_STORE.logger = logger
         return _GLOBAL_TRACE_STORE
 
 
-def append_autonomous_trace(event: str, payload: Mapping[str, Any] | None = None, *, logger: Any | None = None) -> None:
+def autonomous_trace_store(*, logger: Any | None = None) -> PublicTurnTraceStore:
+    """Compatibility wrapper V4/V96; không còn là store riêng."""
+    return public_turn_trace_store(logger=logger)
+
+
+def append_public_turn_trace(event: str, payload: Mapping[str, Any] | None = None, *, logger: Any | None = None) -> None:
     try:
         from runtime.architecture_flags import event_trace_enabled
         if not event_trace_enabled():
             return
     except Exception:
         pass
-    autonomous_trace_store(logger=logger).append(event, payload)
+    public_turn_trace_store(logger=logger).append(event, payload)
 
 
-__all__ = ["AutonomousTraceStore", "autonomous_trace_store", "append_autonomous_trace"]
+def append_autonomous_trace(event: str, payload: Mapping[str, Any] | None = None, *, logger: Any | None = None) -> None:
+    """Compatibility wrapper; production mới dùng ``append_public_turn_trace``."""
+    append_public_turn_trace(event, payload, logger=logger)
+
+
+__all__ = [
+    "AutonomousTraceStore",
+    "PublicTurnTraceStore",
+    "append_autonomous_trace",
+    "append_public_turn_trace",
+    "autonomous_trace_store",
+    "public_turn_trace_store",
+]

@@ -30,7 +30,7 @@ from runtime.json_boundary import public_payload
 
 from .activity_session import ActivitySession, ActivitySessionTracker
 from .ambient_screen_context import AmbientScreenContext, AmbientScreenTracker
-from .autonomous_trace import autonomous_trace_store
+from .autonomous_trace import public_turn_trace_store
 from .commentary_cadence import CommentaryCadence, CommentaryExpectation
 from .cognitive_blackboard import TypedCognitiveBlackboard
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
@@ -151,7 +151,7 @@ class SelfTurnPipeline:
         # Lớp này quản lý chu kỳ hỏi -> nhắc một lần -> bỏ chủ đề. Nó sống cùng
         # pipeline để nhớ được lần nhắc giữa nhiều tick autonomous.
         self.followup_appraisal = FollowUpAppraisalLayer()
-        self.trace_store = autonomous_trace_store(logger=getattr(host, "logger", None))
+        self.trace_store = public_turn_trace_store(logger=getattr(host, "logger", None))
         self.commentary_cadence = CommentaryCadence()
         self._last_deliberation_at = 0.0
         self._last_probe_at = 0.0
@@ -1050,6 +1050,16 @@ class SelfTurnPipeline:
             "speech_intent_owner": getattr(decision.speech_intent, "owner", "") if decision.speech_intent else "",
             "action": decision.action.value,
             "reason": decision.reason,
+            # V97: aliases causal/authority typed để compact trace không phải
+            # suy từ candidate prose hay parse reason string.
+            "authority_action": decision.action.value,
+            "authority_reason": decision.reason,
+            "semantic_owner": str(getattr(plan, "semantic_owner", "unknown") or "unknown"),
+            "trigger_owner": str(getattr(plan, "trigger_owner", "unknown") or "unknown"),
+            "source_kind": str(getattr(plan, "source_kind", "") or ""),
+            "motive": str(getattr(plan, "motive", "") or ""),
+            "proposal_source": str(getattr(candidate, "source", "") or "") if candidate is not None else "",
+            "proposal_kind": str(getattr(candidate, "kind", "") or "") if candidate is not None else "",
             "anchor": decision.speech_intent.anchor_type if decision.speech_intent else "none",
             "semantic_signature": plan.semantic_signature,
             "candidate": candidate.to_dict() if candidate is not None else None,

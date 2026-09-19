@@ -127,6 +127,14 @@ class CoordinatorShutdownMixin:
             except Exception as exc:
                 self.logger.debug("[deep environment] semantic worker stop error: %s", exc)
         self._stop_mental_process_loop()
+        # V98 activation có thread local riêng; dừng trước các cognition service để
+        # bridge không đọc state đang bị tháo trong lúc shutdown.
+        activation_runtime = getattr(self, "continuous_dynamics_runtime_v98", None)
+        if activation_runtime is not None:
+            try:
+                activation_runtime.stop()
+            except Exception as exc:
+                self.logger.debug("[v98 activation] stop error: %s", exc)
         for background_name in ("background_living_user_observer", "background_memory_digest"):
             background_service = getattr(self, background_name, None)
             if background_service is not None:

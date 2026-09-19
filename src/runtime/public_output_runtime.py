@@ -286,6 +286,16 @@ class PublicOutputRuntimeMixin:
         except Exception as exc:
             self.logger.debug("[behavior-observation] public record skipped: %s", exc)
         self._record_public_turn(decision, payload=payload, channel=channel)
+        # V98 negative feedback: public commit tiêu expressive pressure và tạo
+        # refractory tạm thời. Chỉ bơm ModulationEvent, không sửa activation trực tiếp.
+        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
+            try:
+                _v98_bridge = getattr(self, "activation_signal_bridge_v98", None)
+                _v98_bus = getattr(self, "shared_activation_bus", None)
+                if _v98_bridge is not None and _v98_bus is not None:
+                    _v98_bus.submit(_v98_bridge.public_expression_event(now=time.time()))
+            except Exception as exc:
+                self.logger.debug("[v98 activation] refractory modulation skipped: %s", exc)
         stage_output = getattr(self, "stage_output_pipeline", None)
         if stage_output is None:
             stage_output = StageOutputPipeline()
@@ -585,7 +595,10 @@ class PublicOutputRuntimeMixin:
             # Task manager có thể fail trong lúc synth trước khi on_first_start.
             if sync_text and tts_event_releases_deferred_text(event_type):
                 send_text_payload("audio_failed")
-            self._handle_tts_playback_event(event, stage_frame=event_stage_frame)
+            self._handle_tts_playback_event(
+                event, stage_frame=event_stage_frame,
+                trace_id=str(payload.get("event_trace_id") or getattr(event_stage_frame, "turn_id", "") or ""),
+            )
 
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
         speech_provider = self._get_runtime_provider("speech")
@@ -629,8 +642,8 @@ class PublicOutputRuntimeMixin:
                     except Exception as clock_exc:
                         self.logger.debug("[interaction-clock] audio pending mark failed: %s", clock_exc)
                 try:
-                    from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
-                    append_autonomous_trace("tts_dispatch", {
+                    from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+                    append_public_turn_trace("tts_dispatch", {
                         "trace_id": str(payload.get("event_trace_id") or stage_frame.turn_id),
                         "turn_id": str(stage_frame.turn_id),
                         "stage": "tts",
@@ -815,7 +828,7 @@ class PublicOutputRuntimeMixin:
             },
         }
 
-    def _handle_tts_playback_event(self, event, *, stage_frame=None) -> None:
+    def _handle_tts_playback_event(self, event, *, stage_frame=None, trace_id: str = "") -> None:
         """Nhận lifecycle event từ TTS worker.
 
         Mặc định chỉ lưu/log để không phá client Godot cũ. Nếu muốn UI nhận event
@@ -839,10 +852,10 @@ class PublicOutputRuntimeMixin:
         }
         self.last_tts_event = record
         try:
-            from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
-            trace_id = str(record["turn_id"] or "")
-            append_autonomous_trace("tts_event", {
-                "trace_id": trace_id,
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+            public_trace_id = str(trace_id or record["turn_id"] or "")
+            append_public_turn_trace("tts_event", {
+                "trace_id": public_trace_id,
                 "turn_id": record["turn_id"],
                 "stage": "tts",
                 "owner": "tts",
@@ -854,8 +867,8 @@ class PublicOutputRuntimeMixin:
                 ),
             }, logger=getattr(self, "logger", None))
             if event_type in {"audio_done", "audio_cancelled", "audio_failed"}:
-                append_autonomous_trace("outcome", {
-                    "trace_id": trace_id,
+                append_public_turn_trace("outcome", {
+                    "trace_id": public_trace_id,
                     "turn_id": record["turn_id"],
                     "stage": "outcome",
                     "owner": "public_lifecycle",

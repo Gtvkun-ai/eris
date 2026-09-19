@@ -491,7 +491,7 @@ class OutcomeObserver:
             self._safe_setattr(frame, "outcome", report)
 
         try:
-            from runtime.ai_orchestrated.autonomous_trace import append_autonomous_trace
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
             trace_id = str(
                 getattr(frame, "utterance_turn_id", "")
                 or getattr(frame, "turn_id", "")
@@ -499,7 +499,7 @@ class OutcomeObserver:
                 or ""
             )
             if trace_id:
-                append_autonomous_trace("behavior_outcome", {
+                append_public_turn_trace("behavior_outcome", {
                     "trace_id": trace_id,
                     "turn_id": trace_id,
                     "stage": "outcome",

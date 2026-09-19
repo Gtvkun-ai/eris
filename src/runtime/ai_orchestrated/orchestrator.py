@@ -669,6 +669,18 @@ class AIChatOrchestrator:
         turn_id = str(getattr(user_turn, "turn_id", "") or f"session_turn:{turn_seq}")
         latency_trace.set_turn(turn_id)
         user_meta["ai_turn_seq"] = turn_seq
+        # V97: chat dùng cùng public trace với autonomous/TTS. Trace chỉ ghi
+        # provenance typed, không ghi user_text để observability không thành kho prompt.
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+            append_public_turn_trace("turn_input", {
+                "trace_id": turn_id, "turn_id": turn_id, "channel": "chat",
+                "stage": "input", "owner": "user",
+                "semantic_owner": "shared", "trigger_owner": "user",
+                "source_kind": "user_turn", "generation_epoch": turn_seq,
+            }, logger=getattr(host, "logger", None))
+        except Exception:
+            pass
         latency_trace.mark("ledger")
 
         # V27.1: user turn là outcome thật của một Subject intention đã được nói.
@@ -890,6 +902,16 @@ class AIChatOrchestrator:
             user_text, turn_ref=turn_id, context_key="direct_chat",
             trajectory=trajectory_state.to_dict(), now=cycle_start
         )
+        # V98: user quay lại là một xung cảm giác/xã hội, KHÔNG phải seed topic.
+        # Nó chỉ modulation shared activation; semantic content của câu user vẫn
+        # thuộc pipeline planner/authority hiện tại.
+        try:
+            _v98_bridge = getattr(host, "activation_signal_bridge_v98", None)
+            _v98_bus = getattr(host, "shared_activation_bus", None)
+            if _v98_bridge is not None and _v98_bus is not None:
+                _v98_bus.submit(_v98_bridge.user_return_event(now=cycle_start))
+        except Exception as exc:
+            host.logger.debug("[v98 activation] user presence modulation skipped: %s", exc)
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
             before_index=user_turn.index, limit=8
@@ -1424,6 +1446,23 @@ class AIChatOrchestrator:
         )
         subject_payload = subject_decision.to_dict()
         planning_snapshot["subject_decision"] = subject_payload
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+            _subject_args = dict(getattr(subject_decision, "arguments", {}) or {})
+            append_public_turn_trace("authority_decision", {
+                "trace_id": turn_id, "turn_id": turn_id, "channel": "chat",
+                "stage": "authority", "owner": "subject_core",
+                "authority_owner": "subject_core",
+                "authority_action": str(getattr(subject_decision, "proposed_action", "") or ""),
+                "authority_reason": "subject_decision_committed",
+                "speech_act": str(_subject_args.get("speech_act", "") or ""),
+                "goal_state": str(_initiative_ctx.get("active_goal_state", "") or ""),
+                "goal_owner": str(_initiative_ctx.get("active_goal_owner", "unknown") or "unknown"),
+                "proposal_source": "intent_planner",
+                "proposal_id": str(getattr(subject_decision, "decision_id", "") or ""),
+            }, logger=getattr(host, "logger", None))
+        except Exception:
+            pass
 
         # V56: appraisal theo goal đã có authority ở Subject Core thì phải thật sự
         # điều tiết current affect, thay vì nằm trong log rồi bị quên. Social event
@@ -2361,6 +2400,12 @@ class AIChatOrchestrator:
             decision.utterance_turn_id = str(
                 getattr(host, "_active_public_lifecycle_turn_id", "") or turn_id
             )
+        # V97: event_trace_id là identity observability; utterance_turn_id vẫn giữ
+        # semantics lifecycle/UI cũ để không buộc frontend đổi contract.
+        decision.performance_context = dict(getattr(decision, "performance_context", {}) or {})
+        decision.performance_context.setdefault("event_trace_id", turn_id)
+        decision.performance_context.setdefault("generation_epoch", int(turn_seq))
+        decision.performance_context.setdefault("public_intent_owner", "intent_planner")
 
         if (
             not payload
@@ -2434,11 +2479,31 @@ class AIChatOrchestrator:
                         {
                             "causal_receipt": _causal_receipt.to_dict(),
                             "semantic_owner": _causal_receipt.semantic_owner,
+                            "event_trace_id": turn_id,
                         },
                     )
                 if isinstance(assistant_meta, dict):
                     assistant_meta["causal_receipt"] = _causal_receipt.to_dict()
                     assistant_meta["semantic_owner"] = _causal_receipt.semantic_owner
+                    assistant_meta["event_trace_id"] = turn_id
+                try:
+                    from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+                    append_public_turn_trace("public_commit", {
+                        "trace_id": turn_id, "turn_id": turn_id, "channel": "chat",
+                        "stage": "public_commit", "owner": "executive_governor",
+                        "semantic_owner": _causal_receipt.semantic_owner,
+                        "trigger_owner": _causal_receipt.trigger_owner,
+                        "source_kind": _causal_receipt.source_kind,
+                        "source_ref": _causal_receipt.source_ref,
+                        "motive": _causal_receipt.motive,
+                        "why_now": _causal_receipt.why_now,
+                        "user_triggered": _causal_receipt.user_triggered,
+                        "speech_act": _causal_receipt.speech_act,
+                        "public_committed": True,
+                        "authority_action": str(getattr(subject_decision, "proposed_action", "") or "speak"),
+                    }, logger=getattr(host, "logger", None))
+                except Exception:
+                    pass
                 handoff_runtime.observe_assistant_commit(
                     public_text,
                     turn_ref=_assistant_ref,
@@ -2965,12 +3030,33 @@ class AIAutonomousOrchestrator:
         except Exception as exc:
             host.logger.debug("[public causal receipt v93] autonomous build degraded: %s", exc)
             _auto_causal_receipt = None
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+            append_public_turn_trace("public_commit", {
+                "trace_id": str(getattr(decision, "director_trace_id", "") or idempotency_key),
+                "turn_id": str(getattr(decision, "utterance_turn_id", "") or idempotency_key),
+                "channel": str(channel or "autonomous"),
+                "stage": "public_commit", "owner": "executive_governor",
+                "semantic_owner": (_auto_causal_receipt.semantic_owner if _auto_causal_receipt is not None else "unknown"),
+                "trigger_owner": (_auto_causal_receipt.trigger_owner if _auto_causal_receipt is not None else "unknown"),
+                "source_kind": (_auto_causal_receipt.source_kind if _auto_causal_receipt is not None else ""),
+                "source_ref": (_auto_causal_receipt.source_ref if _auto_causal_receipt is not None else ""),
+                "motive": (_auto_causal_receipt.motive if _auto_causal_receipt is not None else ""),
+                "why_now": (_auto_causal_receipt.why_now if _auto_causal_receipt is not None else ""),
+                "user_triggered": (_auto_causal_receipt.user_triggered if _auto_causal_receipt is not None else False),
+                "speech_act": str(getattr(decision, "speech_act", "") or ""),
+                "public_committed": True,
+                "authority_action": "speak",
+            }, logger=getattr(host, "logger", None))
+        except Exception:
+            pass
         meta = {
             "architecture": AI_RUNTIME_VERSION,
             "channel": channel,
             "ai_turn_seq": int(turn_seq),
             "system_action": str(getattr(decision, "system_action", "") or ""),
             "idempotency_key": str(idempotency_key or ""),
+            "event_trace_id": str(getattr(decision, "director_trace_id", "") or idempotency_key),
             # Typed public semantics are ledger data. They are not inferred later
             # from punctuation or remembered in a parallel follow-up state machine.
             "speech_act": str(getattr(decision, "speech_act", "") or ""),

@@ -1,0 +1,21 @@
+{
+  "version": "V98",
+  "name": "Shared Activation Nervous System - shadow foundation",
+  "apply_root": "src",
+  "files": [
+    "runtime/activation_nervous_system_v98.py",
+    "runtime/coordinator_bootstrap.py",
+    "runtime/coordinator_shutdown.py",
+    "runtime/ai_orchestrated/orchestrator.py",
+    "runtime/public_output_runtime.py",
+    "tests/test_v98_continuous_activation_nervous_system.py",
+    "V98_CHANGESET_VI.txt",
+    "V98_TEST_STATUS_VI.txt",
+    "V98_CHANGE_ONLY_MANIFEST.json"
+  ],
+  "notes": [
+    "V98 runs in shadow mode; V97 remains public authority.",
+    "All activation ingress uses ModulationEvent.",
+    "No semantic sentence generation is added to the motor layer."
+  ]
+}

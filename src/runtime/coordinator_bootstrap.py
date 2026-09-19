@@ -632,6 +632,28 @@ class CoordinatorBootstrapMixin:
         # V44: urge là projection ngắn hạn trên concern/content hiện có, không tạo kho nhớ mới.
         self.expression_urge_runtime = ExpressionUrgeRuntime(self, logger=self.logger)
 
+        # V98: dựng "dây thần kinh" activation dùng chung ở SHADOW MODE.
+        # Chưa thay public pipeline V97; motor chỉ quan sát body/micro/vocal urge.
+        # Mọi nguồn cũ được bridge thành ModulationEvent, không được set field thẳng.
+        from runtime.activation_nervous_system_v98 import (
+            ContinuousDynamicsRuntime,
+            ExpressionMotorV98,
+            HostActivationBridgeV98,
+            SharedActivationBus,
+        )
+        self.shared_activation_bus = SharedActivationBus()
+        self.expression_motor_v98 = ExpressionMotorV98(
+            shadow=True,
+            logger=self.logger,
+        )
+        self.activation_signal_bridge_v98 = HostActivationBridgeV98(self)
+        self.continuous_dynamics_runtime_v98 = ContinuousDynamicsRuntime(
+            self.shared_activation_bus,
+            motor=self.expression_motor_v98,
+            source_provider=self.activation_signal_bridge_v98.collect,
+            logger=self.logger,
+        )
+
         # V74 Life-Horizon: bốn object tách vai trò rõ ràng. Manager giữ H0-H4,
         # Arbiter chỉ điều chỉnh utility, Courtesy sở hữu quyền giữ lượt, còn
         # ReviewLock giữ semantic winner sau merge. Không object nào là public writer.
@@ -904,6 +926,15 @@ class CoordinatorBootstrapMixin:
             )
         except Exception as exc:
             self.logger.warning("[browser_bridge] Không khởi động được: %s", exc)
+
+        # Chỉ start dynamics sau khi session clock/world state đã tồn tại. Thread
+        # này local, deterministic, tick 50-100 ms và không gọi provider/LLM.
+        activation_runtime = getattr(self, "continuous_dynamics_runtime_v98", None)
+        if activation_runtime is not None:
+            try:
+                activation_runtime.start()
+            except Exception as exc:
+                self.logger.warning("[v98 activation] Không khởi động được shadow runtime: %s", exc)
 
     def _bootstrap_thought_and_ai(self, *, llm_service) -> None:
         self.thought_model_adapter = RuntimeThoughtModelAdapter.from_env(logger=self.logger)

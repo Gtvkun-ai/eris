@@ -1,0 +1,27 @@
+ERIS V98 — TEST STATUS
+======================
+
+1) V98 + regression V93-V97
+   45 passed
+
+2) Regression expression/life-horizon V66, V67, V69, V74-V77 + V98
+   71 passed
+
+3) Import smoke test
+   PASS
+   - runtime.activation_nervous_system_v98
+   - runtime.coordinator_bootstrap
+   - runtime.coordinator_shutdown
+   - runtime.public_output_runtime
+   - runtime.ai_orchestrated.orchestrator
+
+4) compileall các file V98 thay đổi
+   PASS
+
+Điểm cần quan sát khi chạy thật
+-------------------------------
+- Log: [v98 activation] started tick=75ms shadow_motor=1
+- Debug motor: [v98 motor shadow] channel=...
+- Không được có TTS/public speech phát sinh chỉ từ V98 motor.
+- Khi user quay lại: bus nhận user_presence_v98.
+- Khi Eris commit public speech: bus nhận public_expression_refractory_v98.
