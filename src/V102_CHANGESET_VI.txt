@@ -1,0 +1,113 @@
+ERIS V102 — EXPRESSION COMMITMENT TRANSITION
+===========================================
+
+Mục tiêu
+--------
+V101 đã tách MentalMaterial khỏi PrivateIntention, nhưng production vẫn còn một
+shortcut cũ trong ExpressionUrgeRuntime:
+
+    ExpressionUrge -> commitment_payload(...) ngay trong cùng lần shape
+
+Điều này làm semantic commitment vẫn gần như là một hàm tức thời của pressure.
+V102 lấy quyền tạo commitment production ra khỏi ExpressionUrgeRuntime và đưa nó
+vào một state transition riêng.
+
+Luồng production sau V102
+-------------------------
+
+    Activation V98
+      -> BoundFocus V99
+      -> MentalMaterial V100
+      -> PrivateIntention V101
+      -> ExpressionUrge
+      -> ExpressionCommitmentTransition V102
+      -> ExpressionCommitment V67 contract
+      -> Subject / Neuro / Surface
+
+V102 KHÔNG viết câu, KHÔNG gọi LLM/TTS, KHÔNG tự SPEAK và KHÔNG chọn một global
+winner. Mỗi urge giữ một transition state riêng.
+
+Thay đổi chính
+--------------
+1. runtime/expression_commitment_transition_v102.py (MỚI)
+   - State per-urge: forming / holding / committed / deferred_committed / cooling.
+   - Commitment charge là biến tích phân theo thời gian của đúng một urge, không
+     phải score dùng để bầu winner toàn hệ thống.
+   - Một observation không thể commit dù pressure rất cao.
+   - Cần tối thiểu 2 observations + dwell time + semantic stability.
+   - Hysteresis:
+       OPEN_CHARGE    = 0.60
+       RELEASE_CHARGE = 0.28
+     => commitment không rung ON/OFF khi pressure dao động nhẹ.
+   - Semantic target đổi mạnh reset maturity, ngăn việc giữ commitment cũ rồi
+     thay nội dung mới vào ngay lập tức.
+   - Public receipt làm state cooling; public text không feed ngược cognition.
+
+2. runtime/expression_urge_runtime.py
+   - Production không còn tự gọi commitment_payload() khi V102 runtime tồn tại.
+   - Gọi expression_commitment_transition_v102.consider_urge(...).
+   - Nếu transition chưa mở hoặc đang bị hard boundary defer => urge vẫn sống
+     private nhưng chưa tạo candidate có ExpressionCommitment.
+   - Fallback cũ chỉ giữ compatibility cho host/unit legacy không bootstrap V102.
+   - Public expression receipt được gửi ngược V102 bằng urge_id בלבד; không gửi
+     public wording làm evidence.
+
+3. runtime/ai_orchestrated/self_turn_pipeline.py
+   - Truyền runtime_context vào V102 tại đúng thời điểm commitment.
+   - Context gồm public-turn collision / explicit quiet từ initiative context và
+     awaiting_user_answer / courtesy_hold từ Courtesy Contract.
+   - KHÔNG dùng heuristic kiểu user ít phản hồi, user có vẻ bận, độ thân thấp...
+     để phủ quyết commitment.
+   - Thêm bounded telemetry:
+       expression_commitment_transitions_v102
+       expression_commitment_v102_count
+       v102_expression_urge_direct_commitment = False
+
+4. runtime/coordinator_bootstrap.py
+   - Bootstrap ExpressionCommitmentTransitionV102 ngay sau PrivateIntention V101.
+   - Runtime không có thread riêng và không gọi model.
+
+5. tests/test_v102_expression_commitment_transition.py
+   Khóa 8 invariant:
+   - tick đầu không instant commit;
+   - sustained urge mới commit ở tick sau;
+   - hard boundary defer nhưng không xóa maturity;
+   - hysteresis giữ commitment qua dao động pressure nhỏ;
+   - semantic shift reset maturity;
+   - public receipt cooling transition;
+   - ExpressionUrge production thật sự chờ V102;
+   - bootstrap/pipeline wiring bắt buộc đi qua V102.
+
+Hard boundary semantics
+-----------------------
+V102 chỉ dùng hard_expression_boundary() đã có ở contract V67. Các boundary có
+provenance trực tiếp gồm ví dụ:
+- explicit_quiet_request / user_requested_quiet;
+- awaiting_user_answer / courtesy_hold;
+- user_speaking / active_user_turn / voice floor thuộc user;
+- public_turn_busy / turn collision;
+- conversation_closed / shutdown.
+
+Boundary không làm Eris "quên" rằng mình muốn nói. Nếu semantic commitment đã
+hình thành, state chuyển deferred_committed và chỉ ngừng projection public. Khi
+boundary mở, commitment có thể trở lại mà không cần user phải "nạp quyền nói".
+
+Không làm trong V102
+--------------------
+- Không thay Subject/Neuro winner election.
+- Không thay Surface/TTS.
+- Không sửa structured continuation / conversation arc / task lane đã có typed
+  commitment contract riêng.
+- Không sửa hai regression legacy V43/V66 đã tồn tại trước V102.
+- Không thêm DB/state persistence; transition là session-local giống urge/private
+  intention hiện tại.
+
+Triết lý
+--------
+V98-V102 đang thay dần chuỗi "seed -> score -> nói" bằng một chuỗi state động:
+
+  năng lượng -> đối tượng quan tâm -> material -> ý định private -> desire biểu
+  đạt -> semantic commitment -> public competition
+
+Mỗi bước trả lời một câu hỏi khác nhau, thay vì một score duy nhất vừa chọn chủ
+đề, vừa quyết định nói, vừa quyết định thời điểm.

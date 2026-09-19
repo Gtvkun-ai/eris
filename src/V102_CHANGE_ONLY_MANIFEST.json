@@ -1,0 +1,57 @@
+{
+  "version": "V102",
+  "package_type": "change-only",
+  "base_required": "src(8) + V98 + V99 + V100 + V101",
+  "architecture_goal": "ExpressionUrge -> stateful hysteretic ExpressionCommitment transition",
+  "production_invariant": "ExpressionUrge does not directly mint commitment when V102 runtime is bootstrapped",
+  "files": [
+    {
+      "path": "src/runtime/expression_commitment_transition_v102.py",
+      "bytes": 15231,
+      "sha256": "9688ae73def536382ce0e4eec4a17f5e48e5178886925715f5c95d87f6621873",
+      "action": "add"
+    },
+    {
+      "path": "src/runtime/expression_urge_runtime.py",
+      "bytes": 48052,
+      "sha256": "21508364a5c14e740362b033736de7881db03c5b8a599711504e3a62da5d18cb",
+      "action": "modify"
+    },
+    {
+      "path": "src/runtime/ai_orchestrated/self_turn_pipeline.py",
+      "bytes": 164489,
+      "sha256": "d2de224bf928583e0fac745b8d6f0ab42efe05084c36b044088afeab5f242830",
+      "action": "modify"
+    },
+    {
+      "path": "src/runtime/coordinator_bootstrap.py",
+      "bytes": 54276,
+      "sha256": "7e6b2ebc51a9a48b63bf36185ead5866ad3687c36b687e50743c7a4017a6914e",
+      "action": "modify"
+    },
+    {
+      "path": "src/tests/test_v102_expression_commitment_transition.py",
+      "bytes": 8934,
+      "sha256": "838907bb5e771d9e8d602b723c980556fc10ffb1b249bc0f99c33ea336c22441",
+      "action": "add"
+    },
+    {
+      "path": "src/V102_CHANGESET_VI.txt",
+      "bytes": 5233,
+      "sha256": "0fe07573fbcaff2149312a6185567598484fc576fb6d5b95b59d9cf0c28b5875",
+      "action": "add"
+    },
+    {
+      "path": "src/V102_TEST_STATUS_VI.txt",
+      "bytes": 1561,
+      "sha256": "05ca266be992bab47333b04123753941c5a09f04a4d636dbd2264369b0b1fced",
+      "action": "add"
+    }
+  ],
+  "tests": {
+    "v102": "8 passed",
+    "v93_v102": "64 passed",
+    "broad": "253 passed, 2 baseline failures (verified on V101)",
+    "compileall": "pass"
+  }
+}

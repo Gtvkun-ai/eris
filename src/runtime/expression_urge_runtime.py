@@ -16,8 +16,9 @@ Luật quan trọng:
   ngược thành một event mới.
 
 Nói ngắn: motive trả lời "tôi muốn gần bạn", urge trả lời "tôi muốn mang *cái gì*
-sang phía bạn". Khi urge đã thành ExpressionCommitment, Neuro chỉ xếp hạng giữa
-những điều Eris cùng muốn nói; nó không tái bỏ phiếu quyền được biểu đạt.
+sang phía bạn". Từ V102, urge KHÔNG tự cấp ExpressionCommitment nữa; production
+phải đi qua ExpressionCommitmentTransitionV102. Neuro chỉ xếp hạng sau khi
+transition đó đã commit semantic target.
 """
 from __future__ import annotations
 
@@ -131,6 +132,9 @@ class ExpressionUrge:
     evidence_refs: tuple[str, ...]
     concern_id: str = ""
     source_material_id: str = ""
+    # V101: identity của private intention đã trưởng thành trước urge. Receipt này
+    # cho public expression hạ activation upstream mà không biến Surface thành input.
+    source_private_intent_id: str = ""
     base_strength: float = 0.0
     freshness: float = 0.0
     satisfaction: float = 0.0
@@ -232,6 +236,7 @@ class ExpressionUrge:
             "source": self.source,
             "concern_id": self.concern_id,
             "source_material_id": self.source_material_id,
+            "source_private_intent_id": self.source_private_intent_id,
             "pressure": round(self.pressure(now=now, relational=relational, affect=affect), 3),
             "priority": round(self.selection_priority(now=now, relational=relational, affect=affect), 3),
             "freshness": round(fresh, 3),
@@ -382,6 +387,7 @@ class ExpressionUrgeRuntime:
         freshness: float,
         concern_id: str = "",
         source_material_id: str = "",
+        source_private_intent_id: str = "",
         original_speech_act: str = "",
         confidence: float = 0.72,
         relevance: float = 0.60,
@@ -417,6 +423,12 @@ class ExpressionUrgeRuntime:
                 similar.updated_at = now
                 similar.last_input_at = now
                 similar.evidence_refs = _refs((*similar.evidence_refs, *refs))
+                # V101 provenance phải đi theo semantic urge kể cả khi reopen do
+                # evidence mới chứ không chỉ semantic_development.
+                similar.source_material_id = str(source_material_id or similar.source_material_id).strip()
+                similar.source_private_intent_id = str(
+                    source_private_intent_id or similar.source_private_intent_id
+                ).strip()
                 similar.environment_grounded = bool(similar.environment_grounded or environment_grounded)
                 if concern_id:
                     similar.concern_id = concern_id
@@ -425,7 +437,6 @@ class ExpressionUrgeRuntime:
                 if development_reopen:
                     similar.content = content
                     similar.semantic_key = _digest(content)
-                    similar.source_material_id = str(source_material_id or similar.source_material_id).strip()
                     similar.semantic_development_mode = str(semantic_development_mode or "").strip().lower()
                     similar.semantic_development_score = clamp01(semantic_development_score)
                     similar.rumination_return = bool(rumination_return)
@@ -448,6 +459,7 @@ class ExpressionUrgeRuntime:
             evidence_refs=refs,
             concern_id=concern_id,
             source_material_id=str(source_material_id or "").strip(),
+            source_private_intent_id=str(source_private_intent_id or "").strip(),
             base_strength=clamp01(base_strength),
             freshness=clamp01(freshness),
             satisfaction=0.0,
@@ -517,7 +529,16 @@ class ExpressionUrgeRuntime:
                 now=current,
                 base_strength=base_strength,
                 freshness=freshness,
-                source_material_id=str(meta.get("material_id", "") or "") if owner == "mental_material" else "",
+                source_material_id=(
+                    str(meta.get("material_id", "") or "")
+                    if owner in {"mental_material", "private_intention_v101"}
+                    else ""
+                ),
+                source_private_intent_id=(
+                    str(meta.get("intent_id", "") or "")
+                    if owner == "private_intention_v101"
+                    else ""
+                ),
                 original_speech_act=str(getattr(candidate, "speech_act", "") or ""),
                 confidence=clamp01(getattr(candidate, "confidence", 0.72), 0.72),
                 relevance=clamp01(getattr(candidate, "relevance", 0.60), 0.60),
@@ -629,6 +650,7 @@ class ExpressionUrgeRuntime:
         active_concerns: Sequence[Mapping[str, Any]] = (),
         relational: Mapping[str, Any] | None = None,
         affect: Mapping[str, Any] | None = None,
+        runtime_context: Mapping[str, Any] | None = None,
         now: float | None = None,
         limit: int = 3,
     ) -> tuple[Any, ...]:
@@ -679,15 +701,34 @@ class ExpressionUrgeRuntime:
             if urge.satisfaction >= 0.88:
                 continue
             speech_act = _speech_act_for(urge.motive, urge.original_speech_act)
-            commitment = commitment_payload(
-                origin="expression_urge",
-                source_id=urge.urge_id,
-                semantic_target=urge.content,
-                motive=urge.motive,
-                pressure=pressure,
-                freshness=effective_freshness,
-                persistence=clamp01(1.0 - urge.satisfaction),
-            )
+
+            # V102: ExpressionUrge chỉ là desire có nội dung; nó không còn quyền
+            # tự biến mình thành semantic commitment trong production. Transition
+            # runtime tích hợp urge qua thời gian, áp hysteresis + hard boundary
+            # rồi mới trả payload. Fallback chỉ giữ compatibility cho unit/legacy
+            # host không bootstrap V102; coordinator production luôn có runtime.
+            transition = getattr(self.host, "expression_commitment_transition_v102", None)
+            consider = getattr(transition, "consider_urge", None)
+            if callable(consider):
+                commitment = consider(
+                    urge,
+                    pressure=pressure,
+                    freshness=effective_freshness,
+                    runtime_context=runtime_context or {},
+                    now=current,
+                )
+                if not commitment:
+                    continue
+            else:
+                commitment = commitment_payload(
+                    origin="expression_urge",
+                    source_id=urge.urge_id,
+                    semantic_target=urge.content,
+                    motive=urge.motive,
+                    pressure=pressure,
+                    freshness=effective_freshness,
+                    persistence=clamp01(1.0 - urge.satisfaction),
+                )
             candidate = SocialSpeechCandidate(
                 decision="candidate",
                 kind="random_chat",
@@ -733,6 +774,9 @@ class ExpressionUrgeRuntime:
                     "urge_id": urge.urge_id,
                     "concern_id": urge.concern_id,
                     "motive": urge.motive,
+                    "commitment_transition_v102": callable(
+                        getattr(getattr(self.host, "expression_commitment_transition_v102", None), "consider_urge", None)
+                    ),
                 },
             ))
             emitted += 1
@@ -892,6 +936,23 @@ class ExpressionUrgeRuntime:
                     note_material(urge.source_material_id, now=current)
                 except Exception as exc:
                     self._log("debug", "[mental material] expression receipt degraded: %s", exc)
+        # V102: public receipt đóng commitment transition riêng. Surface text
+        # không quay lại làm evidence; chỉ urge_id receipt được truyền upstream.
+        transition = getattr(self.host, "expression_commitment_transition_v102", None)
+        note_transition = getattr(transition, "note_expressed", None)
+        if callable(note_transition):
+            try:
+                note_transition(urge.urge_id, now=current)
+            except Exception as exc:
+                self._log("debug", "[commitment-transition-v102] expression receipt degraded: %s", exc)
+        if urge.source_private_intent_id:
+            intention_runtime = getattr(self.host, "private_intention_runtime_v101", None)
+            note_intention = getattr(intention_runtime, "note_expressed", None)
+            if callable(note_intention):
+                try:
+                    note_intention(urge.source_private_intent_id, now=current)
+                except Exception as exc:
+                    self._log("debug", "[private-intention-v101] expression receipt degraded: %s", exc)
         self._log(
             "info",
             "[expression urge] expressed id=%s satisfaction=%.2f remaining=%.2f",

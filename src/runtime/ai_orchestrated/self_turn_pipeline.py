@@ -514,6 +514,17 @@ class SelfTurnPipeline:
             except Exception as exc:
                 planner_snapshot["mental_material_pressure"] = 0.0
                 host.logger.debug("[mental material] cheap wake projection failed: %s", exc)
+        # V101: một intention đang forming/considering cũng là private state sống
+        # có thể đáng đánh thức cognition ở tick sau. Nó chưa phải speech urge.
+        private_intention_runtime = getattr(host, "private_intention_runtime_v101", None)
+        if private_intention_runtime is not None:
+            try:
+                planner_snapshot["private_intention_pressure"] = float(
+                    private_intention_runtime.wake_pressure(now=now)
+                )
+            except Exception as exc:
+                planner_snapshot["private_intention_pressure"] = 0.0
+                host.logger.debug("[private-intention-v101] cheap wake projection failed: %s", exc)
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
             try:
@@ -696,17 +707,22 @@ class SelfTurnPipeline:
 
         active_concerns: tuple[dict[str, Any], ...] = ()
         material_concern_affordances: tuple[Any, ...] = ()
-        material_expression_affordances: tuple[Any, ...] = ()
+        # V101 production không dùng direct material-expression projection nữa.
+        private_intention_affordances: tuple[Any, ...] = ()
+        private_intention_inputs: tuple[dict[str, Any], ...] = ()
 
-        # V45: associative seed không còn nằm trong executive affordance list.
-        # MentalMaterialRuntime tự quyết một material chỉ là thought, đủ pull để
-        # thành concern, hay đủ pull biểu đạt. Hai projection được tách để "có
-        # thought" không tự động đồng nghĩa "muốn nói thought".
+        # V101 cutover: MentalMaterial vẫn sở hữu thought/concern lifecycle, nhưng
+        # production KHÔNG đưa ``expression_pull >= 0.60`` thẳng sang ExpressionUrge.
+        # project() legacy vẫn tồn tại cho compatibility; expression half của nó
+        # bị bỏ ở đây. PrivateIntentionField mới sở hữu transition thought -> intent.
         mental_material_runtime = getattr(host, "mental_material_runtime", None)
         if mental_material_runtime is not None:
             try:
-                material_concern_affordances, material_expression_affordances = mental_material_runtime.project(
+                material_concern_affordances, _legacy_direct_expression = mental_material_runtime.project(
                     now=now, limit=8
+                )
+                private_intention_inputs = mental_material_runtime.private_intention_inputs(
+                    now=now, limit=16
                 )
                 material_snapshot = mental_material_runtime.snapshot(now=now, limit=10)
                 planner_snapshot["mental_materials"] = [dict(item) for item in material_snapshot]
@@ -714,8 +730,29 @@ class SelfTurnPipeline:
                     (max(float(item.get("expression_pull", 0.0) or 0.0), float(item.get("concern_pull", 0.0) or 0.0)) for item in material_snapshot),
                     default=0.0,
                 )
+                planner_snapshot["v101_direct_material_expression_route"] = False
             except Exception as exc:
                 host.logger.debug("[mental material] projection failed: %s", exc)
+
+        # V101: integrate cùng semantic object qua nhiều cognition ticks. Không có
+        # global winner; mọi intention sống song song và chỉ READY mới projection
+        # sang ExpressionUrge. Đây vẫn là private semantic target, chưa là SPEAK.
+        private_intention_runtime = getattr(host, "private_intention_runtime_v101", None)
+        if private_intention_runtime is not None:
+            try:
+                private_intention_runtime.observe_materials(private_intention_inputs, now=now)
+                private_intention_affordances = private_intention_runtime.project_ready(now=now, limit=6)
+                intention_snapshot = private_intention_runtime.snapshot(now=now, limit=10)
+                planner_snapshot["private_intentions_v101"] = [dict(item) for item in intention_snapshot]
+                planner_snapshot["private_intention_pressure"] = max(
+                    (float(item.get("tendency", 0.0) or 0.0) for item in intention_snapshot),
+                    default=0.0,
+                )
+                planner_snapshot["private_intention_ready_count"] = sum(
+                    1 for item in intention_snapshot if str(item.get("state", "")) == "ready"
+                )
+            except Exception as exc:
+                host.logger.debug("[private-intention-v101] projection failed: %s", exc)
 
         # V42: chỉ COGNITIVE EVENT MỚI được phép làm concern đổi state. Reservoir
         # có thể đưa lại cùng seed qua nhiều tick, nhưng event ledger sẽ consume đúng
@@ -753,11 +790,21 @@ class SelfTurnPipeline:
                     "curiosity": float(getattr(current_state, "curiosity", 0.0) or 0.0),
                     "social_energy": float(getattr(current_state, "social_energy", 0.5) or 0.5),
                 }
+                # V102 cần đúng hard-boundary context tại thời điểm commitment.
+                # Initiative context có public-turn/explicit-quiet; Courtesy bổ sung
+                # awaiting_user_answer. Không đưa heuristic user-busy/reply-rate vào.
+                commitment_context_v102 = dict(initiative_runtime_context)
+                courtesy_for_commitment = planner_snapshot.get("conversation_courtesy")
+                if isinstance(courtesy_for_commitment, Mapping):
+                    for _key in ("awaiting_user_answer", "courtesy_hold"):
+                        if _key in courtesy_for_commitment:
+                            commitment_context_v102[_key] = bool(courtesy_for_commitment.get(_key, False))
                 affordances = list(expression_urge_runtime.shape_affordances(
-                    tuple(affordances) + tuple(material_expression_affordances),
+                    tuple(affordances) + tuple(private_intention_affordances),
                     active_concerns=active_concerns,
                     relational=relational_view,
                     affect=affect_for_urge,
+                    runtime_context=commitment_context_v102,
                     now=now,
                     limit=3,
                 ))
@@ -769,6 +816,18 @@ class SelfTurnPipeline:
                     (float(item.get("pressure", 0.0) or 0.0) for item in urge_snapshot),
                     default=0.0,
                 )
+                transition_v102 = getattr(host, "expression_commitment_transition_v102", None)
+                transition_snapshot = getattr(transition_v102, "snapshot", None)
+                if callable(transition_snapshot):
+                    commitment_rows_v102 = transition_snapshot(now=now, limit=10)
+                    planner_snapshot["expression_commitment_transitions_v102"] = [
+                        dict(item) for item in commitment_rows_v102
+                    ]
+                    planner_snapshot["expression_commitment_v102_count"] = sum(
+                        1 for item in commitment_rows_v102
+                        if str(item.get("state", "")) == "committed"
+                    )
+                planner_snapshot["v102_expression_urge_direct_commitment"] = False
             except Exception as exc:
                 host.logger.debug("[expression urge] shaping failed: %s", exc)
 
@@ -2111,6 +2170,14 @@ class SelfTurnPipeline:
                 "causal_material_lifecycle",
                 revision=0,
             )
+        private_intention_pressure = float(snapshot.get("private_intention_pressure", 0.0) or 0.0)
+        if private_intention_pressure >= 0.20:
+            emit(
+                "private_intention",
+                private_intention_pressure,
+                "private_intention_field_v101",
+                revision=0,
+            )
         urge_pressure = float(snapshot.get("expression_urge_pressure", 0.0) or 0.0)
         if urge_pressure >= 0.18 and not social_environment_suppressed:
             emit(
@@ -2128,6 +2195,7 @@ class SelfTurnPipeline:
             seed_strength,
             0.90 if discovery_ready else 0.0,
             material_pressure,
+            private_intention_pressure,
             urge_pressure,
         )
         if affordance_strength:

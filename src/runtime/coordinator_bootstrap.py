@@ -694,6 +694,21 @@ class CoordinatorBootstrapMixin:
         # V45: associative seed đi vào một lifecycle material riêng trước khi có
         # quyền thành concern/urge. Đây là projection session-local, không phải DB.
         self.mental_material_runtime = MentalMaterialRuntime(self, logger=self.logger)
+        # V101: production không đưa material expression-ready thẳng sang urge nữa.
+        # PrivateIntentionField tích hợp cùng semantic object qua nhiều tick, giữ
+        # forming/considering/ready/cooling riêng rồi mới projection sang V44 urge.
+        # Không thread, không LLM/TTS và không có public SPEAK authority.
+        from runtime.private_intention_field_v101 import PrivateIntentionFieldV101
+        self.private_intention_runtime_v101 = PrivateIntentionFieldV101(
+            self, logger=self.logger
+        )
+        # V102: semantic commitment không còn được ExpressionUrge tạo tức thời.
+        # Runtime này tích hợp urge qua nhiều tick, giữ hysteresis và chỉ defer
+        # projection khi có hard boundary thật. Không thread/LLM/TTS/public SPEAK.
+        from runtime.expression_commitment_transition_v102 import ExpressionCommitmentTransitionV102
+        self.expression_commitment_transition_v102 = ExpressionCommitmentTransitionV102(
+            self, logger=self.logger
+        )
         self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
         self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None
