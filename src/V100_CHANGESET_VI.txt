@@ -1,0 +1,80 @@
+ERIS V100 — BOUND FOCUS -> PRIVATE MENTAL MATERIAL AUTHORITY
+=============================================================
+
+Mục tiêu V100
+-------------
+V98 đã tạo activation liên tục. V99 đã bind activation vào object có provenance.
+V100 cắt nốt phần còn lại của "seed-era": production associative-material worker
+không còn quét toàn context rồi tự chọn "Eris sẽ nghĩ về cái gì".
+
+Luồng production mới:
+
+    SharedActivationBus V98
+            -> FocusObject / BoundFocus V99
+            -> FocusMaterialAuthorityV100
+            -> CausalMotive runtime-owned
+            -> associative material worker
+            -> MentalMaterial lifecycle V45
+            -> concern / expression urge / public authority hiện có
+
+THAY ĐỔI CHÍNH
+--------------
+1. Thêm runtime/focus_material_authority_v100.py
+   - Chỉ đọc BoundFocus V99.
+   - Không thread, không LLM, không TTS, không public writer.
+   - Không dùng recent_user_events/user_memory/raw context để chọn semantic focus.
+   - Không có BoundFocus đủ lực + provenance => không có generation request.
+   - private_activation + persistence quyết định có đáng nghĩ tiếp hay không.
+   - surface_readiness KHÔNG được dùng làm gate private cognition.
+
+2. Production RandomChatSeedReservoir nhận causal_motive_provider V100
+   - Nếu provider V100 tồn tại: KHÔNG gọi derive_causal_motives(context).
+   - Nếu provider trả rỗng: reservoir đứng yên, không fallback lén sang context scan.
+   - Compatibility host/test cũ không có provider vẫn giữ derive_causal_motives cũ.
+   - Tên RandomChatSeedReservoir/class/file chưa xóa để tránh blast radius API;
+     nhưng production semantic authority đã chuyển sang BoundFocus V100.
+
+3. ConversationTrajectory được đưa vào focus field
+   - V99 bridge giờ project topic trajectory thành FocusObject.
+   - object_id chứa external-input epoch để lời ERIS tự nói không reset generation budget.
+   - Nhờ vậy sau V100 không cần quay lại quét conversation_trajectory riêng ở seed layer.
+
+4. Chính sách material theo motive
+   - develop_concern -> continue_concern
+   - continue_trajectory -> continue_conversation_trajectory
+   - support_active_work -> support_active_work
+   - understand_user -> understand_user (gate cao để tránh thành interview bot)
+   - inspect_environment -> notice_environment_change
+   - protect_user_future -> protect_user_future
+   - maintain_connection -> maintain_connection
+
+5. User-model gap được gate cao
+   - Eris có thể thật sự "muốn hiểu user".
+   - Nhưng model user mỏng không tự động cho phép hỏi liên tục.
+   - Phải có private_activation >= 0.48 và persistence >= 0.24 mới materialize.
+
+6. Worker prompt được nâng contract lên V100
+   - causal_motive đã bind từ BoundFocus có provenance.
+   - worker chỉ được materialize nội dung trong semantic focus đó.
+   - worker không được đổi topic / bịa focus mới / tự hợp thức hóa motive.
+
+FILE THAY ĐỔI
+-------------
+runtime/focus_material_authority_v100.py          [NEW]
+runtime/motivational_focus_v99.py                 [MODIFIED]
+runtime/ai_orchestrated/random_chat_seed_service.py [MODIFIED]
+runtime/ai_orchestrated/bootstrap.py               [MODIFIED]
+runtime/coordinator_bootstrap.py                   [MODIFIED]
+tests/test_v100_bound_focus_material_authority.py  [NEW]
+V100_CHANGESET_VI.txt                              [NEW]
+V100_TEST_STATUS_VI.txt                            [NEW]
+V100_CHANGE_ONLY_MANIFEST.json                     [NEW]
+
+LƯU Ý KIẾN TRÚC
+---------------
+V100 chưa xóa class/file legacy có chữ random_chat_seed. Việc xóa tên vật lý ở bước
+này sẽ làm blast radius rất lớn nhưng không tăng chất lượng cognition. Điều V100
+thực sự giết là QUYỀN semantic của seed-era trong production: random/context scan
+không còn được quyết định chủ đề material.
+
+Public speech authority V97 vẫn nguyên. V100 chỉ thay private material authority.

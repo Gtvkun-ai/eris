@@ -668,6 +668,15 @@ class CoordinatorBootstrapMixin:
             logger=self.logger,
         )
 
+        # V100: từ đây associative-material worker không còn quét context để tự
+        # chọn "nghĩ về cái gì". Authority đọc BoundFocus V99 và chỉ projection
+        # thành CausalMotive; không thread, không LLM, không public writer.
+        from runtime.focus_material_authority_v100 import FocusMaterialAuthorityV100
+        self.focus_material_authority_v100 = FocusMaterialAuthorityV100(
+            self.motivational_focus_runtime_v99,
+            logger=self.logger,
+        )
+
         # V74 Life-Horizon: bốn object tách vai trò rõ ràng. Manager giữ H0-H4,
         # Arbiter chỉ điều chỉnh utility, Courtesy sở hữu quyền giữ lượt, còn
         # ReviewLock giữ semantic winner sau merge. Không object nào là public writer.

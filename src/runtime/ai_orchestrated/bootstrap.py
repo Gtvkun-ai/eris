@@ -384,6 +384,14 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         # đi vào lifecycle session-local; không được tự nhảy thẳng thành concern
         # hay public candidate. Motive đã được runtime chọn trước generation.
         mental_event_sink=getattr(getattr(host, "mental_material_runtime", None), "ingest_seed", None),
+        # V100 production authority: chỉ BoundFocus V99 được quyền sinh
+        # CausalMotive cho associative material. Nếu host cũ không có V100 thì
+        # reservoir vẫn giữ fallback legacy để tool/test cũ không vỡ API.
+        causal_motive_provider=getattr(
+            getattr(host, "focus_material_authority_v100", None),
+            "causal_motives",
+            None,
+        ),
         logger=getattr(host, "logger", None),
         clock=runtime_clock,
     )

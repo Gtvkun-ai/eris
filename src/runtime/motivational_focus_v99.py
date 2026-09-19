@@ -117,6 +117,15 @@ _DEFAULT_RESONANCE: dict[str, dict[str, float]] = {
         "curiosity": 0.12,
         "social_need": 0.06,
     },
+    # V100: quỹ đạo hội thoại cũng phải trở thành object trong cùng focus field;
+    # nếu không material authority mới sẽ phải quay lại quét context cũ.
+    "continue_trajectory": {
+        "curiosity": 0.27,
+        "task_focus": 0.24,
+        "social_need": 0.18,
+        "concern_salience": 0.17,
+        "uncertainty": 0.14,
+    },
     "develop_concern": {
         "concern_salience": 0.38,
         "curiosity": 0.23,
@@ -321,6 +330,11 @@ class HostFocusObjectBridgeV99:
         current = float(now if now is not None else self.clock())
         output: list[FocusObject] = []
         output.extend(self._concern_objects(current))
+        # V100 migration: semantic spine đang sống cũng phải đi qua FocusObject.
+        # Như vậy associative material không cần quét conversation context riêng.
+        trajectory = self._conversation_trajectory_object(current)
+        if trajectory is not None:
+            output.append(trajectory)
         goal = self._active_goal_object(current)
         if goal is not None:
             output.append(goal)
@@ -376,6 +390,71 @@ class HostFocusObjectBridgeV99:
                 tags=(f"concern_state:{state or 'unknown'}",),
             ))
         return tuple(output)
+
+    def _conversation_trajectory_object(self, now: float) -> FocusObject | None:
+        """Project topic trajectory thành focus có provenance cho V100.
+
+        Chỉ external/user input mới recharge trajectory ở runtime V76. Ở đây ta
+        giữ cùng rule đó bằng cách gắn ``last_external_input_at`` vào object id,
+        nên lời ERIS tự nói không tạo một cause generation mới vô hạn.
+        """
+        runtime = getattr(self.host, "conversation_trajectory_runtime", None)
+        snapshot = getattr(runtime, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        try:
+            state = snapshot(now=now)
+            row = state.to_dict() if callable(getattr(state, "to_dict", None)) else {}
+        except Exception:
+            return None
+        if not isinstance(row, Mapping):
+            return None
+        topic_id = _compact(row.get("topic_id", ""), 120)
+        focus = _compact(row.get("current_focus", ""), 620)
+        if (
+            not topic_id or not focus
+            or not bool(row.get("active", False))
+            or bool(row.get("closed", False))
+            or str(row.get("lifecycle_state", "")).lower() in {"satiated", "dormant"}
+        ):
+            return None
+        momentum = _clamp01(row.get("momentum", 0.0))
+        energy = _clamp01(min(1.0, float(row.get("energy", 0.0) or 0.0)))
+        private_budget = max(0, int(row.get("private_budget", 0) or 0))
+        if momentum < 0.20 or energy <= 0.04 or private_budget <= 0:
+            return None
+        engagement = _clamp01(row.get("user_engagement", 0.0))
+        depth = max(0, int(row.get("depth", 0) or 0))
+        mode = _compact(row.get("development_mode", "deepen"), 24).lower() or "deepen"
+        external_epoch = int(float(row.get("last_external_input_at", 0.0) or 0.0))
+        revision = max(0, int(row.get("revision", 0) or 0))
+        root = _compact(row.get("root_focus", ""), 420)
+        refs = _refs(tuple(row.get("source_refs", ()) or ()) + (f"trajectory:{topic_id}",))
+        label = _compact(
+            f"topic_id={topic_id}; current_focus={focus}; root_focus={root or focus}; "
+            f"trajectory_depth={depth}",
+            900,
+        )
+        return FocusObject(
+            object_id=f"trajectory:{topic_id}:e{external_epoch or revision}",
+            kind="conversation_trajectory",
+            label=label,
+            motive_kind="continue_trajectory",
+            source="conversation_trajectory_v100",
+            salience=_clamp01(0.46 + 0.30 * momentum + 0.12 * engagement + 0.12 * energy),
+            novelty=_clamp01(0.22 + 0.18 * min(1.0, depth / 5.0)),
+            uncertainty=_clamp01(0.18 + 0.18 * (1.0 - momentum)),
+            actionability=_clamp01(0.42 + 0.22 * min(1.0, private_budget / 2.0) + 0.18 * energy),
+            user_relevance=_clamp01(0.66 + 0.28 * engagement),
+            evidence_refs=refs,
+            ttl_seconds=28.0,
+            created_at=now,
+            tags=(
+                f"private_budget:{private_budget}",
+                f"development_mode:{mode}",
+                f"lifecycle:{str(row.get('lifecycle_state', 'developing') or 'developing')}",
+            ),
+        )
 
     def _active_goal_object(self, now: float) -> FocusObject | None:
         reducer = getattr(self.host, "ai_state_reducer", None)

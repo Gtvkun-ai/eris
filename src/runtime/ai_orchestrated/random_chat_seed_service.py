@@ -265,8 +265,9 @@ class RandomChatSeedGenerator:
     @staticmethod
     def prompt() -> str:
         return (
-            "Bạn là ASSOCIATIVE_MATERIAL_WORKER của ERIS V45. Bạn KHÔNG viết câu public, KHÔNG quyết định ERIS có nên nói, "
+            "Bạn là ASSOCIATIVE_MATERIAL_WORKER của ERIS V100. Bạn KHÔNG viết câu public, KHÔNG quyết định ERIS có nên nói, "
             "KHÔNG tự khai motive/why_now/opening_move/desired_response. Runtime đã đưa causal_motive tồn tại TRƯỚC output của bạn. "
+            "Trong production V100, causal_motive đã được bind từ BoundFocus có provenance; bạn KHÔNG được đổi topic hoặc tự phát minh focus khác. "
             "Nhiệm vụ duy nhất: materialize một mảnh nội tâm cụ thể từ semantic_focus của causal_motive. "
             "requested_material_kind chỉ là hình dạng ưu tiên trong allowed_material_kinds của motive; nếu không có material thật, "
             "trả decision=none. Không đổi nguyên nhân chỉ để thỏa quota diversity. "
@@ -390,6 +391,7 @@ class RandomChatSeedReservoir:
         wake_callback: Callable[[], Any] | None = None,
         status_callback: Callable[..., Any] | None = None,
         mental_event_sink: Callable[[RandomChatSeed], Any] | None = None,
+        causal_motive_provider: Callable[..., Sequence[Any]] | None = None,
         logger: Any | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -398,6 +400,10 @@ class RandomChatSeedReservoir:
         self.wake_callback = wake_callback
         self.status_callback = status_callback
         self.mental_event_sink = mental_event_sink
+        # V100: khi provider này tồn tại, production không còn dùng
+        # derive_causal_motives(context) để tự chọn topic. Provider phải trả
+        # CausalMotive đã bind từ BoundFocus có provenance.
+        self.causal_motive_provider = causal_motive_provider
         self.logger = logger
         self.clock = clock
         self.enabled = bool(
@@ -611,6 +617,9 @@ class RandomChatSeedReservoir:
                 "schema": "eris.random_chat_seed_reservoir.v1",
                 "enabled": self.enabled,
                 "worker_role": "seed",
+                "material_authority": (
+                    "bound_focus_v100" if callable(self.causal_motive_provider) else "legacy_context_scan"
+                ),
                 "target_size": self.target_size,
                 "max_size": self.max_size,
                 "ready": len(self._entries),
@@ -1028,11 +1037,34 @@ class RandomChatSeedReservoir:
         }
 
     def _eligible_causal_motives_locked(self) -> tuple[Any, ...]:
-        motives = derive_causal_motives(self._context_request, now=self.clock())
+        provider = self.causal_motive_provider
+        if callable(provider):
+            # V100 production path: context được truyền chỉ để giữ signature
+            # extensible; FocusMaterialAuthorityV100 cố ý không dùng nó để chọn
+            # semantic focus. Không có BoundFocus sống => không generation.
+            try:
+                motives = tuple(provider(context=self._context_request, now=self.clock()) or ())
+            except TypeError:
+                try:
+                    motives = tuple(provider(now=self.clock()) or ())
+                except Exception as exc:
+                    self._log("debug", "[v100 focus-material] motive provider degraded: %s", exc)
+                    motives = ()
+            except Exception as exc:
+                self._log("debug", "[v100 focus-material] motive provider degraded: %s", exc)
+                motives = ()
+        else:
+            # Compatibility path cho test/tool/host cũ chưa cài V100. Production
+            # coordinator luôn truyền provider V100 ở ai_orchestrated/bootstrap.
+            motives = derive_causal_motives(self._context_request, now=self.clock())
+
         eligible = []
         for motive in motives:
-            used = int(self._cause_generation_counts.get(motive.cause_id, 0) or 0)
-            if used < max(1, int(motive.generation_budget)):
+            cause_id = str(getattr(motive, "cause_id", "") or "").strip()
+            if not cause_id:
+                continue
+            used = int(self._cause_generation_counts.get(cause_id, 0) or 0)
+            if used < max(1, int(getattr(motive, "generation_budget", 1) or 1)):
                 eligible.append(motive)
         return tuple(eligible)
 
@@ -1104,6 +1136,14 @@ class RandomChatSeedReservoir:
         return {
             **dict(self._context_request),
             "generation_temporal_context": build_seed_temporal_context(self.clock()),
+            "material_authority": {
+                "mode": "bound_focus_v100" if callable(self.causal_motive_provider) else "legacy_context_scan",
+                "context_scan_can_choose_topic": not callable(self.causal_motive_provider),
+                "rule": (
+                    "Production V100 material must be bound to a pre-existing evidence-backed focus object; "
+                    "the worker may shape material but may not choose a new topic."
+                ),
+            },
             # Learning còn được đưa vào để tránh lặp thứ user ghét/đã chán, nhưng
             # không được dùng để model tự phát minh motive. CausalMotive đã chốt.
             "seed_learning": learning,
