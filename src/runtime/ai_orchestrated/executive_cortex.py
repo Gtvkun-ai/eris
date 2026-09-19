@@ -496,6 +496,23 @@ class ExecutiveCortex:
         confidence: float | None = None,
         review_conditions: Sequence[str] = (),
     ) -> SubjectExecutiveCommit:
+        # V103: Subject/Neuro vẫn chấm frame hiện tại, nhưng khi *nhiều*
+        # ExpressionCommitment tự thân cùng cạnh tranh thì winner public cần một
+        # chút continuity qua frame. Stabilizer không dựng coalition mới và sẽ
+        # fail-open về selection gốc nếu frame nằm ngoài scope của nó.
+        try:
+            competition_v103 = getattr(self.owner, "expression_competition_workspace_v103", None)
+            stabilize = getattr(competition_v103, "stabilize", None)
+            if callable(stabilize):
+                selection = stabilize(
+                    frame,
+                    selection,
+                    source=source,
+                    now=float(self._clock()),
+                )
+        except Exception as exc:
+            self._log("debug", "[expression workspace v103] stabilize degraded: %s", exc)
+
         # V74 ReviewLock được ghi sau khi winner cuối cùng đã qua merge/review.
         # Nó không chọn winner; nó chỉ bảo toàn semantic identity cho các review
         # downstream và audit, trừ khi một boundary mới invalidates quyết định.

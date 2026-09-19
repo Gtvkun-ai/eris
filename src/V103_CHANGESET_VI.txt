@@ -1,0 +1,128 @@
+ERIS V103 — STABLE EXPRESSION COMPETITION WORKSPACE
+===================================================
+Base yêu cầu: V102 đã được áp dụng.
+Loại gói: CHANGE-ONLY.
+
+MỤC TIÊU
+--------
+V102 đã làm cho một ExpressionUrge phải sống đủ lâu mới trở thành
+ExpressionCommitment. Nhưng khi NHIỀU commitment tự thân cùng chín, Subject/Neuro
+vẫn cạnh tranh theo snapshot của từng frame. Chỉ cần score đảo rất nhẹ giữa hai
+tick thì public winner có thể flip A -> B -> A dù động lực bên dưới gần như không
+đổi.
+
+V103 thay đúng đoạn đó bằng một public competition workspace session-local:
+
+    Activation V98
+      -> BoundFocus V99
+      -> MentalMaterial V100
+      -> PrivateIntention V101
+      -> ExpressionUrge
+      -> ExpressionCommitmentTransition V102
+      -> nhiều ExpressionCommitment sống song song
+      -> Subject / Neuro chấm frame hiện tại
+      -> ExpressionCompetitionWorkspace V103
+      -> stable public winner
+      -> Surface
+
+V103 KHÔNG tạo topic, KHÔNG tạo motive, KHÔNG gọi LLM/TTS, KHÔNG tự SPEAK và
+KHÔNG biến private cognition thành một global winner duy nhất.
+
+THAY ĐỔI CHÍNH
+--------------
+1. runtime/expression_competition_workspace_v103.py (MỚI)
+   - Giữ state per ExpressionCommitment:
+       activation, observations, support, lead_count, takeover_count...
+   - Giữ một public-workspace occupant session-local.
+   - Chỉ áp dụng cho autonomous competition có commitment origin=expression_urge.
+   - Một commitment duy nhất đi qua ngay, KHÔNG thêm delay.
+   - Khi nhiều commitment cùng cạnh tranh:
+       * frame đầu lấy Neuro winner làm occupant;
+       * challenger thắng một frame chưa đủ đổi occupant;
+       * challenger phải duy trì lợi thế activation + support qua nhiều frame;
+       * takeover có hysteresis và minimum occupancy dwell;
+       * incumbent biến mất khỏi frame => giải phóng ngay, không ghost winner.
+   - Public expression receipt hạ activation và release occupant bằng source_id.
+   - Không nhận public wording làm cognition/evidence.
+
+2. runtime/ai_orchestrated/executive_cortex.py
+   - V103 chạy SAU Subject/Neuro selection/semantic merge nhưng TRƯỚC mapping
+     SelectionResult -> SubjectExecutiveCommit.
+   - Không tạo coalition/proposal mới; chỉ giữ/chuyển winner giữa các coalition đã
+     có trong chính frame hiện tại.
+   - Fail-open: runtime V103 lỗi hoặc frame ngoài scope => dùng selection gốc.
+   - Nếu semantic authority đã chọn SILENCE/BODY_ONLY, V103 không được hồi sinh
+     occupant SPEAK cũ.
+
+3. runtime/coordinator_bootstrap.py
+   - Bootstrap ExpressionCompetitionWorkspaceV103 sau V102.
+   - Không thread, không provider, không persistence DB.
+
+4. runtime/expression_urge_runtime.py
+   - Khi expression thật sự public, semantic receipt urge_id được gửi V103 để
+     release workspace occupancy.
+   - Public text không feed ngược vào V103.
+
+5. runtime/ai_orchestrated/self_turn_pipeline.py
+   - Thêm bounded telemetry:
+       expression_competition_v103
+       expression_competition_states_v103
+   - Refresh state sau Subject/Neuro commit để trace cùng tick thấy occupant/takeover
+     thật sự đã dùng.
+
+6. tests/test_v103_expression_competition_workspace.py
+   - 9 invariant mới khóa behavior V103.
+
+PHẠM VI AUTHORITY
+-----------------
+V103 cố ý rất hẹp.
+
+ĐƯỢC can thiệp:
+- autonomous frame;
+- public competition giữa các ExpressionCommitment có origin=expression_urge.
+
+KHÔNG can thiệp:
+- direct chat;
+- conversation_arc;
+- social_continuation;
+- social_agenda;
+- task/capability route;
+- frame có structured commitment cạnh tranh cùng self-owned commitment;
+- semantic authority đã chọn non-speech.
+
+Lý do: structured lane đã có lifecycle/claim contract riêng. V103 chỉ sửa căn bệnh
+"hai ý tự thân gần ngang nhau cứ đổi winner theo từng snapshot"; nó không trở thành
+một arbiter tổng quát thứ hai.
+
+TẠI SAO KHÔNG CHỈ THÊM MỘT SCORE BONUS?
+---------------------------------------
+Một fixed continuity bonus vẫn là score-era: chỉ thay công thức max(score). V103
+thay vào đó giữ activation của competition qua thời gian và có occupant/challenger
+state. Chênh lệch nhất thời không đủ takeover; chênh lệch bền mới đổi public
+workspace. Đây là hysteresis theo lịch sử thật của runtime.
+
+INVARIANT QUAN TRỌNG
+--------------------
+- Private thoughts/intentions/commitments vẫn sống song song.
+- V103 chỉ tồn tại tại action bottleneck nơi runtime buộc phải chọn một public
+  action duy nhất.
+- Không có random tie-break mới.
+- Không suy user im lặng/bận/ít thân thành boundary.
+- Không giữ ghost winner nếu commitment cũ biến mất.
+- Không phủ quyết semantic SILENCE/BODY_ONLY authority.
+- Không biến public wording thành input cho cognition.
+
+Ý NGHĨA KIẾN TRÚC
+-----------------
+Sau V103, chuỗi mới không còn là:
+
+    nhiều score -> lấy max ở từng tick -> nói
+
+mà gần hơn với:
+
+    dynamics -> semantic objects -> private intentions -> commitments
+    -> action channels cạnh tranh -> một channel chiếm workspace ổn định
+    -> challenger phải thật sự vượt qua theo thời gian mới takeover
+
+Đây vẫn là mô phỏng kỹ thuật lấy cảm hứng từ competition/hysteresis, không tuyên
+bố mô phỏng não sinh học theo nghĩa thần kinh học chính xác.

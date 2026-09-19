@@ -945,6 +945,15 @@ class ExpressionUrgeRuntime:
                 note_transition(urge.urge_id, now=current)
             except Exception as exc:
                 self._log("debug", "[commitment-transition-v102] expression receipt degraded: %s", exc)
+        # V103: giải phóng public-workspace occupancy bằng semantic source id.
+        # Không truyền public wording ngược vào competition/cognition.
+        competition_v103 = getattr(self.host, "expression_competition_workspace_v103", None)
+        note_competition = getattr(competition_v103, "note_expressed", None)
+        if callable(note_competition):
+            try:
+                note_competition(urge.urge_id, now=current)
+            except Exception as exc:
+                self._log("debug", "[expression-workspace-v103] expression receipt degraded: %s", exc)
         if urge.source_private_intent_id:
             intention_runtime = getattr(self.host, "private_intention_runtime_v101", None)
             note_intention = getattr(intention_runtime, "note_expressed", None)

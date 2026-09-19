@@ -709,6 +709,14 @@ class CoordinatorBootstrapMixin:
         self.expression_commitment_transition_v102 = ExpressionCommitmentTransitionV102(
             self, logger=self.logger
         )
+        # V103: khi nhiều commitment tự thân đã cùng chín, public competition
+        # không còn được phép flip winner chỉ vì một frame score hơn rất ít.
+        # Workspace này chỉ giữ continuity của competition; nó không tạo motive,
+        # không viết câu và không chạm structured continuation/task lanes.
+        from runtime.expression_competition_workspace_v103 import ExpressionCompetitionWorkspaceV103
+        self.expression_competition_workspace_v103 = ExpressionCompetitionWorkspaceV103(
+            logger=self.logger
+        )
         self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
         self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None

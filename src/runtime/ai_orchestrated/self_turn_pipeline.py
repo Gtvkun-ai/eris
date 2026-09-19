@@ -828,6 +828,17 @@ class SelfTurnPipeline:
                         if str(item.get("state", "")) == "committed"
                     )
                 planner_snapshot["v102_expression_urge_direct_commitment"] = False
+                # V103 telemetry trước competition: state này là session-local và
+                # chỉ mô tả public-workspace occupancy, không phải private winner.
+                competition_v103 = getattr(host, "expression_competition_workspace_v103", None)
+                status_v103 = getattr(competition_v103, "status", None)
+                snapshot_v103 = getattr(competition_v103, "snapshot", None)
+                if callable(status_v103):
+                    planner_snapshot["expression_competition_v103"] = dict(status_v103(now=now))
+                if callable(snapshot_v103):
+                    planner_snapshot["expression_competition_states_v103"] = [
+                        dict(item) for item in snapshot_v103(now=now, limit=8)
+                    ]
             except Exception as exc:
                 host.logger.debug("[expression urge] shaping failed: %s", exc)
 
@@ -883,6 +894,17 @@ class SelfTurnPipeline:
                     committer=executive,
                 )
                 planner_snapshot["subject_decision"] = subject_decision.to_dict()
+                # Sau Subject/Neuro commit, refresh V103 để trace cùng tick thấy
+                # occupant/takeover thật sự đã dùng, thay vì state của tick trước.
+                competition_v103 = getattr(host, "expression_competition_workspace_v103", None)
+                status_v103 = getattr(competition_v103, "status", None)
+                snapshot_v103 = getattr(competition_v103, "snapshot", None)
+                if callable(status_v103):
+                    planner_snapshot["expression_competition_v103"] = dict(status_v103(now=now))
+                if callable(snapshot_v103):
+                    planner_snapshot["expression_competition_states_v103"] = [
+                        dict(item) for item in snapshot_v103(now=now, limit=8)
+                    ]
                 action_executor = getattr(host, "action_executor", None)
                 set_parent = getattr(action_executor, "set_subject_parent_decision", None)
                 if callable(set_parent):
