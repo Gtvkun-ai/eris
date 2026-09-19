@@ -1,0 +1,47 @@
+ERIS V103 FINAL2 - STRICT PDF ROADMAP AUDIT
+==========================================
+
+Các mục từng còn PARTIAL sau V103 FINAL và trạng thái FINAL2:
+
+[PASS] Public nervous trace
+- Có eris.public_turn.trace.v98_nervous cho event nervous_state.
+- field_snapshot đủ 9 field.
+- top_inputs giữ source + field + signed contribution gần đúng.
+- motor giữ body/vocalization/micro_expression/proposition activations.
+- commit giữ action family đã stable/dwell commit.
+- local nervous surface + TTS event + outcome nối cùng trace_id.
+- Trace không chứa raw prompt/private material.
+
+[PASS] Migration từ V97 state
+- Fixture V97 thật theo schema eris.public_turn.trace.v97.
+- Upgrade chuyển thành ModulationEvent.
+- Candidate/winner/retry timer không được phục hồi.
+- Public act cũ được map thành refractory/inhibition thay vì desire mới.
+
+[PASS] Migration từ V102 state
+- Fixture theo eris.expression_commitment_transition.v102.
+- charge/signal/satisfaction/state được project sang expressive_pressure/concern_salience/task_focus/inhibition.
+- Không deserialize trở lại một ExpressionCommitment có public authority.
+
+[PASS] Full deterministic replay
+- SharedActivationBus -> ContinuousDynamicsRuntime -> NervousAutonomousAuthority -> motor commit.
+- Local vocalization đi tới public receipt.
+- Proposition đi candidate-bypass bất chấp coalition score -> public receipt.
+- Cùng inputs/timestamps/config cho cùng report/hash.
+
+[PASS] 24h virtual soak + motor coverage
+- 345,600 dynamics ticks.
+- hard boundary vẫn tuyệt đối.
+- cả 4 motor channel đều commit trong soak.
+- candidate bypass được exercise 72 lần.
+- field/motor finite và normalized suốt run.
+- health p50/p95/p99 được ghi.
+
+[PASS inherited from V103 FINAL] Property/fuzz
+- hard-boundary fuzz và bounded motor đã có acceptance test V103 FINAL.
+
+Kết luận audit
+--------------
+Trong phạm vi roadmap V98->V103 của PDF, các hạng mục implementation + verification được yêu cầu
+đã có implementation/test tương ứng. FINAL2 không đồng nghĩa toàn bộ repo Eris hết mọi legacy test
+failure; nó chỉ đóng roadmap Continuous Activation Nervous System đã định.

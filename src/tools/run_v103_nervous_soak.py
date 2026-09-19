@@ -14,6 +14,7 @@ import math
 import random
 import time
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,44 @@ if str(ROOT) not in sys.path:
 
 from runtime.activation_nervous_system_v98 import ContinuousDynamicsRuntime, ModulationEvent, SharedActivationBus
 from runtime.nervous_system_v103_final import MotorSemanticTarget, NervousAutonomousAuthorityV103, NervousSystemConfigV103
+
+
+def _candidate(source_id: str):
+    content = f"Soak semantic target {source_id}."
+    return SimpleNamespace(
+        kind="random_chat", topic=content, speech_act="share_self_originated_thought",
+        evidence_refs=("soak:fixture",), uncertainty=0.03,
+        expression_commitment={
+            "origin": "expression_urge", "source_id": source_id,
+            "semantic_target": content, "motive": "inspect", "pressure": 0.97,
+            "freshness": 0.98, "persistence": 0.96,
+        },
+        expression_urge_id=source_id, expression_motive="inspect",
+        expression_pressure=0.97, expression_freshness=0.98,
+        expression_satisfaction=0.0, relevance=0.9, urgency=0.5,
+    )
+
+
+def _affordance(source_id: str):
+    return SimpleNamespace(affordance_id=f"soak:{source_id}", owner="expression_urge", candidate=_candidate(source_id))
+
+
+def _coalition(action: str, source_id: str = ""):
+    args = {}
+    if source_id:
+        args["expression_commitment"] = {
+            "origin": "expression_urge", "source_id": source_id,
+            "semantic_target": f"Soak semantic target {source_id}.",
+        }
+    return SimpleNamespace(action_kind=action, arguments=args, score=-99.0 if source_id else 99.0, uncertainty=0.1)
+
+
+def _frame(source_id: str):
+    return SimpleNamespace(
+        frame_id="soak:frame",
+        coalitions=(_coalition("speak", "soak:other"), _coalition("speak", source_id), _coalition("silence")),
+        appraisals=(), activations=(), proposals=(), substrate=SimpleNamespace(processing_capacity=1.0),
+    )
 
 
 def run(hours: float, step: float, seed: int) -> dict:
@@ -55,8 +94,46 @@ def run(hours: float, step: float, seed: int) -> dict:
     commits_by_channel = {name: 0 for name in ("body", "vocalization", "micro_expression", "proposition")}
     hard_boundary_ticks = 0
     started = time.perf_counter()
+    phase_ticks = max(1, int(600.0 / step))
+    phase_names = ("body", "vocalization", "micro_expression", "proposition")
+    source_id = "soak:concern"
+    affordance = _affordance(source_id)
+    candidate_bypass_events = 0
+
     for index in range(ticks):
         fake_now = (index + 1) * step
+        phase = phase_names[(index // phase_ticks) % len(phase_names)]
+
+        # FINAL2 coverage phase: mỗi 10 phút kéo field vào một regime khác nhau.
+        # Đây vẫn là ModulationEvent -> dynamics; không set field trực tiếp.
+        if index % phase_ticks == 0:
+            phase_targets = {
+                "body": {
+                    "curiosity": 0.92, "boredom": 0.42, "social_need": 0.46, "task_focus": 0.05,
+                    "concern_salience": 0.08, "uncertainty": 0.04, "expressive_pressure": 0.26,
+                    "inhibition": 0.03, "fatigue": 0.02,
+                },
+                "vocalization": {
+                    "curiosity": 0.05, "boredom": 0.94, "social_need": 0.92, "task_focus": 0.0,
+                    "concern_salience": 0.05, "uncertainty": 0.02, "expressive_pressure": 1.0,
+                    "inhibition": 0.01, "fatigue": 0.0,
+                },
+                "micro_expression": {
+                    "curiosity": 1.0, "boredom": 0.05, "social_need": 0.82, "task_focus": 0.0,
+                    "concern_salience": 1.0, "uncertainty": 0.02, "expressive_pressure": 0.25,
+                    "inhibition": 0.01, "fatigue": 0.0,
+                },
+                "proposition": {
+                    "curiosity": 0.92, "boredom": 0.10, "social_need": 0.78, "task_focus": 0.28,
+                    "concern_salience": 0.98, "uncertainty": 0.02, "expressive_pressure": 1.0,
+                    "inhibition": 0.01, "fatigue": 0.01,
+                },
+            }[phase]
+            bus.submit(ModulationEvent(
+                source=f"soak_phase_{phase}", targets=phase_targets, strength=1.0,
+                half_life_seconds=18.0, ttl_seconds=90.0, created_at=fake_now,
+                event_id=f"soak-phase:{phase}:{index}", tags=("soak", "coverage", phase),
+            ))
 
         # Stimulus deterministic nhưng đa dạng: novelty, social idle, task focus,
         # uncertainty và concern. Random ở đây chỉ tạo fixture event; RNG seed cố định.
@@ -111,19 +188,21 @@ def run(hours: float, step: float, seed: int) -> dict:
         hard_boundary = (index % max(1, int(600.0 / step))) < max(1, int(3.0 / step))
         if hard_boundary:
             hard_boundary_ticks += 1
-        decision = authority.motor.evaluate(
-            snapshot,
-            targets=(target,),
-            hard_boundary=hard_boundary,
-            now=fake_now,
+        inputs = (affordance,) if phase == "proposition" else ()
+        _, decision = authority.preprocess_affordances(
+            inputs, runtime_context={"user_holds_turn": hard_boundary}, now=fake_now
         )
         if decision.committed and decision.channel != "silence":
             commits += 1
             commits_by_channel[decision.channel] = commits_by_channel.get(decision.channel, 0) + 1
+            if decision.channel == "proposition":
+                selection = authority.selection_for_frame(_frame(source_id))
+                if selection is not None and str(selection.reason).startswith("candidate_bypass:nervous_motor:proposition"):
+                    candidate_bypass_events += 1
             # Body-only không phải speech discharge. Chỉ channel phát âm/lời mới
             # tăng speech homeostasis + STP public-expression depression.
             if decision.channel in {"vocalization", "micro_expression", "proposition"}:
-                authority.motor.note_public_commit(decision.semantic_source_id, now=fake_now)
+                authority.note_public_commit(decision.semantic_source_id, now=fake_now)
 
         # Property bắt buộc: field/motor phải finite + normalized suốt soak.
         for value in snapshot.values.values():
@@ -137,7 +216,7 @@ def run(hours: float, step: float, seed: int) -> dict:
     elapsed = time.perf_counter() - started
     health = authority.health.snapshot()
     return {
-        "schema": "eris.v103_final.soak_report.v1",
+        "schema": "eris.v103_final2.soak_report.v1",
         "virtual_hours": hours,
         "step_seconds": step,
         "ticks": ticks,
@@ -146,11 +225,19 @@ def run(hours: float, step: float, seed: int) -> dict:
         "ticks_per_wall_second": round(ticks / max(1e-9, elapsed), 2),
         "non_silence_commits": commits,
         "commits_by_channel": commits_by_channel,
+        "candidate_bypass_events": candidate_bypass_events,
+        "coverage": {
+            "all_motor_channels_seen": all(commits_by_channel.get(name, 0) > 0 for name in ("body", "vocalization", "micro_expression", "proposition")),
+            "candidate_bypass_seen": candidate_bypass_events > 0,
+        },
         "hard_boundary_ticks": hard_boundary_ticks,
         "final_state": bus.snapshot().to_dict(),
         "nervous_health": health,
         "stp": list(authority.stp.snapshot(now=fake_now, limit=8)),
-        "pass": True,
+        "pass": bool(
+            all(commits_by_channel.get(name, 0) > 0 for name in ("body", "vocalization", "micro_expression", "proposition"))
+            and candidate_bypass_events > 0
+        ),
     }
 
 

@@ -1,0 +1,57 @@
+ERIS V103 FINAL2 - CHANGESET (verification/observability closure)
+================================================================
+
+Mục đích
+--------
+Bản này KHÔNG tạo V104 và KHÔNG mở thêm subsystem cognition mới.
+Nó chỉ đóng 4 hạng mục còn thiếu khi đối chiếu nghiêm với PDF Continuous Activation Nervous System:
+
+1) Public nervous causal trace: field -> top input -> motor -> commit -> Surface -> TTS.
+2) Migration test/state adapter thật từ V97 và V102.
+3) Deterministic end-to-end replay xuyên production nervous runtime.
+4) 24h virtual soak phủ đủ body/vocalization/micro_expression/proposition + candidate-bypass.
+
+Thay đổi runtime
+----------------
+- runtime/nervous_system_v103_final.py
+  + trace_snapshot(): xuất field_snapshot, top_inputs, motor activations, commit và mode/scope.
+  + migrate_legacy_state(): chuyển V97/V102 state thành ModulationEvent; tuyệt đối không hồi sinh candidate/winner/retry timer.
+  + _top_modulation_inputs(): contribution telemetry bounded từ ModulationEvent gần nhất.
+
+- runtime/ai_orchestrated/autonomous_trace.py
+  + nervous event dùng schema eris.public_turn.trace.v98_nervous.
+  + record V97 cũ vẫn giữ schema V97 để backward tooling không gãy.
+  + compact nervous trace gom field_snapshot/top_inputs/motor/commit/surface/TTS/outcome.
+  + sanitizer vẫn allow-list; private_prompt/mental_material không được lọt vào trace.
+
+- runtime/ai_orchestrated/self_turn_pipeline.py
+  + sau khi plan_id được chốt, nervous snapshot được ghi vào đúng cùng trace_id.
+  + local nervous lexeme (haiz/hừm...) ghi exact surface vì UI text = TTS text; remote/private content vẫn không được log raw.
+
+Verification tools
+------------------
+- tools/run_v103_nervous_replay.py
+  + replay deterministic hai segment:
+    * local vocalization -> haiz -> public receipt
+    * semantic proposition -> candidate bypass -> Surface contract -> public receipt
+  + wall-clock latency không tham gia deterministic hash.
+
+- tools/run_v103_nervous_soak.py
+  + coverage phase đi qua ModulationEvent + ContinuousDynamicsRuntime, không set field trực tiếp.
+  + bắt buộc nhìn thấy cả 4 motor channel và candidate-bypass thì report mới pass.
+
+Migration fixtures
+------------------
+- tests/fixtures/v103_final2/legacy_v97_public_state.json
+- tests/fixtures/v103_final2/legacy_v102_commitment_state.json
+
+Điểm kiến trúc quan trọng
+-------------------------
+FINAL2 không làm candidate voting quay lại. Migration chỉ bảo toàn state cần thiết dưới dạng field modulation.
+Trace mới là observability, không phải decision authority.
+Replay/soak là verification, không tạo thêm runtime owner.
+
+Thứ tự áp dụng
+--------------
+Áp sau Eris_V103_FINAL_CHANGEONLY.zip.
+Đây là patch change-only so với V103 FINAL, không phải full source archive.

@@ -56,6 +56,8 @@ NERVOUS_FINAL_SCHEMA = "eris.nervous_system.v103_final"
 NERVOUS_HEALTH_SCHEMA = "eris.nervous_health.v103"
 NERVOUS_MOTOR_SCHEMA = "eris.expression_motor.v103"
 NERVOUS_STP_SCHEMA = "eris.field_stp.v103"
+NERVOUS_MIGRATION_SCHEMA = "eris.nervous_migration.v103_final2"
+NERVOUS_TRACE_SCHEMA = "eris.public_turn.trace.v98_nervous"
 
 _VALID_MODES = {"off", "shadow", "active"}
 _STRUCTURED_OWNERS = {
@@ -903,6 +905,147 @@ class NervousAutonomousAuthorityV103:
             tags=("external_event", "attractor_escape", "fresh_evidence"),
         ))
 
+    def trace_snapshot(self, *, now: float | None = None, top_inputs: int = 8) -> dict[str, Any]:
+        """Projection public-safe cho causal trace field -> input -> motor.
+
+        Không chứa chain-of-thought, raw prompt hay private material. ``top_inputs``
+        chỉ là contribution số học gần đúng từ ModulationEvent gần nhất, đủ để
+        debug câu hỏi kiểu "vì sao motor vừa thở dài?" mà không suy luận ngược prose.
+        """
+        current = float(now if now is not None else self.clock())
+        snapshot = self.activation_bus.snapshot()
+        with self._lock:
+            decision = self._pending_decision
+            scope = self._pending_scope
+        motor = dict(decision.drives) if decision is not None else {}
+        return {
+            "nervous_schema": NERVOUS_TRACE_SCHEMA,
+            "field_snapshot": {name: round(snapshot.value(name), 4) for name in ACTIVATION_FIELDS},
+            "top_inputs": [list(row) for row in self._top_modulation_inputs(snapshot, limit=top_inputs)],
+            "motor": {str(key): round(_clamp01(value), 4) for key, value in motor.items()},
+            "commit": str(getattr(decision, "channel", "") or "") if bool(getattr(decision, "committed", False)) else "",
+            "motor_committed": bool(getattr(decision, "committed", False)),
+            "motor_reason": str(getattr(decision, "reason", "") or ""),
+            "source_revision": int(getattr(decision, "source_revision", snapshot.revision) or snapshot.revision),
+            "nervous_owner": "eris",
+            "nervous_mode": self.config.mode,
+            "nervous_scope": scope,
+            "trace_at": current,
+        }
+
+    def migrate_legacy_state(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        source_version: str,
+        now: float | None = None,
+    ) -> tuple[ModulationEvent, ...]:
+        """Chuyển state V97/V102 sang modulation, không resurrect candidate authority.
+
+        Migration cố tình lossy: chỉ giữ pressure/salience/task/inhibition cần cho
+        continuous state. Candidate, winner index và retry timer cũ tuyệt đối không
+        được phục hồi. Đây là contract cần cho upgrade state theo roadmap V103.
+        """
+        current = float(now if now is not None else self.clock())
+        version = str(source_version or "").strip().lower().replace(".", "")
+        data = dict(payload or {})
+        events: list[ModulationEvent] = []
+        self._modulation_sequence += 1
+        seq = self._modulation_sequence
+
+        if version in {"v97", "97", "erispublicturntracev97"}:
+            action = str(data.get("authority_action") or data.get("governor_action") or data.get("action") or "").strip().lower()
+            motive = str(data.get("motive") or "").strip().lower()
+            goal_state = str(data.get("goal_state") or "").strip().lower()
+            confidence = _clamp01(data.get("confidence", 0.6), 0.6)
+            committed = bool(data.get("public_committed", False))
+            targets: dict[str, float] = {}
+            impulses: dict[str, float] = {}
+            if goal_state in {"active", "running", "in_progress"} or any(token in motive for token in ("task", "goal", "continue")):
+                targets["task_focus"] = _clamp01(0.48 + 0.28 * confidence)
+            if action in {"speak", "speech"} or committed:
+                # Public act vừa xảy ra: giữ refractory/homeostasis, không nạp lại
+                # candidate đã nói như một desire mới.
+                targets["inhibition"] = _clamp01(0.42 + 0.22 * confidence)
+                impulses["expressive_pressure"] = -0.24
+            elif action in {"body_only", "body"}:
+                impulses["expressive_pressure"] = 0.05 * confidence
+            else:
+                impulses["curiosity"] = 0.06 * confidence
+            if targets or impulses:
+                events.append(ModulationEvent(
+                    source="legacy_v97_state_migration", targets=targets, impulses=impulses,
+                    strength=0.66, half_life_seconds=2.4, ttl_seconds=8.0, created_at=current,
+                    event_id=f"legacy-v97:{seq}", tags=("migration", "v97", "no_candidate_restore"),
+                ))
+
+        elif version in {"v102", "102", "erisexpressioncommitmenttransitionv102"}:
+            charge = _clamp01(data.get("charge", 0.0))
+            signal = _clamp01(data.get("signal", charge))
+            satisfaction = _clamp01(data.get("satisfaction", 0.0))
+            state = str(data.get("state") or "forming").strip().lower()
+            motive = str(data.get("motive") or "").strip().lower()
+            persistence = _clamp01(1.0 - satisfaction)
+            expressive = _clamp01(0.10 + 0.58 * charge + 0.22 * signal) * persistence
+            concern = _clamp01(0.12 + 0.52 * max(charge, signal)) * persistence
+            targets = {
+                "expressive_pressure": expressive,
+                "concern_salience": concern,
+            }
+            if any(token in motive for token in ("task", "goal", "continue", "followup")):
+                targets["task_focus"] = _clamp01(0.34 + 0.42 * max(charge, signal))
+            if state in {"committed", "deferred_committed"}:
+                targets["inhibition"] = 0.28 if state == "committed" else 0.44
+            events.append(ModulationEvent(
+                source="legacy_v102_state_migration", targets=targets,
+                strength=0.72, half_life_seconds=3.2, ttl_seconds=12.0, created_at=current,
+                event_id=f"legacy-v102:{seq}", tags=("migration", "v102", "commitment_to_field"),
+            ))
+        else:
+            raise ValueError(f"unsupported legacy nervous state: {source_version}")
+
+        accepted: list[ModulationEvent] = []
+        for event in events:
+            if self.activation_bus.submit(event):
+                accepted.append(event.normalized(now=current))
+        with self._lock:
+            self._history.append({
+                "at": current, "event": "legacy_state_migration", "source_version": source_version,
+                "events": [event.to_dict() for event in accepted],
+            })
+        return tuple(accepted)
+
+    def _top_modulation_inputs(
+        self, snapshot: ActivationSnapshot, *, limit: int = 8
+    ) -> tuple[tuple[str, str, float], ...]:
+        rows: list[tuple[str, str, float]] = []
+        for event in self.activation_bus.recent_events(limit=32):
+            source = str(event.get("source") or "unknown")[:96]
+            strength = _clamp01(event.get("strength", 0.55), 0.55)
+            impulses = event.get("impulses") if isinstance(event.get("impulses"), Mapping) else {}
+            targets = event.get("targets") if isinstance(event.get("targets"), Mapping) else {}
+            for field_name, raw in dict(impulses).items():
+                if field_name in ACTIVATION_FIELDS:
+                    try:
+                        impact = max(-1.0, min(1.0, float(raw))) * strength
+                    except (TypeError, ValueError):
+                        continue
+                    if abs(impact) >= 0.005:
+                        rows.append((source, field_name, impact))
+            for field_name, raw in dict(targets).items():
+                if field_name in ACTIVATION_FIELDS:
+                    try:
+                        target = _clamp01(raw)
+                    except Exception:
+                        continue
+                    # Target pull không phải delta thật của integrator; nhân 0.5 để
+                    # trace chỉ biểu diễn "đóng góp tương đối", không giả vờ đo synapse.
+                    impact = (target - snapshot.value(field_name)) * strength * 0.5
+                    if abs(impact) >= 0.005:
+                        rows.append((source, field_name, impact))
+        rows.sort(key=lambda item: abs(item[2]), reverse=True)
+        return tuple((source, field_name, round(impact, 4)) for source, field_name, impact in rows[: max(1, int(limit))])
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             decision = self._pending_decision.to_dict() if self._pending_decision is not None else None
@@ -1127,6 +1270,8 @@ class NervousAutonomousAuthorityV103:
 __all__ = [
     "NERVOUS_FINAL_SCHEMA",
     "NERVOUS_HEALTH_SCHEMA",
+    "NERVOUS_MIGRATION_SCHEMA",
+    "NERVOUS_TRACE_SCHEMA",
     "MotorDecisionV103",
     "MotorSemanticTarget",
     "NervousAutonomousAuthorityV103",

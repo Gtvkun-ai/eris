@@ -1139,6 +1139,26 @@ class SelfTurnPipeline:
         host.last_ai_intention_plan = plan
         self._submit_intention(plan, turn_seq=context.turn_seq)
 
+        # V103 FINAL2: nối field -> modulation -> motor vào cùng trace_id public.
+        # Đây chỉ là causal metadata public-safe; không ghi private material/prompt.
+        if nervous_authority is not None:
+            try:
+                _trace_snapshot = getattr(nervous_authority, "trace_snapshot", None)
+                if callable(_trace_snapshot):
+                    _nervous_trace = dict(_trace_snapshot(now=now) or {})
+                    _nervous_trace.update({
+                        "trace_id": str(plan.plan_id or ""),
+                        "turn_id": str(plan.plan_id or ""),
+                        "channel": "autonomous",
+                        "stage": "nervous",
+                        "owner": "continuous_nervous_system",
+                        "semantic_owner": str(getattr(plan, "semantic_owner", "eris") or "eris"),
+                        "trigger_owner": str(getattr(plan, "trigger_owner", "unknown") or "unknown"),
+                    })
+                    self.trace_store.append("nervous_state", _nervous_trace, now=now)
+            except Exception as exc:
+                host.logger.debug("[nervous-v103] public causal trace degraded: %s", exc)
+
         if candidate is not None:
             # Ghi candidate sau khi governor đã đóng plan_id, nhưng đặt event trước
             # governor trong trace để toàn chuỗi dùng đúng một identity ổn định.
@@ -1354,6 +1374,9 @@ class SelfTurnPipeline:
                     "claim_manifest": [],
                     "unsupported_current_world_claim": False,
                     "same_text_tts": True,
+                    # Chỉ local nervous lexeme (haiz/hừm...) được phép ghi exact
+                    # để trace field->motor->surface->TTS đúng ví dụ roadmap.
+                    "surface": str(surface_payload.get("text", "") or "")[:96],
                 })
         elif surface_engine is not None:
             intent_payload = speech_intent.to_dict()
