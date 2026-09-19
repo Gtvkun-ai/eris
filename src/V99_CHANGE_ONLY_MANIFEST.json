@@ -1,0 +1,38 @@
+{
+  "version": "V99",
+  "base": "V98 change-only applied on src(8).zip",
+  "kind": "change-only",
+  "summary": "Object-bound motivational focus field; activation energy binds to evidence-backed semantic objects in shadow mode.",
+  "files": [
+    {
+      "path": "src/runtime/motivational_focus_v99.py",
+      "bytes": 34458,
+      "sha256": "a13121d03861ecd23aa7f13761eea7eb0a7756e36abdfaca0eff3a84978cfacf"
+    },
+    {
+      "path": "src/runtime/coordinator_bootstrap.py",
+      "bytes": 52702,
+      "sha256": "63a1c335f69f1203a0dcc56b86e9d958c41afad0cf420740ecb619926c91e465"
+    },
+    {
+      "path": "src/runtime/coordinator_shutdown.py",
+      "bytes": 9618,
+      "sha256": "e0560d65601d1b1b417fe1a494ac90124ef2f2752623633894762396d0f984f2"
+    },
+    {
+      "path": "src/tests/test_v99_object_bound_motivational_focus.py",
+      "bytes": 9686,
+      "sha256": "ba24b83ae6de13a8f451ce30901aa96e7575ac7db59904c428cfbfcffe877c34"
+    },
+    {
+      "path": "src/V99_CHANGESET_VI.txt",
+      "bytes": 5915,
+      "sha256": "5a7d4853698f513a19beb5dac7490cc8ab88842c5b5b8baf906f429a01c59a6c"
+    },
+    {
+      "path": "src/V99_TEST_STATUS_VI.txt",
+      "bytes": 1551,
+      "sha256": "6a2f37d4bd0c226c8d565bd9a63bc431e87f39f2806876be73385efe72324d31"
+    }
+  ]
+}

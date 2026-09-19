@@ -654,6 +654,20 @@ class CoordinatorBootstrapMixin:
             logger=self.logger,
         )
 
+        # V99: activation V98 chỉ là "năng lượng". Tầng này bind năng lượng đó
+        # vào object có provenance (concern/goal/user-model gap/environment). Nó
+        # vẫn shadow: không tạo câu, không gọi LLM/TTS, không cấp quyền SPEAK.
+        from runtime.motivational_focus_v99 import (
+            HostFocusObjectBridgeV99,
+            MotivationalFocusRuntimeV99,
+        )
+        self.focus_object_bridge_v99 = HostFocusObjectBridgeV99(self)
+        self.motivational_focus_runtime_v99 = MotivationalFocusRuntimeV99(
+            self.shared_activation_bus,
+            source_provider=self.focus_object_bridge_v99.collect,
+            logger=self.logger,
+        )
+
         # V74 Life-Horizon: bốn object tách vai trò rõ ràng. Manager giữ H0-H4,
         # Arbiter chỉ điều chỉnh utility, Courtesy sở hữu quyền giữ lượt, còn
         # ReviewLock giữ semantic winner sau merge. Không object nào là public writer.
@@ -935,6 +949,15 @@ class CoordinatorBootstrapMixin:
                 activation_runtime.start()
             except Exception as exc:
                 self.logger.warning("[v98 activation] Không khởi động được shadow runtime: %s", exc)
+
+        # Focus binding đọc snapshot activation nên start sau V98. Tick chậm hơn
+        # dây thần kinh (mặc định 400 ms), hoàn toàn local và deterministic.
+        focus_runtime = getattr(self, "motivational_focus_runtime_v99", None)
+        if focus_runtime is not None:
+            try:
+                focus_runtime.start()
+            except Exception as exc:
+                self.logger.warning("[v99 focus] Không khởi động được shadow runtime: %s", exc)
 
     def _bootstrap_thought_and_ai(self, *, llm_service) -> None:
         self.thought_model_adapter = RuntimeThoughtModelAdapter.from_env(logger=self.logger)
