@@ -717,6 +717,20 @@ class CoordinatorBootstrapMixin:
         self.expression_competition_workspace_v103 = ExpressionCompetitionWorkspaceV103(
             logger=self.logger
         )
+
+        # V103 FINAL: authority đúng roadmap PDF. Các lớp V99-V103 migration phía
+        # trên vẫn giữ state/compatibility, nhưng normal autonomous action family
+        # giờ do continuous motor sở hữu. Subject/Neuro frame chỉ còn envelope
+        # typed cho downstream V93-V97, không còn vote list speech candidate.
+        from runtime.nervous_system_v103_final import NervousAutonomousAuthorityV103
+        self.nervous_system_v103 = NervousAutonomousAuthorityV103(
+            self.shared_activation_bus,
+            host=self,
+            logger=self.logger,
+        )
+        # Health monitor final đo chính tick V98 thay vì đo một loop khác. Gắn
+        # observer sau construction để V98 không import ngược V103.
+        self.continuous_dynamics_runtime_v98.health_observer = self.nervous_system_v103.health
         self.private_life_surface_queue: list[object] = getattr(self.private_life_daemon, "surface_queue", []) if self.private_life_daemon is not None else []
         self.private_life_digest: dict[str, object] = {}
         self.last_semantic_scene_note: SemanticSceneNote | None = None

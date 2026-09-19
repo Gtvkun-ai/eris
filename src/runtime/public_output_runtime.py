@@ -296,6 +296,24 @@ class PublicOutputRuntimeMixin:
                     _v98_bus.submit(_v98_bridge.public_expression_event(now=time.time()))
             except Exception as exc:
                 self.logger.debug("[v98 activation] refractory modulation skipped: %s", exc)
+            # V103 FINAL: cùng public receipt nuôi speech homeostasis + STP.
+            # Chỉ truyền semantic source ID typed; tuyệt đối không feed public
+            # wording ngược vào cognition.
+            try:
+                _nervous = getattr(self, "nervous_system_v103", None)
+                _note_public = getattr(_nervous, "note_public_commit", None)
+                if callable(_note_public):
+                    _args = dict(getattr(decision, "arguments", {}) or {})
+                    _commitment = _args.get("expression_commitment")
+                    _commitment = dict(_commitment) if isinstance(_commitment, dict) else {}
+                    _source_id = str(
+                        _commitment.get("source_id", "")
+                        or _args.get("expression_urge_id", "")
+                        or ""
+                    )
+                    _note_public(_source_id, now=time.time())
+            except Exception as exc:
+                self.logger.debug("[nervous-v103] public receipt degraded: %s", exc)
         stage_output = getattr(self, "stage_output_pipeline", None)
         if stage_output is None:
             stage_output = StageOutputPipeline()

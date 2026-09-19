@@ -1,0 +1,100 @@
+{
+  "schema": "eris.change_only_manifest.v103_final",
+  "release": "V103_FINAL",
+  "purpose": "Close PDF V98-V103 Continuous Activation Nervous System roadmap without creating V104.",
+  "apply_after": "Current V103 patch chain (V98 -> V103).",
+  "migration_modes": [
+    "off",
+    "shadow",
+    "active"
+  ],
+  "default_mode": "active",
+  "test_summary": {
+    "v103_final_acceptance": "15 passed",
+    "v93_to_v103_final": "88 passed",
+    "broad_cognition_expression": "287 passed, 2 baseline legacy failures",
+    "public_runtime_extra": "122 passed, 1 baseline vision failure",
+    "accelerated_24h_soak": "PASS, 345600 ticks",
+    "compileall": "PASS"
+  },
+  "files": [
+    {
+      "path": "src/V103_FINAL_CHANGESET_VI.txt",
+      "operation": "add",
+      "bytes": 7185,
+      "sha256": "8ee9e5509f13ee740481c4b86dd9d91b75bdc674efddfbbd2ec9c9d1fc179601"
+    },
+    {
+      "path": "src/V103_FINAL_ROADMAP_AUDIT_VI.txt",
+      "operation": "add",
+      "bytes": 4664,
+      "sha256": "634ab48416d40fbbe15b7d79dc21eeb1ffbe27e7e6d18a2fb01c43c1378906c9"
+    },
+    {
+      "path": "src/V103_FINAL_TEST_STATUS_VI.txt",
+      "operation": "add",
+      "bytes": 3829,
+      "sha256": "4761dc4a0c978c538edfaeedb9be00686849c488ba3866c5c5169e70ed725cf5"
+    },
+    {
+      "path": "src/V103_FINAL_SOAK_REPORT.json",
+      "operation": "add",
+      "bytes": 2943,
+      "sha256": "3bb0c954101d06bbe3743386a5007a77eb27314bc6540fb4fee6913a1a6bb830"
+    },
+    {
+      "path": "src/runtime/nervous_system_v103_final.py",
+      "operation": "add",
+      "bytes": 51444,
+      "sha256": "937b4dc1cc8438a4e3551ba9be371524866257bfdf358fcb5a482ccec5b79baf"
+    },
+    {
+      "path": "src/runtime/activation_nervous_system_v98.py",
+      "operation": "modify",
+      "bytes": 37202,
+      "sha256": "be7f9be8c8248b110981974e1758a8492ec3804253b069488db8e2871f76c0a0"
+    },
+    {
+      "path": "src/runtime/coordinator_bootstrap.py",
+      "operation": "modify",
+      "bytes": 55722,
+      "sha256": "9846606ea04cf377183f2822587fad705d3c0d8d6c2c9260aa963626495f19b0"
+    },
+    {
+      "path": "src/runtime/public_output_runtime.py",
+      "operation": "modify",
+      "bytes": 69052,
+      "sha256": "1e98f8f00d4b35863e342e6e81a63757a295281e93c22f9f265fc5b5a673f4e0"
+    },
+    {
+      "path": "src/runtime/ai_orchestrated/self_turn_pipeline.py",
+      "operation": "modify",
+      "bytes": 178998,
+      "sha256": "3573842b3caa544f6fc8bb9686465993c96768c164bccfa225f6e2b0e26e04d0"
+    },
+    {
+      "path": "src/runtime/ai_orchestrated/orchestrator.py",
+      "operation": "modify",
+      "bytes": 178921,
+      "sha256": "3781b0d08f009cd275301e3a08b635b75440d6128202c839b9e0c512ad445f03"
+    },
+    {
+      "path": "src/runtime/ai_orchestrated/executive_cortex.py",
+      "operation": "modify",
+      "bytes": 124031,
+      "sha256": "30d1fbe5276831b0f7cc959d56e15ceb057938e37a40ab88b80d04009b432338"
+    },
+    {
+      "path": "src/tools/run_v103_nervous_soak.py",
+      "operation": "add",
+      "bytes": 7034,
+      "sha256": "163794f279823f30851cf7621758a3508dd66871ba274b89ebf6ffe0eac08d61"
+    },
+    {
+      "path": "src/tests/test_v103_final_continuous_nervous_system.py",
+      "operation": "add",
+      "bytes": 17683,
+      "sha256": "0ba4ba603cbb142f1fe74c9cb31dc7431bcbd7535aa93b37b4802d9aee129544"
+    }
+  ]
+}

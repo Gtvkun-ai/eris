@@ -912,6 +912,15 @@ class AIChatOrchestrator:
                 _v98_bus.submit(_v98_bridge.user_return_event(now=cycle_start))
         except Exception as exc:
             host.logger.debug("[v98 activation] user presence modulation skipped: %s", exc)
+        # V103 FINAL: fresh user input là attractor escape + facilitation, không
+        # phải random seed. Motor/field tự thay đổi từ modulation này.
+        try:
+            _nervous = getattr(host, "nervous_system_v103", None)
+            _note_stimulus = getattr(_nervous, "note_external_stimulus", None)
+            if callable(_note_stimulus):
+                _note_stimulus(source_id="user_turn", strength=0.86, now=cycle_start)
+        except Exception as exc:
+            host.logger.debug("[nervous-v103] user stimulus modulation skipped: %s", exc)
         _ledger_for_handoff = host._ensure_session_turn_ledger()
         _prior_turns_for_handoff = _ledger_for_handoff.recent_turns(
             before_index=user_turn.index, limit=8
@@ -953,7 +962,11 @@ class AIChatOrchestrator:
                 )
             except Exception as exc:
                 host.logger.debug("[topic boundary] persist closure degraded: %s", exc)
-            for _runtime_name in ("mental_material_runtime", "expression_urge_runtime"):
+            for _runtime_name in (
+                "mental_material_runtime",
+                "private_intention_runtime_v101",
+                "expression_urge_runtime",
+            ):
                 _runtime = getattr(host, _runtime_name, None)
                 _boundary = getattr(_runtime, "mark_conversation_boundary", None)
                 if callable(_boundary):

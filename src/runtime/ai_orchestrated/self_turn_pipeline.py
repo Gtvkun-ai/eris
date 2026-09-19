@@ -42,7 +42,7 @@ from .region_memory import RegionMemory
 from .semantic_environment_worker import SemanticEnvironmentWorker
 from .followup_appraisal import FollowUpAppraisalLayer
 from .identity import PendingStrategyUse
-from .initiative import InitiativeAction, InitiativeDecision
+from .initiative import InitiativeAction, InitiativeDecision, SpeechIntent
 from .random_chat_seed import seed_event_family
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
 from runtime.engagements import InteractionDecision
@@ -56,6 +56,7 @@ from runtime.subject_initiative_runtime import (
     filter_affordances_by_proposal_lifecycle,
 )
 from runtime.proposal_lifecycle import ensure_proposal_lifecycle_runtime
+from cortex.subject.expression_commitment import commitment_payload
 
 
 def environment_social_gate(situation: UserSituation | None) -> dict[str, Any]:
@@ -842,6 +843,42 @@ class SelfTurnPipeline:
             except Exception as exc:
                 host.logger.debug("[expression urge] shaping failed: %s", exc)
 
+        # V103 FINAL CUTOVER -------------------------------------------------
+        # Normal autonomous expression không còn đưa một list speech candidate
+        # vào Neuro để chấm winner. Motor continuous chọn action family trước;
+        # ExpressionUrge chỉ còn compatibility envelope cho semantic target đã
+        # bind. Structured task/continuation owners vẫn đi Subject path cũ.
+        nervous_authority = getattr(host, "nervous_system_v103", None)
+        if nervous_authority is not None:
+            try:
+                _nervous_context = dict(initiative_runtime_context)
+                _courtesy = planner_snapshot.get("conversation_courtesy")
+                if isinstance(_courtesy, Mapping):
+                    for _key in ("awaiting_user_answer", "courtesy_hold"):
+                        if _key in _courtesy:
+                            _nervous_context[_key] = bool(_courtesy.get(_key, False))
+                _nervous_context["public_turn_active"] = bool(getattr(host, "_chat_processing", False))
+
+                # Meaningful environment change là attractor-escape/fresh evidence:
+                # curiosity tăng, boredom giảm; tuyệt đối không tự sinh topic.
+                if bool(getattr(context.perception, "mechanical_delta", False)):
+                    _note_stimulus = getattr(nervous_authority, "note_external_stimulus", None)
+                    if callable(_note_stimulus):
+                        _note_stimulus(source_id="environment_delta", strength=0.68, now=now)
+
+                _preprocess = getattr(nervous_authority, "preprocess_affordances", None)
+                if callable(_preprocess):
+                    _filtered, _motor_decision = _preprocess(
+                        tuple(affordances), runtime_context=_nervous_context, now=now
+                    )
+                    affordances = list(_filtered)
+                    planner_snapshot["motor_authority_v103"] = _motor_decision.to_dict()
+                _status = getattr(nervous_authority, "status", None)
+                if callable(_status):
+                    planner_snapshot["nervous_system_v103"] = dict(_status())
+            except Exception as exc:
+                host.logger.warning("[nervous-v103] preprocess degraded; legacy envelope kept: %s", exc)
+
         # Policy chạy sau khi materialize urge để đo đúng mật độ/repetition của
         # tập candidate hiện tại. V67: đây chỉ là self-rhythm telemetry cho các
         # opportunity chưa commit; một ExpressionCommitment không bị vote lại.
@@ -1023,12 +1060,25 @@ class SelfTurnPipeline:
         candidate_ms = (time.monotonic() - candidate_started) * 1000.0
         initiative = getattr(host, "ai_initiative_controller", None)
         if executive_outcome is not None and executive_outcome.action == "body_only":
-            decision = InitiativeDecision(
-                InitiativeAction.BODY_ONLY,
-                f"subject_materializer:{executive_outcome.reason}",
-                IntentionPlan.silence(channel="autonomous", reason="subject_body_only"),
-                body_motion="quiet_presence",
-            )
+            # V103 FINAL: Subject frame cũ không có action riêng cho vocalization/
+            # micro-expression nên Neuro compatibility envelope map hai channel này
+            # về BODY_ONLY. Ở active nervous mode, public authority thật nằm ở
+            # UnifiedExpressionMotor: nếu motor vừa commit một local vocal/micro
+            # lexeme thì nâng envelope này thành typed SPEECH ngay tại boundary,
+            # không gọi candidate voter và cũng không nhờ LLM bịa nội dung.
+            local_motor_decision = self._nervous_local_motor_decision(now=now)
+            if local_motor_decision is not None:
+                decision = self._nervous_local_vocalization_decision(
+                    local_motor_decision,
+                    turn_seq=context.turn_seq,
+                )
+            else:
+                decision = InitiativeDecision(
+                    InitiativeAction.BODY_ONLY,
+                    f"subject_materializer:{executive_outcome.reason}",
+                    IntentionPlan.silence(channel="autonomous", reason="subject_body_only"),
+                    body_motion="quiet_presence",
+                )
         elif initiative is None:
             decision = InitiativeDecision(
                 InitiativeAction.NO_OP,
@@ -1285,7 +1335,27 @@ class SelfTurnPipeline:
         surface_payload = None
         surface_engine = getattr(host, "ai_surface_intent_engine", None)
         surface_turn = None
-        if surface_engine is not None:
+
+        # V103 FINAL: vocalization/micro-expression là local motor act không mang
+        # factual proposition. Với hai channel này, wording đã là chính commit
+        # deterministic của motor ("haiz"/"hừm"). Không được gọi Surface LLM để
+        # nó biến một tiếng thở dài thành câu triết lý. Display và TTS dùng đúng
+        # *cùng một text* theo contract V99 trong roadmap.
+        if self._is_nervous_local_vocalization(speech_intent):
+            surface_payload = self._nervous_local_surface_payload(speech_intent)
+            if surface_payload:
+                self.trace_store.append("surface_result", {
+                    "trace_id": str(speech_intent.trace_id or plan.plan_id),
+                    "stage": "surface",
+                    "owner": "nervous_local_motor",
+                    "generation_epoch": speech_intent.generation_epoch,
+                    "surface_status": "local_exact",
+                    "surface_added_claims": 0,
+                    "claim_manifest": [],
+                    "unsupported_current_world_claim": False,
+                    "same_text_tts": True,
+                })
+        elif surface_engine is not None:
             intent_payload = speech_intent.to_dict()
             intent_seed = (
                 speech_intent.random_chat_seed
@@ -1339,6 +1409,10 @@ class SelfTurnPipeline:
             plan = surface_turn.plan
             surface_payload = surface_turn.public_payload
             host.last_ai_intention_plan = plan
+        elif surface_payload:
+            # Local nervous vocalization đã có exact payload ở trên; không đánh
+            # dấu Surface unavailable chỉ vì ta cố ý không gọi remote writer.
+            pass
         elif surface_engine is not None:
             self.trace_store.append("surface_result", {
                 "trace_id": str(speech_intent.trace_id or plan.plan_id),
@@ -1431,6 +1505,162 @@ class SelfTurnPipeline:
             subject_decision=subject_decision,
             subject_generation_revision=subject_generation_revision,
         )
+
+    def _nervous_local_motor_decision(self, *, now: float | None = None) -> Any | None:
+        """Trả commit vocal/micro mới nhất nếu nervous motor đang active.
+
+        Subject/Neuro chỉ là compatibility envelope ở đây. Kiểm tra mode +
+        committed + local_text giúp một BODY_ONLY legacy bình thường không bao
+        giờ bị nâng nhầm thành speech.
+        """
+        authority = getattr(self.host, "nervous_system_v103", None)
+        config = getattr(authority, "config", None)
+        if str(getattr(config, "mode", "") or "").strip().lower() != "active":
+            return None
+        motor = getattr(authority, "motor", None)
+        getter = getattr(motor, "last_decision", None)
+        decision = getter() if callable(getter) else None
+        channel = str(getattr(decision, "channel", "") or "").strip().lower()
+        local_text = " ".join(str(getattr(decision, "local_text", "") or "").split()).strip()
+        if not bool(getattr(decision, "committed", False)):
+            return None
+        if channel not in {"vocalization", "micro_expression"} or not local_text:
+            return None
+        # Không hồi sinh một motor commit cũ nếu preprocess/authority tick hiện tại
+        # bị fail-open. Local vocalization là impulse ngắn, phải thuộc đúng frame.
+        if now is not None:
+            emitted_at = float(getattr(decision, "emitted_at", 0.0) or 0.0)
+            if emitted_at > 0.0 and abs(float(now) - emitted_at) > 1.5:
+                return None
+        return decision
+
+    def _nervous_local_vocalization_decision(self, motor_decision: Any, *, turn_seq: int) -> InitiativeDecision:
+        """Chuyển motor vocal/micro commit thành typed public intent, không LLM."""
+        channel = str(getattr(motor_decision, "channel", "") or "").strip().lower()
+        text = " ".join(str(getattr(motor_decision, "local_text", "") or "").split()).strip()[:80]
+        revision = max(0, int(getattr(motor_decision, "source_revision", 0) or 0))
+        source_id = f"nervous-motor:{revision}:{channel}"
+        activation = max(0.0, min(1.0, float(getattr(motor_decision, "activation", 0.0) or 0.0)))
+        plan = IntentionPlan.from_mapping({
+            "plan_id": f"nervous-local:{turn_seq}:{revision}:{channel}",
+            "owner": "social_initiative",
+            "speak": True,
+            "motive": "self_expression",
+            "strategy": "nervous_local_vocalization",
+            "value_focus": "self_expression",
+            "topic": text,
+            "importance": max(0.35, activation),
+            "intrusion_risk": 0.02,
+            "confidence": 1.0,
+            "performance_hint": "low_quiet",
+            "evidence_refs": (f"nervous:revision:{revision}",),
+            "provenance": {
+                "semantic_owner": "eris",
+                "trigger_owner": "eris",
+                "source_kind": "nervous_motor",
+                "source_ref": source_id,
+                "why_now": str(getattr(motor_decision, "reason", "stable_dwell_crossing") or "stable_dwell_crossing"),
+                "user_triggered": False,
+            },
+            "semantics": {
+                "turn_kind": "internal",
+                "speech_act": channel,
+                "subject_key": source_id,
+                "evidence_scope": "self_context",
+            },
+        }, channel="autonomous")
+        commitment = commitment_payload(
+            origin="nervous_motor",
+            source_id=source_id,
+            semantic_target=text,
+            motive=channel,
+            pressure=activation,
+            freshness=1.0,
+            persistence=0.70,
+        )
+        intent = SpeechIntent(
+            plan=plan,
+            mode="nervous_local_vocalization",
+            anchor_type="internal",
+            anchor_id=source_id,
+            evidence_refs=(f"nervous:revision:{revision}",),
+            allowed_claim_domains=(),
+            claim_scope="internal_interpretation",
+            max_sentences=1,
+            expression_commitment=commitment,
+            owner="social_initiative",
+            trace_id=plan.plan_id,
+        )
+        return InitiativeDecision(
+            InitiativeAction.SPEECH,
+            f"nervous_motor_local:{channel}",
+            plan,
+            speech_intent=intent,
+            body_motion="quiet_presence",
+        )
+
+    @staticmethod
+    def _is_nervous_local_vocalization(speech_intent: SpeechIntent | None) -> bool:
+        if speech_intent is None:
+            return False
+        commitment = speech_intent.expression_commitment
+        origin = str(commitment.get("origin", "") or "").strip().lower() if isinstance(commitment, Mapping) else ""
+        return (
+            origin == "nervous_motor"
+            and str(getattr(speech_intent, "mode", "") or "") == "nervous_local_vocalization"
+        )
+
+    def _nervous_local_surface_payload(self, speech_intent: SpeechIntent) -> Mapping[str, Any] | None:
+        """Đóng exact utterance cho UI + TTS mà không gọi remote Surface.
+
+        Local vocalization không phải proposition nên claim_manifest luôn rỗng.
+        Cố ý dùng cùng ``display_language`` cho speech để text và TTS không bị
+        một translator/LLM khác thay nghĩa.
+        """
+        text = " ".join(str(getattr(speech_intent.plan, "topic", "") or "").split()).strip()[:80]
+        if not text:
+            return None
+        language = self._runtime_language()
+        router = getattr(self.host, "ai_model_router", None)
+        builder = getattr(router, "build_surface_public_payload", None)
+        if not callable(builder):
+            return None
+        utterance = {
+            "display": {"language": language, "text": text},
+            "speech": {"language": language, "text": text},
+            "performance": {
+                "preset": str(getattr(speech_intent.plan, "performance_hint", "low_quiet") or "low_quiet"),
+                "intensity": 0.32,
+                "nonverbal": "sigh_soft" if text.lower().startswith("haiz") else "none",
+            },
+            "delivery": {"priority": "background", "interruptible": True},
+            "turn_id": str(speech_intent.trace_id or speech_intent.plan.plan_id),
+        }
+        try:
+            payload = dict(builder(
+                plan=speech_intent.plan,
+                mode=speech_intent.mode,
+                utterance=utterance,
+                display_language=language,
+                speech_language=language,
+            ))
+        except Exception as exc:
+            try:
+                self.host.logger.debug("[nervous motor] local surface envelope failed: %s", exc)
+            except Exception:
+                pass
+            return None
+        # Defense-in-depth: builder contract thay đổi vẫn không được phá same-text.
+        payload["text"] = text
+        payload["speech_text"] = text
+        payload["display_language"] = language
+        payload["speech_language"] = language
+        payload["should_speak"] = True
+        payload["claim_manifest"] = []
+        payload["event_trace_id"] = str(speech_intent.trace_id or speech_intent.plan.plan_id)
+        payload["generation_epoch"] = int(speech_intent.generation_epoch)
+        payload["public_intent_owner"] = str(speech_intent.owner)
+        return payload
 
     def _submit_intention(self, plan: IntentionPlan, *, turn_seq: int) -> None:
         """Ghi typed plan vào single-writer reducer sau deterministic decision."""
@@ -2647,6 +2877,7 @@ class SelfTurnPipeline:
             str(getattr(decision, "text", "") or ""),
             context=context,
             grounding_report=grounding_report,
+            plan=plan,
         )
         if not utterance_allowed:
             gate_reason = f"utterance_gate:{utterance_reason}"[:160]
@@ -2960,6 +3191,7 @@ class SelfTurnPipeline:
         *,
         context: SelfTurnBundle,
         grounding_report: Any,
+        plan: IntentionPlan | None = None,
     ) -> tuple[bool, str]:
         recent_autonomous_text = "\n".join(getattr(self, "_recent_autonomous_texts", ())) or str(getattr(self, "_last_autonomous_text", "") or "")
         if recent_autonomous_text:
@@ -2984,7 +3216,19 @@ class SelfTurnPipeline:
             return True, "evaluator_unavailable"
         issues = tuple(str(item) for item in getattr(evaluation, "issues", ()) or ())
         reason = str(getattr(evaluation, "reason", "") or getattr(evaluation, "verdict", "") or "blocked")
+        # V103 FINAL: "haiz"/"hừm" cố ý là motor vocalization ngắn, nên rule
+        # chất lượng câu văn ``too_thin_to_speak`` không được biến nó thành im
+        # lặng. Chỉ miễn đúng local motor act không mang proposition; mọi guard
+        # grounding/safety/public-boundary phía trước vẫn giữ nguyên.
+        local_motor_act = bool(
+            plan is not None
+            and str(getattr(plan, "strategy", "") or "") == "nervous_local_vocalization"
+            and str(getattr(plan, "source_kind", "") or "") == "nervous_motor"
+            and str(getattr(getattr(plan, "semantics", None), "speech_act", "") or "") in {"vocalization", "micro_expression"}
+        )
         if str(getattr(evaluation, "verdict", "") or "") == "drop":
+            if local_motor_act and set(issues).issubset({"too_thin_to_speak"}):
+                return True, "nervous_local_vocalization_expected_short"
             return False, reason
         if "generic_presence_filler" in issues:
             return False, reason

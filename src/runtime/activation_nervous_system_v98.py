@@ -708,12 +708,17 @@ class ContinuousDynamicsRuntime:
         source_sample_interval_sec: float = 0.50,
         clock: Callable[[], float] = time.time,
         logger: Any | None = None,
+        health_observer: Any | None = None,
     ) -> None:
         self.bus = bus
         self.motor = motor
         self.source_provider = source_provider
         self.clock = clock
         self.logger = logger
+        # V103 FINAL: health observer chỉ đo tick latency + histogram field.
+        # Nó không được tác động dynamics hoặc quyết định motor. Gắn sau bootstrap
+        # cũng được để tránh vòng phụ thuộc V98 -> V103.
+        self.health_observer = health_observer
         # Theo design V98: 50-100ms. Env chỉ chỉnh trong chính biên này.
         configured = tick_interval_sec if tick_interval_sec is not None else _env_float(
             "ERIS_V98_ACTIVATION_TICK_SEC", 0.075, minimum=0.05, maximum=0.10
@@ -757,6 +762,7 @@ class ContinuousDynamicsRuntime:
         return self.bus.submit(event)
 
     def tick_once(self, *, now: float | None = None, dt: float | None = None) -> ActivationSnapshot:
+        _tick_started = time.perf_counter()
         current = float(now if now is not None else self.clock())
         previous = self._last_tick_at
         step = float(dt if dt is not None else (self.tick_interval_sec if previous is None else current - previous))
@@ -788,6 +794,14 @@ class ContinuousDynamicsRuntime:
         )
         if self.motor is not None:
             self.motor.evaluate(snapshot, now=current)
+        # V103 FINAL observability: đo sau khi dynamics+shadow motor hoàn tất để
+        # p50/p95/p99 phản ánh đúng chi phí tick production. Observer fail-open.
+        try:
+            _observe_tick = getattr(self.health_observer, "observe_tick", None)
+            if callable(_observe_tick):
+                _observe_tick(snapshot, (time.perf_counter() - _tick_started) * 1000.0)
+        except Exception:
+            pass
         return snapshot
 
     def snapshot(self) -> dict[str, Any]:

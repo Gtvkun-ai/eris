@@ -1,0 +1,114 @@
+ERIS V103 FINAL — TEST STATUS
+=============================
+
+1) Acceptance riêng V103 FINAL
+------------------------------
+Command:
+  python -m pytest -q tests/test_v103_final_continuous_nervous_system.py
+
+Kết quả:
+  15 passed
+
+Bao gồm:
+- off/shadow/active authority semantics
+- proposition target + dwell
+- hard boundary không xóa target
+- SubjectInitiative sensor-only active mode
+- candidate bypass không dùng coalition score
+- semantic critic chỉ uncertainty/inhibition modulation
+- STP depression + fresh evidence reopen
+- health p50/p95/p99 + field histograms
+- deterministic replay
+- property/fuzz bounded + hard boundary
+- proposition starvation regression ở 20 Hz
+- vocalization + micro_expression channel reachability
+- exact UI/TTS same-text local vocalization
+- short local vocalization không bị generic "too thin" gate giết
+
+2) Chuỗi V93 → V103 FINAL
+-------------------------
+Kết quả:
+  88 passed
+
+Không có fail trong suite roadmap/ownership/lifecycle/semantic authority và các
+patch V98→V103 hiện tại.
+
+3) Regression rộng cognition/expression
+---------------------------------------
+V42→V77 + V93→V103 FINAL:
+  287 passed
+  2 failed
+
+Hai fail này đã tồn tại trước V103 FINAL:
+A. test_v43_mood_biases_selection_lightly_before_neuro_without_granting_speech
+   - legacy affordance không có typed ExpressionCommitment nên proposal adapter
+     hiện trả None.
+B. test_v66_duplicate_wording_failure_preserves_expression_urge
+   - legacy retry behavior của ExpressionUrge V66.
+
+Không sửa ké hai contract legacy này trong V103 FINAL vì active nervous authority
+không đi qua chúng; sửa sẽ làm scope drift và che baseline thật.
+
+4) Public/runtime regression bổ sung
+------------------------------------
+Các suite:
+- architecture_c_runtime_regressions
+- deepseek_web_utterance_architecture
+- public_writer_recovery_v6
+- runtime_boundaries_v18
+- deterministic_initiative_v17
+
+Kết quả:
+  122 passed
+  1 failed
+
+Fail:
+  test_chat_main_vision_captures_regular_turn
+
+Đã chạy lại đúng test trên baseline V103 trước FINAL: fail y hệt. File V103 FINAL
+không sửa runtime/chat_cycle.py nên đây không phải regression do nervous cutover.
+
+5) 24h accelerated soak
+-----------------------
+Command:
+  python tools/run_v103_nervous_soak.py --hours 24 --step 0.25 --seed 103 \
+      --output V103_FINAL_SOAK_REPORT.json
+
+Kết quả:
+  PASS
+  virtual_hours: 24.0
+  ticks: 345,600
+  step: 0.25 s
+  rng_seed: 103
+  hard_boundary_ticks: 1,728
+  non_silence_commits: 576
+  body: 288
+  proposition: 288
+
+Lưu ý:
+- Soak là 24 giờ VIRTUAL bằng fake clock, hoàn tất khoảng vài giây wall-clock.
+- Đây không phải cam kết latency production. Timing phụ thuộc container/máy chạy.
+- vocal/micro được cover bằng acceptance test riêng; waveform soak hiện tại cố ý
+  tập trung long-run body/proposition + STP/hard-boundary.
+
+Timing của lần chạy này:
+  tick p50: xem V103_FINAL_SOAK_REPORT.json
+  tick p95: xem V103_FINAL_SOAK_REPORT.json
+  tick p99: xem V103_FINAL_SOAK_REPORT.json
+
+6) Compile
+----------
+  python -m compileall -q runtime cortex tests tools
+  PASS
+
+7) Regression được soak bắt thật
+--------------------------------
+Soak ban đầu phát hiện micro/body có dwell ngắn hơn proposition nên có thể fire
+trước mỗi lần proposition vừa sắp đủ dwell; refractory sau đó làm proposition bị
+starve vô hạn. Motor arbitration đã được sửa và có regression test riêng:
+  test_stronger_proposition_is_not_starved_by_shorter_micro_dwell_at_20hz
+
+Kết luận
+--------
+Không phát hiện regression mới do V103 FINAL trong các vùng đã kiểm.
+Các fail được nêu ở trên đều được đối chiếu với baseline trước FINAL.

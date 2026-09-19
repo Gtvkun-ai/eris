@@ -501,9 +501,16 @@ class ExecutiveCortex:
         # chút continuity qua frame. Stabilizer không dựng coalition mới và sẽ
         # fail-open về selection gốc nếu frame nằm ngoài scope của nó.
         try:
+            # V103 FINAL: candidate_bypass đã được continuous motor commit action
+            # family. Không cho migration workspace cũ "ổn định" lại một quyết
+            # định mà nó không còn sở hữu authority. Structured/legacy path vẫn
+            # dùng stabilizer như trước để backward compatibility.
+            _nervous_bypass = str(getattr(selection, "reason", "") or "").startswith(
+                "candidate_bypass:nervous_motor:"
+            )
             competition_v103 = getattr(self.owner, "expression_competition_workspace_v103", None)
             stabilize = getattr(competition_v103, "stabilize", None)
-            if callable(stabilize):
+            if callable(stabilize) and not _nervous_bypass:
                 selection = stabilize(
                     frame,
                     selection,
@@ -1721,6 +1728,49 @@ class ExecutiveCortex:
                     ],
                 )
                 frame = validation.frame
+
+        # V103 FINAL: normal autonomous propositions đã cut over sang continuous
+        # motor. Neuro frame vẫn tồn tại để giữ typed contracts V93-V97, nhưng
+        # motor trả SelectionResult one-hot theo action family đã commit; không
+        # đọc coalition.score/softmax và không mời semantic critic vote winner.
+        if autonomous_mode:
+            _nervous_authority = getattr(self.owner, "nervous_system_v103", None)
+            _nervous_select = getattr(_nervous_authority, "selection_for_frame", None)
+            if callable(_nervous_select):
+                try:
+                    _motor_selection = _nervous_select(frame)
+                except Exception as exc:
+                    _motor_selection = None
+                    self._log("warning", "[nervous-v103] candidate bypass degraded: %s", exc)
+                if _motor_selection is not None:
+                    winner = _motor_selection.winner(frame)
+                    # Semantic critic semantics mới: measurement -> modulation.
+                    # Không re-rank candidate. Hard safety/grounding veto vẫn chạy
+                    # downstream trước public commit như cũ.
+                    if str(getattr(winner, "action_kind", "") or "").strip().lower() == "speak":
+                        _modulate = getattr(_nervous_authority, "inject_semantic_modulation", None)
+                        if callable(_modulate):
+                            try:
+                                _modulate(
+                                    source_id=str(getattr(winner, "primary_proposal_ref", "") or ""),
+                                    uncertainty=float(getattr(winner, "uncertainty", 0.5) or 0.5),
+                                    epistemic_support=float(getattr(winner, "expected_epistemic_value", 0.5) or 0.5),
+                                    hard_boundary=False,
+                                    now=float(self._clock()),
+                                )
+                            except Exception as exc:
+                                self._log("debug", "[semantic-modulation-v103] degraded: %s", exc)
+                    self._log_neuro_selection("motor-authority", frame, _motor_selection, mode=mode)
+                    commit = self._commit_from_selection(
+                        frame,
+                        _motor_selection,
+                        reason=_motor_selection.reason,
+                        source="nervous_motor_authority",
+                        semantic_commitments=("motor_action_family_committed_before_subject_envelope",),
+                        review_conditions=("hard_safety_and_grounding_remain_absolute",),
+                    )
+                    self._log_neuro_commit(frame, commit, mode=mode)
+                    return commit
 
         selection = self._neuro_selector.select(frame)
         self._log_neuro_selection("neuro-fast", frame, selection, mode=mode)
