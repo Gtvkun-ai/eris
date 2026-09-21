@@ -50,3 +50,8 @@ def test_vsix_contains_native_out_and_resources():
     assert "extension/out/extension.js" in names
     assert "extension/out/ui/webview/gitpilotWorkspaceTemplate.html" in names
     assert "extension/resources/icon.svg" in names
+
+
+def test_vsce_ignores_eris_adapter_staging_source():
+    ignore = (EXT / ".vscodeignore").read_text(encoding="utf-8")
+    assert "eris/**" in ignore
