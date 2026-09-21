@@ -1,0 +1,1827 @@
+/*
+ * GitPilot brand tokens (shared with web frontend + logo).
+ *
+ * Brand palette (single source of truth):
+ *   --gp-accent         #D95C3D  warm orange, primary buttons & links
+ *   --gp-accent-bright  #ff7a3c  brighter variant for glows, cursors, progress
+ *   --gp-accent-hover   #C44F32  darker variant for button hover
+ *   --gp-surface-0      #131316  page background (overrides VS Code in dark themes)
+ *   --gp-surface-1      #1C1C1F  card background (LoginPage theme.cardBg)
+ *   --gp-border-subtle  #27272A  (LoginPage theme.border)
+ *   --gp-text-primary   #EDEDED  primary text on dark surfaces
+ *   --gp-text-muted     #A1A1AA  secondary text
+ *
+ * Philosophy: background and text still honor VS Code's theme so the
+ * extension respects user preferences, but brand accents (--accent,
+ * --button, --focus) are locked to GitPilot's palette so the extension,
+ * web app, and logo share one identity.
+ */
+:root {
+  /* ── GitPilot brand palette (matches docs/logo.svg + web LoginPage) ── */
+  --gp-accent: #D95C3D;
+  --gp-accent-bright: #ff7a3c;
+  --gp-accent-hover: #C44F32;
+  --gp-surface-0: #131316;
+  --gp-surface-1: #1C1C1F;
+  --gp-border-subtle: #27272A;
+  --gp-text-primary: #EDEDED;
+  --gp-text-muted: #A1A1AA;
+
+  /* ── Base tokens honor VS Code theme (light/dark switching works) ── */
+  --bg: var(--vscode-sideBar-background);
+  --surface: color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-sideBar-background)) 78%, var(--vscode-sideBar-background));
+  --surface-2: var(--vscode-editor-background, var(--vscode-sideBar-background));
+  --fg: var(--vscode-foreground);
+  --muted: var(--vscode-descriptionForeground);
+  --border: color-mix(in srgb, var(--vscode-panel-border) 80%, transparent);
+
+  /* ── Brand accents: GitPilot palette, NOT VS Code theme ── */
+  --button: var(--gp-accent);
+  --button-fg: #ffffff;
+  --button-hover: var(--gp-accent-hover);
+  --secondary: color-mix(in srgb, var(--gp-accent) 12%, transparent);
+  --secondary-fg: var(--gp-accent-bright);
+  --input-bg: var(--vscode-input-background);
+  --input-fg: var(--vscode-input-foreground);
+  --input-border: var(--vscode-input-border, var(--vscode-panel-border));
+  --focus: var(--gp-accent);
+  --accent: var(--gp-accent-bright);
+  --accent-soft: color-mix(in srgb, var(--gp-accent) 14%, transparent);
+
+  /* ── Semantic status colors ── */
+  --success: var(--vscode-testing-iconPassed, #4caf50);
+  --success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+  --warning: var(--vscode-testing-iconQueued, #d7ba7d);
+  --warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+  --danger: var(--vscode-errorForeground, #f14c4c);
+  --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
+  --radius-xl: 16px;
+  --radius-lg: 14px;
+  --radius-md: 12px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 26px rgba(0, 0, 0, .08);
+  --transition-fast: 140ms ease;
+  --transition-medium: 220ms ease;
+  --font-xs: 10px;
+  --font-sm: 11px;
+  --font-md: 12px;
+  --font-lg: 14px;
+  --font-xl: 18px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body { padding: 10px; }
+
+button, input, textarea { font: inherit; }
+
+button {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 9px 12px;
+  cursor: pointer;
+  background: var(--button);
+  color: var(--button-fg);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+button:hover { background: var(--button-hover); }
+button:active { transform: translateY(1px); }
+
+button.secondary {
+  background: var(--secondary);
+  color: var(--secondary-fg);
+  border-color: var(--border);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--muted);
+  border-color: transparent;
+  padding: 4px 8px;
+}
+
+button.quiet:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+}
+
+button:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
+}
+
+button[disabled] {
+  opacity: .58;
+  cursor: not-allowed;
+  transform: none;
+}
+
+textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  padding: 12px;
+  line-height: 1.55;
+}
+
+/*
+ * The composer is the one framed object on the page.
+ *
+ * Everything else — the transcript, the landing copy, the suggestions — sits
+ * on the editor background, so the box you type into is unmistakably the
+ * thing to do next. The frame lives on the wrapper rather than the textarea
+ * so the chips and the button row sit inside it.
+ */
+.chat-compose {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  padding: 12px 12px 10px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.chat-compose:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-compose textarea {
+  min-height: 74px;
+  border: none;
+  background: none;
+  padding: 2px 2px 0;
+  border-radius: 0;
+  resize: none;
+}
+
+.chat-compose textarea:focus-visible { outline: none; }
+
+/* The panel is one column on a flat ground; only the composer is framed. */
+#chat-section.surface {
+  background: none;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+/*
+ * A measured column, not the full width of a monitor.
+ *
+ * This is an editor tab now, so on a wide screen the composer would otherwise
+ * stretch to 2000px and the conversation would read like a spreadsheet. The
+ * column stays the width a person can actually read.
+ */
+.app {
+  display: grid;
+  gap: 10px;
+  min-height: calc(100vh - 20px);
+  align-content: start;
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+}
+
+.surface {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 92%, transparent),
+      color-mix(in srgb, var(--surface-2) 100%, transparent)
+    );
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.card {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+/*
+ * A thin action bar.
+ *
+ * It used to be a status card carrying provider, connection, model, repo and
+ * branch — all of which the sidebar and the landing page already say — with a
+ * Disconnected pill beside a Ready pill. Restraint here is what lets the
+ * conversation be the thing you look at.
+ */
+.header {
+  padding: 8px 10px;
+  display: grid;
+  gap: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+/* Named only once there is a task to name. */
+.header-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: messageIn .18s ease both;
+}
+
+.header-title.hidden { display: none; }
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.eyebrow-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.header-title {
+  margin: 0;
+  font-size: var(--font-xl);
+  line-height: 1.18;
+  letter-spacing: -.01em;
+  font-weight: 800;
+}
+
+.header-subtitle,
+.header-meta {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+  border-color: var(--border);
+}
+.icon-btn svg {
+  flex-shrink: 0;
+}
+
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: var(--font-sm);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--muted);
+}
+
+.pill-success {
+  background: var(--success-soft);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--success) 20%, var(--border));
+}
+
+.pill-warning {
+  background: var(--warning-soft);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--warning) 20%, var(--border));
+}
+
+.pill-danger {
+  background: var(--danger-soft);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--danger) 22%, var(--border));
+}
+
+.pill-accent {
+  background: var(--accent-soft);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--font-sm);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+
+.section-copy {
+  color: var(--muted);
+  font-size: var(--font-md);
+  line-height: 1.55;
+}
+
+.summary-card {
+  display: grid;
+  gap: 10px;
+}
+
+.summary-title {
+  font-size: var(--font-lg);
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.summary-note {
+  color: var(--muted);
+  font-size: var(--font-md);
+  line-height: 1.6;
+}
+
+.progress {
+  display: grid;
+  gap: 7px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.progress-bar {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 45%, white));
+  transition: width .2s ease;
+}
+
+.progress-label {
+  color: var(--muted);
+  font-size: var(--font-sm);
+}
+
+details.disclosure {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+details.disclosure summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  user-select: none;
+  padding: 6px 0;
+}
+
+details.disclosure summary::-webkit-details-marker { display: none; }
+
+.summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The shape of a diff, stated in the header so the rows stay optional. */
+.summary-stat {
+  margin-left: auto;
+  margin-right: 8px;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chevron {
+  color: var(--muted);
+  transition: transform var(--transition-fast);
+}
+
+details[open] .chevron {
+  transform: rotate(180deg);
+}
+
+.disclosure-body {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.tool-button {
+  width: 100%;
+  text-align: left;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--fg);
+  border-color: var(--border);
+  display: grid;
+  gap: 2px;
+}
+
+.tool-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--surface-2) 82%, var(--accent-soft));
+}
+
+.tool-title {
+  font-size: var(--font-md);
+  font-weight: 700;
+}
+
+.tool-copy {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  line-height: 1.45;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.row {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px;
+}
+
+.plan-item {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.plan-marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.plan-item.done .plan-marker {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.plan-item.active .plan-marker {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plan-item.failed .plan-marker {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.item-title {
+  font-size: var(--font-md);
+  font-weight: 700;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.item-meta {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.mini-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.chat-compose {
+  display: grid;
+  gap: 8px;
+}
+
+/* ─── Context chips ───
+ *
+ * What GitPilot will look at, stated before you send. Selecting code attaches
+ * one on its own, because naming the file you mean is the most tedious step
+ * of an AI coding workflow. Every chip is removable: context you cannot see
+ * or take back is context you cannot trust.
+ */
+.context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--muted);
+  font-size: var(--font-xs);
+  animation: messageIn .16s ease both;
+}
+
+.context-chip .chip-icon { color: var(--accent); flex-shrink: 0; }
+
+.context-chip .chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.context-chip .chip-remove {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.context-chip .chip-remove:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+
+/* ─── Inline completion for @ and / ───
+ *
+ * A dropdown anchored to the composer rather than a modal quick pick: the
+ * sentence you are part-way through writing stays on screen while you choose.
+ */
+.compose-field { position: relative; }
+
+.compose-popup {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.30);
+  animation: activityFadeIn .12s ease both;
+}
+
+.popup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 11px;
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.popup-row.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.popup-row:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+.popup-label {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup-detail {
+  color: var(--muted);
+  font-size: var(--font-xs);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* The + that opens a file picker. Neutral: the send button is the one action
+   on this row that deserves the accent. */
+.compose-chip {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.compose-chip:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.chat-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.chat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  /* A fixed cap wastes a tall panel and cramps a short one. Bounded by the
+     viewport so the composer below stays reachable without a long scroll. */
+  max-height: min(62vh, 760px);
+  overflow: auto;
+  scroll-behavior: smooth;
+}
+
+/*
+ * A message is text, not a card.
+ *
+ * Boxing every turn makes a long conversation visually exhausting — card,
+ * then card, then card. Cards are reserved for things you can act on: a
+ * suggested change, an approval, a tool-activity group. The role is carried
+ * by a 2px rule instead of a border-and-fill, which reads at a glance without
+ * competing with the interactive blocks below it.
+ */
+.chat-item {
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 4px 0 4px 11px;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: messageIn .18s ease forwards;
+}
+
+/* The user's own turn is the one worth setting apart; a faint fill does it
+   without the weight of a full card. */
+.chat-item.user {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding-right: 11px;
+}
+.chat-item.assistant { border-left-color: transparent; padding-left: 13px; }
+.chat-item.system { border-left-color: var(--warning); }
+
+.chat-role-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.chat-role {
+  color: var(--muted);
+  font-size: var(--font-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+/*
+ * The timestamp is reference material, not part of reading the conversation.
+ * A column of times down the right-hand edge of every turn is visual noise
+ * you scan past; on hover it is exactly as available as before.
+ */
+.chat-time {
+  color: var(--muted);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.chat-item:hover .chat-time,
+.chat-item:focus-within .chat-time { opacity: 1; }
+
+.chat-content {
+  font-size: var(--font-md);
+  line-height: 1.62;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-content h4 {
+  margin: 12px 0 6px;
+  font-size: var(--font-md);
+  font-weight: 800;
+  color: var(--fg);
+}
+
+.chat-content h4:first-child { margin-top: 0; }
+
+.chat-item.thinking {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--surface-2) 96%, var(--accent-soft));
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-item.thinking::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    color-mix(in srgb, white 10%, transparent) 45%,
+    transparent 60%
+  );
+  transform: translateX(-120%);
+  animation: thinkingSweep 2.2s linear infinite;
+  pointer-events: none;
+}
+
+.thinking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.thinking-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--font-sm);
+  min-width: 0;
+}
+
+.thinking-label {
+  color: var(--fg);
+}
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.thinking-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.28;
+  animation: thinkingPulse 1.2s infinite ease-in-out;
+}
+
+.thinking-dots span:nth-child(2) { animation-delay: .18s; }
+.thinking-dots span:nth-child(3) { animation-delay: .36s; }
+
+.thinking-elapsed {
+  font-size: var(--font-xs);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.compose-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--font-sm);
+}
+
+.primary-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ─── The composer row ───
+ *
+ * Left: what acts on the message you are writing. Right: how it will be run,
+ * and one accent-coloured button to run it. A three-segment permission
+ * control ate the width the composer needed, so it became a menu that still
+ * names every mode — and now says what each one will and will not do, which
+ * the segments only managed in a tooltip.
+ */
+.row-spacer { flex: 1; }
+
+.mode-picker { position: relative; flex-shrink: 0; }
+
+.mode-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.mode-trigger:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.mode-trigger .caret { color: var(--muted); font-size: 10px; }
+
+.mode-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  min-width: 268px;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  animation: activityFadeIn .12s ease both;
+}
+
+.mode-btn {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  text-align: left;
+  font-family: inherit;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  color: var(--fg);
+  background: none;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.mode-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+
+.mode-name { font-size: var(--font-sm); font-weight: 600; }
+
+.mode-detail {
+  font-size: var(--font-xs);
+  color: var(--muted);
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.mode-btn.active .mode-name { color: var(--accent-bright, #ff7a3c); }
+.mode-btn.active { background: rgba(255, 122, 60, 0.1); }
+
+/*
+ * One accent-coloured control on the page, and it is small.
+ *
+ * A full-width Send bar shouted louder than the question above it; the arrow
+ * is unmistakable, and Enter is what people actually press.
+ */
+.primary-row #send-btn {
+  width: 34px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+}
+
+.primary-row #send-btn svg { width: 15px; height: 15px; }
+.primary-row #send-btn:active { transform: scale(0.94); }
+
+.secondary-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notice-banner {
+  border-color: color-mix(in srgb, var(--warning) 32%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 8%, transparent), color-mix(in srgb, var(--surface) 100%, transparent));
+}
+
+.notice-banner.danger {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 9%, transparent), color-mix(in srgb, var(--surface) 100%, transparent));
+}
+
+/* Busy overlay: disabled — the inline thinking bubble in chat is the
+   sole active-state indicator (follows ChatGPT/Claude pattern). The
+   overlay element stays in the DOM so JS refs don't break but is
+   never shown. */
+.busy-overlay {
+  display: none !important;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+  flex-shrink: 0;
+}
+
+.busy-text {
+  color: var(--muted);
+  font-size: var(--font-sm);
+  line-height: 1.4;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: var(--font-md);
+  line-height: 1.55;
+}
+
+.hidden { display: none !important; }
+
+.chat-content p {
+  margin: 0 0 10px;
+}
+
+.chat-content p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-content pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--font-sm);
+  line-height: 1.55;
+}
+
+.chat-content code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 0.95em;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+.chat-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.chat-content ul,
+.chat-content ol {
+  margin: 8px 0 10px 18px;
+  padding: 0;
+}
+
+.chat-content li {
+  margin: 4px 0;
+}
+
+.chat-content blockquote {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent-soft) 36%, transparent);
+  border-radius: 0 8px 8px 0;
+}
+
+.chat-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.chat-content a:hover {
+  text-decoration: underline;
+}
+
+.chat-content strong {
+  font-weight: 800;
+}
+
+.chat-content em {
+  font-style: italic;
+}
+
+/* ─── Role avatars ─── */
+
+.chat-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.role-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  flex-shrink: 0;
+}
+
+.role-avatar.user {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+.role-avatar.assistant {
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 22%, var(--border));
+}
+
+.role-avatar.system {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 22%, var(--border));
+}
+
+/* ─── Code block copy button ─── */
+
+.chat-content pre {
+  position: relative;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  z-index: 2;
+}
+
+.chat-content pre:hover .code-copy-btn {
+  opacity: 1;
+}
+
+.code-copy-btn:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+
+.code-copy-btn.copied {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 32%, var(--border));
+}
+
+/* ─── Thinking → response collapse ─── */
+
+.chat-item.thinking.collapsing {
+  animation: thinkingCollapse 200ms ease forwards;
+  pointer-events: none;
+}
+
+.chat-item.thinking.collapsing::after {
+  animation: none;
+}
+
+/* ─── Success / error flash on completed messages ─── */
+
+.chat-item.success-flash {
+  animation: successFlash 700ms ease forwards;
+}
+
+.chat-item.error-flash {
+  animation: errorShake 400ms ease;
+}
+
+/* ─── Stop button (replaces Send during generation) ─── */
+
+/* Stopping is a different act, so it looks like one. */
+#send-btn.stop-mode {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+}
+
+#send-btn.stop-mode:hover {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+/* ─── Streaming cursor ─── */
+
+.chat-item.streaming .chat-content::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: cursorBlink 1s step-end infinite;
+}
+
+/* ─── Phase indicator inside thinking bubble ─── */
+
+.thinking-phase-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+  font-size: var(--font-sm);
+  line-height: 1;
+}
+
+.thinking-activity {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+  max-height: 48px;
+  overflow: hidden;
+}
+
+.activity-line {
+  font-size: var(--font-xs);
+  color: var(--muted);
+  opacity: 0;
+  animation: activityFadeIn 220ms ease forwards;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-line.stale {
+  opacity: 0.35;
+}
+
+/* ─── Empty state ─── */
+
+/* ─── The landing page ───
+ *
+ * This is the empty state of the one GitPilot tab, so the landing page and
+ * the conversation are the same surface at two moments. It is generous
+ * because it is the first thing anyone sees, and it disappears entirely the
+ * moment there is a transcript to read instead.
+ */
+.chat-empty-state {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  padding: clamp(24px, 7vh, 72px) 16px 24px;
+  text-align: center;
+  animation: homeIn .26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes homeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.home-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.home-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+}
+
+.home-name {
+  font-size: clamp(20px, 2.4vw, 27px);
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  color: var(--fg);
+}
+
+.home-headline {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 38px);
+  font-weight: 700;
+  letter-spacing: -1.1px;
+  line-height: 1.15;
+  color: var(--fg);
+}
+
+.home-subhead {
+  margin: 0;
+  font-size: var(--font-md);
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 46ch;
+}
+
+/* Stated once, quietly, and only while the landing page is on screen. */
+.home-trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: var(--font-xs);
+  color: var(--muted);
+}
+
+.home-trust .trust-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-trust .trust-sep { opacity: 0.45; }
+
+.home-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.home-dot.ok { background: var(--success); }
+.home-dot.bad { background: var(--danger); }
+.home-dot.pending {
+  background: var(--warning);
+  animation: thinkingPulse 1.4s ease-in-out infinite;
+}
+
+/* ─── The landing page's shortcuts, below the composer ─── */
+.home-actions {
+  display: grid;
+  gap: 0;
+  justify-items: center;
+  animation: homeIn .26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.home-actions.hidden { display: none; }
+
+.empty-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/*
+ * Neutral outlines, not accent pills. Four coloured buttons compete with the
+ * send button and turn a landing page into a toolbar; the composer has to
+ * stay the one obvious thing to do.
+ */
+.suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  background: none;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.suggestion-chip svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.suggestion-chip:hover {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+
+.suggestion-chip:active {
+  transform: translateY(0);
+}
+
+/* ─── Approval card ─── */
+
+.approval-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--warning) 6%, transparent), color-mix(in srgb, var(--surface) 100%, transparent));
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.approval-title {
+  font-size: var(--font-md);
+  font-weight: 700;
+}
+
+.approval-risk {
+  font-size: var(--font-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.risk-low { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 20%, var(--border)); }
+.risk-medium { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 20%, var(--border)); }
+.risk-high { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 20%, var(--border)); }
+
+.approval-summary {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.approval-diff {
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval-body {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ─── Tool activity, inline in the transcript ───
+ *
+ * The work GitPilot did is part of the conversation, so it lives in the flow
+ * and stays there once the task is over. Collapsed, it is one quiet line —
+ * "Investigated 4 steps" — because a transcript that reads as prose is worth
+ * more than one that reads as a log. Expanded, every call is still there.
+ */
+.activity-block {
+  padding: 2px 0 2px 13px;
+}
+
+.activity-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.activity-summary:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+}
+
+.activity-caret {
+  font-size: 9px;
+  width: 10px;
+  flex-shrink: 0;
+  transition: transform 140ms ease;
+}
+
+.activity-glyph {
+  font-size: var(--font-xs);
+  width: 13px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.activity-block.running .activity-glyph {
+  color: var(--accent);
+  animation: thinkingPulse 1.3s ease-in-out infinite;
+}
+.activity-block.failed .activity-glyph { color: var(--danger); }
+.activity-block:not(.running):not(.failed) .activity-glyph { color: var(--success); }
+
+.activity-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsed by default: the summary is the answer, the calls are the detail. */
+.activity-block > .activity-list { display: none; }
+.activity-block.open > .activity-list {
+  display: grid;
+  animation: activityFadeIn .16s ease both;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 3px 0 4px;
+  padding: 0 0 0 17px;
+  display: grid;
+  gap: 4px;
+  border-left: 1px solid var(--border);
+}
+
+.activity-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-sm);
+  color: var(--muted);
+  padding: 3px 0;
+}
+
+.activity-icon {
+  font-size: var(--font-xs);
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.activity-item.running .activity-icon { color: var(--accent); }
+.activity-item.completed .activity-icon { color: var(--success); }
+.activity-item.failed .activity-icon { color: var(--danger); }
+
+.activity-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.activity-status {
+  font-size: var(--font-xs);
+  color: var(--muted);
+}
+
+/* ─── Terminal panel ─── */
+
+.terminal-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-height: 280px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.terminal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.terminal-output {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--surface-2) 50%, black);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+}
+
+/* ─── Results bar (tests + diagnostics) ─── */
+
+.results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.test-badge,
+.diag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  border: 1px solid var(--border);
+}
+
+.test-badge.passed {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 20%, var(--border));
+}
+
+.test-badge.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 20%, var(--border));
+}
+
+.test-badge.skipped {
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--muted);
+}
+
+.diag-badge.errors {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 20%, var(--border));
+}
+
+.diag-badge.warnings {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 20%, var(--border));
+}
+
+/* ─── Keyframes ─── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes thinkingPulse {
+  0%, 80%, 100% { opacity: 0.28; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+@keyframes messageIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes thinkingSweep {
+  to {
+    transform: translateX(120%);
+  }
+}
+
+/* ─── Plan approval bar ─── */
+.plan-approval {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.plan-approval__text {
+  margin: 0 0 10px;
+  font-size: var(--font-md);
+  color: var(--muted);
+}
+.plan-approval__actions {
+  display: flex;
+  gap: 8px;
+}
+
+@keyframes thinkingCollapse {
+  to {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: -8px;
+    border-width: 0;
+    overflow: hidden;
+  }
+}
+
+@keyframes successFlash {
+  0%   { border-color: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+  100% { border-color: var(--border);  box-shadow: none; }
+}
+
+@keyframes errorShake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(2px); }
+}
+
+@keyframes cursorBlink {
+  50% { opacity: 0; }
+}
+
+@keyframes activityFadeIn {
+  to { opacity: 0.7; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .header-top,
+  .section-head,
+  .compose-meta,
+  .item-head,
+  .thinking-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .primary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .header-actions,
+  .item-actions {
+    justify-content: flex-start;
+  }
+}

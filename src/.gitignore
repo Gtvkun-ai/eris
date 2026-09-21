@@ -13,6 +13,7 @@ htmlcov/
 venv/
 build/
 dist/
+vscode-extension/out/
 *.egg-info/
 
 # Local configuration and secrets
