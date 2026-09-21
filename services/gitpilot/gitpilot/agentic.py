@@ -644,6 +644,7 @@ async def generate_plan(
                 _map = build_repo_map(
                     owner=owner, repo=repo, branch=active_ref or "HEAD",
                     paths=_all_files,
+                    goal=goal,  # enables goal-aware rich context ranking
                 )
                 if _map.agents_md:
                     context_pack = (context_pack or "") + (
