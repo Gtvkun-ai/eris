@@ -133,7 +133,14 @@ export class GitPilotServerController implements vscode.Disposable {
         // On Windows `gitpilot` is a .exe/.cmd shim that needs the shell to
         // resolve; elsewhere spawning directly avoids quoting surprises.
         shell: process.platform === "win32",
-        env: { ...process.env },
+        // GitPilot's Rich banner contains Unicode symbols. With piped output,
+        // Python may otherwise select the Windows cp1252 stream encoding and
+        // exit before the server starts.
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: "utf-8",
+          PYTHONUTF8: "1",
+        },
       });
     } catch (err) {
       return { ok: false, reason: describeSpawnError(err, this.command) };

@@ -21,6 +21,7 @@ const SUITES = [
   ["Diagnostics", "diagnostics.test.js"],
   ["Error translation", "errorTranslator.test.js"],
   ["LLM request deadlines", "llmTimeout.test.js"],
+  ["Server startup", "serverController.test.js"],
   ["Navigation sidebar", "navView.test.js"],
   ["Landing page", "landing.test.js"],
   ["Session commands", "chatSession.test.js"],

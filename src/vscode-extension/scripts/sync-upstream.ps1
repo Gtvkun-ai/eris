@@ -21,6 +21,16 @@ Copy-Item (Join-Path $Upstream "resources\*") (Join-Path $Destination "resources
 Copy-Item (Join-Path $Upstream "scripts\copy-webview-assets.js") (Join-Path $Destination "scripts\copy-webview-assets.js") -Force
 Copy-Item (Join-Path $Upstream "tsconfig.json") (Join-Path $Destination "tsconfig.json") -Force
 Copy-Item (Join-Path $Upstream ".vscodeignore") (Join-Path $Destination ".vscodeignore") -Force
+$VsCodeIgnore = Join-Path $Destination ".vscodeignore"
+$VsCodeIgnoreLines = @(Get-Content -LiteralPath $VsCodeIgnore)
+if ($VsCodeIgnoreLines -notcontains "eris/**") {
+  $VsCodeIgnoreText = [System.IO.File]::ReadAllText($VsCodeIgnore).TrimEnd("`r", "`n")
+  [System.IO.File]::WriteAllText(
+    $VsCodeIgnore,
+    $VsCodeIgnoreText + [Environment]::NewLine + "eris/**" + [Environment]::NewLine,
+    [System.Text.UTF8Encoding]::new($false)
+  )
+}
 New-Item -ItemType Directory -Force (Join-Path $Destination "src\eris") | Out-Null
 Get-ChildItem -LiteralPath $ErisAdapter -Filter "*.ts" -File | Copy-Item -Destination (Join-Path $Destination "src\eris") -Force
 

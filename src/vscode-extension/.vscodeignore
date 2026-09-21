@@ -2,7 +2,6 @@
 .vscode-test/**
 # Test suites are for developing the extension, not for shipping to users.
 test/**
-eris/**
 src/**
 !src/**/*.d.ts
 !src/ui/webview/gitpilotWorkspaceTemplate.html
@@ -20,3 +19,4 @@ node_modules/**
 **/*.copy.ts
 **/*.backup.ts
 **/*.bak.ts
+eris/**
