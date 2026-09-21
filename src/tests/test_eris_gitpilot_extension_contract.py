@@ -1,4 +1,5 @@
 import json
+import zipfile
 from pathlib import Path
 
 
@@ -38,3 +39,14 @@ def test_old_eris_adapter_is_not_the_active_entrypoint():
     assert manifest["main"] != "./dist/extension.js"
     assert not (EXT / "src" / "chatPanel.ts").is_file()
     assert not (EXT / "src" / "gitPilotClient.ts").is_file()
+
+
+def test_vsix_contains_native_out_and_resources():
+    vsix_files = sorted(EXT.glob("eris-code-*.vsix"))
+    assert vsix_files, "a packaged Eris VSIX is required for this contract"
+    with zipfile.ZipFile(vsix_files[-1]) as archive:
+        names = set(archive.namelist())
+    assert "extension/package.json" in names
+    assert "extension/out/extension.js" in names
+    assert "extension/out/ui/webview/gitpilotWorkspaceTemplate.html" in names
+    assert "extension/resources/icon.svg" in names

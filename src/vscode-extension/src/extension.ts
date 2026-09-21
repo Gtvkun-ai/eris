@@ -1,5 +1,5 @@
 /**
- * GitPilot VS Code Extension — Main Entry Point
+ * GitPilot VS Code Extension â€” Main Entry Point
  *
  * Production-ready activation flow with:
  * - stable command registration for Quick Actions
@@ -332,9 +332,9 @@ export function activate(context: vscode.ExtensionContext): void {
   /**
    * Mirror the editor selection into the composer.
    *
-   * A single-line caret is not a selection worth attaching — pushing
+   * A single-line caret is not a selection worth attaching â€” pushing
    * "user.ts:42" on every cursor move would make the chip flicker for no
-   * benefit — so only a real range counts. The body travels with it, capped,
+   * benefit â€” so only a real range counts. The body travels with it, capped,
    * so the model sees the code rather than a coordinate.
    */
   const SELECTION_TEXT_LIMIT = 4000;
@@ -358,7 +358,7 @@ export function activate(context: vscode.ExtensionContext): void {
         range: start === end ? `${start}` : `${start}-${end}`,
         text:
           text.length > SELECTION_TEXT_LIMIT
-            ? `${text.slice(0, SELECTION_TEXT_LIMIT)}\n… (${text.length - SELECTION_TEXT_LIMIT} more characters)`
+            ? `${text.slice(0, SELECTION_TEXT_LIMIT)}\nâ€¦ (${text.length - SELECTION_TEXT_LIMIT} more characters)`
             : text,
       },
     });
@@ -1056,12 +1056,12 @@ export function activate(context: vscode.ExtensionContext): void {
     // click on WSL where /api/status takes 10+ seconds.
     if (!state.readiness.canChat) {
       output.appendLine(
-        "[GitPilot] Chat not ready yet — waiting for status refresh..."
+        "[GitPilot] Chat not ready yet â€” waiting for status refresh..."
       );
       try {
         await vscode.commands.executeCommand("gitpilot.refreshStatus");
       } catch {
-        // ignore — readiness will be re-evaluated below
+        // ignore â€” readiness will be re-evaluated below
       }
     }
 
@@ -1153,7 +1153,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const picked = await vscode.window.showQuickPick(choices, {
-      placeHolder: "GitPilot Setup Wizard — choose the next step",
+      placeHolder: "GitPilot Setup Wizard â€” choose the next step",
       title: "GitPilot Setup Wizard",
       matchOnDescription: true,
     });
@@ -1172,7 +1172,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  // ── V2 streaming support (additive) ──────────────────────────────────
+  // â”€â”€ V2 streaming support (additive) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // AbortController for the current SSE stream. Allows CANCEL_TASK to
   // terminate a running agent request immediately.
   let activeStreamAbort: AbortController | null = null;
@@ -1196,13 +1196,13 @@ export function activate(context: vscode.ExtensionContext): void {
     // three different failures all returned a bare `null` and the log said
     // only "streaming unavailable". Each one now names itself, with the
     // event tally that distinguishes "server refused" from "server answered
-    // with nothing" — which are the same value here and completely
+    // with nothing" â€” which are the same value here and completely
     // different problems.
     const startedAt = Date.now();
     const seen: Record<string, number> = {};
     const elapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
     output.appendLine(
-      `[GitPilot] stream → POST /api/v2/chat/stream session=${sessionId} intent=${intent ?? "none"} chars=${message.length}`
+      `[GitPilot] stream â†’ POST /api/v2/chat/stream session=${sessionId} intent=${intent ?? "none"} chars=${message.length}`
     );
 
     let res: Response;
@@ -1218,16 +1218,16 @@ export function activate(context: vscode.ExtensionContext): void {
         signal,
       });
     } catch (err: unknown) {
-      // Server doesn't support v2 or network error — fall back
+      // Server doesn't support v2 or network error â€” fall back
       output.appendLine(
-        `[GitPilot] stream ✗ unreachable after ${elapsed()} (${err instanceof Error ? err.message : String(err)}) → batch`
+        `[GitPilot] stream âœ— unreachable after ${elapsed()} (${err instanceof Error ? err.message : String(err)}) â†’ batch`
       );
       return null;
     }
 
     if (!res.ok || !res.body) {
       output.appendLine(
-        `[GitPilot] stream ✗ HTTP ${res.status}${res.body ? "" : " (no body)"} after ${elapsed()} → batch`
+        `[GitPilot] stream âœ— HTTP ${res.status}${res.body ? "" : " (no body)"} after ${elapsed()} â†’ batch`
       );
       return null;
     }
@@ -1394,20 +1394,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (!fullText) {
       // An empty stream is the backend's way of saying "this session is not
-      // one I can plan for — use the batch endpoint". It is a normal
+      // one I can plan for â€” use the batch endpoint". It is a normal
       // handover for folder-only sessions, not a fault, so it is logged as
       // a route rather than an error. The tally is what tells the two apart
       // when it is a fault: `done=1` alone is the handover, whereas a
       // `status_change` run that produced no text is a real failure to
       // generate.
       output.appendLine(
-        `[GitPilot] stream → empty after ${elapsed()} (${tally}); backend handed off → batch`
+        `[GitPilot] stream â†’ empty after ${elapsed()} (${tally}); backend handed off â†’ batch`
       );
       return null;
     }
 
     output.appendLine(
-      `[GitPilot] stream ✓ ${fullText.length} chars in ${elapsed()} (${tally})`
+      `[GitPilot] stream âœ“ ${fullText.length} chars in ${elapsed()} (${tally})`
     );
     return fullText;
   };
@@ -1476,7 +1476,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const topologyId =
         workflowMode && workflowMode !== "auto" ? workflowMode : undefined;
 
-      // ── Try V2 SSE streaming first, fall back to batch ──
+      // â”€â”€ Try V2 SSE streaming first, fall back to batch â”€â”€
       const serverUrl = client.serverUrl;
       const streamedText = await sendChatStreaming(
         serverUrl,
@@ -1486,7 +1486,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
 
       if (streamedText !== null) {
-        // Streaming succeeded — finalize state
+        // Streaming succeeded â€” finalize state
         const assistantMessage: ChatMessageState = {
           id: `assistant:${Date.now()}`,
           role: "assistant",
@@ -1505,7 +1505,7 @@ export function activate(context: vscode.ExtensionContext): void {
           `[GitPilot] Streamed response received (${streamedText.length} chars). intent=${intent} session=${sessionId}`
         );
       } else {
-        // Streaming produced nothing — the real answer comes from the batch
+        // Streaming produced nothing â€” the real answer comes from the batch
         // endpoint. Keep the thinking state up for it: this call is the slow
         // one, routinely 20-40s against a local model.
         //
@@ -1514,7 +1514,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // premature completion. It stays explicit because the stream may
         // still have advanced the status to "planning" before handing off.
         const batchStartedAt = Date.now();
-        output.appendLine("[GitPilot] batch → POST /api/chat/send");
+        output.appendLine("[GitPilot] batch â†’ POST /api/chat/send");
 
         stateStore.updateActiveTask({
           ...(stateStore.state.activeTask || {}),
@@ -1571,7 +1571,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
 
         output.appendLine(
-          `[GitPilot] batch ✓ ${(response.answer || "").length} chars in ` +
+          `[GitPilot] batch âœ“ ${(response.answer || "").length} chars in ` +
             `${((Date.now() - batchStartedAt) / 1000).toFixed(1)}s ` +
             `(plan=${normalizedPlan ? "yes" : "no"} edits=${responseEdits.length}) ` +
             `intent=${intent} session=${sessionId}`
@@ -1749,7 +1749,7 @@ export function activate(context: vscode.ExtensionContext): void {
             }
             const picked = await vscode.window.showQuickPick(files, {
               title: "Attach a file to the context",
-              placeHolder: "Type to filter…",
+              placeHolder: "Type to filterâ€¦",
             });
             if (picked) {
               postMessageToPanel({
@@ -1910,7 +1910,7 @@ export function activate(context: vscode.ExtensionContext): void {
             await vscode.commands.executeCommand("gitpilot.regenerateTaskPlan");
             return;
 
-          // ── V2 streaming messages ──
+          // â”€â”€ V2 streaming messages â”€â”€
           case "TOOL_APPROVAL_RESPONSE": {
             const { id: approvalId, approved, scope } = msg.payload;
             output.appendLine(
@@ -1950,7 +1950,7 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
 
           case "NEW_SESSION": {
-            output.appendLine("[GitPilot] New session requested — clearing state");
+            output.appendLine("[GitPilot] New session requested â€” clearing state");
             // Cancel any active stream
             if (activeStreamAbort) {
               activeStreamAbort.abort();
@@ -1963,13 +1963,13 @@ export function activate(context: vscode.ExtensionContext): void {
             }
             // Force a fresh session on the backend for the next message
             stateStore.updateSession({ sessionId: "", status: "idle" });
-            // Notify webview — STATE_SYNC will fire via onDidChangeState
+            // Notify webview â€” STATE_SYNC will fire via onDidChangeState
             output.appendLine("[GitPilot] State cleared, ready for new chat");
             return;
           }
 
           case "APPROVE_PLAN": {
-            output.appendLine("[GitPilot] Plan approved by user — executing");
+            output.appendLine("[GitPilot] Plan approved by user â€” executing");
             // The plan is already stored in stateStore.activeTask.plan
             // Trigger execution by sending the plan to the executor
             const plan = stateStore.state.activeTask?.plan;
@@ -2025,7 +2025,7 @@ export function activate(context: vscode.ExtensionContext): void {
   /**
    * The editor is the product surface, and there is exactly one of it.
    *
-   * Empty, the tab is GitPilot Home — brand, "What are we building?", one
+   * Empty, the tab is GitPilot Home â€” brand, "What are we building?", one
    * composer. Send a message and the same tab is the conversation. Two
    * surfaces each with their own composer only ever raised the question of
    * which one was real.
@@ -2107,7 +2107,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerMcpGatewayCommands(context, new McpGatewayClient(client));
   registerSessionCommands(context, stateStore, sessionCoordinator);
   registerChatCommandsV2(context, stateStore, chatClientV2);
-  // Phase 1–4 backend feature commands (doctor, wizard, runbooks, flags).
+  // Phase 1â€“4 backend feature commands (doctor, wizard, runbooks, flags).
   registerPhase4Commands(context);
 
   registerCommand("gitpilot.showAgentFlow", () => {
@@ -2228,7 +2228,7 @@ export function activate(context: vscode.ExtensionContext): void {
    *
    * GitPilot snapshots before every mutating tool call, so this is the undo
    * that makes Agent mode a choice rather than a one-way door. Both halves go
-   * back together — restoring files under a transcript that still describes
+   * back together â€” restoring files under a transcript that still describes
    * the work would leave the model reasoning about edits that no longer exist.
    */
   const rewindToCheckpoint = async (checkpoint: Checkpoint): Promise<void> => {
@@ -2277,7 +2277,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  /** "2:34 PM" today, otherwise a short date — same rule as the sidebar. */
+  /** "2:34 PM" today, otherwise a short date â€” same rule as the sidebar. */
   const checkpointWhen = (iso: string): string => {
     const then = new Date(iso);
     if (Number.isNaN(then.getTime())) {
@@ -2319,8 +2319,8 @@ export function activate(context: vscode.ExtensionContext): void {
         label: cp.description || cp.tool_name,
         description: checkpointWhen(cp.timestamp),
         detail: cp.has_files
-          ? `Restores files · rewinds to message ${cp.message_index}`
-          : "Conversation only — the workspace was too large to snapshot",
+          ? `Restores files Â· rewinds to message ${cp.message_index}`
+          : "Conversation only â€” the workspace was too large to snapshot",
         checkpoint: cp,
       })),
       { title: "Rewind GitPilot", placeHolder: "Pick a point to go back to" }
@@ -2340,7 +2340,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Undo the last thing GitPilot changed.
    *
    * The Revert button has been in the chat panel all along, wired to a command
-   * that was never registered — so it silently did nothing. With checkpoints
+   * that was never registered â€” so it silently did nothing. With checkpoints
    * it has an honest meaning: go back to the snapshot taken before the most
    * recent change.
    */
@@ -2379,7 +2379,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const latest = checkpoints.find((cp) => cp.has_files) || checkpoints[0];
     if (!latest) {
       vscode.window.showInformationMessage(
-        "No checkpoint to revert to — GitPilot has not changed anything in this session."
+        "No checkpoint to revert to â€” GitPilot has not changed anything in this session."
       );
       return;
     }
@@ -2392,7 +2392,7 @@ export function activate(context: vscode.ExtensionContext): void {
    *
    * "Approve & Execute" dispatched this command, which nobody had registered.
    * The `catch` around the dispatch logged "delegated to active stream" and
-   * moved on — so the task sat at `generating` while nothing executed. There
+   * moved on â€” so the task sat at `generating` while nothing executed. There
    * is no other stream to delegate to; the approval *is* the trigger.
    */
   registerCommand("gitpilot.executeApprovedPlan", async () => {
@@ -2491,7 +2491,7 @@ export function activate(context: vscode.ExtensionContext): void {
   if (config.autoConnect) {
     // Connecting once and giving up was the whole procedure. Now a server
     // that is merely slow to start gets waited for, and one that is not
-    // running yet is watched for — so starting `gitpilot serve` in a terminal
+    // running yet is watched for â€” so starting `gitpilot serve` in a terminal
     // is enough on its own, with no trip back here to click Reconnect.
     // The listener is registered before connect() resolves, so it would also
     // see the first success. One bootstrap per arrival, not two.
@@ -2554,7 +2554,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       clearProjectCaches();
 
-      // ── Project isolation: when the workspace folder changes,
+      // â”€â”€ Project isolation: when the workspace folder changes,
       // clear the chat and session so the new project starts fresh.
       // Without this, chat messages from the previous project
       // persist and confuse the user.
@@ -2564,7 +2564,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       stateStore.updateSession({ sessionId: "", status: "idle" });
       output.appendLine(
-        `[GitPilot] Workspace changed to "${info.folderName || "(none)"}" — session reset for project isolation`
+        `[GitPilot] Workspace changed to "${info.folderName || "(none)"}" â€” session reset for project isolation`
       );
 
       if (info.folderPath) {
@@ -2614,7 +2614,7 @@ export function activate(context: vscode.ExtensionContext): void {
    *
    * The landing page is the product's front door, but a front door that opens
    * on top of the file someone was reading is an interruption. So it appears
-   * on a fresh window and stays out of the way otherwise — the sidebar's
+   * on a fresh window and stays out of the way otherwise â€” the sidebar's
    * New Task and the command palette are always there.
    */
   const editorIsEmpty = vscode.window.tabGroups.all.every(
