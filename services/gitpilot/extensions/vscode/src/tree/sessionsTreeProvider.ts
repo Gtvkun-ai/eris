@@ -33,9 +33,9 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<SessionTree
                 return [new SessionTreeItem('No sessions yet', '', 'empty', 'info')];
             }
             return sessions.map(s => new SessionTreeItem(
-                s.title || `${s.repo_owner}/${s.repo_name}`,
+                sessionLabel(s),
                 s.id,
-                s.status,
+                s.status || 'active',
                 'session',
                 s,
             ));
@@ -67,7 +67,7 @@ export class SessionTreeItem extends vscode.TreeItem {
         };
         this.iconPath = new vscode.ThemeIcon(icons[status] || 'circle-outline');
         this.description = `${session?.message_count || 0} msgs · ${status}`;
-        this.tooltip = `Session: ${sessionId}\nRepo: ${session?.repo_owner}/${session?.repo_name}\nStatus: ${status}\nMessages: ${session?.message_count || 0}`;
+        this.tooltip = `Session: ${sessionId}\nRepo: ${sessionRepo(session)}\nStatus: ${status}\nMessages: ${session?.message_count || 0}`;
         this.contextValue = 'session';
 
         this.command = {
@@ -76,4 +76,23 @@ export class SessionTreeItem extends vscode.TreeItem {
             arguments: [sessionId],
         };
     }
+}
+
+function sessionLabel(session: SessionInfo): string {
+    return (
+        session.title ||
+        session.name ||
+        session.repo ||
+        joinedRepo(session) ||
+        (session.branch ? `Local Git (${session.branch})` : 'Untitled session')
+    );
+}
+
+function sessionRepo(session?: SessionInfo): string {
+    if (!session) { return 'Unknown'; }
+    return session.repo || joinedRepo(session) || (session.branch ? `Local branch: ${session.branch}` : 'Local workspace');
+}
+
+function joinedRepo(session: SessionInfo): string {
+    return session.repo_owner && session.repo_name ? `${session.repo_owner}/${session.repo_name}` : '';
 }

@@ -42,10 +42,152 @@ OPENWEBUI_DEFAULT_BASE_URL = "http://localhost:3000"
 #: Open WebUI serves its OpenAI-compatible surface under ``/api``, not ``/v1``.
 OPENWEBUI_API_SUFFIX = "/api"
 
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})
 
 #: Suffixes that already identify an OpenAI-compatible API root.
 _API_ROOT_SUFFIXES = ("/v1", "/api/v1", "/api", "/openai/v1")
+
+
+def _non_empty(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        text = _non_empty(value)
+        if text:
+            return text
+    return ""
+
+
+def _env_enabled(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _project_root_candidate() -> Path:
+    # services/gitpilot/gitpilot/settings.py -> repository root.
+    return Path(__file__).resolve().parents[3]
+
+
+def _eris_secrets_candidates() -> list[Path]:
+    raw_paths = [
+        os.getenv("GITPILOT_ERIS_SECRETS_FILE", ""),
+        str(Path(os.getenv("ERIS_PROJECT_ROOT", "")) / "config" / "secrets.json")
+        if os.getenv("ERIS_PROJECT_ROOT")
+        else "",
+        str(Path.cwd() / "config" / "secrets.json"),
+        str(_project_root_candidate() / "config" / "secrets.json"),
+    ]
+
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    for raw in raw_paths:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text("utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _lookup_secret(payload: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = _non_empty(os.getenv(name))
+        if value:
+            return value
+
+    for name in names:
+        value = _non_empty(payload.get(name))
+        if value:
+            return value
+
+    for section_name in ("api_keys", "env", "secrets"):
+        section = _dict(payload.get(section_name))
+        for name in names:
+            value = _non_empty(section.get(name))
+            if value:
+                return value
+
+    return ""
+
+
+def _provider_profile(payload: dict[str, Any], provider: str, slot: str) -> dict[str, Any]:
+    provider_payload = _dict(_dict(payload.get("providers")).get(provider))
+    if not provider_payload:
+        return {}
+
+    selected = _dict(provider_payload.get(slot)) or _dict(provider_payload.get("default"))
+    if selected:
+        return selected
+
+    if any(key in provider_payload for key in ("base_url", "model", "model_name", "api_key")):
+        return provider_payload
+    return {}
+
+
+def _load_eris_deepseek_defaults() -> dict[str, str]:
+    """Read Eris' existing DeepSeek credentials as a GitPilot custom endpoint.
+
+    Eris stores its primary model credentials in ``config/secrets.json``. The
+    VS Code GitPilot backend is a separate service, so without this bridge it
+    falls back to the local OllaBridge default even when DeepSeek is already
+    configured for the rest of the app.
+    """
+    if _env_enabled("GITPILOT_DISABLE_ERIS_DEEPSEEK"):
+        return {}
+
+    slot = os.getenv("GITPILOT_ERIS_DEEPSEEK_SLOT", "default").strip() or "default"
+    for path in _eris_secrets_candidates():
+        payload = _read_json_object(path)
+        if not payload:
+            continue
+
+        profile = _provider_profile(payload, "deepseek", slot)
+        api_key = _first_non_empty(
+            os.getenv("GITPILOT_DEEPSEEK_API_KEY"),
+            _lookup_secret(payload, "ERIS_REMOTE_API_KEY", "DEEPSEEK_API_KEY"),
+            profile.get("api_key"),
+        )
+        if not api_key:
+            continue
+
+        base_url = _first_non_empty(
+            os.getenv("GITPILOT_DEEPSEEK_BASE_URL"),
+            profile.get("base_url"),
+            _lookup_secret(payload, "ERIS_REMOTE_BASE_URL"),
+            DEEPSEEK_DEFAULT_BASE_URL,
+        )
+        model = _first_non_empty(
+            os.getenv("GITPILOT_DEEPSEEK_MODEL"),
+            profile.get("model"),
+            profile.get("model_name"),
+            _lookup_secret(payload, "ERIS_REMOTE_MODEL", "DEEPSEEK_MODEL"),
+            DEEPSEEK_DEFAULT_MODEL,
+        )
+        if base_url and model:
+            return {"base_url": base_url, "model": model, "api_key": api_key}
+
+    return {}
 
 
 def openai_compatible_api_base(url: str, suffix: str = "/v1") -> str:
@@ -314,6 +456,13 @@ class AppSettings(BaseModel):
         if os.getenv("GITPILOT_CUSTOM_MODEL"):
             settings.custom.model = os.getenv("GITPILOT_CUSTOM_MODEL", "")
 
+        custom_was_explicit = bool(
+            settings.custom.base_url or settings.custom.model or settings.custom.api_key
+        )
+        eris_deepseek = _load_eris_deepseek_defaults()
+        if eris_deepseek and not custom_was_explicit:
+            settings.custom = CustomEndpointConfig(**eris_deepseek)
+
         # Installs created before the default moved off port 8000 carry a
         # base URL that loops straight back to GitPilot's own backend.  Repair
         # it once, here, rather than letting every model lookup fail.
@@ -364,6 +513,8 @@ class AppSettings(BaseModel):
             if env_provider:
                 with contextlib.suppress(ValueError):
                     settings.provider = LLMProvider(env_provider.lower())
+            elif settings.custom.base_url and settings.custom.model:
+                settings.provider = LLMProvider.custom
 
             if os.getenv("GITPILOT_OPENAI_MODEL"):
                 settings.openai.model = os.getenv("GITPILOT_OPENAI_MODEL", settings.openai.model)

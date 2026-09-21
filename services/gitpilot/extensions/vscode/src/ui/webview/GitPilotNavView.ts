@@ -33,6 +33,8 @@ interface NavState {
   canStartLocally: boolean;
   detail?: string;
   model?: string;
+  providerHealth?: "ok" | "warning" | "error" | "unknown";
+  providerWarning?: string;
   repo?: string;
   branch?: string;
   sessions: SessionListItem[];
@@ -115,6 +117,8 @@ export class GitPilotNavView implements vscode.WebviewViewProvider {
       canStartLocally: this.deps.serverController.isLocalUrl(),
       detail: connected ? this.detail : this.offlineReason(),
       model: s.provider?.model,
+      providerHealth: s.provider?.health,
+      providerWarning: s.provider?.warning,
       repo: s.projectContextSummary?.repoName || s.workspace?.folderName,
       branch: s.workspace?.git?.branch,
       sessions: this.sessions,

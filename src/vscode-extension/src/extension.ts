@@ -1082,6 +1082,82 @@ export function activate(context: vscode.ExtensionContext): void {
     return stateStore.state.session.sessionId;
   };
 
+  const resolveChatReadinessBlocker = async (): Promise<
+    | {
+        code: string;
+        title: string;
+        message: string;
+        recoverable?: boolean;
+      }
+    | undefined
+  > => {
+    const needsRefresh = (): boolean => {
+      const state = stateStore.state;
+      return (
+        !state.workspace.folderOpen ||
+        !state.server.connected ||
+        !state.provider.configured ||
+        !state.provider.model ||
+        state.provider.health === "error" ||
+        state.provider.modelsAvailable === false
+      );
+    };
+
+    if (needsRefresh()) {
+      try {
+        await vscode.commands.executeCommand("gitpilot.refreshStatus");
+      } catch (error: unknown) {
+        appendOutputError("[GitPilot] Readiness refresh before chat failed", error);
+      }
+    }
+
+    const state = stateStore.state;
+
+    if (!state.workspace.folderOpen) {
+      return {
+        code: "WORKSPACE_NOT_OPEN",
+        title: "Open a folder first",
+        message: "GitPilot needs a workspace folder before it can answer.",
+      };
+    }
+
+    if (!state.server.connected) {
+      return {
+        code: "SERVER_NOT_CONNECTED",
+        title: "GitPilot server is offline",
+        message: "Start or reconnect the GitPilot server, then send the message again.",
+      };
+    }
+
+    if (!state.provider.configured) {
+      return {
+        code: "PROVIDER_NOT_CONFIGURED",
+        title: "AI provider is not configured",
+        message: "Choose a provider and model in Settings before starting a chat.",
+      };
+    }
+
+    if (!state.provider.model) {
+      return {
+        code: "PROVIDER_MODEL_MISSING",
+        title: "No model selected",
+        message: "Select a model in GitPilot Settings before starting a chat.",
+      };
+    }
+
+    if (state.provider.health === "error" || state.provider.modelsAvailable === false) {
+      return {
+        code: "PROVIDER_CONNECTION_FAILED",
+        title: "Provider connection failed",
+        message:
+          state.provider.warning ||
+          "GitPilot could not verify the configured provider. Check the provider settings and try again.",
+      };
+    }
+
+    return undefined;
+  };
+
   const runSetupWizard = async (): Promise<void> => {
     const workspaceRoot = currentWorkspaceRoot();
     const repoRoot = findGitRoot(workspaceRoot);
@@ -1236,6 +1312,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const decoder = new TextDecoder();
     let fullText = "";
     let buffer = "";
+    let streamError: string | undefined;
 
     try {
       while (true) {
@@ -1366,12 +1443,13 @@ export function activate(context: vscode.ExtensionContext): void {
               payload: { usage: (event.usage || {}) as any },
             } as ExtensionToWebviewMessage);
           } else if (type === "error") {
+            streamError = String(event.error || "Unknown error");
             postMessageToPanel({
               type: "ERROR",
               payload: {
                 code: "AGENT_ERROR",
                 title: "Agent Error",
-                message: String(event.error || "Unknown error"),
+                message: streamError,
                 recoverable: Boolean(event.recoverable ?? true),
               },
             } as ExtensionToWebviewMessage);
@@ -1391,6 +1469,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const tally = Object.entries(seen)
       .map(([k, v]) => `${k}=${v}`)
       .join(" ") || "no events";
+
+    if (streamError) {
+      output.appendLine(
+        `[GitPilot] stream âœ— backend error after ${elapsed()} (${streamError})`
+      );
+      throw new Error(streamError);
+    }
 
     if (!fullText) {
       // An empty stream is the backend's way of saying "this session is not
@@ -1412,9 +1497,27 @@ export function activate(context: vscode.ExtensionContext): void {
     return fullText;
   };
 
+  const shouldUseStreamingForIntent = (intent: string): boolean =>
+    intent !== "general";
+
   const sendChatToBackend = async (rawText: string): Promise<void> => {
     const text = rawText.trim();
     if (!text) {
+      return;
+    }
+
+    const { intent, cleanMessage } = detectIntent(text);
+    const readinessBlock = await resolveChatReadinessBlocker();
+    if (readinessBlock) {
+      output.appendLine(
+        `[GitPilot] Chat blocked before model request: ${readinessBlock.code}`
+      );
+      stateStore.updateActiveTask({
+        ...(stateStore.state.activeTask || {}),
+        status: "idle",
+        error: undefined,
+      });
+      postErrorToPanel(readinessBlock);
       return;
     }
 
@@ -1459,7 +1562,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     try {
-      const { intent, cleanMessage } = detectIntent(text);
       const normalizedMessage = cleanMessage || text;
       const intentPrefix = buildIntentPrefix(intent);
 
@@ -1478,12 +1580,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // â”€â”€ Try V2 SSE streaming first, fall back to batch â”€â”€
       const serverUrl = client.serverUrl;
-      const streamedText = await sendChatStreaming(
-        serverUrl,
-        sessionId,
-        enrichedMessage,
-        intent
-      );
+      let streamedText: string | null = null;
+      if (shouldUseStreamingForIntent(intent)) {
+        streamedText = await sendChatStreaming(
+          serverUrl,
+          sessionId,
+          enrichedMessage,
+          intent
+        );
+      } else {
+        output.appendLine("[GitPilot] stream skipped for general chat -> batch");
+      }
 
       if (streamedText !== null) {
         // Streaming succeeded â€” finalize state

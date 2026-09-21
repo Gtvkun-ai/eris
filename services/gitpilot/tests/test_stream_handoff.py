@@ -67,6 +67,28 @@ async def test_local_session_uses_local_team_instead_of_batch_fallback(tmp_path,
 
 
 @pytest.mark.anyio
+async def test_local_team_failure_emits_error_instead_of_hanging_stream(tmp_path, monkeypatch):
+    bus = _RecordingBus()
+    executor = StreamingAgentExecutor(bus=bus, gate=object(), workspace=_workspace(tmp_path))
+
+    async def broken_local_team(*, user_message: str, mode: str, topology_id: str):
+        raise RuntimeError("Crew execution failed")
+
+    monkeypatch.setattr(executor, "_execute_local_team", broken_local_team)
+
+    result = await executor.execute(
+        user_message="xin chao",
+        repo_full_name="",
+        topology_id="feature_builder",
+    )
+
+    assert result is None
+    assert EventType.ERROR.value in bus.types()
+    assert "Crew execution failed" in bus.events[-1].data["error"]
+    assert EventType.DONE.value not in bus.types()
+
+
+@pytest.mark.anyio
 async def test_repo_less_session_without_workspace_fails_clearly():
     bus = _RecordingBus()
     executor = StreamingAgentExecutor(bus=bus, gate=object(), workspace=None)

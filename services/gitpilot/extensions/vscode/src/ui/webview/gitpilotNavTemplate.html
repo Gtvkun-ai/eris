@@ -577,6 +577,13 @@
           reason: "No provider configured",
         };
       }
+      if (s.providerHealth && s.providerHealth !== "ok") {
+        return {
+          label: "Needs setup",
+          tone: "warn",
+          reason: s.providerWarning || "Provider connection not verified",
+        };
+      }
       return { label: "Ready", tone: "ok" };
     }
 

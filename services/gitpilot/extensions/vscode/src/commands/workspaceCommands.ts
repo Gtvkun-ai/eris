@@ -45,7 +45,11 @@ export function registerWorkspaceCommands(
             providerName: status.provider.name,
             source: status.provider.source,
             model: status.provider.model,
+            baseUrl: status.provider.base_url,
+            connectionType: status.provider.connection_type,
             health: status.provider.health,
+            modelsAvailable: status.provider.models_available,
+            warning: status.provider.warning,
           });
           stateStore.updateGithub({
             connected: status.github.connected,

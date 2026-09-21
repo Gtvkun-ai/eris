@@ -188,13 +188,16 @@ export interface ChatExecuteResponse {
 
 export interface SessionInfo {
     id: string;
-    repo_owner: string;
-    repo_name: string;
+    repo_owner?: string;
+    repo_name?: string;
+    repo?: string | null;
+    branch?: string | null;
+    name?: string;
+    title?: string;
     status: string;
     created_at: string;
     updated_at: string;
     message_count: number;
-    title?: string;
 }
 
 export interface SkillInfo {

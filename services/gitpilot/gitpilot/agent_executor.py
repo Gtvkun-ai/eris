@@ -95,14 +95,19 @@ class StreamingAgentExecutor:
         # GitPilot để chạy Explorer → Planner → Coder → Reviewer. GitHub path
         # cũ vẫn được giữ nguyên phía dưới để patch upstream luôn hẹp.
         if not self._is_valid_repo_full_name(repo_full_name):
-            if self._workspace is None:
-                await self._bus.emit(evt.agent_error(
-                    "Local session has no workspace; cannot run GitPilot coding team"
-                ))
+            try:
+                if self._workspace is None:
+                    await self._bus.emit(evt.agent_error(
+                        "Local session has no workspace; cannot run GitPilot coding team"
+                    ))
+                    return None
+                return await self._execute_local_team(
+                    user_message=user_message, mode=mode, topology_id=topology_id
+                )
+            except Exception as e:
+                logger.error("StreamingAgentExecutor local team error: %s", e, exc_info=True)
+                await self._bus.emit(evt.agent_error(str(e)))
                 return None
-            return await self._execute_local_team(
-                user_message=user_message, mode=mode, topology_id=topology_id
-            )
 
         try:
             # ── Phase 1: Plan ──

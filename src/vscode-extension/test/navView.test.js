@@ -48,6 +48,7 @@ const STATE = {
   connecting: false,
   canStartLocally: true,
   model: "llama3:8b",
+  providerHealth: "ok",
   repo: "gitpilot",
   branch: "develop/ai-provider",
   activeSessionId: "s1",
@@ -124,6 +125,23 @@ test("reachable but unconfigured is Needs setup, not Ready", async () => {
   assert.ok($("#status-dot").classList.contains("warn"));
   assert.ok($("#btn-model").classList.contains("hidden"),
     "there is no model to change");
+});
+
+test("reachable but unverified provider is Needs setup, not Ready", async () => {
+  toHost({
+    type: "NAV_STATE",
+    state: {
+      ...STATE,
+      providerHealth: "unknown",
+      providerWarning: "OllaBridge gateway is not reachable",
+    },
+  });
+  await flush();
+
+  assert.strictEqual($("#status-text").textContent, "Needs setup");
+  assert.strictEqual($("#status-reason").textContent, "OllaBridge gateway is not reachable");
+  assert.ok($("#status-dot").classList.contains("warn"));
+  assert.strictEqual($("#model-name").textContent, "llama3:8b");
 });
 
 test("the sidebar never contradicts itself", async () => {

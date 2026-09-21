@@ -18,6 +18,7 @@ from gitpilot.settings import (
     OLLABRIDGE_DEFAULT_BASE_URL,
     OPENWEBUI_API_SUFFIX,
     AppSettings,
+    CustomEndpointConfig,
     LLMProvider,
     OllaBridgeConfig,
     openai_compatible_api_base,
@@ -182,6 +183,155 @@ def test_a_legacy_self_referential_url_is_repaired_on_load(monkeypatch, tmp_path
     loaded = AppSettings.from_disk()
 
     assert loaded.ollabridge.base_url == OLLABRIDGE_DEFAULT_BASE_URL
+
+
+def test_eris_deepseek_secrets_bootstrap_custom_provider(monkeypatch, tmp_path):
+    """An Eris checkout already has DeepSeek credentials in config/secrets.json."""
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(
+        """
+        {
+          "api_keys": {
+            "DEEPSEEK_API_KEY": "sk-from-eris-secrets"
+          },
+          "providers": {
+            "deepseek": {
+              "default": {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash"
+              }
+            }
+          }
+        }
+        """,
+        "utf-8",
+    )
+    monkeypatch.setattr(settings_mod, "CONFIG_DIR", tmp_path / "gitpilot")
+    monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "gitpilot" / "settings.json")
+    monkeypatch.setenv("GITPILOT_ERIS_SECRETS_FILE", str(secrets))
+    monkeypatch.delenv("GITPILOT_PROVIDER", raising=False)
+    monkeypatch.delenv("GITPILOT_CUSTOM_BASE_URL", raising=False)
+    monkeypatch.delenv("GITPILOT_CUSTOM_API_KEY", raising=False)
+    monkeypatch.delenv("GITPILOT_CUSTOM_MODEL", raising=False)
+
+    loaded = AppSettings.from_disk()
+
+    assert loaded.provider == LLMProvider.custom
+    assert loaded.custom.base_url == "https://api.deepseek.com"
+    assert loaded.custom.model == "deepseek-v4-flash"
+    assert loaded.custom.api_key == "sk-from-eris-secrets"
+
+
+def test_eris_remote_api_key_wins_over_provider_profile_key(monkeypatch, tmp_path):
+    """GitPilot should use Eris' canonical remote key names, not a provider slot."""
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(
+        """
+        {
+          "api_keys": {
+            "ERIS_REMOTE_API_KEY": "sk-canonical-remote",
+            "DEEPSEEK_API_KEY": "sk-canonical-deepseek"
+          },
+          "providers": {
+            "deepseek": {
+              "default": {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "api_key": "sk-profile-key"
+              }
+            }
+          }
+        }
+        """,
+        "utf-8",
+    )
+    monkeypatch.setattr(settings_mod, "CONFIG_DIR", tmp_path / "gitpilot")
+    monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "gitpilot" / "settings.json")
+    monkeypatch.setenv("GITPILOT_ERIS_SECRETS_FILE", str(secrets))
+    monkeypatch.delenv("GITPILOT_CUSTOM_BASE_URL", raising=False)
+    monkeypatch.delenv("GITPILOT_CUSTOM_API_KEY", raising=False)
+    monkeypatch.delenv("GITPILOT_CUSTOM_MODEL", raising=False)
+
+    loaded = AppSettings.from_disk()
+
+    assert loaded.custom.api_key == "sk-canonical-remote"
+
+
+def test_eris_deepseek_secrets_do_not_override_persisted_provider(monkeypatch, tmp_path):
+    """A user-picked GitPilot provider remains authoritative."""
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(
+        """
+        {
+          "api_keys": {
+            "DEEPSEEK_API_KEY": "sk-from-eris-secrets"
+          },
+          "providers": {
+            "deepseek": {
+              "default": {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash"
+              }
+            }
+          }
+        }
+        """,
+        "utf-8",
+    )
+    config_dir = tmp_path / "gitpilot"
+    config_dir.mkdir()
+    config = config_dir / "settings.json"
+    config.write_text(
+        AppSettings(provider=LLMProvider.ollama).model_dump_json(),
+        "utf-8",
+    )
+    monkeypatch.setattr(settings_mod, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(settings_mod, "CONFIG_FILE", config)
+    monkeypatch.setenv("GITPILOT_ERIS_SECRETS_FILE", str(secrets))
+
+    loaded = AppSettings.from_disk()
+
+    assert loaded.provider == LLMProvider.ollama
+    assert loaded.custom.base_url == "https://api.deepseek.com"
+    assert loaded.custom.model == "deepseek-v4-flash"
+    assert loaded.custom.api_key == "sk-from-eris-secrets"
+
+
+def test_gitpilot_custom_env_wins_over_eris_deepseek_secrets(monkeypatch, tmp_path):
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(
+        """
+        {
+          "api_keys": {
+            "DEEPSEEK_API_KEY": "sk-from-eris-secrets"
+          },
+          "providers": {
+            "deepseek": {
+              "default": {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash"
+              }
+            }
+          }
+        }
+        """,
+        "utf-8",
+    )
+    monkeypatch.setattr(settings_mod, "CONFIG_DIR", tmp_path / "gitpilot")
+    monkeypatch.setattr(settings_mod, "CONFIG_FILE", tmp_path / "gitpilot" / "settings.json")
+    monkeypatch.setenv("GITPILOT_ERIS_SECRETS_FILE", str(secrets))
+    monkeypatch.setenv("GITPILOT_CUSTOM_BASE_URL", "https://custom.example/v1")
+    monkeypatch.setenv("GITPILOT_CUSTOM_MODEL", "custom-model")
+    monkeypatch.setenv("GITPILOT_CUSTOM_API_KEY", "sk-custom")
+
+    loaded = AppSettings.from_disk()
+
+    assert loaded.provider == LLMProvider.custom
+    assert loaded.custom == CustomEndpointConfig(
+        base_url="https://custom.example/v1",
+        model="custom-model",
+        api_key="sk-custom",
+    )
 
 
 def test_model_discovery_explains_a_self_referential_url(fresh_settings):
