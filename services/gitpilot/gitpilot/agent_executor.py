@@ -36,6 +36,40 @@ logger = logging.getLogger(__name__)
 MAX_VALIDATION_RETRIES = 2
 
 
+async def conversational_short_circuit(goal: str) -> Optional[str]:
+    """Direct reply when *goal* is unambiguously social, else ``None``.
+
+    Mirrors the gatekeeper pre-classification block in ``_api_app.py``
+    (``POST /api/chat/plan``): only ``confidence >= 0.95`` short-circuits, so
+    the 0.80 heuristic tier (``wc <= 4`` with no info/code signal) keeps terse
+    real requests such as "fix it" on the normal pipeline.
+
+    Dependency-free and best-effort: the gatekeeper/direct_reply imports are
+    local so this module stays importable without crewai/litellm, and any
+    failure degrades to ``None`` (normal pipeline) instead of becoming a new
+    failure mode for real tasks.
+    """
+    try:
+        from . import flags
+        if not flags.is_on("gatekeeper", default=True):
+            return None
+        from .gatekeeper import classify_request
+        from .pipelines.direct_reply import direct_reply
+
+        decision = await classify_request(goal)
+        logger.info(
+            "[gatekeeper] route=%s confidence=%.2f fast=%s rationale=%r",
+            decision.route, decision.confidence, decision.fast_path, decision.rationale,
+        )
+        if decision.route != "conversational" or decision.confidence < 0.95:
+            return None
+        logger.info("[gatekeeper] SHORT-CIRCUIT: conversational -> direct_reply")
+        return (await direct_reply(goal))["summary"]
+    except Exception as exc:
+        logger.warning("[gatekeeper] local short-circuit skipped: %s", exc, exc_info=True)
+        return None
+
+
 class StreamingAgentExecutor:
     """
     Autonomous multi-step agent executor with real-time streaming.
@@ -90,6 +124,20 @@ class StreamingAgentExecutor:
         Returns:
             The plan dict on success, None on failure.
         """
+        # Gatekeeper conversational fast path.
+        # Runs before _build_llm()/Crew()/repo I/O, so a plain greeting is
+        # answered even when crewai/litellm are absent. One call site covers
+        # both session kinds (local team and GitHub generate_plan_lite) and
+        # both transports sharing this executor (the SSE route and the WS
+        # session route). No repo I/O, no plan, no write tools.
+        reply = await conversational_short_circuit(user_message)
+        if reply is not None:
+            await self._bus.emit(evt.status_change("conversational", "Replying directly"))
+            for _offset in range(0, len(reply), 120):
+                await self._bus.emit(evt.text_delta(reply[_offset : _offset + 120]))
+            await self._bus.emit(evt.agent_done(summary=reply[:500]))
+            return {"summary": reply, "roles": [], "pipeline": "direct_reply"}
+
         # V78: local/folder session KHÔNG còn downgrade sang direct LLM.
         # Nếu session có workspace local, dùng chính CrewAI + local tools của
         # GitPilot để chạy Explorer → Planner → Coder → Reviewer. GitHub path

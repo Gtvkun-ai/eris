@@ -412,11 +412,13 @@ Respond with ONLY a JSON object:
 }
 
 Rules:
-- Be strategic. Don’t read the same file twice.
+- Be strategic. Don't read the same file twice.
 - Start with search or read_ast (cheap, no LLM) before analyze_modules (costs N LLM calls).
 - Use analyze_modules when the task clearly spans multiple modules and you need deep understanding.
 - When you have enough context to answer confidently: plan or done.
-- Don’t over-investigate. Simple tasks need few files.
+- Don't over-investigate. Simple tasks need few files.
+- LANGUAGE: always reply ("answer", "reasoning", step descriptions) in the SAME language as the user's goal.
+  If the goal is in Vietnamese → respond in Vietnamese. If English → English. Never mix.
 """
 
 

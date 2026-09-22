@@ -35,6 +35,8 @@ from .agentic import (
     generate_plan_lite,
     execute_plan_lite,
     PlanResult,
+    PlanStep,
+    PlanFile,
     get_flow_definition,
     dispatch_request,
     create_pr_after_execution,
@@ -1499,37 +1501,52 @@ async def api_chat_plan(req: ChatPlanRequest, authorization: Optional[str] = Hea
 
         # ── Gatekeeper pre-classification ────────────────────────────────
         # Evaluate the request BEFORE any repo I/O or LLM call.
-        # Conversational messages (greetings, social, meta) are served
-        # instantly without reading the repo tree or spawning agents.
-        # Best-effort: any failure falls through to the existing pipeline.
+        # Only strong conversational signals (confidence >= 0.95) short-circuit:
+        #   1.00 — exact match  ("xin chào", "hello", "cam on")
+        #   0.95 — prefix match ("xin chào bạn khoẻ không?")
+        # The 0.80 heuristic tier (wc<=4, no signals) does NOT short-circuit —
+        # it would swallow terse real requests like "do thing", "fix it", etc.
+        # Behind the `gatekeeper` flag (default on) for hot-rollback.
+        # Best-effort: any failure is logged as WARNING and falls through.
         try:
+            from . import flags as _flags
             from .gatekeeper import classify_request as _gate_classify
             from .pipelines.direct_reply import direct_reply as _direct_reply
 
-            _gate = await _gate_classify(req.goal)
-            logger.info(
-                "[gatekeeper] route=%s confidence=%.2f fast=%s rationale=%r",
-                _gate.route, _gate.confidence, _gate.fast_path, _gate.rationale,
-            )
+            if _flags.is_on("gatekeeper", default=True):
+                _gate = await _gate_classify(req.goal)
+                logger.info(
+                    "[gatekeeper] route=%s confidence=%.2f fast=%s rationale=%r",
+                    _gate.route, _gate.confidence, _gate.fast_path, _gate.rationale,
+                )
 
-            if _gate.route == "conversational" and _gate.confidence >= 0.75:
-                # Zero repo reads, zero agents — answer directly
-                logger.info("[gatekeeper] SHORT-CIRCUIT: conversational → direct_reply")
-                reply = await _direct_reply(
-                    req.goal,
-                    owner=req.repo_owner,
-                    repo=req.repo_name,
-                )
-                # Return as a minimal PlanResult-compatible response
-                from .agentic import PlanResult
-                return PlanResult(
-                    goal=req.goal,
-                    summary=reply["summary"],
-                    steps=[],
-                )
+                if _gate.route == "conversational" and _gate.confidence >= 0.95:
+                    # Zero repo reads, zero agents — answer directly.
+                    logger.info("[gatekeeper] SHORT-CIRCUIT: conversational → direct_reply")
+                    reply = await _direct_reply(
+                        req.goal,
+                        owner=req.repo_owner,
+                        repo=req.repo_name,
+                    )
+                    # "Answer, not a plan" — same convention as generate_plan_lite
+                    # Q&A fallback: one step with files=[], so classifyPlan() in
+                    # the frontend renders the summary as a chat reply instead of
+                    # an approvable plan.
+                    return PlanResult(
+                        goal=req.goal,
+                        summary=reply["summary"],
+                        steps=[
+                            PlanStep(
+                                step_number=1,
+                                title="Answer",
+                                description=reply["summary"],
+                                files=[],
+                            )
+                        ],
+                    )
 
         except Exception as _gate_err:
-            logger.debug("[gatekeeper] skipped: %s", _gate_err)
+            logger.warning("[gatekeeper] skipped: %s", _gate_err, exc_info=True)
 
         # Use lite planner when Lite Mode is active (setting OR topology)
         planner = generate_plan_lite if _is_lite_mode_active() else generate_plan
@@ -1602,75 +1619,174 @@ async def api_chat_plan(req: ChatPlanRequest, authorization: Optional[str] = Hea
             routing_intent = None
 
         try:
-            plan = await planner(
-                req.goal, full_name,
-                token=token, branch_name=req.branch_name,
-                routing_hint=routing_hint,
-                intent=routing_intent,
-            )
+            from . import flags as _flags
+            _use_orchestrator = _flags.is_on("task_orchestrator", default=True)
+        except Exception:
+            _use_orchestrator = False
 
-            # Belt-and-suspenders for the "execute" path: if the
-            # short-circuit didn't fire pre-LLM (router didn't classify,
-            # or no path candidates surfaced) and the planner came back
-            # with an empty / answer-only plan, retry the short-circuit
-            # post-LLM so the user gets a real EXECUTE action instead
-            # of "execute the existing file" plain text.
-            try:
-                from .agentic import try_execute_short_circuit
-                no_actionable = (
-                    not getattr(plan, "steps", None)
-                    or all(
-                        not getattr(step, "files", None)
-                        or all(
-                            getattr(f, "action", None) in {None, "READ"}
-                            for f in step.files
-                        )
-                        for step in plan.steps
-                    )
-                )
-                if no_actionable:
-                    goal_lower = req.goal.lower()
-                    looks_like_execute = any(
-                        kw in goal_lower
-                        for kw in ("execute", "run the", "run hello",
-                                   "run main", "run demo", "run my",
-                                   "in the sandbox", "in sandbox",
-                                   "please run", "can you run")
-                    )
-                    if looks_like_execute:
-                        # ``repo_paths`` was computed during routing; if
-                        # routing was skipped, fall back to a quick tree
-                        # fetch so the short-circuit has a chance.
-                        if not repo_paths:
-                            try:
-                                from .github_api import get_repo_tree
-                                _tree = await get_repo_tree(
-                                    req.repo_owner, req.repo_name,
-                                    token=token, ref=req.branch_name,
-                                )
-                                repo_paths = [t["path"] for t in (_tree or []) if t.get("path")]
-                            except Exception:
-                                pass
+        try:
+            if _use_orchestrator:
+                # ── TaskOrchestrator path ─────────────────────────────────
+                # Central agentic loop replaces the 4-agent CrewAI pipeline.
+                try:
+                    from .pipelines.task_pipeline import run_task_pipeline
+                    from . import settings as _settings_mod
 
-                        # Try the explicitly-mentioned target first, then
-                        # fall back to "single runnable in repo".
-                        fallback = try_execute_short_circuit(
-                            goal=req.goal, intent="execute",
-                            target_files=routing_targets,
-                            repo_files=repo_paths,
+                    async def _orchestrator_llm_call(system: str, user: str) -> str:
+                        import litellm
+                        _cfg = _settings_mod.load_settings()
+                        _provider = getattr(_cfg, "provider", "ollama")
+                        if _provider == "openai":
+                            _model = f"openai/{_cfg.openai.model or 'gpt-4o-mini'}"
+                            _base = _cfg.openai.base_url or None
+                            _key = _cfg.openai.api_key or "x"
+                        elif _provider == "claude":
+                            _model = f"anthropic/{_cfg.claude.model or 'claude-sonnet-4-5'}"
+                            _base = _cfg.claude.base_url or None
+                            _key = _cfg.claude.api_key or "x"
+                        else:  # ollama / local
+                            _model = f"openai/{_cfg.ollama.model or 'llama3'}"
+                            _base = _cfg.ollama.base_url or "http://localhost:11434/v1"
+                            _key = "ollama"
+                        resp = await litellm.acompletion(
+                            model=_model,
+                            messages=[
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": user},
+                            ],
+                            api_base=_base,
+                            api_key=_key,
+                            temperature=0.2,
+                            max_tokens=4096,
                         )
-                        if fallback is not None:
-                            logger.info(
-                                "[router] post-LLM EXECUTE rescue: planner returned no "
-                                "actionable steps for an execute-looking goal — "
-                                "substituting deterministic plan for %s",
-                                fallback.steps[0].files[0].path,
+                        return resp.choices[0].message.content or ""
+
+                    async def _fetch_file(owner: str, repo_name: str, path: str, branch: str) -> str:
+                        from .github_api import get_file_content
+                        return await get_file_content(owner, repo_name, path, token=token, ref=branch)
+
+                    async def _fallback(goal_text: str) -> dict:
+                        _plan = await planner(
+                            goal_text, full_name,
+                            token=token, branch_name=req.branch_name,
+                            routing_hint=routing_hint,
+                            intent=routing_intent,
+                        )
+                        return {
+                            "goal": goal_text,
+                            "summary": _plan.summary,
+                            "steps": [
+                                {
+                                    "step_number": s.step_number,
+                                    "title": s.title,
+                                    "description": s.description,
+                                    "files": [{"path": f.path, "action": f.action} for f in (s.files or [])],
+                                }
+                                for s in (_plan.steps or [])
+                            ],
+                            "metadata": {"pipeline": "generate_plan_fallback"},
+                        }
+
+                    _task_result = await run_task_pipeline(
+                        goal=req.goal,
+                        owner=req.repo_owner,
+                        repo=req.repo_name,
+                        branch=req.branch_name or "HEAD",
+                        fetch_file_fn=_fetch_file,
+                        llm_call=_orchestrator_llm_call,
+                        fallback_fn=_fallback,
+                    )
+
+                    plan = PlanResult(
+                        goal=req.goal,
+                        summary=_task_result.get("summary", ""),
+                        steps=[
+                            PlanStep(
+                                step_number=s.get("step_number", i + 1),
+                                title=s.get("title", ""),
+                                description=s.get("description", ""),
+                                files=[
+                                    PlanFile(path=f.get("path", ""), action=f.get("action", "MODIFY"))
+                                    for f in (s.get("files") or [])
+                                ],
                             )
-                            return fallback
-            except Exception as _rescue_err:  # pragma: no cover - defensive
-                logger.debug("[router] post-LLM execute rescue skipped: %s", _rescue_err)
+                            for i, s in enumerate(_task_result.get("steps") or [])
+                        ],
+                    )
+                    logger.info(
+                        "[orchestrator] done: steps=%d pipeline=%s",
+                        len(plan.steps),
+                        _task_result.get("metadata", {}).get("pipeline", "?"),
+                    )
+
+                except Exception as _orch_err:
+                    logger.warning(
+                        "[orchestrator] failed (%s), falling back to generate_plan", _orch_err,
+                        exc_info=True,
+                    )
+                    _use_orchestrator = False
+
+            if not _use_orchestrator:
+                plan = await planner(
+                    req.goal, full_name,
+                    token=token, branch_name=req.branch_name,
+                    routing_hint=routing_hint,
+                    intent=routing_intent,
+                )
+
+                # Belt-and-suspenders for the "execute" path.
+                # (Only applicable when using the old planner.)
+                try:
+                    from .agentic import try_execute_short_circuit
+                    no_actionable = (
+                        not getattr(plan, "steps", None)
+                        or all(
+                            not getattr(step, "files", None)
+                            or all(
+                                getattr(f, "action", None) in {None, "READ"}
+                                for f in step.files
+                            )
+                            for step in plan.steps
+                        )
+                    )
+                    if no_actionable:
+                        goal_lower = req.goal.lower()
+                        looks_like_execute = any(
+                            kw in goal_lower
+                            for kw in ("execute", "run the", "run hello",
+                                       "run main", "run demo", "run my",
+                                       "in the sandbox", "in sandbox",
+                                       "please run", "can you run")
+                        )
+                        if looks_like_execute:
+                            if not repo_paths:
+                                try:
+                                    from .github_api import get_repo_tree
+                                    _tree = await get_repo_tree(
+                                        req.repo_owner, req.repo_name,
+                                        token=token, ref=req.branch_name,
+                                    )
+                                    repo_paths = [t["path"] for t in (_tree or []) if t.get("path")]
+                                except Exception:
+                                    pass
+
+                            fallback = try_execute_short_circuit(
+                                goal=req.goal, intent="execute",
+                                target_files=routing_targets,
+                                repo_files=repo_paths,
+                            )
+                            if fallback is not None:
+                                logger.info(
+                                    "[router] post-LLM EXECUTE rescue: planner returned no "
+                                    "actionable steps — substituting deterministic plan for %s",
+                                    fallback.steps[0].files[0].path,
+                                )
+                                return fallback
+                except Exception as _rescue_err:  # pragma: no cover - defensive
+                    logger.debug("[router] post-LLM execute rescue skipped: %s", _rescue_err)
 
             return plan
+
         except Exception as exc:
             error_msg = str(exc)
 
