@@ -29,8 +29,8 @@ assert.ok(
 
 assert.match(
   source,
-  /const shouldUseStreamingForIntent = \(intent: string\): boolean =>[\s\S]{0,120}intent !== "general"/,
-  "plain conversational messages should skip the coding-agent stream"
+  /const shouldUseStreamingForIntent = \(_intent: string\): boolean => true/,
+  "all chat intents, including general conversation, should enter the coordinator stream"
 );
 
 const streamGuardIndex = sendBody.indexOf("if (shouldUseStreamingForIntent(intent))");
@@ -39,11 +39,11 @@ const batchIndex = sendBody.indexOf("const batchStartedAt = Date.now();");
 
 assert.ok(
   streamGuardIndex !== -1 && streamGuardIndex < streamCallIndex,
-  "the SSE call should be guarded by intent"
+  "the SSE call should use the unified coordinator routing decision"
 );
 assert.ok(
   streamCallIndex !== -1 && streamCallIndex < batchIndex,
   "batch remains the fallback/lightweight route after the stream decision"
 );
 
-console.log("PASS chat readiness and general-message routing are guarded");
+console.log("PASS chat readiness and unified coordinator routing are guarded");

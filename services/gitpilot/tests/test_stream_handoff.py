@@ -1,12 +1,4 @@
-"""Regression tests cho V78 local-workspace cutover.
-
-Trước V78, session không có ``owner/repo`` kết thúc SSE ngay và client rơi xuống
-``/api/chat/send`` direct LLM. Điều đó làm local coding bỏ qua GitPilot team.
-
-Sau V78, nếu session có WorkspaceInfo local thì StreamingAgentExecutor phải chuyển
-sang local multi-agent path; chỉ session thật sự không có workspace mới fail rõ.
-"""
-
+"""Regression tests for V104 local-workspace coordinator cutover."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,59 +24,63 @@ class _RecordingBus(AgentEventBus):
 
 def _workspace(tmp_path: Path) -> WorkspaceInfo:
     return WorkspaceInfo(
-        owner="local",
-        repo="repo",
-        path=tmp_path,
-        branch="main",
-        remote_url="",
+        owner="local", repo="repo", path=tmp_path, branch="main", remote_url="",
     )
 
 
 @pytest.mark.anyio
-async def test_local_session_uses_local_team_instead_of_batch_fallback(tmp_path, monkeypatch):
+async def test_local_session_uses_main_coordinator_not_fixed_team(tmp_path, monkeypatch):
     bus = _RecordingBus()
     executor = StreamingAgentExecutor(bus=bus, gate=object(), workspace=_workspace(tmp_path))
     called = {}
 
-    async def fake_local_team(*, user_message: str, mode: str, topology_id: str):
-        called.update(message=user_message, mode=mode, topology_id=topology_id)
-        return {"summary": "local team ran"}
+    async def fake_coordinator(*, user_message: str, mode: str):
+        called.update(message=user_message, mode=mode)
+        return {"summary": "coordinator ran", "pipeline": "coordinator_loop_v2"}
 
-    monkeypatch.setattr(executor, "_execute_local_team", fake_local_team)
+    async def forbidden_team(**kwargs):
+        raise AssertionError("legacy Explorer->Planner->Developer->Reviewer must not be the default path")
 
-    result = await executor.execute(
-        user_message="fix the bug",
-        repo_full_name="",
-        topology_id="feature_builder",
-    )
+    monkeypatch.setattr(executor, "_execute_local_coordinator", fake_coordinator)
+    monkeypatch.setattr(executor, "_execute_local_team", forbidden_team)
 
-    assert result == {"summary": "local team ran"}
-    assert called == {
-        "message": "fix the bug",
-        "mode": "auto",
-        "topology_id": "feature_builder",
-    }
+    result = await executor.execute(user_message="fix the bug", repo_full_name="")
+
+    assert result == {"summary": "coordinator ran", "pipeline": "coordinator_loop_v2"}
+    assert called == {"message": "fix the bug", "mode": "auto"}
 
 
 @pytest.mark.anyio
-async def test_local_team_failure_emits_error_instead_of_hanging_stream(tmp_path, monkeypatch):
+async def test_greeting_also_enters_coordinator_in_local_workspace(tmp_path, monkeypatch):
+    bus = _RecordingBus()
+    executor = StreamingAgentExecutor(bus=bus, gate=object(), workspace=_workspace(tmp_path))
+    called = []
+
+    async def fake_coordinator(*, user_message: str, mode: str):
+        called.append(user_message)
+        return {"summary": "hello with awareness", "pipeline": "coordinator_loop_v2"}
+
+    monkeypatch.setattr(executor, "_execute_local_coordinator", fake_coordinator)
+    result = await executor.execute(user_message="xin chào", repo_full_name="")
+
+    assert result["pipeline"] == "coordinator_loop_v2"
+    assert called == ["xin chào"]
+
+
+@pytest.mark.anyio
+async def test_coordinator_failure_emits_error_instead_of_hanging_stream(tmp_path, monkeypatch):
     bus = _RecordingBus()
     executor = StreamingAgentExecutor(bus=bus, gate=object(), workspace=_workspace(tmp_path))
 
-    async def broken_local_team(*, user_message: str, mode: str, topology_id: str):
-        raise RuntimeError("Crew execution failed")
+    async def broken_coordinator(*, user_message: str, mode: str):
+        raise RuntimeError("Coordinator failed")
 
-    monkeypatch.setattr(executor, "_execute_local_team", broken_local_team)
-
-    result = await executor.execute(
-        user_message="xin chao",
-        repo_full_name="",
-        topology_id="feature_builder",
-    )
+    monkeypatch.setattr(executor, "_execute_local_coordinator", broken_coordinator)
+    result = await executor.execute(user_message="xin chao", repo_full_name="")
 
     assert result is None
     assert EventType.ERROR.value in bus.types()
-    assert "Crew execution failed" in bus.events[-1].data["error"]
+    assert "Coordinator failed" in bus.events[-1].data["error"]
     assert EventType.DONE.value not in bus.types()
 
 
@@ -97,16 +93,10 @@ async def test_repo_less_session_without_workspace_fails_clearly():
 
     assert result is None
     assert EventType.ERROR.value in bus.types()
-    assert EventType.DONE.value not in bus.types(), "không được giả vờ task đã hoàn tất"
+    assert EventType.DONE.value not in bus.types()
 
 
-def test_local_feature_builder_keeps_only_local_engineering_roles():
+def test_legacy_local_sequence_is_retained_only_for_rollback_compatibility():
     sequence = StreamingAgentExecutor._local_sequence("feature_builder", "auto")
-
     assert sequence[:4] == ["explorer", "planner", "developer", "reviewer"]
-    assert "git_agent" not in sequence, "local mode không được tự push/PR"
-
-
-def test_plan_and_inspect_are_read_only_sequences():
-    assert StreamingAgentExecutor._local_sequence("feature_builder", "plan_only") == ["explorer", "planner"]
-    assert StreamingAgentExecutor._local_sequence("feature_builder", "inspect") == ["explorer", "reviewer"]
+    assert "git_agent" not in sequence

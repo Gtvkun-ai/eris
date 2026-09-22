@@ -1,20 +1,13 @@
 """Regression tests for the gatekeeper conversational short-circuit.
 
-Context: greetings were already classified correctly by ``gatekeeper.py``, but
-that decision was only consumed by ``POST /api/chat/plan``.  The
-``StreamingAgentExecutor`` — entry point behind the SSE chat route and the v2
-websocket session route — never consulted the gatekeeper, so ``xin chào`` fell
-through to the full Explorer/Planner/Coder/Reviewer crew with a write-capable
-Coder agent.
+The gatekeeper short-circuit is retained for remote GitHub sessions and older
+API paths. V104 deliberately does NOT use it for local/folder sessions: those
+always enter the Main Coordinator so even casual conversation shares workspace
+awareness with coding work.
 
-These tests pin the two failure classes the seam must prevent:
-
-1. **Over-short-circuiting.**  Terse but real requests ("fix it", "do thing",
-   "sửa lỗi …") must still reach the normal pipeline.  The ``>= 0.95``
-   threshold — not the whole conversational route — is the load-bearing guard.
-2. **Regressing into the old behaviour.**  A greeting must produce a direct
-   answer with zero repo I/O, zero plan steps, no write tools, no approval
-   request, and it must do so before any LLM/provider is constructed.
+These tests therefore pin only the remaining seam itself and the remote-session
+compatibility path. Local coordinator routing is covered in
+``test_stream_handoff.py`` and ``test_coordinator_runtime.py``.
 """
 from __future__ import annotations
 
@@ -115,44 +108,6 @@ async def test_flag_off_disables_the_seam() -> None:
 # ── V3: executor integration — answer, not a plan ───────────────────────────
 
 
-async def test_execute_greeting_streams_answer_not_plan(monkeypatch) -> None:
-    bus = AgentEventBus()
-    _sub_id, queue = bus.subscribe()
-    executor = StreamingAgentExecutor(bus=bus, gate=ApprovalGate(bus))
-
-    async def _never(*args, **kwargs):
-        raise AssertionError("the coding team must not run for a greeting")
-
-    monkeypatch.setattr(executor, "_execute_local_team", _never)
-
-    result = await executor.execute("xin chào", "", mode="auto")
-
-    assert result == {
-        "summary": _INSTANT_REPLIES["xin chao"],
-        "roles": [],
-        "pipeline": "direct_reply",
-    }
-
-    events = _drain(queue)
-    types = [e.type for e in events]
-    assert types.count(EventType.DONE) == 1
-    for forbidden in (
-        EventType.PLAN_STEP,
-        EventType.TOOL_START,
-        EventType.TOOL_RESULT,
-        EventType.APPROVAL_NEEDED,
-        EventType.FILE_WRITE,
-    ):
-        assert forbidden not in types
-
-    streamed = "".join(
-        e.data["text"] for e in events if e.type is EventType.TEXT_DELTA
-    )
-    assert streamed == _INSTANT_REPLIES["xin chao"]
-    statuses = [e.data.get("status") for e in events if e.type is EventType.STATUS_CHANGE]
-    assert statuses == ["conversational"]
-
-
 async def test_execute_greeting_short_circuits_on_github_sessions_too(monkeypatch) -> None:
     """One call site must cover both session kinds (local team + GitHub plan)."""
     bus = AgentEventBus()
@@ -167,26 +122,6 @@ async def test_execute_greeting_short_circuits_on_github_sessions_too(monkeypatc
     result = await executor.execute("xin chào", "owner/repo", mode="auto")
     assert result is not None
     assert result["pipeline"] == "direct_reply"
-
-
-async def test_execute_real_request_still_reaches_the_team(monkeypatch) -> None:
-    """Guard against over-short-circuiting in production wiring, not just V1."""
-    bus = AgentEventBus()
-    executor = StreamingAgentExecutor(bus=bus, gate=ApprovalGate(bus))
-    sentinel = {"summary": "team ran", "roles": ["explorer"], "pipeline": "local_team"}
-    seen = {}
-
-    async def _team(*, user_message, mode, topology_id):
-        seen["user_message"] = user_message
-        return sentinel
-
-    monkeypatch.setattr(executor, "_execute_local_team", _team)
-
-    goal = "fix the timeout bug in inference_broker.py"
-    result = await executor.execute(goal, "", mode="auto")
-
-    assert result is sentinel
-    assert seen["user_message"] == goal
 
 
 # ── V3b: import safety — the gate must precede _build_llm() ─────────────────
@@ -207,7 +142,9 @@ async def test_greeting_works_without_crewai_or_litellm(monkeypatch) -> None:
     executor = StreamingAgentExecutor(bus=bus, gate=ApprovalGate(bus))
     monkeypatch.setattr(builtins, "__import__", _blocked)
 
-    result = await executor.execute("xin chào", "", mode="auto")
+    # V104: local sessions intentionally enter the coordinator. The old
+    # dependency-free greeting seam remains valid for remote GitHub sessions.
+    result = await executor.execute("xin chào", "owner/repo", mode="auto")
     assert result == {
         "summary": _INSTANT_REPLIES["xin chao"],
         "roles": [],

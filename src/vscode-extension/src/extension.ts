@@ -1302,6 +1302,9 @@ export function activate(context: vscode.ExtensionContext): void {
           session_id: sessionId,
           message,
           permission_mode: ({ auto: "auto", ask: "normal", plan: "plan" } as Record<string, string>)[stateStore.state.executionMode] || "normal",
+          // V104: backend coordinator cần biết đây là plan/inspect/general thay
+          // vì đoán mọi stream thành execute/auto.
+          intent,
         }),
         signal,
       });
@@ -1436,10 +1439,15 @@ export function activate(context: vscode.ExtensionContext): void {
           } else if (type === "status_change" && event.status !== "keepalive") {
             // Update task status in state store
             const statusMap: Record<string, string> = {
+              orienting: "planning",
+              coordinating: "planning",
+              investigating: "planning",
+              delegating: "planning",
               planning: "planning",
               generating: "generating",
               executing: "generating",
               reviewing: "reviewing",
+              responding: "generating",
               done: "done",
             };
             const mapped = statusMap[String(event.status)] || undefined;
@@ -1509,8 +1517,10 @@ export function activate(context: vscode.ExtensionContext): void {
     return fullText;
   };
 
-  const shouldUseStreamingForIntent = (intent: string): boolean =>
-    intent !== "general";
+  // V104: mọi intent đều đi qua coordinator streaming. `general` không còn
+  // bị tách sang batch path, vì Main Coordinator phải giữ continuity và có
+  // workspace awareness ngay cả khi user chỉ chào hỏi / small-talk.
+  const shouldUseStreamingForIntent = (_intent: string): boolean => true;
 
   const sendChatToBackend = async (rawText: string): Promise<void> => {
     const text = rawText.trim();

@@ -88,6 +88,8 @@ class StreamingAgentExecutor:
         workspace: Optional[WorkspaceInfo] = None,
         ws_manager: Optional[WorkspaceManager] = None,
         terminal: Optional[TerminalExecutor] = None,
+        coordinator_memory: Optional[dict] = None,
+        conversation_messages: Optional[list[dict[str, str]]] = None,
     ) -> None:
         self._bus = bus
         self._gate = gate
@@ -95,6 +97,11 @@ class StreamingAgentExecutor:
         self._ws_manager = ws_manager or WorkspaceManager()
         self._terminal = terminal or TerminalExecutor()
         self._cancelled = False
+        # V105: Main Coordinator memory survives executor recreation through the
+        # session layer. Executor only transports it; cognition remains in runtime.
+        self._coordinator_memory = dict(coordinator_memory or {})
+        self._conversation_messages = list(conversation_messages or [])
+        self.coordinator_memory_snapshot: dict = dict(self._coordinator_memory)
 
     def cancel(self) -> None:
         """Signal the executor to stop after the current step."""
@@ -124,12 +131,31 @@ class StreamingAgentExecutor:
         Returns:
             The plan dict on success, None on failure.
         """
-        # Gatekeeper conversational fast path.
-        # Runs before _build_llm()/Crew()/repo I/O, so a plain greeting is
-        # answered even when crewai/litellm are absent. One call site covers
-        # both session kinds (local team and GitHub generate_plan_lite) and
-        # both transports sharing this executor (the SSE route and the WS
-        # session route). No repo I/O, no plan, no write tools.
+        # V105: local/folder sessions always enter the Main Coordinator loop.
+        # Even small talk receives a cheap ambient workspace probe first, so Main
+        # is never completely blind to the repo.  We intentionally DO NOT use the
+        # old greeting short-circuit here: bypassing the runtime was fast, but it
+        # split conversation from repository awareness and encouraged two separate
+        # "brains".
+        if not self._is_valid_repo_full_name(repo_full_name):
+            try:
+                if self._workspace is None:
+                    await self._bus.emit(evt.agent_error(
+                        "Local session has no workspace; cannot run GitPilot coordinator"
+                    ))
+                    return None
+                return await self._execute_local_coordinator(
+                    user_message=user_message, mode=mode
+                )
+            except Exception as e:
+                logger.error("StreamingAgentExecutor coordinator error: %s", e, exc_info=True)
+                await self._bus.emit(evt.agent_error(str(e)))
+                return None
+
+        # Remote GitHub sessions keep the existing lightweight conversational
+        # short-circuit for now.  The coordinator introduced in V105 is grounded
+        # directly against a local WorkspaceInfo and is deliberately not faked
+        # over the remote plan API.
         reply = await conversational_short_circuit(user_message)
         if reply is not None:
             await self._bus.emit(evt.status_change("conversational", "Replying directly"))
@@ -137,25 +163,6 @@ class StreamingAgentExecutor:
                 await self._bus.emit(evt.text_delta(reply[_offset : _offset + 120]))
             await self._bus.emit(evt.agent_done(summary=reply[:500]))
             return {"summary": reply, "roles": [], "pipeline": "direct_reply"}
-
-        # V78: local/folder session KHÔNG còn downgrade sang direct LLM.
-        # Nếu session có workspace local, dùng chính CrewAI + local tools của
-        # GitPilot để chạy Explorer → Planner → Coder → Reviewer. GitHub path
-        # cũ vẫn được giữ nguyên phía dưới để patch upstream luôn hẹp.
-        if not self._is_valid_repo_full_name(repo_full_name):
-            try:
-                if self._workspace is None:
-                    await self._bus.emit(evt.agent_error(
-                        "Local session has no workspace; cannot run GitPilot coding team"
-                    ))
-                    return None
-                return await self._execute_local_team(
-                    user_message=user_message, mode=mode, topology_id=topology_id
-                )
-            except Exception as e:
-                logger.error("StreamingAgentExecutor local team error: %s", e, exc_info=True)
-                await self._bus.emit(evt.agent_error(str(e)))
-                return None
 
         try:
             # ── Phase 1: Plan ──
@@ -223,6 +230,38 @@ class StreamingAgentExecutor:
             return None
 
     # ── Internal helpers ──
+
+    async def _execute_local_coordinator(
+        self,
+        *,
+        user_message: str,
+        mode: str,
+    ) -> dict:
+        """Run the coordinator-centric local agent loop (V105).
+
+        Main owns the conversation and global repo understanding. It decides
+        dynamically whether to search/read/act or fan out read-only research
+        branches. Specialist output stays private and returns to Main as
+        evidence; only Main emits the final user-facing text.
+        """
+        if self._workspace is None:
+            raise RuntimeError("Coordinator requires an attached local workspace")
+
+        from .coordinator_runtime import LocalCoordinatorRuntime
+
+        runtime = LocalCoordinatorRuntime(
+            workspace=self._workspace,
+            bus=self._bus,
+            gate=self._gate,
+            ws_manager=self._ws_manager,
+            terminal=self._terminal,
+            cancelled=lambda: self._cancelled,
+            memory=self._coordinator_memory,
+            conversation_messages=self._conversation_messages,
+        )
+        result = await runtime.run(user_message, mode=mode)
+        self.coordinator_memory_snapshot = dict(runtime.memory_snapshot)
+        return result
 
     async def _execute_local_team(
         self,

@@ -4748,8 +4748,24 @@ async def v2_chat_stream(request: _Request):
         except Exception as ws_err:
             logger.warning("Could not resolve workspace: %s", ws_err)
 
+    # V105: Main Coordinator is persistent at session scope.  Pass only prior
+    # conversation here; the current user message remains the explicit goal.
+    conversation_messages = []
+    coordinator_memory = {}
+    if session:
+        conversation_messages = [
+            {"role": m.role, "content": m.content} for m in session.messages
+        ]
+        coordinator_memory = dict(session.metadata.get("coordinator_memory_v1") or {})
+        # SSE client does not use /message separately. Persist the user turn once.
+        if not session.messages or session.messages[-1].role != "user" or session.messages[-1].content != user_message:
+            session.add_message("user", user_message)
+            _session_mgr.save(session)
+
     executor = _StreamingExecutor(
         bus=bus, gate=gate, workspace=workspace, ws_manager=ws_mgr,
+        coordinator_memory=coordinator_memory,
+        conversation_messages=conversation_messages,
     )
     session_key = session_id or "ephemeral"
     _active_executors[session_key] = executor
@@ -4798,7 +4814,13 @@ async def v2_chat_stream(request: _Request):
                     if result:
                         summary = result.get("summary", "") if isinstance(result, dict) else str(result)
                         session.add_message("assistant", summary[:5000])
-                        _session_mgr.save(session)
+                    # Persist Main's repo model even though a new executor object is
+                    # constructed on the next HTTP turn. This is the actual V105
+                    # continuity boundary, not a process-global cache.
+                    session.metadata["coordinator_memory_v1"] = dict(
+                        executor.coordinator_memory_snapshot or {}
+                    )
+                    _session_mgr.save(session)
                 except Exception:
                     pass
 
@@ -4922,34 +4944,60 @@ async def v2_session_websocket(websocket: WebSocket, session_id: str):
                 session.add_message("user", content)
                 _session_mgr.save(session)
 
-                # Resolve workspace
+                # Resolve workspace for github AND local/folder sessions, matching SSE.
                 workspace = None
                 repo_full = session.repo_full_name or ""
-                parts = repo_full.split("/", 1)
-                if len(parts) == 2:
-                    try:
-                        ws_mgr = _V2WorkspaceManager()
-                        workspace = await ws_mgr.ensure_workspace(
-                            owner=parts[0], repo=parts[1],
-                            token=data.get("token"),
-                            branch=session.branch,
-                        )
-                    except Exception:
-                        pass
+                ws_mgr = _V2WorkspaceManager()
+                try:
+                    local_path = session.repo_root or session.folder_path
+                    if local_path:
+                        workspace = await ws_mgr.attach_local_workspace(local_path, branch=session.branch)
+                    else:
+                        parts = repo_full.split("/", 1)
+                        if len(parts) == 2:
+                            workspace = await ws_mgr.ensure_workspace(
+                                owner=parts[0], repo=parts[1],
+                                token=data.get("token"),
+                                branch=session.branch,
+                            )
+                except Exception as ws_err:
+                    logger.warning("Could not resolve V2 WS workspace: %s", ws_err)
 
+                prior_messages = [
+                    {"role": m.role, "content": m.content} for m in session.messages[:-1]
+                ]
                 executor = _StreamingExecutor(
-                    bus=bus, gate=gate, workspace=workspace,
-                    ws_manager=_V2WorkspaceManager(),
+                    bus=bus, gate=gate, workspace=workspace, ws_manager=ws_mgr,
+                    coordinator_memory=dict(session.metadata.get("coordinator_memory_v1") or {}),
+                    conversation_messages=prior_messages,
                 )
                 _active_executors[session_id] = executor
 
-                # Run agent (non-blocking)
-                _asyncio.create_task(executor.execute(
-                    user_message=content,
-                    repo_full_name=repo_full,
-                    branch=session.branch,
-                    token=data.get("token"),
-                ))
+                async def _run_and_persist_v105(
+                    _executor=executor,
+                    _content=content,
+                    _repo_full=repo_full,
+                    _token=data.get("token"),
+                ):
+                    # Bind request-local values as defaults: the websocket loop may
+                    # receive another message before this background task resumes.
+                    result = await _executor.execute(
+                        user_message=_content,
+                        repo_full_name=_repo_full,
+                        branch=session.branch,
+                        token=_token,
+                    )
+                    if result:
+                        summary = result.get("summary", "") if isinstance(result, dict) else str(result)
+                        session.add_message("assistant", summary[:5000])
+                    session.metadata["coordinator_memory_v1"] = dict(
+                        _executor.coordinator_memory_snapshot or {}
+                    )
+                    _session_mgr.save(session)
+                    return result
+
+                # Run agent (non-blocking); persistence belongs to this request task.
+                _asyncio.create_task(_run_and_persist_v105())
 
             elif event_type == "approval_response":
                 gate.resolve(
