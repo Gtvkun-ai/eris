@@ -8,7 +8,6 @@ name = "gitcopilot"
 version = "0.2.8"
 description = "Multi-agent AI coding assistant — four specialized agents (Explorer, Planner, Coder, Reviewer) that read your repo, plan safe changes, write code, run tests, and wait for your approval. Any LLM."
 requires-python = ">=3.11,<3.13"
-readme = "README.md"
 
 # Use a simple SPDX license string, not a table
 license = "Apache-2.0"

@@ -274,7 +274,7 @@ def setup_secrets() -> None:
         print(err("setup_secrets.bat khong tim thay"))
         print(info(r"Can tao config\secrets.json tu config\secrets.example.json."))
         return
-    print(info(r"Mo config\SECRETS_SETUP.md va config\secrets.json de dien key."))
+    print(info(r"Mo config\secrets.json de dien key."))
     result = subprocess.run(["cmd", "/c", str(script)], cwd=ROOT)
     if result.returncode == 0:
         update_state("secrets", {"ts": time.time()})
@@ -285,12 +285,7 @@ def setup_secrets() -> None:
 
 def open_user_guide() -> None:
     banner("User Guide")
-    script = ROOT / "open_user_guide.bat"
-    if not script.exists():
-        print(err("open_user_guide.bat khong tim thay"))
-        return
-    subprocess.run(["cmd", "/c", str(script)], cwd=ROOT)
-    print(ok("Da mo huong dan nguoi dung"))
+    print(info("User guide da duoc loai khoi repo."))
 
 
 def apply_deepseek_pool_keys() -> None:

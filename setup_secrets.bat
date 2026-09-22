@@ -19,11 +19,9 @@ if not exist "config\secrets.json" (
 
 echo.
 echo Fill real keys in: %CD%\config\secrets.json
-echo Guide:             %CD%\config\SECRETS_SETUP.md
 echo.
 
 if /I "%~1"=="--no-open" exit /b 0
 
-if exist "config\SECRETS_SETUP.md" start "" notepad "config\SECRETS_SETUP.md"
 start "" notepad "config\secrets.json"
 exit /b 0

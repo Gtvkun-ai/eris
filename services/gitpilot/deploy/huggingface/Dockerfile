@@ -45,7 +45,7 @@ WORKDIR $HOME/app
 
 # ── Install Python dependencies BEFORE copying source code ──────────
 # This ensures pip install layers are cached even when code changes.
-COPY --chown=user pyproject.toml README.md ./
+COPY --chown=user pyproject.toml ./
 
 # Step 1: lightweight deps (cached layer)
 RUN pip install --no-cache-dir --upgrade pip && \

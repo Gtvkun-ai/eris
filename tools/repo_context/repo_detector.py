@@ -282,7 +282,6 @@ def _find_notable_root_files(root: Path) -> list[str]:
         ".env.example", "env-example", ".env.example",
         "project.godot",
         "CHANGELOG.md", "CHANGELOG.rst",
-        "HUONG_DAN_NGUOI_DUNG.md",  # eris specific
     ]
     for fname in candidates:
         if (root / fname).exists():

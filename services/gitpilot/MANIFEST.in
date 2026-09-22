@@ -1,8 +1,5 @@
 # MANIFEST.in - Specify additional files to include in the distribution
 
-# Include documentation
-include README.md
-include FRONTEND_CODE_REFERENCE.md
 include LICENSE
 
 # Include the built frontend assets

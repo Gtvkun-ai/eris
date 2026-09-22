@@ -41,7 +41,6 @@ CORE_ACTIONS = [
     Action("Runtime", "Start Eris", "run_eris.vbs", kind="vbs", note="Silent main launcher"),
     Action("Runtime", "Runtime only", "run_runtime.bat"),
     Action("Runtime", "Smoke test", "run_smoke_test.bat"),
-    Action("Runtime", "User guide", "open_user_guide.bat", note="Vietnamese non-dev guide"),
     Action("Accounts", "Secrets setup", "setup_secrets.bat", note="Create/open config\\secrets.json"),
     Action("Accounts", "Gemini login", "setup_gemini_login.bat"),
     Action("Accounts", "Tutor browser setup", "setup_tutor_browser.bat"),
@@ -283,8 +282,6 @@ class ErisManager(tk.Tk):
     def _render_status(self) -> None:
         checks = [
             ("secrets.json", self.root_dir / "config" / "secrets.json"),
-            ("secrets guide", self.root_dir / "config" / "SECRETS_SETUP.md"),
-            ("user guide", self.root_dir / "HUONG_DAN_NGUOI_DUNG.md"),
             ("ElevenLabs DB", self.root_dir / "config" / "elevenlabs_pool.db"),
             ("Portable Python", self.root_dir / "python" / "python.exe"),
             ("Live2D requirements", self.root_dir / "requirements-live2d.txt"),

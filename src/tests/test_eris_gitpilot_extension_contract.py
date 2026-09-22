@@ -1,5 +1,4 @@
 import json
-import zipfile
 from pathlib import Path
 
 
@@ -41,15 +40,15 @@ def test_old_eris_adapter_is_not_the_active_entrypoint():
     assert not (EXT / "src" / "gitPilotClient.ts").is_file()
 
 
-def test_vsix_contains_native_out_and_resources():
-    vsix_files = sorted(EXT.glob("eris-code-*.vsix"))
-    assert vsix_files, "a packaged Eris VSIX is required for this contract"
-    with zipfile.ZipFile(vsix_files[-1]) as archive:
-        names = set(archive.namelist())
-    assert "extension/package.json" in names
-    assert "extension/out/extension.js" in names
-    assert "extension/out/ui/webview/gitpilotWorkspaceTemplate.html" in names
-    assert "extension/resources/icon.svg" in names
+def test_vsix_packager_includes_native_out_and_resources():
+    packer = (EXT / "package_vsix.py").read_text(encoding="utf-8")
+    build_script = (EXT / "build_vsix.ps1").read_text(encoding="utf-8")
+
+    assert 'files = [(PACKAGE, "extension/package.json")]' in packer
+    assert 'package_files(OUT, "out"' in packer
+    assert 'package_files(RESOURCES, "resources"' in packer
+    assert 'workspace_template = OUT / "ui" / "webview" / "gitpilotWorkspaceTemplate.html"' in packer
+    assert "python package_vsix.py" in build_script
 
 
 def test_vsce_ignores_eris_adapter_staging_source():

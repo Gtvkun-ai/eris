@@ -59,7 +59,7 @@ $rootFiles = @(
     ".env.example", "requirements.txt", "pytest.ini", "run_tests.py",
     "focus_context_config.json", "ni_focus_config.json",
     "goal_profiles.json", "goal_memory.json", "long_term_memory.json",
-    "BUILD.md", "README.md", "project.godot", "export_presets.cfg", "Eris.sln", "Eris.csproj"
+    "project.godot", "export_presets.cfg", "Eris.sln", "Eris.csproj"
 )
 foreach ($f in $rootFiles) {
     $p = Join-Path $Root $f

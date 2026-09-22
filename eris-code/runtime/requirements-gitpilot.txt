@@ -1,3 +1,0 @@
-# Pinned external coding runtime for Eris Code.
-# PyPI package is `gitcopilot`; CLI command is `gitpilot`.
-gitcopilot==0.2.7

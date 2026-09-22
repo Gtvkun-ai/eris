@@ -732,18 +732,12 @@ banner("4 / 5  --  Deploy runtime files + run_eris.bat")
 build_manager_exe()
 
 deploy_pairs = [
-    (os.path.join(REPO, "HUONG_DAN_NGUOI_DUNG.md"),
-     os.path.join(OUT,  "HUONG_DAN_NGUOI_DUNG.md")),
-    (os.path.join(REPO, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
-     os.path.join(OUT,  "VIDEO_GUIDE_POOL_SETUP_VI.md")),
     (os.path.join(REPO, "run_elevenlabs_pool_ui.bat"),
      os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
     (os.path.join(REPO, "run_deepseek_pool_ui.bat"),
      os.path.join(OUT,  "run_deepseek_pool_ui.bat")),
     (os.path.join(REPO, "setup_gemini_login.bat"),
      os.path.join(OUT,  "setup_gemini_login.bat")),
-    (os.path.join(REPO, "config", "SECRETS_SETUP.md"),
-     os.path.join(OUT,  "config", "SECRETS_SETUP.md")),
     (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
@@ -1003,7 +997,6 @@ banner("4d/5  --  Deploy setup wizard & pool scripts")
 ROOT_COPY = [
     "eris_setup.py",
     "run_manager.bat",
-    "open_user_guide.bat",
     "setup_secrets.bat",
     "apply_deepseek_pool_to_secrets.bat",
     "_setup_gemini_pool_auth.bat",
@@ -1203,27 +1196,19 @@ if IS_RELEASE:
     must_exist.extend([
         os.path.join(OUT, "Eris.exe"),
         os.path.join(OUT, "Eris.pck"),
-        os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
-        os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
-        os.path.join(OUT, "open_user_guide.bat"),
         os.path.join(OUT, ".env"),
         os.path.join(OUT, ".env.example"),
         os.path.join(OUT, "setup_secrets.bat"),
         os.path.join(OUT, "apply_deepseek_pool_to_secrets.bat"),
         os.path.join(OUT, "tools", "apply_deepseek_pool_to_secrets.py"),
-        os.path.join(OUT, "config", "SECRETS_SETUP.md"),
         os.path.join(OUT, "config", "secrets.example.json"),
     ])
 else:
     must_exist.extend([
-        os.path.join(OUT, "HUONG_DAN_NGUOI_DUNG.md"),
-        os.path.join(OUT, "VIDEO_GUIDE_POOL_SETUP_VI.md"),
-        os.path.join(OUT, "open_user_guide.bat"),
         os.path.join(OUT, ".env"),
         os.path.join(OUT, "setup_secrets.bat"),
         os.path.join(OUT, "apply_deepseek_pool_to_secrets.bat"),
         os.path.join(OUT, "tools", "apply_deepseek_pool_to_secrets.py"),
-        os.path.join(OUT, "config", "SECRETS_SETUP.md"),
         os.path.join(OUT, "config", "secrets.json"),
     ])
 
