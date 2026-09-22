@@ -1497,8 +1497,43 @@ async def api_chat_plan(req: ChatPlanRequest, authorization: Optional[str] = Hea
     with execution_context(token, ref=req.branch_name):
         full_name = f"{req.repo_owner}/{req.repo_name}"
 
+        # ── Gatekeeper pre-classification ────────────────────────────────
+        # Evaluate the request BEFORE any repo I/O or LLM call.
+        # Conversational messages (greetings, social, meta) are served
+        # instantly without reading the repo tree or spawning agents.
+        # Best-effort: any failure falls through to the existing pipeline.
+        try:
+            from .gatekeeper import classify_request as _gate_classify
+            from .pipelines.direct_reply import direct_reply as _direct_reply
+
+            _gate = await _gate_classify(req.goal)
+            logger.info(
+                "[gatekeeper] route=%s confidence=%.2f fast=%s rationale=%r",
+                _gate.route, _gate.confidence, _gate.fast_path, _gate.rationale,
+            )
+
+            if _gate.route == "conversational" and _gate.confidence >= 0.75:
+                # Zero repo reads, zero agents — answer directly
+                logger.info("[gatekeeper] SHORT-CIRCUIT: conversational → direct_reply")
+                reply = await _direct_reply(
+                    req.goal,
+                    owner=req.repo_owner,
+                    repo=req.repo_name,
+                )
+                # Return as a minimal PlanResult-compatible response
+                from .agentic import PlanResult
+                return PlanResult(
+                    goal=req.goal,
+                    summary=reply["summary"],
+                    steps=[],
+                )
+
+        except Exception as _gate_err:
+            logger.debug("[gatekeeper] skipped: %s", _gate_err)
+
         # Use lite planner when Lite Mode is active (setting OR topology)
         planner = generate_plan_lite if _is_lite_mode_active() else generate_plan
+
 
         # Batch B9 — deterministic query router.  Runs BEFORE the LLM
         # so even small models that pick poorly without guidance see

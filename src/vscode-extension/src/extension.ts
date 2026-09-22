@@ -176,6 +176,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const codeLensProvider = new GitPilotCodeLensProvider(config.showInlineHints);
 
   const stateStore = new StateStore();
+
+  // Restore saved permission mode from VS Code config so it persists
+  // across extension restarts (e.g. "auto" stays "auto", not reset to "ask").
+  {
+    const savedMode = vscode.workspace.getConfiguration("gitpilot").get<string>("permissionMode", "normal");
+    const modeMap: Record<string, "auto" | "ask" | "plan"> = { auto: "auto", normal: "ask", plan: "plan" };
+    const restored = modeMap[savedMode] ?? "ask";
+    if (restored !== "ask") {
+      stateStore.setExecutionMode(restored);
+    }
+  }
+
   const events = new GitPilotEvents();
 
   const statusClient = new StatusClient(client);
