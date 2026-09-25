@@ -2494,10 +2494,11 @@ class _TtsWorker:
     ) -> tuple[str, bool, str]:
         """Khóa transcript theo language contract trước khi gọi provider audio.
 
-        ``prelocalized=True`` nghĩa là canonical UtteranceSpec đã chốt speech
-        surface. TTS không gọi model dịch lần hai trên critical path. Nếu transcript
-        không khớp contract Nhật, engine hạ language theo chính transcript và phát
-        ngay. Localizer chỉ còn dành cho legacy/non-prelocalized request.
+        ``prelocalized=True`` nghĩa là canonical UtteranceSpec *tuyên bố* đã chốt
+        speech surface. TTS tin cờ đó chỉ khi transcript thực sự khớp language
+        contract. Nếu contract là Nhật nhưng transcript không có kana/kanji, đây
+        là lỗi invariant upstream: engine phải repair bằng localizer (hoặc câm khi
+        repair thất bại), tuyệt đối không được hạ ``ja -> vi`` rồi phát sai giọng.
         """
 
         language_hint = self._request_language(req)
@@ -2506,25 +2507,29 @@ class _TtsWorker:
             return text_to_speak, bool(req.prelocalized), language_hint
         if _contains_japanese_chars(text_to_speak):
             return text_to_speak, True, "ja"
-        if req.prelocalized:
-            # Canonical UtteranceSpec đã có quyền sở hữu speech surface. Nếu model
-            # lỡ trả transcript không phải tiếng Nhật, TTS không được mở thêm một
-            # LLM-localizer 60s ở critical path. Hạ language theo transcript gốc
-            # và phát ngay; lượt sau model có thể sửa surface, còn UI không bị
-            # đứng chờ một bản dịch thứ hai rồi mới nghe thấy giọng.
-            fallback_language = _fallback_language_for_transcript(text_to_speak)
+        repairing_invalid_prelocalized = bool(req.prelocalized)
+        if repairing_invalid_prelocalized:
+            # Đây là lớp chặn cuối cho bug "Vietnamese transcript wearing a ja
+            # label". Không fail-open sang tiếng nguồn ở nhánh này: nếu upstream
+            # đã tuyên bố canonical Japanese mà nội dung không phải Japanese thì
+            # đọc nguyên văn sẽ vi phạm chính voice contract người dùng đang nghe.
             logger.warning(
                 "[TTS] prelocalized transcript không khớp contract ja; "
-                "bypass runtime localizer và phát theo language=%s.",
-                fallback_language,
+                "repair bằng Japanese localizer trước khi phát."
             )
-            return text_to_speak, False, fallback_language
         if not _prelocalize_japanese_enabled():
-            if _speech_contract_fail_open_enabled():
+            if _speech_contract_fail_open_enabled() and not repairing_invalid_prelocalized:
                 logger.warning("[TTS] JP localization disabled; audio degraded to source transcript.")
                 return text_to_speak, bool(req.prelocalized), _fallback_language_for_transcript(text_to_speak)
-            logger.warning("[TTS] JP localization disabled; audio fail-closed for Japanese contract.")
-            raise SpeechLocalizationError("japanese_speech_contract_unavailable:localizer_disabled")
+            logger.warning(
+                "[TTS] JP localization disabled; audio fail-closed for Japanese contract%s.",
+                " (invalid prelocalized surface)" if repairing_invalid_prelocalized else "",
+            )
+            raise SpeechLocalizationError(
+                "japanese_speech_contract_unavailable:invalid_prelocalized_surface"
+                if repairing_invalid_prelocalized
+                else "japanese_speech_contract_unavailable:localizer_disabled"
+            )
 
         source_text = text_to_speak
         try:
@@ -2539,7 +2544,7 @@ class _TtsWorker:
         except SpeechLocalizationCancelled:
             raise
         except Exception as exc:
-            if _speech_contract_fail_open_enabled():
+            if _speech_contract_fail_open_enabled() and not repairing_invalid_prelocalized:
                 logger.warning(
                     "[TTS] JP localization lỗi (%s); audio degraded to source transcript.",
                     _short_error(exc),
@@ -2555,7 +2560,7 @@ class _TtsWorker:
                 f"japanese_speech_contract_unavailable:{type(exc).__name__}"
             ) from exc
         if not _contains_japanese_chars(text_to_speak):
-            if _speech_contract_fail_open_enabled():
+            if _speech_contract_fail_open_enabled() and not repairing_invalid_prelocalized:
                 logger.warning(
                     "[TTS] JP localizer trả transcript không phải tiếng Nhật; audio degraded to source transcript."
                 )

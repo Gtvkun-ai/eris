@@ -59,34 +59,45 @@ def requirement_from_frame(frame: SemanticFrame | Mapping[str, Any] | None, *, d
     return ReplyRequirement.REQUIRED if direct_user_turn else ReplyRequirement.OPTIONAL
 
 
-def _minimal_text(frame: SemanticFrame | None, *, language_hint: str) -> tuple[str, str]:
+def _minimal_surface(frame: SemanticFrame | None, *, language_hint: str) -> tuple[str, str, str]:
+    """Return ``(display_text, speech_text_ja, assistant_act_kind)``.
+
+    Đây là fallback cuối khi public writer không còn câu dùng được. Các câu ở
+    đây đều là literal tĩnh nên ta có thể giữ sẵn bản Nhật tương ứng, thay vì
+    copy display tiếng Việt sang speech rồi để tầng sau phải đoán lại ngôn ngữ.
+    """
+
     language = str(language_hint or "vi").strip().lower()
     act = str(getattr(frame, "user_act", "") or "").strip().lower() if frame else ""
     if act == "greeting":
-        return {
-            "en": ("Hi. I'm here.", "social"),
-            "ja": ("こんにちは。ここにいるよ。", "social"),
-            "vi": ("Chào bạn. Tôi đây.", "social"),
-        }.get(language, ("Chào bạn. Tôi đây.", "social"))
+        display = {
+            "en": "Hi. I'm here.",
+            "ja": "こんにちは。ここにいるよ。",
+            "vi": "Chào bạn. Tôi đây.",
+        }.get(language, "Chào bạn. Tôi đây.")
+        return display, "こんにちは。ここにいるよ。", "social"
     if act == "acknowledgement":
-        return {
-            "en": ("Got it.", "acknowledgement"),
-            "ja": ("わかった。", "acknowledgement"),
-            "vi": ("Ừ, tôi hiểu rồi.", "acknowledgement"),
-        }.get(language, ("Ừ, tôi hiểu rồi.", "acknowledgement"))
+        display = {
+            "en": "Got it.",
+            "ja": "わかった。",
+            "vi": "Ừ, tôi hiểu rồi.",
+        }.get(language, "Ừ, tôi hiểu rồi.")
+        return display, "わかった。", "acknowledgement"
     if act == "repair_request":
-        return {
-            "en": ("You're right, I failed to answer directly. Please send that exact line once more.", "repair"),
-            "ja": ("その通り。直接答えられていなかった。同じ文をもう一度送って。", "repair"),
-            "vi": ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"),
-        }.get(language, ("Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.", "repair"))
+        display = {
+            "en": "You're right, I failed to answer directly. Please send that exact line once more.",
+            "ja": "その通り。直接答えられていなかった。同じ文をもう一度送って。",
+            "vi": "Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.",
+        }.get(language, "Đúng, lượt trước tôi đã không trả lời trực tiếp. Bạn gửi lại đúng câu đó một lần nhé.")
+        return display, "その通り。直接答えられていなかった。同じ文をもう一度送って。", "repair"
     # Chỉ dùng khi provider thật sự không trả được bất kỳ public text nào. Không
     # dùng văn mẫu “hụt nhịp/bám mạch” vì nó vừa vô nghĩa vừa che mất lỗi thật.
-    return {
-        "en": ("I received that message, but the reply generator returned no usable text.", "repair"),
-        "ja": ("そのメッセージは受け取ったが、返答生成から使える文が返らなかった。", "repair"),
-        "vi": ("Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.", "repair"),
-    }.get(language, ("Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.", "repair"))
+    display = {
+        "en": "I received that message, but the reply generator returned no usable text.",
+        "ja": "そのメッセージは受け取ったが、返答生成から使える文が返らなかった。",
+        "vi": "Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.",
+    }.get(language, "Tôi đã nhận câu này, nhưng bộ sinh lời không trả về câu dùng được.")
+    return display, "そのメッセージは受け取ったが、返答生成から使える文が返らなかった。", "repair"
 
 
 def enforce_reply_obligation(
@@ -140,11 +151,16 @@ def enforce_reply_obligation(
             reason="exact_local_required_reply",
             performance_preset=str(local.get("performance_hint", "neutral") or "neutral"),
             should_speak=True,
+            # ``build_degraded_reply`` đã commit cặp bilingual tĩnh. Nếu bỏ hai
+            # override này, degrade_surface_payload legacy sẽ lại copy display
+            # tiếng Việt sang speech và tái tạo đúng bug ta đang sửa.
+            speech_text=str(local.get("speech_text", "") or ""),
+            speech_language=str(local.get("speech_language", "ja") or "ja"),
         )
         _observe_public_writer_fallback("exact_local_required_reply")
         return ReplyObligationResult(local, requirement, repaired=True, reason="exact_local_required_reply")
 
-    text, act_kind = _minimal_text(typed, language_hint=language_hint)
+    text, speech_text, act_kind = _minimal_surface(typed, language_hint=language_hint)
     if typed is not None:
         data["semantic_frame"] = typed.to_dict()
         data["_typed_semantic_frame"] = typed
@@ -163,6 +179,8 @@ def enforce_reply_obligation(
         reason="required_reply_repair",
         performance_preset="repair" if act_kind == "repair" else "neutral",
         should_speak=True,
+        speech_text=speech_text,
+        speech_language="ja",
     )
     _observe_public_writer_fallback("required_reply_repair")
     return ReplyObligationResult(data, requirement, repaired=True, reason="required_reply_repair")

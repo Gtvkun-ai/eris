@@ -162,12 +162,18 @@ class UtteranceSpec:
             display_value if not display_raw else None,
             legacy_display,
         )
-        speech_text = _first_text(
+        # ``speech_text`` chỉ được xem là một speech surface đã commit khi
+        # provider/caller thực sự gửi nó.  Trước đây ta fallback thẳng sang
+        # ``display_text`` nhưng vẫn gắn ``default_speech_language='ja'``.
+        # Hậu quả là một câu tiếng Việt có thể bị đóng dấu thành "Japanese đã
+        # prelocalized" và tầng TTS không còn cơ hội dịch nó nữa.
+        explicit_speech_text = _first_text(
             speech_raw.get("text") if speech_raw else None,
             speech_value if not speech_raw else None,
             root.get("speech_text"),
-            display_text,
         )
+        speech_text = explicit_speech_text or display_text
+        speech_surface_is_explicit = bool(explicit_speech_text)
 
         # Trích xuất nếu model lọt câu tiếng Nhật dạng 「...」 vào display_text
         import re
@@ -179,6 +185,7 @@ class UtteranceSpec:
                 display_text = clean_display
             if (not speech_raw or not speech_raw.get("text")) and not root.get("speech_text"):
                 speech_text = extracted_jp
+                speech_surface_is_explicit = True
 
 
         display_language = _language(
@@ -186,9 +193,17 @@ class UtteranceSpec:
             default_display_language,
         )
 
+        # Nếu speech surface chỉ là fallback từ display thì ngôn ngữ trung thực
+        # của chuỗi đó phải là display language.  Japanese là *đích cần dịch*,
+        # không phải thuộc tính ta được phép bịa cho một transcript tiếng Việt.
+        # Stage/TTS vẫn có thể pin voice contract sang ja và localize ở bước sau.
         speech_language = _language(
-            speech_raw.get("language", root.get("speech_language", "")),
-            default_speech_language or display_language,
+            speech_raw.get("language", root.get("speech_language", ""))
+            if speech_surface_is_explicit
+            else "",
+            (default_speech_language or display_language)
+            if speech_surface_is_explicit
+            else display_language,
         )
 
         preset = _text(
@@ -270,14 +285,17 @@ def degrade_surface_payload(
     reason: str,
     performance_preset: str | None = None,
     should_speak: bool = True,
+    speech_text: str | None = None,
+    speech_language: str | None = None,
 ) -> dict[str, Any]:
     """Rebind a post-commit rewrite without leaving contradictory surfaces.
 
     A deterministic safety/repair policy may occasionally replace public text
-    after the semantic model has returned.  It cannot translate the replacement
-    without creating another semantic authority, so the honest degradation is to
-    use the same replacement for display and speech, mark the reason, and keep
-    the original delivery contract.
+    after the semantic model has returned.  Mặc định policy không được tự dịch,
+    nên display và speech cùng dùng replacement text/language.  Tuy nhiên một số
+    fallback *đã có sẵn* cặp câu song ngữ được viết tĩnh trong source; caller có
+    thể truyền ``speech_text``/``speech_language`` để giữ cặp đó.  Hàm này không
+    sinh bản dịch mới, vì vậy semantic authority vẫn không bị nhân đôi.
     """
 
     data = dict(payload) if isinstance(payload, Mapping) else {}
@@ -290,10 +308,18 @@ def degrade_surface_payload(
     )
     resolved_language = _language(language, previous.display.language or "vi")
     resolved_text = _text(text)
+    # ``None`` nghĩa là caller không có speech surface riêng -> dùng cùng display
+    # như hành vi legacy. Chuỗi rỗng được giữ là rỗng nếu caller truyền rõ ràng.
+    has_explicit_speech_override = speech_text is not None
+    resolved_speech_text = _text(speech_text) if has_explicit_speech_override else resolved_text
+    resolved_speech_language = _language(
+        speech_language,
+        previous.speech.language or resolved_language,
+    ) if has_explicit_speech_override else resolved_language
     preset = _text(performance_preset, 60).lower() if performance_preset is not None else previous.performance.preset
     rebuilt = UtteranceSpec(
         display=LocalizedSurface(resolved_language, resolved_text),
-        speech=LocalizedSurface(resolved_language, resolved_text),
+        speech=LocalizedSurface(resolved_speech_language, resolved_speech_text),
         performance=PerformanceSpec(
             preset=preset or "neutral",
             intensity=previous.performance.intensity,

@@ -77,6 +77,19 @@ def test_utterance_spec_recovers_mild_provider_shape_drift():
     assert flat_spec.speech.text == "ここにいる。"
 
 
+def test_utterance_spec_does_not_label_display_fallback_as_japanese_speech():
+    spec = UtteranceSpec.from_mapping(
+        {"text": "Chào bạn. Tôi đây."},
+        default_display_language="vi",
+        default_speech_language="ja",
+    )
+
+    # Chưa có speech_text thật thì transcript chỉ là display fallback. Nó phải
+    # mang ngôn ngữ thật (vi); Stage/TTS mới là nơi pin target ja và localize.
+    assert spec.speech.text == "Chào bạn. Tôi đây."
+    assert spec.speech.language == "vi"
+
+
 def test_split_web_envelope_keeps_top_level_surfaces():
     spec = UtteranceSpec.from_mapping(
         {
@@ -242,6 +255,8 @@ def test_stage_pins_japanese_speech_contract_even_if_payload_downgrades_it():
 
     assert frame.speech_contract["language"] == "ja"
     assert frame.tts_text == "Xin chào."
+    assert frame.speech_contract["can_translate"] is True
+    assert frame.speech_contract.get("prelocalized") is not True
 
 
 def test_post_commit_rewrite_degrades_both_surfaces_honestly():

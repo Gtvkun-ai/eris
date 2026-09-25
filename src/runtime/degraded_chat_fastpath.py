@@ -42,6 +42,27 @@ _SCREEN_CAPABILITY_MARKERS = (
 )
 
 
+def _paired_surface(language: str, variants: dict[str, str]) -> tuple[str, str, str]:
+    """Tạo cặp display/speech tĩnh cho degraded path.
+
+    ``language`` ở fast-path là ngôn ngữ UI, không phải quyền đổi voice của Eris.
+    Vì voice contract production được pin sang tiếng Nhật, mọi câu fallback đã
+    biết trước ở module này đều mang luôn một ``speech_text`` Nhật tương ứng.
+
+    Làm vậy có hai lợi ích:
+    1. degraded greeting không phải gọi thêm LLM chỉ để dịch một câu cố định;
+    2. không còn tình trạng display tiếng Việt bị copy sang speech rồi gắn nhãn
+       ``ja`` ở compatibility envelope.
+    """
+
+    display_language = language if language in {"vi", "en", "ja"} else "vi"
+    display_text = variants.get(display_language, variants["vi"])
+    # Mọi bảng variants trong file này bắt buộc có bản Nhật vì đó là transcript
+    # TTS canonical cho Eris khi voice contract đang pin ja.
+    speech_text = variants["ja"]
+    return display_text, display_language, speech_text
+
+
 def _enabled() -> bool:
     raw = str(os.getenv("ERIS_DEGRADED_CHAT_FASTPATH", "1") or "1").strip().lower()
     return raw not in {"0", "false", "off", "no"}
@@ -56,11 +77,11 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
     language = str(language_hint or "vi").strip().lower()
 
     if cue in _GREETING_FORMS:
-        text = {
+        text, display_language, speech_text = _paired_surface(language, {
             "en": "Hi. I'm here.",
             "ja": "こんにちは。ここにいるよ。",
             "vi": "Chào bạn. Tôi đây.",
-        }.get(language, "Chào bạn. Tôi đây.")
+        })
         frame = {
             "turn_kind": "chat_response",
             "discourse_relation": "new_or_direct_turn",
@@ -80,11 +101,11 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
             },
         }
     elif cue in _ACK_FORMS:
-        text = {
+        text, display_language, speech_text = _paired_surface(language, {
             "en": "Got it.",
             "ja": "わかった。",
             "vi": "Ừ, tôi hiểu rồi.",
-        }.get(language, "Ừ, tôi hiểu rồi.")
+        })
         frame = {
             "turn_kind": "chat_response",
             "discourse_relation": "acknowledgement",
@@ -104,11 +125,11 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
             },
         }
     elif any(marker in cue for marker in _SMALL_TALK_REQUEST_MARKERS):
-        text = {
+        text, display_language, speech_text = _paired_surface(language, {
             "en": "Then I'll start small: what's the tiny thing on your mind right now?",
             "ja": "じゃあ小さく始めよう。今いちばん気になってることは何？",
             "vi": "Vậy tôi khởi đầu nhẹ nha: trong đầu cậu lúc này đang vướng điều gì nhất?",
-        }.get(language, "Vậy tôi khởi đầu nhẹ nha: trong đầu cậu lúc này đang vướng điều gì nhất?")
+        })
         frame = {
             "turn_kind": "chat_response",
             "discourse_relation": "new_or_direct_turn",
@@ -128,11 +149,11 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
             },
         }
     elif any(marker in cue for marker in _SCREEN_CAPABILITY_MARKERS):
-        text = {
+        text, display_language, speech_text = _paired_surface(language, {
             "en": "I can use screen evidence when capture/OCR gives me something grounded. Right now I shouldn't pretend I saw details that did not resolve.",
             "ja": "画面は、キャプチャやOCRが根拠のある情報を出した時だけ扱える。今は見えたふりはしない。",
             "vi": "Có, nhưng chỉ khi capture/OCR cho ra bằng chứng đủ chắc. Lúc nãy tôi không nên giả vờ thấy chi tiết khi phần nhìn chưa resolve được.",
-        }.get(language, "Có, nhưng chỉ khi capture/OCR cho ra bằng chứng đủ chắc. Lúc nãy tôi không nên giả vờ thấy chi tiết khi phần nhìn chưa resolve được.")
+        })
         frame = {
             "turn_kind": "chat_response",
             "discourse_relation": "answer",
@@ -168,6 +189,12 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
         "semantic_frame": validated.to_dict(),
         "assistant_act": assistant_act,
         "text": text,
+        # Display và speech là hai surface độc lập. Đừng xóa ba field này khi
+        # refactor fallback: compatibility envelope cần chúng để biết câu Nhật
+        # đã thật sự tồn tại, thay vì tự gắn nhãn ja lên display tiếng Việt.
+        "display_language": display_language,
+        "speech_text": speech_text,
+        "speech_language": "ja",
         "should_speak": True,
         "performance_hint": "neutral",
         "degraded_fastpath": True,

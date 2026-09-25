@@ -105,6 +105,21 @@ def clean_tts_source(text: str) -> str:
     return _TRANSFORMERS.transform(text).tts_text
 
 
+def _contains_japanese_script(text: str) -> bool:
+    """Guard rẻ cho invariant ``speech_contract=ja``.
+
+    Stage không cần đoán đầy đủ ngôn ngữ tự nhiên; nó chỉ cần biết transcript
+    có thật sự mang kana/kanji hay không trước khi tuyên bố ``prelocalized``.
+    Cùng dải ký tự với guard cuối trong tts_engine để hai tầng thống nhất.
+    """
+
+    for ch in str(text or ""):
+        point = ord(ch)
+        if 0x3040 <= point <= 0x30FF or 0x3400 <= point <= 0x9FFF:
+            return True
+    return False
+
+
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -281,7 +296,24 @@ class StageFrameBuilder:
             contract_payload["speech_contract"] = supplied_contract
             contract_payload["tts_language"] = utterance.speech.language
             speech_contract = self.speech_contract_resolver.resolve(contract_payload, text=tts_text)
-            prelocalized = True
+            # Một UtteranceSpec có cấu trúc hợp lệ chưa chắc speech surface của
+            # nó hợp lệ về *ngôn ngữ*. Compatibility payload cũ từng copy câu
+            # Việt sang speech rồi gắn ja; nếu đánh prelocalized=True ở đây thì
+            # TTS sẽ tưởng bản dịch đã hoàn tất. Với contract Nhật, chỉ transcript
+            # thật sự có kana/kanji mới được quyền mang cờ prelocalized.
+            needs_language_repair = bool(
+                tts_text
+                and speech_contract.language == "ja"
+                and not _contains_japanese_script(tts_text)
+            )
+            if needs_language_repair:
+                # Không dịch ngay tại Stage: renderer không phải semantic/localize
+                # authority. Chỉ hạ cờ ownership và cho phép TTS localizer thực
+                # hiện đúng nhiệm vụ của nó ở bước audio.
+                speech_contract = replace(speech_contract, can_translate=True)
+                prelocalized = False
+            else:
+                prelocalized = True
         else:
             performance = self.performance_planner.apply(
                 display_surfaces,

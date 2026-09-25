@@ -357,7 +357,7 @@ def test_japanese_localizer_default_timeout_requires_open_model_hygiene_friendly
     assert _localizer_timeout_seconds() == 60.0
 
 
-def test_tts_worker_honors_prelocalized_owner_without_second_model_call(monkeypatch) -> None:
+def test_tts_worker_repairs_invalid_prelocalized_japanese_surface(monkeypatch) -> None:
     import runtime.tts_engine as tts_engine
 
     class _Localizer:
@@ -379,10 +379,40 @@ def test_tts_worker_honors_prelocalized_owner_without_second_model_call(monkeypa
     monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
 
     text, localized, language = worker._resolve_main_transcript(request, request.text)
+    # ``prelocalized`` là ownership claim, không phải giấy phép bỏ qua language
+    # invariant. Transcript Việt đội nhãn ja phải được repair trước khi phát.
+    assert worker._localizer.called is True
+    assert text == "話すことがなくても、無理に話さなくていいよ。"
+    assert localized is True
+    assert language == "ja"
+
+
+def test_tts_worker_keeps_valid_prelocalized_japanese_without_second_model_call(monkeypatch) -> None:
+    import runtime.tts_engine as tts_engine
+
+    class _Localizer:
+        def __init__(self) -> None:
+            self.called = False
+
+        def localize(self, _text: str, **_kwargs) -> str:
+            self.called = True
+            return "SHOULD NOT RUN"
+
+    worker = tts_engine._TtsWorker.__new__(tts_engine._TtsWorker)
+    worker._language_hint = "ja"
+    worker._localizer = _Localizer()
+    request = tts_engine._SpeakRequest(
+        "話すことがなくても、無理に話さなくていいよ。",
+        prelocalized=True,
+        language_hint="ja",
+    )
+    monkeypatch.setattr(tts_engine, "_prelocalize_japanese_enabled", lambda: True)
+
+    text, localized, language = worker._resolve_main_transcript(request, request.text)
     assert worker._localizer.called is False
     assert text == request.text
-    assert localized is False
-    assert language == "vi"
+    assert localized is True
+    assert language == "ja"
 
 
 def test_tts_localizer_uses_speech_model_when_no_override(monkeypatch) -> None:
