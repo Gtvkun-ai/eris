@@ -1,12 +1,15 @@
 from dataclasses import FrozenInstanceError
+import math
 
 import pytest
 
 from runtime.pedagogical_contracts import (
     ComprehensionState,
+    TeachingPlan,
     TeachingConcept,
     TeachingDirective,
     TeachingEpisode,
+    TeachingReceipt,
     normalize_episode,
     validate_directive,
 )
@@ -64,3 +67,39 @@ def test_contracts_are_frozen_and_serialization_bounds_text():
     assert len(payload["concepts"][0]["description"]) <= 420
     with pytest.raises(FrozenInstanceError):
         episode.status = "ready"
+
+
+def test_plan_rejects_concept_cardinality_outside_three_to_eight():
+    concept = TeachingConcept("c", "description")
+    with pytest.raises(ValueError, match="concepts_required"):
+        TeachingPlan("goal", (concept, concept))
+    with pytest.raises(ValueError, match="concepts_required"):
+        TeachingPlan("goal", ())
+    with pytest.raises(ValueError, match="concepts_limit"):
+        TeachingPlan("goal", tuple(TeachingConcept(str(i), "d") for i in range(9)))
+
+
+def test_persisted_scalars_are_finite_bounded_and_boolean():
+    episode = TeachingEpisode(
+        "e", "topic", "goal", (TeachingConcept("c", "d"),),
+        float("nan"), float("inf"), plan_revision=10**99,
+        autonomous_chunks_used=10**99, repair_attempts=-4, consecutive_stalls=10**99,
+    )
+    payload = episode.to_dict()
+    assert math.isfinite(payload["started_at"]) and math.isfinite(payload["expires_at"])
+    assert payload["plan_revision"] <= 1_000_000
+    assert payload["autonomous_chunks_used"] <= 1_000_000
+    receipt = TeachingReceipt("e", 1, "chunk", successful="false")
+    assert receipt.to_dict()["successful"] is False
+    directive = TeachingDirective("e", 1, "chunk", "g", "o", "c", "x", "allowed", 1, 1,
+                                  allow_question="false", stop_after_chunk=0, allow_autonomous_resume=object())
+    assert directive.to_dict()["allow_question"] is False
+    assert directive.to_dict()["stop_after_chunk"] is False
+    assert directive.to_dict()["allow_autonomous_resume"] is False
+
+
+def test_directive_rejects_non_positive_budgets():
+    directive = TeachingDirective("e", 1, "chunk", "g", "o", "c", "x", "allowed", 0, 1, True, True, True)
+    assert validate_directive(directive) == (False, "directive_budget_exceeded")
+    directive = TeachingDirective("e", 1, "chunk", "g", "o", "c", "x", "allowed", 1, 0, True, True, True)
+    assert validate_directive(directive) == (False, "directive_budget_exceeded")

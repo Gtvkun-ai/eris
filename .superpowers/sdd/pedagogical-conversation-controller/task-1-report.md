@@ -25,3 +25,11 @@
 
 - The broader suite cannot complete because the checkout lacks `tools.run_v103_nervous_replay`; this is unrelated to Task 1 and was present before these changes.
 - Plan cardinality (3-8 concepts) is represented by the bounded plan container and should be enforced by the Task 4 plan builder when rejecting malformed provider payloads.
+
+## Review Fixes
+
+- Enforced `TeachingPlan` concept cardinality at construction: fewer than three or more than eight concepts now fail closed with a `ValueError` instead of being silently accepted/truncated.
+- Added finite timestamp normalization and bounded integer normalization for episode revisions/counters and directive/receipt revisions.
+- Normalized directive and receipt boolean fields to actual booleans, including string and invalid-object inputs.
+- Updated directive validation to reject zero or negative chunk budgets.
+- Added three focused regression tests covering these review findings; focused suite now reports `7 passed`.
