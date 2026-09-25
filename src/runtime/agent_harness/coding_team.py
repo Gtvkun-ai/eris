@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Role-specialized coding team policy for Eris.
 
-The execution shape is deliberately inspired by GitPilot's public topology model:
-Explorer -> Planner -> Coder -> Reviewer.  Eris keeps the implementation native so
-there is still one checkpoint/tool/permission spine and one official-API credential
-lane; roles are separate model contexts, not competing runtimes.
+Uses the Explorer → Planner → Coder → Reviewer topology.  Eris keeps the
+implementation native so there is still one checkpoint/tool/permission spine and
+one official-API credential lane; roles are separate model contexts, not
+competing runtimes.
 """
 from __future__ import annotations
 

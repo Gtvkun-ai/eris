@@ -55,7 +55,7 @@ def _subsystem(path: str) -> str:
     if "vscode-extension" in lowered:
         return "Eris Code / VS Code"
     if len(parts) >= 2 and lowered[0] == "services" and lowered[1] == "gitpilot":
-        return "GitPilot"
+        return "Eris Code"
     if len(parts) >= 2 and lowered[0] == "src" and lowered[1] == "runtime":
         return "Runtime"
     if len(parts) >= 2 and lowered[0] == "src" and lowered[1] == "body":

@@ -17,7 +17,7 @@ Boundary quan trọng:
 - không gọi tool coding;
 - không sửa file;
 - không approve task;
-- không điều khiển GitPilot;
+- không điều khiển coding agent bên ngoài;
 - không suy user "ngu" chỉ vì user giao việc cho AI.
 
 Skill estimate chỉ thay đổi khi có evidence hành vi tương đối rõ. Rủi ro lạm dụng AI
@@ -569,7 +569,7 @@ class UserEngineeringSkillModel:
     def note_agent_flow(self, flow: Mapping[str, Any], *, now: float | None = None) -> None:
         """Flow của agent không phải evidence về user, kể cả cho overreliance.
 
-        GitPilot retry ngu hoặc scope phình là dữ kiện để Mentor giảng về workflow,
+        Agent retry ngu hoặc scope phình là dữ kiện để Mentor giảng về workflow,
         nhưng không chứng minh user phụ thuộc AI. V80 giữ boundary này tuyệt đối.
         """
         _ = (flow, now)

@@ -174,9 +174,9 @@ class RuntimeCoordinator(
         self._agent_task_threads = {}
         self._agent_last_started_task_id = ""
         self.agent_default_workspace = ""
-        # V78: coding owner mặc định là GitPilot ở Eris Code. AgentHarness cũ
-        # chỉ còn developer rollback flag, không được tự trở thành coding brain
-        # thứ hai trong production Desktop.
+        # V78: Eris native AgentHarness là coding lane chính thức cho Eris Code.
+        # AgentHarness cũ chỉ còn developer rollback flag, không được tự trở thành
+        # coding brain thứ hai trong production Desktop.
         legacy_coding_enabled = str(
             os.environ.get("ERIS_LEGACY_CODING_HARNESS_ENABLED", "0") or "0"
         ).strip().lower() not in {"0", "false", "no", "off", ""}
@@ -277,7 +277,7 @@ class RuntimeCoordinator(
             info = getattr(logger, "info", None)
             if callable(info):
                 info(
-                    "[V78] legacy coding AgentHarness disabled; GitPilot owns VS Code coding. "
+                    "[V78] legacy coding AgentHarness disabled; Eris native agent harness owns coding lane. "
                     "Set ERIS_LEGACY_CODING_HARNESS_ENABLED=1 only for temporary rollback."
                 )
 
@@ -294,11 +294,11 @@ class RuntimeCoordinator(
             except Exception:
                 self.agent_capability_self_model = None
 
-        # Legacy Eris IDE agent WebSocket is opt-in only. Eris Code is now an
-        # independent GitPilot client and never depends on this runtime.
+        # Agent WebSocket service is opt-in only. Eris Code agent bridge never
+        # depends on this runtime startup path.
 
-        # V80 Engineering Mentor tồn tại độc lập với GitPilot/observer link. Nó chỉ
-        # giữ skill projection + teaching policy, tuyệt đối không có coding authority.
+        # V80 Engineering Mentor tồn tại độc lập với coding extension/observer link.
+        # Nó chỉ giữ skill projection + teaching policy, tuyệt đối không có coding authority.
         self.engineering_mentor_service = None
         try:
             from runtime.engineering_mentor import EngineeringMentorService
@@ -309,7 +309,7 @@ class RuntimeCoordinator(
                 debug("[mentor-v80] optional engineering mentor unavailable: %s", exc)
 
         # V86: read-model thống kê năng lực. Đây chỉ là projection từ Mentor state,
-        # không gọi model/tool và không có quyền điều khiển GitPilot.
+        # không gọi model/tool và không có quyền điều khiển coding agent.
         self.capability_projection_service = None
         try:
             from runtime.capability_projection import CapabilityProjectionService
@@ -320,7 +320,7 @@ class RuntimeCoordinator(
                 debug("[mentor-v86] capability projection unavailable: %s", exc)
 
         # V87: state local-first cho correction/mục tiêu user chọn trong Capability Panel.
-        # Service này không gọi model/tool và không có quyền điều khiển GitPilot.
+        # Service này không gọi model/tool và không có quyền điều khiển coding agent.
         self.development_control_service = None
         try:
             from runtime.development_control import DevelopmentControlService
@@ -339,8 +339,8 @@ class RuntimeCoordinator(
         # V91: Eris Desktop và Eris Code tách runtime thật sự.
         #
         # Hai attribute giữ lại để code/UI cũ kiểm tra availability không vỡ,
-        # nhưng normal startup KHÔNG mở listener, không đọc GitPilot telemetry và
-        # không chờ extension. User muốn Eris xem repo/diff/log thì đưa evidence
+        # nhưng normal startup KHÔNG mở listener, không đọc coding extension telemetry
+        # và không chờ extension. User muốn Eris xem repo/diff/log thì đưa evidence
         # qua chính kênh Eris; companion model học từ conversation-first context.
         self.eris_code_observer_link = None
         self.coding_observation_service = None

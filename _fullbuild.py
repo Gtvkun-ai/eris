@@ -1,4 +1,4 @@
-"""
+﻿"""
 _fullbuild.py -- One-click build Eris: moi .py -> .pyc, deploy sang build dir.
 
 Chay bang VENV cua du an (bat buoc):
@@ -884,11 +884,26 @@ if os.path.exists(ds_pool_apply_src):
 portable_src = os.path.join(REPO, "portable_python")
 portable_dst = os.path.join(OUT, "python")
 if os.path.exists(portable_src):
-    print("  Deploying Portable Python Runtime to build... This may take a while.")
-    shutil.copytree(portable_src, portable_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
+    try:
+        _src_real = os.path.realpath(portable_src)
+        _dst_real = os.path.realpath(portable_dst)
+        _same_dir = os.path.normcase(_src_real) == os.path.normcase(_dst_real)
+    except Exception:
+        _same_dir = False
+    if _same_dir:
+        print("  [OK] Portable Python source == destination (skipping copy)")
+        ensure_portable_python_can_import_src(portable_dst)
+        ensure_live2d_dependencies(portable_dst)
+    else:
+        print("  Deploying Portable Python Runtime to build... This may take a while.")
+        shutil.copytree(portable_src, portable_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
+        ensure_portable_python_can_import_src(portable_dst)
+        ensure_live2d_dependencies(portable_dst)
+        print("  [OK] Portable Python deployed")
+elif os.path.exists(portable_dst):
+    print("  [OK] Portable Python pre-deployed at build output (skipping copy)")
     ensure_portable_python_can_import_src(portable_dst)
     ensure_live2d_dependencies(portable_dst)
-    print("  [OK] Portable Python deployed")
 else:
     print("  [ERROR] portable_python not found. Please run 'eris_setup.py' -> 'Create Portable Python' first!")
     sys.exit(1)

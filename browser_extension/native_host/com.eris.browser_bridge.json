@@ -1,9 +1,0 @@
-{
-  "name": "com.eris.browser_bridge",
-  "description": "ERIS Browser DOM Bridge — writes tab/media metadata to disk",
-  "path": "C:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\browser_extension\\native_host\\eris_bridge_host.bat",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://cjmlcpjnjgkfjfnbkcdbdkapnlckdepm/"
-  ]
-}
