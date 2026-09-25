@@ -217,8 +217,17 @@ class PedagogicalRuntime:
                 episode = self._episode_locked()
                 if episode is None:
                     return False
-                updated = note_public_commit(episode, receipt)
-                if updated == episode:
+                receipt_episode = episode
+                if episode.status == "dwelling":
+                    # A dwell lease proves this exact chunk was selected for a
+                    # public attempt. Convert only this transient projection to
+                    # the controller's receipt-valid state; the stored episode
+                    # remains dwelling until a successful receipt consumes it.
+                    if not self._state["claim_owner"] or self._state["claim_until"] <= current:
+                        return False
+                    receipt_episode = replace(episode, status="ready")
+                updated = note_public_commit(receipt_episode, receipt)
+                if updated == receipt_episode:
                     return False
                 self._set_episode_locked(updated)
                 self._clear_dwell_locked(reason="public_commit")

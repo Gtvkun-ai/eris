@@ -109,6 +109,24 @@ def test_claim_is_leased_and_cannot_be_duplicated_while_live(tmp_path):
     assert runtime.snapshot(now=1001.1)["claimed"] is True
 
 
+def test_claimed_dwell_directive_commits_once_and_advances_episode(tmp_path):
+    runtime = _runtime(tmp_path)
+    assert runtime.start_episode(_episode(status="dwelling"))
+    directive = runtime.claim_due(worker_id="worker-a", now=1001.0)
+    assert directive is not None
+    receipt = _receipt(
+        episode_id=directive.episode_id,
+        revision=directive.plan_revision,
+        chunk_id=directive.chunk_id,
+    )
+    assert not runtime.commit_receipt(_receipt(chunk_id="stale"), now=1001.05)
+    assert runtime.commit_receipt(receipt, now=1001.1)
+    assert not runtime.commit_receipt(receipt, now=1001.2)
+    snapshot = runtime.snapshot(now=1001.2)
+    assert snapshot["active_episode"]["status"] == "speaking"
+    assert snapshot["active_episode"]["autonomous_chunks_used"] == 1
+
+
 def test_receipt_is_idempotent_and_mismatched_identity_is_rejected(tmp_path):
     runtime = _runtime(tmp_path)
     assert runtime.start_episode(_episode())
