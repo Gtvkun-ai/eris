@@ -8,12 +8,14 @@ from typing import Any, Mapping
 from runtime.pedagogical_contracts import MisconceptionHypothesis, TeachingConcept, TeachingPlan
 
 
-_FORBIDDEN_PLAN_KEYS = frozenset(
-    {
-        "assistant_reply", "chain_of_thought", "completion_claim", "cot", "public_reply",
-        "public_text", "public_utterance", "reasoning", "speech_text", "utterance",
-    }
-)
+def _canonical_key(value: Any) -> str:
+    return "".join(character for character in str(value or "").casefold() if character.isalnum())
+
+
+_FORBIDDEN_PLAN_KEYS = frozenset(_canonical_key(value) for value in {
+    "assistant_reply", "chain_of_thought", "completion_claim", "cot", "public_reply",
+    "public_text", "public_utterance", "reasoning", "speech_text", "utterance",
+})
 _MAX_CONTEXT_KEYS = 16
 _MAX_CONTEXT_ITEMS = 12
 _MAX_CONTEXT_TEXT = 1200
@@ -40,8 +42,7 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
 def _contains_forbidden_fields(value: Any) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            normalized = str(key or "").strip().lower().replace("-", "_").replace(" ", "_")
-            if normalized in _FORBIDDEN_PLAN_KEYS or _contains_forbidden_fields(item):
+            if _canonical_key(key) in _FORBIDDEN_PLAN_KEYS or _contains_forbidden_fields(item):
                 return True
     elif isinstance(value, (list, tuple)):
         return any(_contains_forbidden_fields(item) for item in value)
@@ -49,7 +50,7 @@ def _contains_forbidden_fields(value: Any) -> bool:
 
 
 def _clean_text(value: Any, *, limit: int = 420) -> str:
-    return str(value or "").strip()[:limit]
+    return value.strip()[:limit] if isinstance(value, str) else ""
 
 
 def _stable_id(prefix: str, *parts: Any) -> str:
@@ -91,13 +92,21 @@ class TeachingPlanBuilder:
 
     @staticmethod
     def _normalize(payload: Mapping[str, Any]) -> TeachingPlan | None:
-        global_goal = _clean_text(payload.get("global_goal"))
+        raw_goal = payload.get("global_goal")
+        if not isinstance(raw_goal, str):
+            return None
+        global_goal = _clean_text(raw_goal)
         raw_evidence = payload.get("success_evidence")
+        if not isinstance(raw_evidence, (list, tuple)):
+            return None
+        bounded_evidence = raw_evidence[:16]
+        if any(not isinstance(item, str) or not item.strip() for item in bounded_evidence):
+            return None
         success_evidence = tuple(
             text
-            for text in (_clean_text(item, limit=240) for item in raw_evidence[:16])
+            for text in (_clean_text(item, limit=240) for item in bounded_evidence)
             if text
-        ) if isinstance(raw_evidence, (list, tuple)) else ()
+        )
         raw_concepts = payload.get("concepts")
         if not global_goal or not success_evidence or not isinstance(raw_concepts, (list, tuple)):
             return None
@@ -106,18 +115,30 @@ class TeachingPlanBuilder:
         used_ids: set[str] = set()
         for index, raw in enumerate(raw_concepts[:8]):
             if not isinstance(raw, Mapping):
-                continue
-            objective = _clean_text(raw.get("objective"))
-            description = _clean_text(raw.get("description"))
+                return None
+            raw_objective = raw.get("objective")
+            raw_description = raw.get("description")
+            if not isinstance(raw_objective, str) or not isinstance(raw_description, str):
+                return None
+            objective = _clean_text(raw_objective)
+            description = _clean_text(raw_description)
             if not objective or not description:
-                continue
-            concept_id = _unique_concept_id(raw.get("id", raw.get("concept_id", "")), raw, index, used_ids)
+                return None
+            raw_id = raw.get("id", raw.get("concept_id", ""))
+            if not isinstance(raw_id, str):
+                return None
+            concept_id = _unique_concept_id(raw_id, raw, index, used_ids)
             raw_prerequisites = raw.get("prerequisite_ids", raw.get("prerequisites", ()))
+            if not isinstance(raw_prerequisites, (list, tuple)):
+                return None
+            bounded_prerequisites = raw_prerequisites[:16]
+            if any(not isinstance(value, str) for value in bounded_prerequisites):
+                return None
             prerequisites = tuple(
                 item
-                for item in (_clean_text(value, limit=120) for value in raw_prerequisites[:16])
+                for item in (_clean_text(value, limit=120) for value in bounded_prerequisites)
                 if item
-            ) if isinstance(raw_prerequisites, (list, tuple)) else ()
+            )
             prepared.append((concept_id, description, objective, prerequisites))
         if len(prepared) < 3:
             return None
@@ -151,32 +172,48 @@ class TeachingPlanBuilder:
             remaining.remove(ready)
 
         raw_hypotheses = payload.get("misconception_hypotheses", ())
+        if not isinstance(raw_hypotheses, (list, tuple)):
+            return None
         hypotheses: list[MisconceptionHypothesis] = []
-        if isinstance(raw_hypotheses, (list, tuple)):
-            for index, raw in enumerate(raw_hypotheses[:16]):
-                if not isinstance(raw, Mapping):
-                    continue
-                description = _clean_text(raw.get("description"))
-                if not description:
-                    continue
-                concept_id = _clean_text(raw.get("concept_id"), limit=120)
-                if concept_id not in valid_ids:
-                    concept_id = ""
-                hypothesis_id = _clean_text(raw.get("id", raw.get("hypothesis_id", "")), limit=120)
-                hypotheses.append(
-                    MisconceptionHypothesis(
-                        hypothesis_id=hypothesis_id or _stable_id("misconception", index, description),
-                        description=description,
-                        concept_id=concept_id,
-                        confidence=raw.get("confidence", 0.0),
-                    )
+        for index, raw in enumerate(raw_hypotheses[:16]):
+            if not isinstance(raw, Mapping):
+                return None
+            raw_description = raw.get("description")
+            raw_concept_id = raw.get("concept_id", "")
+            raw_hypothesis_id = raw.get("id", raw.get("hypothesis_id", ""))
+            confidence = raw.get("confidence", 0.0)
+            if (
+                not isinstance(raw_description, str)
+                or not raw_description.strip()
+                or not isinstance(raw_concept_id, str)
+                or not isinstance(raw_hypothesis_id, str)
+                or isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not 0.0 <= confidence <= 1.0
+            ):
+                return None
+            description = _clean_text(raw_description)
+            concept_id = _clean_text(raw_concept_id, limit=120)
+            if concept_id not in valid_ids:
+                concept_id = ""
+            hypothesis_id = _clean_text(raw_hypothesis_id, limit=120)
+            hypotheses.append(
+                MisconceptionHypothesis(
+                    hypothesis_id=hypothesis_id or _stable_id("misconception", index, description),
+                    description=description,
+                    concept_id=concept_id,
+                    confidence=confidence,
                 )
+            )
 
         edges = tuple(
             (prerequisite, concept.concept_id)
             for concept in ordered
             for prerequisite in concept.prerequisites
         )
+        raw_example_policy = payload.get("example_policy", "allowed")
+        if not isinstance(raw_example_policy, str):
+            return None
         try:
             return TeachingPlan(
                 global_goal=global_goal,
@@ -184,7 +221,7 @@ class TeachingPlanBuilder:
                 prerequisite_edges=edges,
                 success_evidence=success_evidence,
                 misconception_hypotheses=tuple(hypotheses),
-                example_policy=_clean_text(payload.get("example_policy"), limit=240) or "allowed",
+                example_policy=_clean_text(raw_example_policy, limit=240) or "allowed",
             )
         except (TypeError, ValueError):
             return None

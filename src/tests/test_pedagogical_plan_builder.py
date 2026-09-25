@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -168,6 +169,60 @@ def test_plan_builder_rejects_public_prose_and_chain_of_thought_fields() -> None
 
     assert TeachingPlanBuilder(_FakePlanRouter(public_prose)).build(_context()) is None
     assert TeachingPlanBuilder(_FakePlanRouter(chain_of_thought)).build(_context()) is None
+
+
+def test_plan_builder_rejects_camel_case_and_separator_variants_of_forbidden_fields() -> None:
+    for forbidden_key in (
+        "chainOfThought",
+        "Chain-Of Thought",
+        "CHAIN_OF_THOUGHT",
+        "publicUtterance",
+        "Public-Utterance",
+        "PUBLIC_UTTERANCE",
+    ):
+        payload = _valid_plan_payload()
+        payload["concepts"][0][forbidden_key] = "raw private or public prose"
+
+        assert TeachingPlanBuilder(_FakePlanRouter(payload)).build(_context()) is None
+
+
+def test_plan_builder_rejects_non_string_plan_fields_instead_of_coercing_them() -> None:
+    malformed_payloads: list[dict[str, Any]] = []
+
+    goal = _valid_plan_payload()
+    goal["global_goal"] = 42
+    malformed_payloads.append(goal)
+
+    objective = _valid_plan_payload()
+    objective["concepts"][0]["objective"] = 42
+    malformed_payloads.append(objective)
+
+    description = _valid_plan_payload()
+    description["concepts"][0]["description"] = 42
+    malformed_payloads.append(description)
+
+    evidence = _valid_plan_payload()
+    evidence["success_evidence"] = [42]
+    malformed_payloads.append(evidence)
+
+    concept_id = _valid_plan_payload()
+    concept_id["concepts"][0]["id"] = 42
+    malformed_payloads.append(concept_id)
+
+    prerequisite = _valid_plan_payload()
+    prerequisite["concepts"][0]["prerequisite_ids"] = [42]
+    malformed_payloads.append(prerequisite)
+
+    hypothesis = _valid_plan_payload()
+    hypothesis["misconception_hypotheses"][0]["description"] = 42
+    malformed_payloads.append(hypothesis)
+
+    example_policy = _valid_plan_payload()
+    example_policy["example_policy"] = 42
+    malformed_payloads.append(example_policy)
+
+    for payload in malformed_payloads:
+        assert TeachingPlanBuilder(_FakePlanRouter(deepcopy(payload))).build(_context()) is None
 
 
 def test_plan_builder_does_not_call_router_without_explicit_request() -> None:
