@@ -19,6 +19,7 @@ from runtime.eris_voice_contract import (
     CHAT_STYLE_RULES_V39,
     AUTONOMOUS_VOICE_CORE_V39,
 )
+from runtime.pedagogical_contracts import TeachingDirective, validate_directive
 from llm.deepseek import is_deepseek
 
 
@@ -886,6 +887,131 @@ PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
     },
 }
 
+TEACHING_PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "global_goal", "concepts", "success_evidence", "misconception_hypotheses", "example_policy",
+    ],
+    "properties": {
+        "global_goal": {"type": "string", "maxLength": 420},
+        "concepts": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["objective", "description", "prerequisite_ids"],
+                "properties": {
+                    "id": {"type": "string", "maxLength": 120},
+                    "objective": {"type": "string", "maxLength": 420},
+                    "description": {"type": "string", "maxLength": 420},
+                    "prerequisite_ids": {
+                        "type": "array", "maxItems": 8,
+                        "items": {"type": "string", "maxLength": 120},
+                    },
+                },
+            },
+        },
+        "success_evidence": {
+            "type": "array", "minItems": 1, "maxItems": 16,
+            "items": {"type": "string", "maxLength": 240},
+        },
+        "misconception_hypotheses": {
+            "type": "array", "maxItems": 16,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["description", "concept_id", "confidence"],
+                "properties": {
+                    "id": {"type": "string", "maxLength": 120},
+                    "description": {"type": "string", "maxLength": 420},
+                    "concept_id": {"type": "string", "maxLength": 120},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                },
+            },
+        },
+        "example_policy": {"type": "string", "maxLength": 240},
+    },
+}
+
+
+def _bounded_teaching_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 3:
+        return str(value or "")[:1200]
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:120]: _bounded_teaching_value(item, depth=depth + 1)
+            for key, item in list(value.items())[:16]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_bounded_teaching_value(item, depth=depth + 1) for item in value[:12]]
+    if isinstance(value, str):
+        return value[:1200]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:1200]
+
+
+def _valid_teaching_plan_payload(payload: Any) -> bool:
+    if not isinstance(payload, Mapping):
+        return False
+    allowed_root = set(TEACHING_PLAN_SCHEMA["properties"])
+    if set(payload) != allowed_root:
+        return False
+    goal = payload.get("global_goal")
+    evidence = payload.get("success_evidence")
+    concepts = payload.get("concepts")
+    hypotheses = payload.get("misconception_hypotheses")
+    example_policy = payload.get("example_policy")
+    if not isinstance(goal, str) or not goal.strip() or len(goal) > 420:
+        return False
+    if not isinstance(example_policy, str) or len(example_policy) > 240:
+        return False
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
+        return False
+    if any(not isinstance(item, str) or not item.strip() or len(item) > 240 for item in evidence):
+        return False
+    if not isinstance(concepts, list) or not 3 <= len(concepts) <= 8:
+        return False
+    concept_keys = {"id", "objective", "description", "prerequisite_ids"}
+    for concept in concepts:
+        if not isinstance(concept, Mapping) or set(concept) - concept_keys:
+            return False
+        if not {"objective", "description", "prerequisite_ids"} <= set(concept):
+            return False
+        if "id" in concept and (not isinstance(concept["id"], str) or len(concept["id"]) > 120):
+            return False
+        for key in ("objective", "description"):
+            if not isinstance(concept[key], str) or not concept[key].strip() or len(concept[key]) > 420:
+                return False
+        prerequisites = concept["prerequisite_ids"]
+        if not isinstance(prerequisites, list) or len(prerequisites) > 8:
+            return False
+        if any(not isinstance(item, str) or len(item) > 120 for item in prerequisites):
+            return False
+    if not isinstance(hypotheses, list) or len(hypotheses) > 16:
+        return False
+    hypothesis_keys = {"id", "description", "concept_id", "confidence"}
+    for hypothesis in hypotheses:
+        if not isinstance(hypothesis, Mapping) or set(hypothesis) - hypothesis_keys:
+            return False
+        if not {"description", "concept_id", "confidence"} <= set(hypothesis):
+            return False
+        if "id" in hypothesis and (not isinstance(hypothesis["id"], str) or len(hypothesis["id"]) > 120):
+            return False
+        if not isinstance(hypothesis["description"], str) or not hypothesis["description"].strip():
+            return False
+        if len(hypothesis["description"]) > 420:
+            return False
+        if not isinstance(hypothesis["concept_id"], str) or len(hypothesis["concept_id"]) > 120:
+            return False
+        confidence = hypothesis["confidence"]
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0.0 <= confidence <= 1.0:
+            return False
+    return True
+
 INTENTION_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -1440,6 +1566,34 @@ class AIRuntimeModelRouter:
             timeout_seconds=timeout_seconds,
         )
 
+    def plan_teaching_episode(self, *, request_context: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Request one bounded concept graph without granting public-writing authority."""
+
+        if not isinstance(request_context, Mapping):
+            return {}
+        bounded_context = _bounded_teaching_value(request_context)
+        client = self.deep_client or self.seed_client or self.surface_client or getattr(self.llm_service, "client", None)
+        payload = self.invoke_structured_worker(
+            client,
+            system=(
+                "You are the ERIS teaching-plan worker. Return JSON only. Build a small dependency graph "
+                "for the explicit learning request using three to eight concepts. Include observable success "
+                "evidence, bounded misconception hypotheses, and an example policy. Do not write a public "
+                "utterance, hidden reasoning, chain of thought, comprehension verdict, completion decision, "
+                "or scheduling instruction."
+            ),
+            payload={"explicit_plan_request": bounded_context},
+            schema=TEACHING_PLAN_SCHEMA,
+            name="eris_teaching_plan",
+            max_tokens=1200,
+            inference_tier="subconscious_4b",
+            priority=60,
+            timeout_seconds=30.0,
+        )
+        if not _valid_teaching_plan_payload(payload):
+            return {}
+        return dict(payload)
+
     @staticmethod
     def _public_reply_prompt(
         display_language_hint: str = "vi",
@@ -1507,6 +1661,7 @@ class AIRuntimeModelRouter:
         planned_intention: IntentionPlan | None = None,
         retry_instruction: str = "",
         locked_semantic_frame: Mapping[str, Any] | None = None,
+        teaching_directive: TeachingDirective | None = None,
     ) -> dict[str, Any]:
         if locked_semantic_frame:
             try:
@@ -1567,6 +1722,28 @@ class AIRuntimeModelRouter:
                     ensure_ascii=False,
                 )
             )
+        if isinstance(teaching_directive, TeachingDirective):
+            valid, _reason = validate_directive(teaching_directive)
+            if valid and teaching_directive.stop_after_chunk:
+                projection = {
+                    "episode_id": teaching_directive.episode_id,
+                    "plan_revision": teaching_directive.plan_revision,
+                    "chunk_id": teaching_directive.chunk_id,
+                    "current_objective": teaching_directive.current_objective,
+                    "claim": teaching_directive.claim,
+                    "contrast": teaching_directive.contrast,
+                    "example_policy": teaching_directive.example_policy,
+                    "max_ideas": teaching_directive.max_ideas,
+                    "max_sentences": teaching_directive.max_sentences,
+                    "allow_question": teaching_directive.allow_question,
+                    "stop_after_chunk": True,
+                }
+                context_parts.append(
+                    "LOCKED TEACHING DIRECTIVE (wording guidance only; no plan authority): "
+                    + json.dumps(projection, ensure_ascii=False)
+                    + " Realize only this current chunk and stop after it. Do not select or preview future "
+                    "concepts; never claim that the learner understands; never claim the episode is complete."
+                )
         language_names = {"ja": "tiếng Nhật", "en": "tiếng Anh", "vi": "tiếng Việt"}
         display_code = str(language_hint or "vi").strip().lower()
         speech_code = str(speech_language_hint or display_code).strip().lower()
