@@ -40,7 +40,10 @@ def test_acknowledgement_does_not_increase_mastery():
 
 def test_common_acknowledgements_cannot_gain_mastery_from_positive_tag():
     episode = _episode_with_chunk()
-    for acknowledgement in ("yes", "yeah", "yep", "okay", "ok", "uh-huh", "mm-hmm"):
+    for acknowledgement in (
+        "yes", "yeah", "yep", "okay", "ok", "uh-huh", "mm-hmm", "got it", "understood",
+        "I understand", "makes sense", "sure", "yes, got it",
+    ):
         result = observe_user_turn(episode, acknowledgement, evidence=("user_paraphrase",), now=101.0)
         assert result.episode.comprehension.estimated_mastery == episode.comprehension.estimated_mastery
 
@@ -70,6 +73,17 @@ def test_correct_paraphrase_advances_current_concept():
     )
     assert result.episode.comprehension.estimated_mastery > episode.comprehension.estimated_mastery
     assert result.action.kind in {"advance", "probe", "complete"}
+
+
+def test_explicit_application_still_advances_current_concept():
+    episode = _episode_with_chunk()
+    result = observe_user_turn(
+        episode,
+        "In this example, that means avoiding the stuck feeling by trying something new.",
+        evidence=("user_application",), now=101.0,
+    )
+    assert result.episode.comprehension.estimated_mastery > episode.comprehension.estimated_mastery
+    assert result.action.kind == "advance"
 
 
 def test_user_correction_enters_repair_without_lowering_user_mastery():

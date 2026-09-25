@@ -23,7 +23,9 @@ STALL_LIMIT = 2
 EPISODE_SECONDS = 10 * 60
 MASTERY_INCREMENT = 0.35
 ACKNOWLEDGEMENTS = frozenset({
-    "ok", "okay", "yes", "yeah", "yep", "yup", "uh", "uh-huh", "uh huh", "mm-hmm", "mhm", "hmm", "ừ",
+    "ok", "okay", "yes", "yeah", "yep", "yup", "uh", "uh huh", "mm hmm", "mhm", "hmm", "ừ",
+    "got it", "i got it", "understood", "i understand", "makes sense", "that makes sense", "sure",
+    "yes got it", "yeah got it", "yes understood", "ừ hiểu rồi", "hiểu rồi",
 })
 
 
@@ -101,6 +103,13 @@ def _refresh_activity(episode: TeachingEpisode, now: float) -> TeachingEpisode:
     return replace(episode, last_activity_at=now, expires_at=now + EPISODE_SECONDS)
 
 
+def _is_acknowledgement(user_text: str) -> bool:
+    normalized = user_text.strip().casefold()
+    canonical = " ".join(normalized.replace("-", " ").replace(",", " ").replace(".", " ")
+                         .replace("!", " ").replace("?", " ").split())
+    return not canonical or canonical in ACKNOWLEDGEMENTS
+
+
 def _misconception_key(evidence: set[str], episode: TeachingEpisode) -> str:
     for code in sorted(evidence):
         if code.startswith(("misconception:", "misconception_assertion:", "candidate_misconception:")):
@@ -161,11 +170,10 @@ def observe_user_turn(
         return ControllerResult(episode, _action("abandon", "episode_expired", episode), ("episode_expired",))
 
     supplied = {str(code) for code in evidence}
-    normalized = user_text.strip().casefold().rstrip(".!?")
     codes: list[str] = []
-    acknowledgement = not normalized or normalized in ACKNOWLEDGEMENTS or "hiểu rồi" in normalized
+    acknowledgement = _is_acknowledgement(user_text)
     if acknowledgement:
-        codes.append("silence" if not normalized else "self_report_understood")
+        codes.append("silence" if not user_text.strip() else "self_report_understood")
     if "topic_change" in supplied:
         codes.append("topic_change")
         updated = replace(episode, status="abandoned", pending_chunk=None)
