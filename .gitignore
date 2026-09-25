@@ -104,3 +104,6 @@ eris-code/
 
 # Eris runtime data (specs duoc tao ra, khong phai steering)
 .eris/specs/
+
+# Local implementation worktrees
+.worktrees/
