@@ -22,6 +22,9 @@ REPAIR_LIMIT = 1
 STALL_LIMIT = 2
 EPISODE_SECONDS = 10 * 60
 MASTERY_INCREMENT = 0.35
+ACKNOWLEDGEMENTS = frozenset({
+    "ok", "okay", "yes", "yeah", "yep", "yup", "uh", "uh-huh", "uh huh", "mm-hmm", "mhm", "hmm", "ừ",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +97,29 @@ def expire_if_needed(episode: TeachingEpisode, *, now: float) -> TeachingEpisode
     return episode
 
 
+def _refresh_activity(episode: TeachingEpisode, now: float) -> TeachingEpisode:
+    return replace(episode, last_activity_at=now, expires_at=now + EPISODE_SECONDS)
+
+
+def _misconception_key(evidence: set[str], episode: TeachingEpisode) -> str:
+    for code in sorted(evidence):
+        if code.startswith(("misconception:", "misconception_assertion:", "candidate_misconception:")):
+            return code.split(":", 1)[1] or episode.comprehension.current_concept_id
+    return episode.comprehension.current_concept_id
+
+
+def _begin_repair(episode: TeachingEpisode, key: str) -> TeachingEpisode:
+    is_new_candidate = key != episode.repair_concept_id
+    return replace(
+        episode,
+        status="repairing",
+        pending_chunk=_chunk_for(episode, episode.comprehension.current_concept_id),
+        repair_attempts=0 if is_new_candidate else episode.repair_attempts,
+        repair_concept_id=key,
+        consecutive_stalls=0,
+    )
+
+
 def _next_concept_id(episode: TeachingEpisode) -> str | None:
     current = episode.comprehension.current_concept_id
     for index, concept in enumerate(episode.concepts):
@@ -135,21 +161,26 @@ def observe_user_turn(
         return ControllerResult(episode, _action("abandon", "episode_expired", episode), ("episode_expired",))
 
     supplied = {str(code) for code in evidence}
-    normalized = user_text.strip().casefold()
+    normalized = user_text.strip().casefold().rstrip(".!?")
     codes: list[str] = []
-    acknowledgement = not normalized or normalized in {"ok", "ừ", "uh", "hmm"} or "hiểu rồi" in normalized
+    acknowledgement = not normalized or normalized in ACKNOWLEDGEMENTS or "hiểu rồi" in normalized
     if acknowledgement:
         codes.append("silence" if not normalized else "self_report_understood")
     if "topic_change" in supplied:
         codes.append("topic_change")
+        updated = replace(episode, status="abandoned", pending_chunk=None)
+        return ControllerResult(updated, _action("abandon", "topic_changed", updated), tuple(codes))
+
+    if not acknowledgement:
+        episode = _refresh_activity(episode, now)
 
     if "eris_corrected" in supplied:
-        updated = replace(episode, status="repairing", consecutive_stalls=0)
+        updated = _begin_repair(episode, episode.comprehension.current_concept_id)
         codes.append("eris_corrected")
         return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
 
     if "misconception_assertion" in supplied:
-        updated = replace(episode, status="repairing", consecutive_stalls=0)
+        updated = _begin_repair(episode, _misconception_key(supplied, episode))
         codes.append("candidate_misconception")
         return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
 

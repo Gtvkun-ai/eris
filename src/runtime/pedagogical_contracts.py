@@ -285,6 +285,8 @@ class TeachingEpisode:
     autonomous_chunks_used: int = 0
     repair_attempts: int = 0
     consecutive_stalls: int = 0
+    last_activity_at: float = 0.0
+    repair_concept_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "episode_id", _text(self.episode_id, MAX_ID))
@@ -298,13 +300,15 @@ class TeachingEpisode:
         object.__setattr__(self, "autonomous_chunks_used", _bounded_int(self.autonomous_chunks_used))
         object.__setattr__(self, "repair_attempts", _bounded_int(self.repair_attempts))
         object.__setattr__(self, "consecutive_stalls", _bounded_int(self.consecutive_stalls))
+        object.__setattr__(self, "last_activity_at", _finite_float(self.last_activity_at))
+        object.__setattr__(self, "repair_concept_id", _text(self.repair_concept_id, MAX_ID))
         if not isinstance(self.comprehension, ComprehensionState):
             object.__setattr__(self, "comprehension", ComprehensionState.from_mapping(self.comprehension))
 
     @classmethod
     def new(cls, *, episode_id: str, topic_key: str, global_goal: str,
             concepts: tuple[TeachingConcept, ...], now: float, expires_at: float) -> "TeachingEpisode":
-        return cls(episode_id, topic_key, global_goal, concepts, now, expires_at)
+        return cls(episode_id, topic_key, global_goal, concepts, now, expires_at, last_activity_at=now)
 
     def to_dict(self) -> dict[str, Any]:
         return {"episode_id": self.episode_id, "topic_key": self.topic_key, "global_goal": self.global_goal,
@@ -313,7 +317,8 @@ class TeachingEpisode:
                 "comprehension": self.comprehension.to_dict(),
                 "pending_chunk": self.pending_chunk.to_dict() if self.pending_chunk else None,
                 "autonomous_chunks_used": self.autonomous_chunks_used, "repair_attempts": self.repair_attempts,
-                "consecutive_stalls": self.consecutive_stalls}
+                "consecutive_stalls": self.consecutive_stalls, "last_activity_at": self.last_activity_at,
+                "repair_concept_id": self.repair_concept_id}
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "TeachingEpisode":
@@ -325,7 +330,8 @@ class TeachingEpisode:
                    ComprehensionState.from_mapping(payload.get("comprehension")),
                    TeachingChunk.from_mapping(pending) if isinstance(pending, Mapping) else None,
                    payload.get("autonomous_chunks_used", 0), payload.get("repair_attempts", 0),
-                   payload.get("consecutive_stalls", 0))
+                   payload.get("consecutive_stalls", 0), payload.get("last_activity_at", 0.0),
+                   payload.get("repair_concept_id", ""))
 
 
 def normalize_episode(payload: Mapping[str, Any] | None) -> TeachingEpisode | None:

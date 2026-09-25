@@ -38,6 +38,13 @@ def test_acknowledgement_does_not_increase_mastery():
     assert "self_report_understood" in result.evidence_codes
 
 
+def test_common_acknowledgements_cannot_gain_mastery_from_positive_tag():
+    episode = _episode_with_chunk()
+    for acknowledgement in ("yes", "yeah", "yep", "okay", "ok", "uh-huh", "mm-hmm"):
+        result = observe_user_turn(episode, acknowledgement, evidence=("user_paraphrase",), now=101.0)
+        assert result.episode.comprehension.estimated_mastery == episode.comprehension.estimated_mastery
+
+
 def test_topic_change_cannot_turn_paraphrase_tag_into_mastery():
     episode = _episode_with_chunk()
     result = observe_user_turn(
@@ -46,6 +53,12 @@ def test_topic_change_cannot_turn_paraphrase_tag_into_mastery():
     )
     assert result.episode.comprehension.estimated_mastery == episode.comprehension.estimated_mastery
     assert "topic_change" in result.evidence_codes
+
+
+def test_topic_change_abandons_episode_instead_of_teaching_another_chunk():
+    result = observe_user_turn(_episode_with_chunk(), "Let's discuss another topic.", evidence=("topic_change",), now=101.0)
+    assert result.episode.status == "abandoned"
+    assert result.action.kind == "abandon"
 
 
 def test_correct_paraphrase_advances_current_concept():
@@ -117,6 +130,42 @@ def test_episode_expires_after_ten_minutes():
     episode = _episode_with_chunk()
     assert episode.expires_at == 700.0
     assert expire_if_needed(episode, now=700.0).status == "expired"
+
+
+def test_meaningful_user_turn_refreshes_inactivity_deadline():
+    episode = _episode_with_chunk()
+    active = observe_user_turn(episode, "Why is that?", evidence=("focused_question",), now=650.0).episode
+    assert active.last_activity_at == 650.0
+    assert active.expires_at == 1250.0
+    assert expire_if_needed(active, now=1249.0).status != "expired"
+    assert expire_if_needed(active, now=1250.0).status == "expired"
+
+
+def test_different_concept_gets_its_own_repair_allowance():
+    episode = _episode_with_chunk()
+    first = observe_user_turn(episode, "Core 7 means talking.", evidence=("misconception_assertion",), now=101.0).episode
+    repaired = note_public_commit(first, TeachingReceipt(first.episode_id, first.plan_revision, first.pending_chunk.chunk_id))
+    next_concept = replace(
+        note_audio_finished(repaired, now=102.0),
+        comprehension=ComprehensionState(current_concept_id="contrast"),
+    )
+    result = observe_user_turn(
+        next_concept, "Core 8 is the same.", evidence=("misconception_assertion",), now=103.0,
+    )
+    assert result.episode.repair_concept_id == "contrast"
+    assert result.action.kind == "repair"
+
+
+def test_same_misconception_is_limited_to_one_repair():
+    episode = _episode_with_chunk()
+    first = observe_user_turn(episode, "Core 7 means talking.", evidence=("misconception_assertion",), now=101.0).episode
+    repaired = note_public_commit(first, TeachingReceipt(first.episode_id, first.plan_revision, first.pending_chunk.chunk_id))
+    result = observe_user_turn(
+        note_audio_finished(repaired, now=102.0),
+        "Core 7 means talking.", evidence=("misconception_assertion",), now=103.0,
+    )
+    assert result.action.kind == "wait"
+    assert result.action.reason == "repair_limit"
 
 
 def test_autonomous_budget_exhaustion_forces_wait():

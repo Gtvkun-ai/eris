@@ -103,3 +103,14 @@ def test_directive_rejects_non_positive_budgets():
     assert validate_directive(directive) == (False, "directive_budget_exceeded")
     directive = TeachingDirective("e", 1, "chunk", "g", "o", "c", "x", "allowed", 1, 0, True, True, True)
     assert validate_directive(directive) == (False, "directive_budget_exceeded")
+
+
+def test_episode_persists_bounded_activity_and_repair_scope():
+    episode = TeachingEpisode(
+        "e", "topic", "goal", (TeachingConcept("c", "d"),), 1.0, 601.0,
+        last_activity_at=float("inf"), repair_concept_id="repair" * 100,
+    )
+    restored = TeachingEpisode.from_mapping(episode.to_dict())
+    assert restored == episode
+    assert restored.last_activity_at == 0.0
+    assert len(restored.repair_concept_id) <= 120
