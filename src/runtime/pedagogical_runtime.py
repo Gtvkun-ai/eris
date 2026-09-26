@@ -27,6 +27,17 @@ PEDAGOGY_RUNTIME_SCHEMA = "eris.pedagogy.v1"
 DWELL_SECONDS = 1.0
 CLAIM_LEASE_SECONDS = 2.0
 MAX_ID = 120
+_OBSERVABILITY_REASONS = frozenset({
+    "audio_finished",
+    "awaiting_demonstration",
+    "delivery_failed",
+    "episode_expired",
+    "grounding_rejected",
+    "public_commit",
+    "surface_failed",
+    "tts_failed",
+    "user_turn",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,11 +517,13 @@ class PedagogicalRuntime:
             self._settle_locked(current)
             episode = self._episode_locked()
             self._cancel_timer_locked()
+            updated = episode
             if episode is not None and episode.status == "dwelling":
-                self._set_episode_locked(replace(episode, status="waiting_user"))
+                updated = replace(episode, status="waiting_user")
+                self._set_episode_locked(updated)
             self._clear_dwell_locked(reason=reason)
             self._stage_locked()
-            self._emit("dwell_cancelled", episode, action="cancel", reason=reason)
+            self._emit("dwell_cancelled", updated, action="cancel", reason=reason)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -629,12 +642,15 @@ class PedagogicalRuntime:
             current = episode or self._episode_locked()
             chunk = current.pending_chunk if current is not None else None
             status = current.status if current is not None else ""
+            canonical_reason = _identifier(reason).lower()
+            if canonical_reason not in _OBSERVABILITY_REASONS:
+                canonical_reason = "delivery_failed" if event == "delivery_failed" else "external_cancel"
             fields = {
                 "episode_id": _identifier(current.episode_id if current is not None else ""),
                 "plan_revision": int(current.plan_revision) if current is not None else 0,
                 "chunk_id": _identifier(chunk.chunk_id if chunk is not None else ""),
                 "action": _identifier(action),
-                "reason": _identifier(reason),
+                "reason": canonical_reason,
                 "status": _identifier(status),
             }
             from runtime.observability import GLOBAL_OBSERVABILITY

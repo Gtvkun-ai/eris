@@ -279,15 +279,19 @@ def test_runtime_emits_bounded_lifecycle_observability_without_user_text(tmp_pat
     runtime = _runtime(tmp_path)
     assert runtime.start_episode(_episode(status="dwelling"))
     assert runtime.claim_due(worker_id="worker", now=1001.0) is not None
-    runtime.observe_user_turn("SECRET USER TEXT MUST NOT BE EMITTED", now=1001.1)
-    runtime.cancel_dwell("test_cancel", now=1001.2)
+    runtime.cancel_dwell("SECRET CANCEL REASON", now=1001.1)
+    runtime.observe_user_turn("SECRET USER TEXT MUST NOT BE EMITTED", now=1001.2)
 
     names = {name for name, _tags, _fields, _status in observer.events}
     assert {"pedagogy.episode_started", "pedagogy.directive_claimed", "pedagogy.user_observed", "pedagogy.dwell_cancelled"} <= names
     serialized = repr(observer.events) + repr(observer.counters)
     assert "SECRET USER TEXT MUST NOT BE EMITTED" not in serialized
+    assert "SECRET CANCEL REASON" not in serialized
     for _name, _tags, fields, _status in observer.events:
         assert set(fields) <= {"episode_id", "plan_revision", "chunk_id", "action", "reason", "status"}
+    cancelled = next(fields for name, _tags, fields, _status in observer.events if name == "pedagogy.dwell_cancelled")
+    assert cancelled["reason"] == "external_cancel"
+    assert cancelled["status"] == "waiting_user"
 
 
 def test_cancel_and_shutdown_cancel_timers_and_preserve_episode(tmp_path):
