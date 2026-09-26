@@ -13,6 +13,7 @@ from runtime.pedagogical_contracts import TeachingDirective, TeachingEpisode, Te
 from runtime.runtime_settings_store import runtime_bool, runtime_float, runtime_int
 from runtime.pedagogical_controller import (
     ControllerResult,
+    EPISODE_SECONDS,
     PedagogicalLimits,
     expire_if_needed,
     note_audio_finished,
@@ -198,6 +199,12 @@ class PedagogicalRuntime:
         current = self._now()
         with self._lock, self._transaction():
             self._cancel_timer_locked()
+            default_expiry = episode.last_activity_at + EPISODE_SECONDS
+            if abs(episode.expires_at - default_expiry) < 0.001:
+                episode = replace(
+                    episode,
+                    expires_at=episode.last_activity_at + self._limits.episode_expiry_seconds,
+                )
             self._state = _empty_state()
             self._state["episode"] = episode.to_dict()
             if episode.status == "dwelling":
@@ -468,7 +475,11 @@ class PedagogicalRuntime:
             episode = self._episode_locked()
             if episode is None or (source_id and source_id != self._state["committed_turn_id"]):
                 return
-            updated = note_audio_finished(episode, now=current)
+            updated = note_audio_finished(
+                episode,
+                now=current,
+                limits=self._limits.controller_limits,
+            )
             if updated != episode:
                 self._set_episode_locked(updated)
                 self._clear_dwell_locked(reason="audio_finished")

@@ -2,7 +2,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
-from runtime.pedagogical_contracts import TeachingConcept, TeachingEpisode, TeachingReceipt
+from runtime.pedagogical_contracts import TeachingConcept, TeachingEpisode, TeachingPlan, TeachingReceipt
+from runtime.pedagogical_controller import start_episode as controller_start_episode
 from runtime import pedagogical_runtime
 from runtime.pedagogical_runtime import PedagogicalRuntime, PedagogicalRuntimeLimits, ensure_pedagogical_runtime
 
@@ -195,6 +196,49 @@ def test_runtime_loads_registered_pedagogy_limits(monkeypatch):
     assert limits.controller_limits.max_autonomous_chunks == 1
     assert limits.controller_limits.max_repair_attempts == 0
     assert limits.controller_limits.episode_expiry_seconds == 120.0
+
+
+def test_start_episode_rebases_controller_default_expiry_to_runtime_limit(tmp_path):
+    clock = _Clock()
+    limits = PedagogicalRuntimeLimits(episode_expiry_seconds=3600.0)
+    runtime = PedagogicalRuntime(
+        SQLiteAtomicStateStore(tmp_path / "state.sqlite", clock=clock),
+        clock=clock,
+        timer_factory=_FakeTimer,
+        limits=limits,
+    )
+    episode = controller_start_episode(
+        TeachingPlan(
+            "goal",
+            (
+                TeachingConcept("one", "one"),
+                TeachingConcept("two", "two"),
+                TeachingConcept("three", "three"),
+            ),
+        ),
+        now=1000.0,
+    )
+    assert episode.expires_at == 1600.0
+    assert runtime.start_episode(episode)
+    assert runtime.snapshot()["active_episode"]["expires_at"] == 4600.0
+    assert runtime.start_episode(replace(episode, expires_at=1800.0))
+    assert runtime.snapshot()["active_episode"]["expires_at"] == 1800.0
+
+
+def test_audio_finish_uses_runtime_expiry_limit_for_active_episode(tmp_path):
+    clock = _Clock(1000.0)
+    limits = PedagogicalRuntimeLimits(episode_expiry_seconds=3600.0)
+    runtime = PedagogicalRuntime(
+        SQLiteAtomicStateStore(tmp_path / "state.sqlite", clock=clock),
+        clock=clock,
+        timer_factory=_FakeTimer,
+        limits=limits,
+    )
+    episode = _episode()
+    assert runtime.start_episode(episode)
+    assert runtime.commit_receipt(_receipt(), now=1001.0)
+    runtime.notify_audio_finished(2000.0, source_turn_id="turn:1")
+    assert runtime.snapshot(now=2000.0)["active_episode"]["status"] == "waiting_user"
 
 
 def test_claimed_autonomous_receipt_consumes_once_and_does_not_rearm_same_chunk(tmp_path):

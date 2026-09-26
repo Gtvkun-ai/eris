@@ -366,8 +366,10 @@ def note_public_commit(
     )
 
 
-def note_audio_finished(episode: TeachingEpisode, *, now: float) -> TeachingEpisode:
-    episode = expire_if_needed(episode, now=now)
+def note_audio_finished(
+    episode: TeachingEpisode, *, now: float, limits: PedagogicalLimits = DEFAULT_LIMITS,
+) -> TeachingEpisode:
+    episode = expire_if_needed(episode, now=now, limits=limits)
     if episode.status == "speaking":
         return replace(episode, status="waiting_user")
     return episode
