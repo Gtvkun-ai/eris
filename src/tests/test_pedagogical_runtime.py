@@ -1,5 +1,7 @@
 from dataclasses import replace
+from types import ModuleType
 from types import SimpleNamespace
+import sys
 
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
 from runtime.pedagogical_contracts import TeachingConcept, TeachingEpisode, TeachingPlan, TeachingReceipt
@@ -253,6 +255,39 @@ def test_claimed_autonomous_receipt_consumes_once_and_does_not_rearm_same_chunk(
     assert snapshot["active_episode"]["status"] == "waiting_user"
     assert snapshot["active_episode"]["autonomous_chunks_used"] == 1
     assert runtime.claim_due(worker_id="worker-2", now=1003.0) is None
+
+
+def test_runtime_emits_bounded_lifecycle_observability_without_user_text(tmp_path, monkeypatch):
+    class _Observability:
+        def __init__(self):
+            self.events = []
+            self.counters = []
+
+        def log(self, name, *, tags, fields, status):
+            self.events.append((name, tags, fields, status))
+
+        def increment(self, name, *, tags, fields):
+            self.counters.append((name, tags, fields))
+
+        def gauge(self, *_args, **_kwargs):
+            pass
+
+    observer = _Observability()
+    module = ModuleType("runtime.observability")
+    module.GLOBAL_OBSERVABILITY = observer
+    monkeypatch.setitem(sys.modules, "runtime.observability", module)
+    runtime = _runtime(tmp_path)
+    assert runtime.start_episode(_episode(status="dwelling"))
+    assert runtime.claim_due(worker_id="worker", now=1001.0) is not None
+    runtime.observe_user_turn("SECRET USER TEXT MUST NOT BE EMITTED", now=1001.1)
+    runtime.cancel_dwell("test_cancel", now=1001.2)
+
+    names = {name for name, _tags, _fields, _status in observer.events}
+    assert {"pedagogy.episode_started", "pedagogy.directive_claimed", "pedagogy.user_observed", "pedagogy.dwell_cancelled"} <= names
+    serialized = repr(observer.events) + repr(observer.counters)
+    assert "SECRET USER TEXT MUST NOT BE EMITTED" not in serialized
+    for _name, _tags, fields, _status in observer.events:
+        assert set(fields) <= {"episode_id", "plan_revision", "chunk_id", "action", "reason", "status"}
 
 
 def test_cancel_and_shutdown_cancel_timers_and_preserve_episode(tmp_path):

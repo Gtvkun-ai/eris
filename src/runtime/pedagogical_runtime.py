@@ -211,6 +211,7 @@ class PedagogicalRuntime:
                 self._set_dwell_locked(current)
             self._stage_locked()
             self._arm_timer_locked()
+        self._emit("episode_started", episode)
         return True
 
     def snapshot(self, now: float | None = None) -> dict[str, Any]:
@@ -272,6 +273,12 @@ class PedagogicalRuntime:
             self._set_episode_locked(result.episode)
             self._stage_locked()
             self._arm_timer_locked()
+            self._emit(
+                "user_observed",
+                result.episode,
+                action=result.action.kind,
+                reason=result.action.reason,
+            )
             return result
 
     def claim_due(
@@ -310,6 +317,7 @@ class PedagogicalRuntime:
             )
             self._stage_locked()
             self._arm_timer_locked()
+            self._emit("directive_claimed", episode, action=action.kind, reason=action.reason)
             return directive
 
     def commit_receipt(self, receipt: TeachingReceipt, *, now: float | None = None) -> bool:
@@ -351,6 +359,7 @@ class PedagogicalRuntime:
                 self._stage_locked()
                 self._arm_timer_locked()
                 committed = True
+                self._emit("receipt_committed", updated, action="commit", reason="public_commit")
             return True
         finally:
             if committed:
@@ -391,6 +400,7 @@ class PedagogicalRuntime:
             self._state["cancel_reason"] = _identifier(reason)
             self._stage_locked()
             self._arm_timer_locked()
+            self._emit("claim_released", episode, action="release", reason=reason)
             return True
 
     def stage_receipt(self, receipt: TeachingReceipt, *, now: float | None = None) -> bool:
@@ -420,6 +430,7 @@ class PedagogicalRuntime:
             self._state["claim_until"] = max(self._state["claim_until"], current + 120.0)
             self._stage_locked()
             self._arm_timer_locked()
+            self._emit("receipt_staged", episode, action="stage", reason="delivery_pending")
             return True
 
     def settle_delivery(
@@ -435,6 +446,7 @@ class PedagogicalRuntime:
         receipt: TeachingReceipt | None = None
         with self._lock, self._transaction():
             self._settle_locked(current)
+            episode = self._episode_locked()
             raw = self._state.get("pending_receipt")
             if not isinstance(raw, Mapping):
                 return False
@@ -460,6 +472,7 @@ class PedagogicalRuntime:
                 self._state["cancel_reason"] = "delivery_failed"
                 self._stage_locked()
                 self._arm_timer_locked()
+                self._emit("delivery_failed", episode, action="release", reason="delivery_failed")
                 return True
 
         if receipt is None or not self.commit_receipt(receipt, now=current):
@@ -485,6 +498,7 @@ class PedagogicalRuntime:
                 self._clear_dwell_locked(reason="audio_finished")
                 self._stage_locked()
                 self._arm_timer_locked()
+                self._emit("audio_finished", updated, action="wait", reason="audio_finished")
 
     def cancel_dwell(self, reason: str, *, now: float | None = None) -> None:
         current = self._now(now)
@@ -496,6 +510,7 @@ class PedagogicalRuntime:
                 self._set_episode_locked(replace(episode, status="waiting_user"))
             self._clear_dwell_locked(reason=reason)
             self._stage_locked()
+            self._emit("dwell_cancelled", episode, action="cancel", reason=reason)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -548,6 +563,7 @@ class PedagogicalRuntime:
                 self._set_episode_locked(updated)
                 self._clear_dwell_locked(reason="episode_expired")
                 changed = True
+                self._emit("episode_expired", updated, action="expire", reason="episode_expired")
         if self._state["claim_until"] and self._state["claim_until"] <= now:
             self._state["claim_owner"] = ""
             self._state["claim_until"] = 0.0
@@ -599,6 +615,41 @@ class PedagogicalRuntime:
                 cancel()
             except Exception:
                 pass
+
+    def _emit(
+        self,
+        event: str,
+        episode: TeachingEpisode | None = None,
+        *,
+        action: str = "",
+        reason: str = "",
+    ) -> None:
+        """Best-effort observability projection with no public or user text."""
+        try:
+            current = episode or self._episode_locked()
+            chunk = current.pending_chunk if current is not None else None
+            status = current.status if current is not None else ""
+            fields = {
+                "episode_id": _identifier(current.episode_id if current is not None else ""),
+                "plan_revision": int(current.plan_revision) if current is not None else 0,
+                "chunk_id": _identifier(chunk.chunk_id if chunk is not None else ""),
+                "action": _identifier(action),
+                "reason": _identifier(reason),
+                "status": _identifier(status),
+            }
+            from runtime.observability import GLOBAL_OBSERVABILITY
+
+            tags = {"event": _identifier(event), "status": fields["status"]}
+            GLOBAL_OBSERVABILITY.log(f"pedagogy.{event}", tags=tags, fields=fields, status="ok")
+            GLOBAL_OBSERVABILITY.increment(
+                "eris_pedagogy_lifecycle_events_total", tags=tags, fields=fields,
+            )
+            GLOBAL_OBSERVABILITY.gauge(
+                "eris_pedagogy_pending",
+                1.0 if current is not None and current.pending_chunk is not None else 0.0,
+            )
+        except Exception:
+            pass
 
 
 def _host_feature_enabled(host: Any) -> bool:
