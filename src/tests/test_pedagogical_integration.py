@@ -546,6 +546,7 @@ def test_async_tts_failure_releases_staged_claim_without_advancing(tmp_path: Any
         event_type="audio_failed",
         turn_id="pedagogy:autonomous:failed",
         now=1002.0,
+        final_segment=False,
     )
     snapshot = runtime.snapshot(now=1002.0)
     assert snapshot["claimed"] is False
