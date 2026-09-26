@@ -6,6 +6,8 @@ from typing import Any, Mapping
 import pytest
 
 from runtime.ai_orchestrated import orchestrator
+from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
+from runtime import pedagogical_runtime
 from runtime.pedagogical_contracts import TeachingConcept, TeachingDirective, TeachingPlan
 from runtime.runtime_settings_store import RuntimeSettingsStore
 from runtime.settings_catalog import build_settings_catalog
@@ -99,6 +101,30 @@ def test_flag_off_does_not_resolve_runtime_or_change_writer_inputs(monkeypatch: 
     assert "teaching_directive" not in writer.calls[0]
 
 
+def test_runtime_enablement_uses_runtime_settings_after_host_overrides(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def enabled_from_catalog(*path: str, default: bool = False) -> bool:
+        calls.append(path)
+        return path == ("pedagogy", "enabled")
+
+    monkeypatch.setattr(pedagogical_runtime, "runtime_bool", enabled_from_catalog, raising=False)
+
+    shared_store = SQLiteAtomicStateStore(tmp_path / "pedagogy.sqlite")
+    configured_host = SimpleNamespace(ai_social_atomic_store=shared_store)
+    assert isinstance(
+        pedagogical_runtime.ensure_pedagogical_runtime(configured_host),
+        pedagogical_runtime.PedagogicalRuntime,
+    )
+    assert pedagogical_runtime.ensure_pedagogical_runtime(
+        SimpleNamespace(pedagogical_controller_enabled=False, ai_social_atomic_store=shared_store)
+    ) is None
+    assert calls == [("pedagogy", "enabled")]
+
+
 def test_explicit_activation_starts_episode_and_reaches_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = _FakeRuntime()
     builder = _FakeBuilder(_plan())
@@ -166,6 +192,28 @@ def test_active_episode_observation_precedes_writer_and_can_cancel_directive(
     assert events == ["observe", "writer"]
     assert runtime.observations == [("ok", (), 300.0)]
     assert "teaching_directive" not in writer.calls[0]
+
+
+def test_active_episode_observation_receives_only_a_bounded_current_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _FakeRuntime({"episode_id": "active", "status": "waiting_user"})
+    runtime.observed_result = SimpleNamespace(action=SimpleNamespace(directive=None))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="x" * 5000,
+        turn_id="turn-active-bounded",
+        recent_history=(),
+        now=350.0,
+    )
+
+    observed_text, evidence, observed_at = runtime.observations[0]
+    assert len(observed_text) == 1200
+    assert evidence == ()
+    assert observed_at == 350.0
 
 
 def test_valid_sealed_public_output_commits_one_matching_receipt() -> None:

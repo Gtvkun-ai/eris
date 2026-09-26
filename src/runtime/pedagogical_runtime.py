@@ -4,13 +4,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 import math
-import os
 import threading
 import time
 from typing import Any, Callable, Iterator, Mapping
 
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from runtime.pedagogical_contracts import TeachingDirective, TeachingEpisode, TeachingReceipt, normalize_episode
+from runtime.runtime_settings_store import runtime_bool
 from runtime.pedagogical_controller import (
     ControllerResult,
     expire_if_needed,
@@ -380,8 +380,7 @@ def _host_feature_enabled(host: Any) -> bool:
     settings = getattr(getattr(host, "runtime_policy_settings", None), "pedagogy", None)
     if settings is not None and hasattr(settings, "enabled"):
         return bool(settings.enabled)
-    raw = str(os.getenv("ERIS_PEDAGOGICAL_CONTROLLER_ENABLED", "0") or "0").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return runtime_bool("pedagogy", "enabled", default=False)
 
 
 def ensure_pedagogical_runtime(host: Any) -> PedagogicalRuntime | None:

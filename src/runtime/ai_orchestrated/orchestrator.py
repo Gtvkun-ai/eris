@@ -548,6 +548,10 @@ def _bounded_pedagogical_history(history: Any) -> tuple[dict[str, str], ...]:
     return tuple(projected)
 
 
+def _bounded_pedagogical_turn(user_text: Any) -> str:
+    return " ".join(str(user_text or "").split()).strip()[:1200]
+
+
 def _prepare_pedagogical_turn(
     host: Any,
     *,
@@ -570,7 +574,9 @@ def _prepare_pedagogical_turn(
     status = str(active.get("status", "") or "").strip().lower() if isinstance(active, Mapping) else ""
     if isinstance(active, Mapping) and status not in {"completed", "abandoned", "expired", "failed"}:
         try:
-            result = runtime.observe_user_turn(user_text, evidence=(), now=now)
+            result = runtime.observe_user_turn(
+                _bounded_pedagogical_turn(user_text), evidence=(), now=now,
+            )
         except Exception:
             return runtime, None
         directive = getattr(getattr(result, "action", None), "directive", None)
@@ -590,7 +596,7 @@ def _prepare_pedagogical_turn(
     request_context = {
         "explicit_plan_request": True,
         "turn_id": str(turn_id or "")[:120],
-        "current_turn": " ".join(str(user_text or "").split()).strip()[:1200],
+        "current_turn": _bounded_pedagogical_turn(user_text),
         "recent_public_history": list(_bounded_pedagogical_history(recent_history)),
     }
     try:
