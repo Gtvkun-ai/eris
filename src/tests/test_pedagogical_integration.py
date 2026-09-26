@@ -9,6 +9,7 @@ import pytest
 from runtime.ai_orchestrated import orchestrator
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
 from runtime.ai_orchestrated import self_turn_pipeline
+from runtime import public_output_runtime
 from runtime.ai_orchestrated.contracts import IntentionPlan
 from runtime.ai_orchestrated.initiative import (
     InitiativeAction,
@@ -23,6 +24,7 @@ from runtime.pedagogical_contracts import (
     TeachingDirective,
     TeachingEpisode,
     TeachingPlan,
+    TeachingReceipt,
 )
 from runtime.runtime_settings_store import RuntimeSettingsStore
 from runtime.settings_catalog import build_settings_catalog
@@ -459,11 +461,14 @@ def test_audio_finished_anchors_dwell_and_allows_exactly_one_claim(tmp_path: Any
         initial.objective, initial.claim, initial.contrast, initial.example_policy,
         initial.max_ideas, initial.max_sentences, True, True, True,
     )
-    assert self_turn_pipeline._commit_pedagogical_autonomous_receipt(
-        runtime,
-        directive,
-        public_text="A sealed teaching chunk",
-        turn_id="autonomous:1",
+    assert runtime.commit_receipt(
+        TeachingReceipt(
+            directive.episode_id,
+            directive.plan_revision,
+            directive.chunk_id,
+            turn_id="autonomous:1",
+            successful=True,
+        ),
         now=1000.5,
     )
     host = _autonomous_host(runtime, clock)
@@ -497,23 +502,56 @@ def test_successful_autonomous_surface_commits_one_receipt(tmp_path: Any) -> Non
     )
     assert directive is not None
 
-    assert self_turn_pipeline._commit_pedagogical_autonomous_receipt(
+    assert self_turn_pipeline._stage_pedagogical_autonomous_receipt(
         runtime,
         directive,
         public_text="A sealed teaching chunk",
-        turn_id="autonomous:7",
+        turn_id="pedagogy:autonomous:7",
         now=1005.0,
     )
-    assert not self_turn_pipeline._commit_pedagogical_autonomous_receipt(
-        runtime,
-        directive,
-        public_text="A sealed teaching chunk",
-        turn_id="autonomous:7",
+    before_delivery = runtime.snapshot(now=1005.0)["active_episode"]
+    assert before_delivery["status"] == "dwelling"
+    assert before_delivery["autonomous_chunks_used"] == 0
+
+    assert public_output_runtime._settle_pedagogical_delivery_event(
+        host,
+        event_type="audio_done",
+        turn_id="pedagogy:autonomous:7",
         now=1005.1,
     )
     active = runtime.snapshot(now=1005.1)["active_episode"]
-    assert active["status"] == "speaking"
+    assert active["status"] == "dwelling"
     assert active["autonomous_chunks_used"] == 1
+
+
+def test_async_tts_failure_releases_staged_claim_without_advancing(tmp_path: Any) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+    _, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+    assert directive is not None
+    assert self_turn_pipeline._stage_pedagogical_autonomous_receipt(
+        runtime,
+        directive,
+        public_text="A text commit whose audio later fails",
+        turn_id="pedagogy:autonomous:failed",
+        now=1001.1,
+    )
+
+    assert public_output_runtime._settle_pedagogical_delivery_event(
+        host,
+        event_type="audio_failed",
+        turn_id="pedagogy:autonomous:failed",
+        now=1002.0,
+    )
+    snapshot = runtime.snapshot(now=1002.0)
+    assert snapshot["claimed"] is False
+    assert snapshot["active_episode"]["status"] == "dwelling"
+    assert snapshot["active_episode"]["autonomous_chunks_used"] == 0
+    assert snapshot["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
 
 
 @pytest.mark.parametrize("reason", ("surface_failed", "tts_failed", "grounding_rejected"))
@@ -631,3 +669,30 @@ def test_due_directive_routes_through_initiative_before_autonomous_surface(
     assert candidate.claim_token == "episode:2:chunk"
     assert surface_calls[0]["teaching_directive"] is directive
     assert surface_calls[0]["pedagogical_runtime"] is runtime
+
+
+def test_queued_user_input_prevents_pedagogical_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claim_calls: list[Any] = []
+    host = SimpleNamespace(
+        _process_pending_user_input=lambda: True,
+        running=True,
+    )
+    pipeline = object.__new__(self_turn_pipeline.SelfTurnPipeline)
+    pipeline.host = host
+    monkeypatch.setattr(
+        self_turn_pipeline,
+        "_claim_due_pedagogical_continuation",
+        lambda *args, **kwargs: claim_calls.append((args, kwargs)),
+    )
+
+    result = pipeline._run_due_pedagogical_candidate(
+        now=1005.0,
+        context=SimpleNamespace(turn_seq=9, activity=SimpleNamespace()),
+        blackboard=object(),
+        interaction_busy=False,
+    )
+
+    assert result is True
+    assert claim_calls == []

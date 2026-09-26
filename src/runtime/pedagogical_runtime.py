@@ -56,6 +56,7 @@ def _empty_state() -> dict[str, Any]:
         "claim_owner": "",
         "claim_until": 0.0,
         "claim_token": "",
+        "pending_receipt": None,
         "committed_turn_id": "",
         "cancel_reason": "",
     }
@@ -65,6 +66,22 @@ def _state_from_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     data = payload if isinstance(payload, Mapping) else {}
     episode_data = data.get("episode")
     episode = normalize_episode(episode_data) if isinstance(episode_data, Mapping) else None
+    receipt_data = data.get("pending_receipt")
+    pending_receipt = None
+    if isinstance(receipt_data, Mapping):
+        try:
+            candidate = TeachingReceipt(
+                episode_id=receipt_data.get("episode_id", ""),
+                plan_revision=receipt_data.get("plan_revision", 1),
+                chunk_id=receipt_data.get("chunk_id", ""),
+                turn_id=receipt_data.get("turn_id", ""),
+                text_signature=receipt_data.get("text_signature", ""),
+                successful=receipt_data.get("successful", True),
+            )
+            if candidate.episode_id and candidate.chunk_id and candidate.turn_id:
+                pending_receipt = candidate.to_dict()
+        except (TypeError, ValueError):
+            pending_receipt = None
     state = _empty_state()
     state.update(
         version=_counter(data.get("version", 0)),
@@ -74,6 +91,7 @@ def _state_from_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         claim_owner=_identifier(data.get("claim_owner")),
         claim_until=_timestamp(data.get("claim_until")),
         claim_token=_identifier(data.get("claim_token")),
+        pending_receipt=pending_receipt,
         committed_turn_id=_identifier(data.get("committed_turn_id")),
         cancel_reason=_identifier(data.get("cancel_reason")),
     )
@@ -141,6 +159,7 @@ class PedagogicalRuntime:
                 "active_episode": episode.to_dict() if episode is not None else None,
                 "pending": bool(episode and episode.pending_chunk),
                 "claimed": claimed,
+                "delivery_pending": isinstance(self._state.get("pending_receipt"), Mapping),
                 "due": due,
                 "dwell_anchor_at": self._state["dwell_anchor_at"],
                 "dwell_due_at": self._state["dwell_due_at"],
@@ -280,11 +299,86 @@ class PedagogicalRuntime:
             self._state["claim_owner"] = ""
             self._state["claim_until"] = 0.0
             self._state["claim_token"] = ""
+            self._state["pending_receipt"] = None
             self._state["dwell_due_at"] = max(self._state["dwell_due_at"], current + delay)
             self._state["cancel_reason"] = _identifier(reason)
             self._stage_locked()
             self._arm_timer_locked()
             return True
+
+    def stage_receipt(self, receipt: TeachingReceipt, *, now: float | None = None) -> bool:
+        """Durably bind a public attempt to its live claim until TTS settles."""
+        if not isinstance(receipt, TeachingReceipt) or not receipt.successful or not receipt.turn_id:
+            return False
+        current = self._now(now)
+        with self._lock, self._transaction():
+            self._settle_locked(current)
+            episode = self._episode_locked()
+            chunk = episode.pending_chunk if episode is not None else None
+            if (
+                episode is None
+                or episode.status != "dwelling"
+                or chunk is None
+                or receipt.episode_id != episode.episode_id
+                or receipt.plan_revision != episode.plan_revision
+                or receipt.chunk_id != chunk.chunk_id
+                or not self._state["claim_owner"]
+                or self._state["claim_until"] <= current
+            ):
+                return False
+            existing = self._state.get("pending_receipt")
+            if isinstance(existing, Mapping):
+                return existing == receipt.to_dict()
+            self._state["pending_receipt"] = receipt.to_dict()
+            self._state["claim_until"] = max(self._state["claim_until"], current + 120.0)
+            self._stage_locked()
+            self._arm_timer_locked()
+            return True
+
+    def settle_delivery(
+        self,
+        *,
+        turn_id: str,
+        successful: bool,
+        now: float | None = None,
+    ) -> bool:
+        """Settle one staged public attempt from the authoritative TTS terminal."""
+        current = self._now(now)
+        normalized_turn_id = _identifier(turn_id)
+        receipt: TeachingReceipt | None = None
+        with self._lock, self._transaction():
+            self._settle_locked(current)
+            raw = self._state.get("pending_receipt")
+            if not isinstance(raw, Mapping):
+                return False
+            try:
+                receipt = TeachingReceipt(
+                    episode_id=raw.get("episode_id", ""),
+                    plan_revision=raw.get("plan_revision", 1),
+                    chunk_id=raw.get("chunk_id", ""),
+                    turn_id=raw.get("turn_id", ""),
+                    text_signature=raw.get("text_signature", ""),
+                    successful=raw.get("successful", True),
+                )
+            except (TypeError, ValueError):
+                receipt = None
+            if receipt is None or receipt.turn_id != normalized_turn_id:
+                return False
+            if not successful:
+                self._state["pending_receipt"] = None
+                self._state["claim_owner"] = ""
+                self._state["claim_until"] = 0.0
+                self._state["claim_token"] = ""
+                self._state["dwell_due_at"] = max(self._state["dwell_due_at"], current)
+                self._state["cancel_reason"] = "delivery_failed"
+                self._stage_locked()
+                self._arm_timer_locked()
+                return True
+
+        if receipt is None or not self.commit_receipt(receipt, now=current):
+            return False
+        self.notify_audio_finished(current, source_turn_id=receipt.turn_id)
+        return True
 
     def notify_audio_finished(self, timestamp: float, *, source_turn_id: str = "") -> None:
         current = self._now(timestamp)
@@ -352,6 +446,7 @@ class PedagogicalRuntime:
         self._state["claim_owner"] = ""
         self._state["claim_until"] = 0.0
         self._state["claim_token"] = ""
+        self._state["pending_receipt"] = None
         self._state["cancel_reason"] = _identifier(reason)
 
     def _settle_locked(self, now: float) -> None:
@@ -367,6 +462,7 @@ class PedagogicalRuntime:
             self._state["claim_owner"] = ""
             self._state["claim_until"] = 0.0
             self._state["claim_token"] = ""
+            self._state["pending_receipt"] = None
             changed = True
         if changed:
             self._stage_locked()

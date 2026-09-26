@@ -145,7 +145,7 @@ def _release_pedagogical_claim(
         return False
 
 
-def _commit_pedagogical_autonomous_receipt(
+def _stage_pedagogical_autonomous_receipt(
     runtime: Any,
     directive: TeachingDirective | None,
     *,
@@ -169,8 +169,11 @@ def _commit_pedagogical_autonomous_receipt(
         ).hexdigest(),
         successful=True,
     )
+    stage = getattr(runtime, "stage_receipt", None)
+    if not callable(stage):
+        return False
     try:
-        return bool(runtime.commit_receipt(receipt, now=now))
+        return bool(stage(receipt, now=now))
     except Exception:
         return False
 
@@ -2835,6 +2838,8 @@ class SelfTurnPipeline:
     ) -> bool | None:
         """Run one claimed teaching chunk through the autonomous public gates."""
         host = self.host
+        if host._process_pending_user_input():
+            return bool(getattr(host, "running", True))
         runtime, directive = _claim_due_pedagogical_continuation(
             host,
             worker_id=f"self_turn:{threading.get_ident()}",
@@ -2896,7 +2901,7 @@ class SelfTurnPipeline:
             return True
         teaching_plan = replace(
             decision.plan,
-            plan_id=f"pedagogy:{claim_key}"[:80],
+            plan_id=f"pedagogy:{claim_key}:{context.turn_seq}"[:80],
             motive="teach_chunk",
             strategy="pedagogical_continuation",
             topic=directive.current_objective,
@@ -3311,6 +3316,30 @@ class SelfTurnPipeline:
             )
             return host.running
 
+        delivery_turn_id = str(
+            getattr(decision, "utterance_turn_id", "")
+            or plan.plan_id
+            or f"pedagogy:autonomous:{context.turn_seq}"
+        )
+        if teaching_directive is not None and not _stage_pedagogical_autonomous_receipt(
+            pedagogical_runtime,
+            teaching_directive,
+            public_text=str(getattr(decision, "text", "") or ""),
+            turn_id=delivery_turn_id,
+            now=time.time(),
+        ):
+            _release_pedagogical_claim(
+                pedagogical_runtime,
+                reason="pedagogical_receipt_stage_failed",
+                now=time.time(),
+            )
+            self._record_result(
+                plan,
+                result="generation_failed",
+                gate_reason="pedagogical_receipt_stage_failed",
+            )
+            return True
+
         text, assistant_meta = self.commit_public(
             decision,
             channel="autonomous",
@@ -3335,42 +3364,6 @@ class SelfTurnPipeline:
             return True
 
         autonomous_turn_id = f"autonomous:{context.turn_seq}"
-        if teaching_directive is not None:
-            committed = _commit_pedagogical_autonomous_receipt(
-                pedagogical_runtime,
-                teaching_directive,
-                public_text=text,
-                turn_id=autonomous_turn_id,
-                now=time.time(),
-            )
-            if not committed:
-                _release_pedagogical_claim(
-                    pedagogical_runtime,
-                    reason="pedagogical_receipt_rejected",
-                    now=time.time(),
-                )
-            else:
-                clock = getattr(host, "interaction_clock", None)
-                audio_finished_at = float(
-                    getattr(clock, "audio_finished_at", 0.0) or 0.0
-                ) if clock is not None else 0.0
-                assistant_text_at = float(
-                    getattr(clock, "assistant_text_at", 0.0) or 0.0
-                ) if clock is not None else 0.0
-                playback_done = bool(
-                    audio_finished_at > 0.0
-                    and audio_finished_at >= assistant_text_at
-                    and not bool(getattr(clock, "audio_active", False))
-                    and not bool(getattr(clock, "audio_pending", False))
-                )
-                if playback_done:
-                    try:
-                        pedagogical_runtime.notify_audio_finished(
-                            audio_finished_at,
-                            source_turn_id=autonomous_turn_id,
-                        )
-                    except Exception:
-                        pass
 
         host.last_autonomous_spoken_at = time.time()
         try:
