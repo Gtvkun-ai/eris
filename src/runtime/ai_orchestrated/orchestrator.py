@@ -552,6 +552,27 @@ def _bounded_pedagogical_turn(user_text: Any) -> str:
     return " ".join(str(user_text or "").split()).strip()[:1200]
 
 
+def _notify_pedagogical_audio_finished(
+    host: Any,
+    timestamp: float,
+    *,
+    source_turn_id: str = "",
+) -> bool:
+    """Forward a real playback edge to the enabled teaching runtime."""
+    if not _pedagogy_enabled(host) or float(timestamp or 0.0) <= 0.0:
+        return False
+    runtime = ensure_pedagogical_runtime(host)
+    if runtime is None:
+        return False
+    try:
+        runtime.notify_audio_finished(
+            float(timestamp), source_turn_id=str(source_turn_id or "")[:120],
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _prepare_pedagogical_turn(
     host: Any,
     *,
@@ -2837,6 +2858,11 @@ class AIChatOrchestrator:
                     and not bool(getattr(clock, "audio_active", False))
                 )
                 if playback_already_done:
+                    _notify_pedagogical_audio_finished(
+                        host,
+                        audio_finished_at,
+                        source_turn_id=turn_id,
+                    )
                     if social_continuation_runtime is not None:
                         try:
                             social_continuation_runtime.notify_audio_finished(

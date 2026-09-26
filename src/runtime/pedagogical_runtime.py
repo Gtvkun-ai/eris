@@ -172,9 +172,19 @@ class PedagogicalRuntime:
             self._arm_timer_locked()
             return result
 
-    def claim_due(self, *, worker_id: str, now: float | None = None) -> TeachingDirective | None:
+    def claim_due(
+        self,
+        *,
+        worker_id: str,
+        now: float | None = None,
+        lease_seconds: float = CLAIM_LEASE_SECONDS,
+    ) -> TeachingDirective | None:
         current = self._now(now)
         owner = _identifier(worker_id) or "anonymous"
+        try:
+            lease = max(0.25, min(120.0, float(lease_seconds)))
+        except (TypeError, ValueError, OverflowError):
+            lease = CLAIM_LEASE_SECONDS
         with self._lock, self._transaction():
             self._settle_locked(current)
             episode = self._episode_locked()
@@ -192,7 +202,7 @@ class PedagogicalRuntime:
             if directive is None:
                 return None
             self._state["claim_owner"] = owner
-            self._state["claim_until"] = current + CLAIM_LEASE_SECONDS
+            self._state["claim_until"] = current + lease
             self._state["claim_token"] = _identifier(
                 f"{episode.episode_id}:{episode.plan_revision}:{episode.pending_chunk.chunk_id}:{owner}"
             )
@@ -243,6 +253,38 @@ class PedagogicalRuntime:
                 )
             else:
                 self._store.abandon_idempotency(ledger_key, owner="pedagogy_runtime")
+
+    def release_claim(
+        self,
+        reason: str,
+        *,
+        now: float | None = None,
+        delay_seconds: float = 0.0,
+    ) -> bool:
+        """Release a live autonomous lease without consuming its teaching chunk."""
+        current = self._now(now)
+        try:
+            delay = max(0.0, min(300.0, float(delay_seconds)))
+        except (TypeError, ValueError, OverflowError):
+            delay = 0.0
+        with self._lock, self._transaction():
+            self._settle_locked(current)
+            episode = self._episode_locked()
+            if (
+                episode is None
+                or episode.status != "dwelling"
+                or episode.pending_chunk is None
+                or not self._state["claim_owner"]
+            ):
+                return False
+            self._state["claim_owner"] = ""
+            self._state["claim_until"] = 0.0
+            self._state["claim_token"] = ""
+            self._state["dwell_due_at"] = max(self._state["dwell_due_at"], current + delay)
+            self._state["cancel_reason"] = _identifier(reason)
+            self._stage_locked()
+            self._arm_timer_locked()
+            return True
 
     def notify_audio_finished(self, timestamp: float, *, source_turn_id: str = "") -> None:
         current = self._now(timestamp)

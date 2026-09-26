@@ -17,6 +17,7 @@ state machine is allowed beside it.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
 import time
@@ -27,6 +28,9 @@ from runtime.no_fallback_policy import no_fallback_mode_enabled
 from runtime.affective_voice_state import project_affective_voice_state
 from runtime.grounding_surface_gate import evaluate_grounded_surface
 from runtime.json_boundary import public_payload
+from runtime.pedagogical_contracts import TeachingDirective, TeachingReceipt, validate_directive
+from runtime.pedagogical_runtime import ensure_pedagogical_runtime
+from runtime.runtime_settings_store import runtime_bool
 
 from .activity_session import ActivitySession, ActivitySessionTracker
 from .ambient_screen_context import AmbientScreenContext, AmbientScreenTracker
@@ -45,6 +49,7 @@ from .identity import PendingStrategyUse
 from .initiative import InitiativeAction, InitiativeDecision, SpeechIntent
 from .random_chat_seed import seed_event_family
 from .self_context import AutonomousSelfContext, build_autonomous_self_context
+from .semantic_contracts import TurnSemantics
 from runtime.engagements import InteractionDecision
 from runtime.temporal_mind import TemporalMind, TemporalSignal
 from runtime.runtime_status import emit_runtime_status
@@ -57,6 +62,117 @@ from runtime.subject_initiative_runtime import (
 )
 from runtime.proposal_lifecycle import ensure_proposal_lifecycle_runtime
 from cortex.subject.expression_commitment import commitment_payload
+
+
+def _pedagogy_enabled(host: Any) -> bool:
+    explicit = getattr(host, "pedagogical_controller_enabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    return runtime_bool("pedagogy", "enabled", default=False)
+
+
+def _claim_due_pedagogical_continuation(
+    host: Any,
+    *,
+    worker_id: str,
+    now: float,
+    interaction_busy: bool,
+) -> tuple[Any | None, TeachingDirective | None]:
+    """Claim one due teaching chunk without perturbing the disabled path."""
+    if not _pedagogy_enabled(host):
+        return None, None
+    runtime = ensure_pedagogical_runtime(host)
+    if runtime is None or interaction_busy or bool(getattr(host, "_chat_processing", False)):
+        return runtime, None
+    clock = getattr(host, "interaction_clock", None)
+    if clock is not None and bool(
+        getattr(clock, "busy", False)
+        or getattr(clock, "audio_active", False)
+        or getattr(clock, "audio_pending", False)
+    ):
+        return runtime, None
+    if clock is not None:
+        audio_finished_at = float(getattr(clock, "audio_finished_at", 0.0) or 0.0)
+        assistant_text_at = float(getattr(clock, "assistant_text_at", 0.0) or 0.0)
+        if audio_finished_at > 0.0 and audio_finished_at >= assistant_text_at and audio_finished_at <= now:
+            try:
+                runtime.notify_audio_finished(audio_finished_at)
+            except Exception:
+                pass
+    try:
+        try:
+            directive = runtime.claim_due(
+                worker_id=worker_id,
+                now=now,
+                lease_seconds=90.0,
+            )
+        except TypeError:
+            directive = runtime.claim_due(worker_id=worker_id, now=now)
+    except Exception:
+        return runtime, None
+    if not isinstance(directive, TeachingDirective):
+        return runtime, None
+    valid, _reason = validate_directive(directive)
+    if not valid or not directive.allow_autonomous_resume:
+        _release_pedagogical_claim(
+            runtime,
+            reason="invalid_autonomous_directive",
+            now=now,
+        )
+        return runtime, None
+    return runtime, directive
+
+
+def _release_pedagogical_claim(
+    runtime: Any,
+    *,
+    reason: str,
+    now: float | None = None,
+    delay_seconds: float = 0.0,
+) -> bool:
+    release = getattr(runtime, "release_claim", None)
+    if not callable(release):
+        return False
+    try:
+        return bool(
+            release(
+                str(reason or "autonomous_attempt_failed")[:120],
+                now=now,
+                delay_seconds=delay_seconds,
+            )
+        )
+    except Exception:
+        return False
+
+
+def _commit_pedagogical_autonomous_receipt(
+    runtime: Any,
+    directive: TeachingDirective | None,
+    *,
+    public_text: str,
+    turn_id: str,
+    now: float,
+) -> bool:
+    if runtime is None or not isinstance(directive, TeachingDirective):
+        return False
+    valid, _reason = validate_directive(directive)
+    text = str(public_text or "").strip()
+    if not valid or not text:
+        return False
+    receipt = TeachingReceipt(
+        episode_id=directive.episode_id,
+        plan_revision=directive.plan_revision,
+        chunk_id=directive.chunk_id,
+        turn_id=str(turn_id or "")[:120],
+        text_signature="sha256:" + hashlib.sha256(
+            text.encode("utf-8", errors="replace")
+        ).hexdigest(),
+        successful=True,
+    )
+    try:
+        return bool(runtime.commit_receipt(receipt, now=now))
+    except Exception:
+        return False
 
 
 def environment_social_gate(situation: UserSituation | None) -> dict[str, Any]:
@@ -526,6 +642,23 @@ class SelfTurnPipeline:
             except Exception as exc:
                 planner_snapshot["private_intention_pressure"] = 0.0
                 host.logger.debug("[private-intention-v101] cheap wake projection failed: %s", exc)
+
+        # A durable teaching dwell is already a controller-approved continuation.
+        # Give it the first claim opportunity, but only on the feature-on path;
+        # ordinary autonomous timing remains byte-for-byte unchanged otherwise.
+        if _pedagogy_enabled(host):
+            pedagogical_blackboard = TypedCognitiveBlackboard.from_snapshot(
+                planner_snapshot, now=now,
+            )
+            pedagogical_result = self._run_due_pedagogical_candidate(
+                now=now,
+                context=context,
+                blackboard=pedagogical_blackboard,
+                interaction_busy=interaction_busy,
+            )
+            if pedagogical_result is not None:
+                return pedagogical_result
+
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
             try:
@@ -2692,6 +2825,161 @@ class SelfTurnPipeline:
         self.host._sleep_interruptible(2.5)
         return True
 
+    def _run_due_pedagogical_candidate(
+        self,
+        *,
+        now: float,
+        context: SelfTurnBundle,
+        blackboard: TypedCognitiveBlackboard,
+        interaction_busy: bool,
+    ) -> bool | None:
+        """Run one claimed teaching chunk through the autonomous public gates."""
+        host = self.host
+        runtime, directive = _claim_due_pedagogical_continuation(
+            host,
+            worker_id=f"self_turn:{threading.get_ident()}",
+            now=now,
+            interaction_busy=interaction_busy,
+        )
+        if directive is None:
+            return None
+
+        claim_key = ":".join(
+            (directive.episode_id, str(directive.plan_revision), directive.chunk_id)
+        )
+        from .social_candidate import SocialSpeechCandidate
+
+        candidate = SocialSpeechCandidate(
+            decision="candidate",
+            kind="conversation_arc",
+            topic=directive.current_objective or directive.claim,
+            speech_act="teach_chunk",
+            anchor_type="conversation",
+            anchor_id=directive.episode_id,
+            evidence_refs=(f"pedagogy:{directive.episode_id}",),
+            confidence=1.0,
+            relevance=1.0,
+            urgency=0.8,
+            tone="focused",
+            reason="pedagogical_dwell_due",
+            source="pedagogical_runtime",
+            continuation_lane="pedagogical",
+            claim_token=claim_key,
+            idempotency_key=f"pedagogy:{claim_key}",
+            expression_commitment=commitment_payload(
+                origin="pedagogical_runtime",
+                source_id=claim_key,
+                semantic_target=directive.current_objective or directive.claim,
+                motive="teach_chunk",
+                pressure=0.9,
+                freshness=1.0,
+                persistence=0.9,
+            ),
+        )
+        initiative = getattr(host, "ai_initiative_controller", None)
+        if initiative is None:
+            _release_pedagogical_claim(runtime, reason="initiative_controller_unavailable", now=now)
+            return True
+        try:
+            decision = initiative.decide(blackboard, candidate)
+        except Exception as exc:
+            host.logger.debug("[pedagogy] initiative gate failed: %s", exc)
+            _release_pedagogical_claim(runtime, reason="initiative_gate_failed", now=now)
+            return True
+        if not bool(getattr(decision, "should_speak", False)):
+            _release_pedagogical_claim(
+                runtime,
+                reason=str(getattr(decision, "reason", "initiative_deferred") or "initiative_deferred"),
+                now=now,
+                delay_seconds=0.5,
+            )
+            return True
+        teaching_plan = replace(
+            decision.plan,
+            plan_id=f"pedagogy:{claim_key}"[:80],
+            motive="teach_chunk",
+            strategy="pedagogical_continuation",
+            topic=directive.current_objective,
+            evidence_refs=(f"pedagogy:{directive.episode_id}",),
+            semantic_owner="shared",
+            trigger_owner="runtime",
+            source_kind="pedagogical_runtime",
+            source_ref=claim_key,
+            why_now="validated_dwell_elapsed",
+            user_triggered=False,
+            semantics=TurnSemantics(
+                turn_kind="continuation",
+                speech_act="teach_chunk",
+                subject_key=directive.episode_id,
+                evidence_scope="conversation",
+            ),
+            continuation_lane="",
+            continuation_ticket_id="",
+            continuation_claim_token="",
+            continuation_idempotency_key=f"pedagogy:{claim_key}",
+        )
+        teaching_intent = replace(
+            decision.speech_intent,
+            plan=teaching_plan,
+            mode="continuation",
+            anchor_type="conversation",
+            anchor_id=directive.episode_id,
+            evidence_refs=(f"pedagogy:{directive.episode_id}",),
+            max_sentences=directive.max_sentences,
+            trace_id=teaching_plan.plan_id,
+            claim_token=claim_key,
+        )
+        decision = replace(
+            decision,
+            plan=teaching_plan,
+            speech_intent=teaching_intent,
+        )
+        if host._process_pending_user_input():
+            _release_pedagogical_claim(runtime, reason="user_input_preempted", now=now)
+            return bool(getattr(host, "running", True))
+
+        speech_intent = getattr(decision, "speech_intent", None)
+        validator = getattr(host, "ai_autonomous_grounding_validator", None)
+        if validator is not None and speech_intent is not None:
+            try:
+                preflight = validator.validate_intent(speech_intent, blackboard)
+            except Exception:
+                preflight = None
+            if preflight is not None and not bool(getattr(preflight, "allowed", False)):
+                _release_pedagogical_claim(
+                    runtime,
+                    reason=str(getattr(preflight, "reason", "grounding_preflight_rejected")),
+                    now=now,
+                )
+                return True
+
+        try:
+            from runtime.public_lifecycle import lifecycle_for
+
+            lifecycle_turn_id = f"pedagogy:{claim_key}"
+            host._active_public_lifecycle_turn_id = lifecycle_turn_id
+            lifecycle_for(host).begin(
+                turn_id=lifecycle_turn_id,
+                channel="autonomous",
+                reason="pedagogical_continuation_composing",
+                received=False,
+            )
+        except Exception:
+            pass
+
+        return self._surface(
+            plan=decision.plan,
+            context=context,
+            activity=context.activity,
+            discovery_grounding="",
+            discovery_id="",
+            discovery_runtime=None,
+            allow_model_generation=True,
+            candidate=candidate,
+            teaching_directive=directive,
+            pedagogical_runtime=runtime,
+        )
+
 
     def _autonomous_grounding_report(self, context: SelfTurnBundle, plan: IntentionPlan):
         """Đóng evidence autonomous thành SourceGroundingReport cho gate chung."""
@@ -2751,10 +3039,36 @@ class SelfTurnPipeline:
         candidate: Any | None = None,
         subject_decision: Any | None = None,
         subject_generation_revision: int = 0,
+        teaching_directive: TeachingDirective | None = None,
+        pedagogical_runtime: Any | None = None,
     ) -> bool:
         host = self.host
         payload = dict(prebuilt_payload or {})
-        if not payload and allow_model_generation:
+        if not payload and allow_model_generation and teaching_directive is not None:
+            try:
+                payload = host.ai_model_router.generate_public_reply(
+                    chat_history=context.recent_history,
+                    user_text="",
+                    memory_context=context.memory_context,
+                    grounding_context="\n".join(
+                        part for part in (
+                            context.perception.screen.prompt_context(),
+                            "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
+                            f"PEDAGOGICAL_EPISODE_REF:{teaching_directive.episode_id}",
+                        ) if part
+                    ),
+                    personality_context=context.state.personality_prompt_context(),
+                    engagement_context=context.engagement_prompt_context,
+                    planned_intention=plan,
+                    teaching_directive=teaching_directive,
+                    allow_fallback=False,
+                    language_hint=self._runtime_language(),
+                    speech_language_hint=self._runtime_speech_language(),
+                )
+            except Exception as exc:
+                host.logger.warning("[pedagogy] autonomous writer failed: %s", exc)
+                payload = {}
+        if not payload and allow_model_generation and teaching_directive is None:
             chess_context = ""
             chess_bridge = getattr(host, "chess_bridge_service", None)
             if chess_bridge is not None and callable(getattr(chess_bridge, "current_surface_state", None)):
@@ -2792,6 +3106,9 @@ class SelfTurnPipeline:
         if payload and host._process_pending_user_input():
             # Re-check input immediately before commit so interruption remains real.
             self._release_seed_lease(candidate, reason="user_input_before_commit")
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason="user_input_before_commit", now=context.now,
+            )
             self.trace_store.append("outcome", {
                 "trace_id": str(payload.get("event_trace_id") or plan.plan_id),
                 "turn_id": str(plan.plan_id or ""),
@@ -2803,6 +3120,9 @@ class SelfTurnPipeline:
             return host.running
         if not payload:
             self._release_seed_lease(candidate, reason="public_generation_failed")
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason="public_generation_failed", now=context.now,
+            )
             host.logger.warning(
                 "[ai autonomous] public generation failed kind=%s subject=%s",
                 plan.semantics.turn_kind,
@@ -2867,6 +3187,9 @@ class SelfTurnPipeline:
             # hơn nhiều so với phát claim sai rồi trông chờ observer sửa hậu quả.
             gate_reason = f"grounding_gate:{grounding_code}"[:160]
             self._release_seed_lease(candidate, reason=gate_reason)
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason=gate_reason, now=context.now,
+            )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             host.logger.warning(
                 "[grounding gate] autonomous surface blocked subject=%s violations=%s",
@@ -2905,6 +3228,9 @@ class SelfTurnPipeline:
         if not utterance_allowed:
             gate_reason = f"utterance_gate:{utterance_reason}"[:160]
             self._release_seed_lease(candidate, reason=gate_reason)
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason=gate_reason, now=context.now,
+            )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             host.logger.warning(
                 "[utterance gate] autonomous surface blocked subject=%s reason=%s text=%s",
@@ -2962,6 +3288,9 @@ class SelfTurnPipeline:
                 f"subject={subject_generation_revision}->{current_subject_revision}"
             )
             self._release_seed_lease(candidate, reason=gate_reason)
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason=gate_reason, now=context.now,
+            )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=0.25)
             self.trace_store.append("outcome", {
                 "trace_id": str(plan.plan_id or ""),
@@ -2991,6 +3320,9 @@ class SelfTurnPipeline:
             discovery_runtime.mark_spoken(discovery_id, text)
         if not text:
             self._release_seed_lease(candidate, reason="no_public_text")
+            _release_pedagogical_claim(
+                pedagogical_runtime, reason="no_public_text", now=context.now,
+            )
             self._defer_claimed_continuation(plan, reason="no_public_text", seconds=0.75)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
             try:
@@ -3001,6 +3333,44 @@ class SelfTurnPipeline:
                 host.logger.debug("[proposal lifecycle v94] no-text receipt failed: %s", exc)
             host._sleep_interruptible(10)
             return True
+
+        autonomous_turn_id = f"autonomous:{context.turn_seq}"
+        if teaching_directive is not None:
+            committed = _commit_pedagogical_autonomous_receipt(
+                pedagogical_runtime,
+                teaching_directive,
+                public_text=text,
+                turn_id=autonomous_turn_id,
+                now=time.time(),
+            )
+            if not committed:
+                _release_pedagogical_claim(
+                    pedagogical_runtime,
+                    reason="pedagogical_receipt_rejected",
+                    now=time.time(),
+                )
+            else:
+                clock = getattr(host, "interaction_clock", None)
+                audio_finished_at = float(
+                    getattr(clock, "audio_finished_at", 0.0) or 0.0
+                ) if clock is not None else 0.0
+                assistant_text_at = float(
+                    getattr(clock, "assistant_text_at", 0.0) or 0.0
+                ) if clock is not None else 0.0
+                playback_done = bool(
+                    audio_finished_at > 0.0
+                    and audio_finished_at >= assistant_text_at
+                    and not bool(getattr(clock, "audio_active", False))
+                    and not bool(getattr(clock, "audio_pending", False))
+                )
+                if playback_done:
+                    try:
+                        pedagogical_runtime.notify_audio_finished(
+                            audio_finished_at,
+                            source_turn_id=autonomous_turn_id,
+                        )
+                    except Exception:
+                        pass
 
         host.last_autonomous_spoken_at = time.time()
         try:
@@ -3117,7 +3487,6 @@ class SelfTurnPipeline:
                 social_agenda_store.note_spoken(plan, now=host.last_autonomous_spoken_at)
             except Exception as exc:
                 host.logger.debug("[social agenda] completion note failed: %s", exc)
-        autonomous_turn_id = f"autonomous:{context.turn_seq}"
         try:
             from .social_plan_commit import activate_social_plan_after_public_commit
 

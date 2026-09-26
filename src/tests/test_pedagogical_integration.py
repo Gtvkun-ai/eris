@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -7,8 +8,22 @@ import pytest
 
 from runtime.ai_orchestrated import orchestrator
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
+from runtime.ai_orchestrated import self_turn_pipeline
+from runtime.ai_orchestrated.contracts import IntentionPlan
+from runtime.ai_orchestrated.initiative import (
+    InitiativeAction,
+    InitiativeDecision,
+    SpeechIntent,
+)
 from runtime import pedagogical_runtime
-from runtime.pedagogical_contracts import TeachingConcept, TeachingDirective, TeachingPlan
+from runtime.pedagogical_contracts import (
+    ComprehensionState,
+    TeachingChunk,
+    TeachingConcept,
+    TeachingDirective,
+    TeachingEpisode,
+    TeachingPlan,
+)
 from runtime.runtime_settings_store import RuntimeSettingsStore
 from runtime.settings_catalog import build_settings_catalog
 
@@ -75,6 +90,74 @@ class _FakeWriter:
             self.events.append("writer")
         self.calls.append(dict(kwargs))
         return {"text": "one bounded chunk"}
+
+
+class _Clock:
+    def __init__(self, value: float = 1000.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+
+class _FakeTimer:
+    def __init__(self, delay: float, callback: Any) -> None:
+        self.delay = delay
+        self.callback = callback
+        self.daemon = False
+
+    def start(self) -> None:
+        pass
+
+    def cancel(self) -> None:
+        pass
+
+
+def _teaching_episode(*, status: str = "dwelling") -> TeachingEpisode:
+    concepts = (
+        TeachingConcept("first", "First concept", "Understand first."),
+        TeachingConcept("second", "Second concept", "Understand second."),
+        TeachingConcept("third", "Third concept", "Understand third."),
+    )
+    episode = TeachingEpisode.new(
+        episode_id="teaching:first:1000",
+        topic_key="first",
+        global_goal="Learn the distinction.",
+        concepts=concepts,
+        now=1000.0,
+        expires_at=1600.0,
+    )
+    return replace(
+        episode,
+        status=status,
+        comprehension=ComprehensionState(current_concept_id="first"),
+        pending_chunk=TeachingChunk(
+            "first:r1", "first", "Understand first.", claim="First concept",
+        ),
+    )
+
+
+def _durable_pedagogy(tmp_path: Any, clock: _Clock) -> pedagogical_runtime.PedagogicalRuntime:
+    return pedagogical_runtime.PedagogicalRuntime(
+        SQLiteAtomicStateStore(tmp_path / "autonomous-pedagogy.sqlite", clock=clock),
+        clock=clock,
+        timer_factory=_FakeTimer,
+    )
+
+
+def _autonomous_host(runtime: Any, clock: _Clock) -> SimpleNamespace:
+    return SimpleNamespace(
+        pedagogical_controller_enabled=True,
+        ai_pedagogical_runtime=runtime,
+        pedagogical_runtime=runtime,
+        interaction_clock=SimpleNamespace(
+            busy=False,
+            audio_active=False,
+            audio_pending=False,
+            audio_finished_at=0.0,
+        ),
+        _runtime_clock=clock,
+    )
 
 
 def test_flag_off_does_not_resolve_runtime_or_change_writer_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,3 +427,207 @@ def test_pedagogy_settings_default_off_parse_clamp_and_catalog(
     assert fields["pedagogy.enabled"]["default"] is False
     assert fields["pedagogy.minimum_dwell_seconds"]["min"] == 0.5
     assert fields["pedagogy.maximum_dwell_seconds"]["max"] == 300.0
+
+
+def test_user_turn_wins_against_due_autonomous_teaching_chunk(tmp_path: Any) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+
+    runtime.observe_user_turn("Wait, I do not understand yet", now=1001.0)
+    claimed_runtime, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host,
+        worker_id="self-turn",
+        now=1002.0,
+        interaction_busy=False,
+    )
+
+    assert claimed_runtime is runtime
+    assert directive is None
+    assert runtime.snapshot(now=1002.0)["claimed"] is False
+
+
+def test_audio_finished_anchors_dwell_and_allows_exactly_one_claim(tmp_path: Any) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode(status="ready"))
+    initial = _teaching_episode(status="ready").pending_chunk
+    assert initial is not None
+    directive = TeachingDirective(
+        "teaching:first:1000", 1, initial.chunk_id, "Learn the distinction.",
+        initial.objective, initial.claim, initial.contrast, initial.example_policy,
+        initial.max_ideas, initial.max_sentences, True, True, True,
+    )
+    assert self_turn_pipeline._commit_pedagogical_autonomous_receipt(
+        runtime,
+        directive,
+        public_text="A sealed teaching chunk",
+        turn_id="autonomous:1",
+        now=1000.5,
+    )
+    host = _autonomous_host(runtime, clock)
+    host.interaction_clock.audio_finished_at = 1002.0
+
+    _, early = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1002.1, interaction_busy=False,
+    )
+    _, due = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1003.0, interaction_busy=False,
+    )
+    _, duplicate = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn-2", now=1003.1, interaction_busy=False,
+    )
+
+    assert early is None
+    assert due is not None
+    assert duplicate is None
+    snapshot = runtime.snapshot(now=1003.1)
+    assert snapshot["dwell_anchor_at"] == 1002.0
+    assert snapshot["claimed"] is True
+
+
+def test_successful_autonomous_surface_commits_one_receipt(tmp_path: Any) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+    _, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+    assert directive is not None
+
+    assert self_turn_pipeline._commit_pedagogical_autonomous_receipt(
+        runtime,
+        directive,
+        public_text="A sealed teaching chunk",
+        turn_id="autonomous:7",
+        now=1005.0,
+    )
+    assert not self_turn_pipeline._commit_pedagogical_autonomous_receipt(
+        runtime,
+        directive,
+        public_text="A sealed teaching chunk",
+        turn_id="autonomous:7",
+        now=1005.1,
+    )
+    active = runtime.snapshot(now=1005.1)["active_episode"]
+    assert active["status"] == "speaking"
+    assert active["autonomous_chunks_used"] == 1
+
+
+@pytest.mark.parametrize("reason", ("surface_failed", "tts_failed", "grounding_rejected"))
+def test_autonomous_failure_releases_claim_without_receipt(
+    tmp_path: Any,
+    reason: str,
+) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+    _, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+    assert directive is not None
+
+    assert self_turn_pipeline._release_pedagogical_claim(
+        runtime, reason=reason, now=1001.1,
+    )
+    snapshot = runtime.snapshot(now=1001.1)
+    assert snapshot["claimed"] is False
+    assert snapshot["active_episode"]["status"] == "dwelling"
+    assert snapshot["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
+    assert runtime.claim_due(worker_id="retry", now=1001.1) is not None
+
+
+def test_autonomous_flag_off_does_not_resolve_or_claim_pedagogy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved: list[Any] = []
+    host = SimpleNamespace(pedagogical_controller_enabled=False)
+    monkeypatch.setattr(
+        self_turn_pipeline,
+        "ensure_pedagogical_runtime",
+        lambda value: resolved.append(value),
+    )
+
+    runtime, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+
+    assert runtime is None
+    assert directive is None
+    assert resolved == []
+
+
+def test_due_directive_routes_through_initiative_before_autonomous_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directive = TeachingDirective(
+        "episode", 2, "chunk", "goal", "objective", "claim", "contrast",
+        "allowed", 2, 4, True, True, True,
+    )
+    runtime = SimpleNamespace()
+    initiative_calls: list[Any] = []
+    surface_calls: list[dict[str, Any]] = []
+    plan = IntentionPlan.from_mapping(
+        {
+            "plan_id": "pedagogy:episode:2:chunk",
+            "speak": True,
+            "motive": "teach_chunk",
+            "topic": "objective",
+            "semantics": {
+                "turn_kind": "continuation",
+                "speech_act": "teach_chunk",
+                "subject_key": "episode",
+                "evidence_scope": "conversation",
+            },
+        },
+        channel="autonomous",
+    )
+    intent = SpeechIntent(
+        plan=plan,
+        mode="continuation",
+        anchor_type="conversation",
+        anchor_id="episode",
+    )
+
+    class _Initiative:
+        def decide(self, blackboard: Any, candidate: Any) -> InitiativeDecision:
+            initiative_calls.append((blackboard, candidate))
+            return InitiativeDecision(
+                InitiativeAction.SPEECH,
+                "expression_committed",
+                plan,
+                speech_intent=intent,
+            )
+
+    host = SimpleNamespace(
+        ai_initiative_controller=_Initiative(),
+        _process_pending_user_input=lambda: False,
+        running=True,
+        logger=SimpleNamespace(debug=lambda *args: None),
+    )
+    pipeline = object.__new__(self_turn_pipeline.SelfTurnPipeline)
+    pipeline.host = host
+    pipeline._surface = lambda **kwargs: surface_calls.append(kwargs) or True  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        self_turn_pipeline,
+        "_claim_due_pedagogical_continuation",
+        lambda *args, **kwargs: (runtime, directive),
+    )
+
+    result = pipeline._run_due_pedagogical_candidate(
+        now=1005.0,
+        context=SimpleNamespace(turn_seq=9, activity=SimpleNamespace()),
+        blackboard=object(),
+        interaction_busy=False,
+    )
+
+    assert result is True
+    assert len(initiative_calls) == 1
+    candidate = initiative_calls[0][1]
+    assert candidate.source == "pedagogical_runtime"
+    assert candidate.claim_token == "episode:2:chunk"
+    assert surface_calls[0]["teaching_directive"] is directive
+    assert surface_calls[0]["pedagogical_runtime"] is runtime
