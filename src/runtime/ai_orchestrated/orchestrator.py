@@ -31,7 +31,11 @@ from runtime.cognition.normalization import normalize_vi
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
 from runtime.pedagogical_contracts import TeachingDirective, TeachingReceipt
-from runtime.pedagogical_controller import select_next_action, start_episode as start_teaching_episode
+from runtime.pedagogical_controller import (
+    infer_user_evidence,
+    select_next_action,
+    start_episode as start_teaching_episode,
+)
 from runtime.pedagogical_plan_builder import TeachingPlanBuilder
 from runtime.pedagogical_runtime import ensure_pedagogical_runtime
 from runtime.runtime_status import emit_runtime_status
@@ -580,6 +584,7 @@ def _prepare_pedagogical_turn(
     turn_id: str,
     recent_history: Any,
     now: float,
+    evidence: tuple[str, ...] | None = None,
 ) -> tuple[Any | None, TeachingDirective | None]:
     """Select one foreground teaching directive before ordinary chat planning."""
     if not _pedagogy_enabled(host):
@@ -595,8 +600,11 @@ def _prepare_pedagogical_turn(
     status = str(active.get("status", "") or "").strip().lower() if isinstance(active, Mapping) else ""
     if isinstance(active, Mapping) and status not in {"completed", "abandoned", "expired", "failed"}:
         try:
+            bounded_turn = _bounded_pedagogical_turn(user_text)
             result = runtime.observe_user_turn(
-                _bounded_pedagogical_turn(user_text), evidence=(), now=now,
+                bounded_turn,
+                evidence=infer_user_evidence(bounded_turn, explicit_evidence=evidence),
+                now=now,
             )
         except Exception:
             return runtime, None

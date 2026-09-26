@@ -26,6 +26,7 @@ from runtime.pedagogical_contracts import (
     TeachingPlan,
     TeachingReceipt,
 )
+from runtime.pedagogical_controller import infer_user_evidence, start_episode
 from runtime.runtime_settings_store import RuntimeSettingsStore
 from runtime.settings_catalog import build_settings_catalog
 
@@ -299,6 +300,99 @@ def test_active_episode_observation_receives_only_a_bounded_current_turn(
     assert len(observed_text) == 1200
     assert evidence == ()
     assert observed_at == 350.0
+
+
+def test_inferred_user_evidence_is_conservative_and_explicitly_overridable() -> None:
+    assert infer_user_evidence("ok") == ()
+    assert infer_user_evidence("In this example, I would use the distinction to choose a new approach.") == (
+        "user_application",
+    )
+    assert infer_user_evidence("No, you misunderstood me; that is not what I meant.") == (
+        "eris_corrected",
+    )
+    assert infer_user_evidence("Let's change the topic and discuss something else.") == ("topic_change",)
+    assert infer_user_evidence("Why does that make the distinction important?") == ("focused_question",)
+    assert infer_user_evidence("Core 7 just means talking a lot.") == ("misconception_assertion",)
+    assert infer_user_evidence("In other words, the distinction changes the next action.") == (
+        "user_paraphrase",
+    )
+    assert infer_user_evidence("ok", explicit_evidence=("user_paraphrase",)) == ("user_paraphrase",)
+
+
+def test_active_real_application_advances_episode_without_a_model_call(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(100.0))
+    assert runtime.start_episode(start_episode(_plan(), now=100.0))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    _, directive = orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="In this example, I would apply the distinction by trying a new approach.",
+        turn_id="turn-advance",
+        recent_history=(),
+        now=101.0,
+    )
+
+    snapshot = runtime.snapshot(now=101.0)["active_episode"]
+    assert directive is None
+    assert snapshot["status"] == "ready"
+    assert snapshot["comprehension"]["current_concept_id"] == "concept-1"
+
+
+def test_active_real_correction_repairs_and_matching_receipt_commits(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(100.0))
+    assert runtime.start_episode(start_episode(_plan(), now=100.0))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    _, directive = orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="No, you misunderstood me; that is not what I meant.",
+        turn_id="turn-repair",
+        recent_history=(),
+        now=101.0,
+    )
+    committed = orchestrator._commit_pedagogical_receipt(
+        runtime,
+        directive,
+        public_text="A repaired bounded teaching chunk.",
+        turn_id="turn-repair",
+        decision=SimpleNamespace(parse_mode="json", failure_meta=None, should_speak=True),
+        payload={"grounding_risk": {"allowed": True}},
+        assistant_meta={},
+        now=102.0,
+    )
+
+    assert isinstance(directive, TeachingDirective)
+    assert committed is True
+    assert runtime.snapshot(now=102.0)["active_episode"]["status"] == "speaking"
+
+
+def test_active_real_topic_change_abandons_episode(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(100.0))
+    assert runtime.start_episode(start_episode(_plan(), now=100.0))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    _, directive = orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="Let's change the topic and discuss something else.",
+        turn_id="turn-abandon",
+        recent_history=(),
+        now=101.0,
+    )
+
+    assert directive is None
+    assert runtime.snapshot(now=101.0)["active_episode"]["status"] == "abandoned"
 
 
 def test_valid_sealed_public_output_commits_one_matching_receipt() -> None:

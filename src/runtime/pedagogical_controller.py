@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from runtime.cognition.normalization import normalize_vi
 from runtime.pedagogical_contracts import (
     ComprehensionState,
     TeachingChunk,
@@ -26,6 +27,14 @@ ACKNOWLEDGEMENTS = frozenset({
     "ok", "okay", "yes", "yeah", "yep", "yup", "uh", "uh huh", "mm hmm", "mhm", "hmm", "ừ",
     "got it", "i got it", "understood", "i understand", "makes sense", "that makes sense", "sure",
     "yes got it", "yeah got it", "yes understood", "ừ hiểu rồi", "hiểu rồi",
+})
+_USER_EVIDENCE_CODES = frozenset({
+    "topic_change",
+    "eris_corrected",
+    "misconception_assertion",
+    "focused_question",
+    "user_paraphrase",
+    "user_application",
 })
 
 
@@ -108,6 +117,56 @@ def _is_acknowledgement(user_text: str) -> bool:
     canonical = " ".join(normalized.replace("-", " ").replace(",", " ").replace(".", " ")
                          .replace("!", " ").replace("?", " ").split())
     return not canonical or canonical in ACKNOWLEDGEMENTS
+
+
+def infer_user_evidence(
+    user_text: str,
+    *,
+    explicit_evidence: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Infer only high-confidence controller evidence from one bounded user turn."""
+    if explicit_evidence is not None:
+        return tuple(dict.fromkeys(
+            code for code in (str(item or "").strip() for item in explicit_evidence)
+            if code in _USER_EVIDENCE_CODES
+        ))
+    if _is_acknowledgement(user_text):
+        return ()
+
+    text = normalize_vi(user_text)
+    if not text:
+        return ()
+    if any(marker in text for marker in (
+        "change the topic", "new topic", "another topic", "something else",
+        "chuyen chu de", "doi chu de", "chu de khac", "noi chuyen khac",
+    )):
+        return ("topic_change",)
+    if any(marker in text for marker in (
+        "you misunderstood", "you are wrong", "that is not what i meant",
+        "you got it wrong", "ban hieu sai", "ban sai", "khong phai y minh",
+    )):
+        return ("eris_corrected",)
+    if "?" in str(user_text) or any(marker in text for marker in (
+        "why does", "what do you mean", "how does", "does that mean",
+        "tai sao", "vi sao", "y la gi", "the nao", "co phai",
+    )):
+        return ("focused_question",)
+    if any(marker in text for marker in (
+        "just means", "only means", "is simply", "is the same",
+        "chi la", "chi co nghia", "don gian la", "giong het",
+    )):
+        return ("misconception_assertion",)
+    if any(marker in text for marker in (
+        "in this example", "for example", "i would apply", "i can apply",
+        "if i", "apply the", "vi du", "truong hop", "ap dung", "neu minh",
+    )):
+        return ("user_application",)
+    if any(marker in text for marker in (
+        "in other words", "what i understand", "so it means", "that means",
+        "nghia la", "noi cach khac", "minh hieu la", "tuc la",
+    )):
+        return ("user_paraphrase",)
+    return ()
 
 
 def _misconception_key(evidence: set[str], episode: TeachingEpisode) -> str:
@@ -246,6 +305,6 @@ def note_audio_finished(episode: TeachingEpisode, *, now: float) -> TeachingEpis
 
 
 __all__ = [
-    "ControllerAction", "ControllerResult", "expire_if_needed", "note_audio_finished",
+    "ControllerAction", "ControllerResult", "expire_if_needed", "infer_user_evidence", "note_audio_finished",
     "note_public_commit", "observe_user_turn", "select_next_action", "start_episode",
 ]
