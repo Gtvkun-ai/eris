@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
 from runtime.pedagogical_contracts import TeachingConcept, TeachingEpisode, TeachingReceipt
-from runtime.pedagogical_runtime import PedagogicalRuntime, ensure_pedagogical_runtime
+from runtime import pedagogical_runtime
+from runtime.pedagogical_runtime import PedagogicalRuntime, PedagogicalRuntimeLimits, ensure_pedagogical_runtime
 
 
 class _Clock:
@@ -137,20 +138,77 @@ def test_receipt_is_idempotent_and_mismatched_identity_is_rejected(tmp_path):
     assert not runtime.commit_receipt(_receipt())
     snapshot = runtime.snapshot()
     assert snapshot["active_episode"]["status"] == "speaking"
-    assert snapshot["active_episode"]["autonomous_chunks_used"] == 1
+    assert snapshot["active_episode"]["autonomous_chunks_used"] == 0
 
 
-def test_audio_finished_moves_dwell_anchor_forward(tmp_path):
+def test_foreground_audio_completion_waits_for_user_without_rearming_same_chunk(tmp_path):
     clock = _Clock()
     runtime = _runtime(tmp_path, clock)
     assert runtime.start_episode(_episode())
     assert runtime.commit_receipt(_receipt())
     runtime.notify_audio_finished(1010.0, source_turn_id="turn:1")
     snapshot = runtime.snapshot(now=1010.0)
-    assert snapshot["active_episode"]["status"] == "dwelling"
-    assert snapshot["dwell_anchor_at"] == 1010.0
-    assert runtime.claim_due(worker_id="worker", now=1010.5) is None
-    assert runtime.claim_due(worker_id="worker", now=1011.0) is not None
+    assert snapshot["active_episode"]["status"] == "waiting_user"
+    assert snapshot["dwell_anchor_at"] == 0.0
+    assert runtime.claim_due(worker_id="worker", now=1011.0) is None
+
+
+def test_runtime_limits_clamp_dwell_and_foreground_audio_does_not_repeat_chunk(tmp_path):
+    clock = _Clock()
+    limits = PedagogicalRuntimeLimits(minimum_dwell_seconds=2.0, maximum_dwell_seconds=3.0)
+    runtime = PedagogicalRuntime(
+        SQLiteAtomicStateStore(tmp_path / "state.sqlite", clock=clock),
+        clock=clock,
+        timer_factory=_FakeTimer,
+        limits=limits,
+    )
+    assert runtime.start_episode(_episode())
+    assert runtime.commit_receipt(_receipt(), now=1000.5)
+    runtime.notify_audio_finished(1010.0, source_turn_id="turn:1")
+    snapshot = runtime.snapshot(now=1010.0)
+    assert snapshot["active_episode"]["status"] == "waiting_user"
+    assert snapshot["active_episode"]["autonomous_chunks_used"] == 0
+    assert runtime.claim_due(worker_id="worker", now=1012.0) is None
+
+
+def test_runtime_loads_registered_pedagogy_limits(monkeypatch):
+    values = {
+        "minimum_dwell_seconds": 2.0,
+        "maximum_dwell_seconds": 4.0,
+        "max_autonomous_chunks": 1,
+        "max_repair_attempts": 0,
+        "max_consecutive_stalls": 3,
+        "episode_expiry_seconds": 120.0,
+    }
+    monkeypatch.setattr(
+        pedagogical_runtime,
+        "runtime_float",
+        lambda _group, name, default: values.get(name, default),
+    )
+    monkeypatch.setattr(
+        pedagogical_runtime,
+        "runtime_int",
+        lambda _group, name, default: values.get(name, default),
+    )
+    limits = PedagogicalRuntimeLimits.from_runtime_settings()
+    assert limits.dwell_seconds == 2.0
+    assert limits.controller_limits.max_autonomous_chunks == 1
+    assert limits.controller_limits.max_repair_attempts == 0
+    assert limits.controller_limits.episode_expiry_seconds == 120.0
+
+
+def test_claimed_autonomous_receipt_consumes_once_and_does_not_rearm_same_chunk(tmp_path):
+    runtime = _runtime(tmp_path)
+    assert runtime.start_episode(_episode(status="dwelling"))
+    directive = runtime.claim_due(worker_id="worker", now=1001.0)
+    assert directive is not None
+    receipt = _receipt(episode_id=directive.episode_id, revision=directive.plan_revision, chunk_id=directive.chunk_id)
+    assert runtime.commit_receipt(receipt, now=1001.1)
+    runtime.notify_audio_finished(1002.0, source_turn_id="turn:1")
+    snapshot = runtime.snapshot(now=1002.0)
+    assert snapshot["active_episode"]["status"] == "waiting_user"
+    assert snapshot["active_episode"]["autonomous_chunks_used"] == 1
+    assert runtime.claim_due(worker_id="worker-2", now=1003.0) is None
 
 
 def test_cancel_and_shutdown_cancel_timers_and_preserve_episode(tmp_path):

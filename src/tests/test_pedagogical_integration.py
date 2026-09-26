@@ -597,7 +597,7 @@ def test_user_turn_wins_against_due_autonomous_teaching_chunk(tmp_path: Any) -> 
     assert runtime.snapshot(now=1002.0)["claimed"] is False
 
 
-def test_audio_finished_anchors_dwell_and_allows_exactly_one_claim(tmp_path: Any) -> None:
+def test_foreground_audio_finished_waits_for_user_without_repeating_chunk(tmp_path: Any) -> None:
     clock = _Clock()
     runtime = _durable_pedagogy(tmp_path, clock)
     assert runtime.start_episode(_teaching_episode(status="ready"))
@@ -624,7 +624,7 @@ def test_audio_finished_anchors_dwell_and_allows_exactly_one_claim(tmp_path: Any
     _, early = self_turn_pipeline._claim_due_pedagogical_continuation(
         host, worker_id="self-turn", now=1002.1, interaction_busy=False,
     )
-    _, due = self_turn_pipeline._claim_due_pedagogical_continuation(
+    _, later = self_turn_pipeline._claim_due_pedagogical_continuation(
         host, worker_id="self-turn", now=1003.0, interaction_busy=False,
     )
     _, duplicate = self_turn_pipeline._claim_due_pedagogical_continuation(
@@ -632,11 +632,11 @@ def test_audio_finished_anchors_dwell_and_allows_exactly_one_claim(tmp_path: Any
     )
 
     assert early is None
-    assert due is not None
+    assert later is None
     assert duplicate is None
     snapshot = runtime.snapshot(now=1003.1)
-    assert snapshot["dwell_anchor_at"] == 1002.0
-    assert snapshot["claimed"] is True
+    assert snapshot["active_episode"]["status"] == "waiting_user"
+    assert snapshot["claimed"] is False
 
 
 def test_successful_autonomous_surface_commits_one_receipt(tmp_path: Any) -> None:
@@ -667,8 +667,9 @@ def test_successful_autonomous_surface_commits_one_receipt(tmp_path: Any) -> Non
         now=1005.1,
     )
     active = runtime.snapshot(now=1005.1)["active_episode"]
-    assert active["status"] == "dwelling"
+    assert active["status"] == "waiting_user"
     assert active["autonomous_chunks_used"] == 1
+    assert runtime.claim_due(worker_id="second-autonomous", now=1006.1) is None
 
 
 def test_async_tts_failure_releases_staged_claim_without_advancing(tmp_path: Any) -> None:

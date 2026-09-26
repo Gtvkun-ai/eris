@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import math
 import threading
 import time
@@ -10,9 +10,10 @@ from typing import Any, Callable, Iterator, Mapping
 
 from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore, SQLiteStateTransaction
 from runtime.pedagogical_contracts import TeachingDirective, TeachingEpisode, TeachingReceipt, normalize_episode
-from runtime.runtime_settings_store import runtime_bool
+from runtime.runtime_settings_store import runtime_bool, runtime_float, runtime_int
 from runtime.pedagogical_controller import (
     ControllerResult,
+    PedagogicalLimits,
     expire_if_needed,
     note_audio_finished,
     note_public_commit,
@@ -25,6 +26,69 @@ PEDAGOGY_RUNTIME_SCHEMA = "eris.pedagogy.v1"
 DWELL_SECONDS = 1.0
 CLAIM_LEASE_SECONDS = 2.0
 MAX_ID = 120
+
+
+@dataclass(frozen=True, slots=True)
+class PedagogicalRuntimeLimits:
+    """Bounded dwell and controller budgets loaded from runtime settings."""
+
+    minimum_dwell_seconds: float = 1.0
+    maximum_dwell_seconds: float = 30.0
+    max_autonomous_chunks: int = 2
+    max_repair_attempts: int = 1
+    max_consecutive_stalls: int = 2
+    episode_expiry_seconds: float = 600.0
+
+    def __post_init__(self) -> None:
+        def bounded(value: Any, default: float, minimum: float, maximum: float) -> float:
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                number = default
+            return max(minimum, min(maximum, number))
+
+        minimum = bounded(self.minimum_dwell_seconds, 1.0, 0.5, 60.0)
+        maximum = bounded(self.maximum_dwell_seconds, 30.0, 1.0, 300.0)
+        def bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+            try:
+                number = int(value)
+            except (TypeError, ValueError, OverflowError):
+                number = default
+            return max(minimum, min(maximum, number))
+
+        object.__setattr__(self, "minimum_dwell_seconds", minimum)
+        object.__setattr__(self, "maximum_dwell_seconds", max(minimum, maximum))
+        object.__setattr__(self, "max_autonomous_chunks", bounded_int(self.max_autonomous_chunks, 2, 0, 8))
+        object.__setattr__(self, "max_repair_attempts", bounded_int(self.max_repair_attempts, 1, 0, 5))
+        object.__setattr__(self, "max_consecutive_stalls", bounded_int(self.max_consecutive_stalls, 2, 1, 8))
+        object.__setattr__(
+            self, "episode_expiry_seconds",
+            bounded(self.episode_expiry_seconds, 600.0, 60.0, 86400.0),
+        )
+
+    @classmethod
+    def from_runtime_settings(cls) -> "PedagogicalRuntimeLimits":
+        return cls(
+            minimum_dwell_seconds=runtime_float("pedagogy", "minimum_dwell_seconds", default=1.0),
+            maximum_dwell_seconds=runtime_float("pedagogy", "maximum_dwell_seconds", default=30.0),
+            max_autonomous_chunks=runtime_int("pedagogy", "max_autonomous_chunks", default=2),
+            max_repair_attempts=runtime_int("pedagogy", "max_repair_attempts", default=1),
+            max_consecutive_stalls=runtime_int("pedagogy", "max_consecutive_stalls", default=2),
+            episode_expiry_seconds=runtime_float("pedagogy", "episode_expiry_seconds", default=600.0),
+        )
+
+    @property
+    def dwell_seconds(self) -> float:
+        return max(self.minimum_dwell_seconds, min(self.maximum_dwell_seconds, DWELL_SECONDS))
+
+    @property
+    def controller_limits(self) -> PedagogicalLimits:
+        return PedagogicalLimits(
+            max_autonomous_chunks=self.max_autonomous_chunks,
+            max_repair_attempts=self.max_repair_attempts,
+            max_consecutive_stalls=self.max_consecutive_stalls,
+            episode_expiry_seconds=self.episode_expiry_seconds,
+        )
 
 
 def _timestamp(value: Any, default: float = 0.0) -> float:
@@ -109,6 +173,7 @@ class PedagogicalRuntime:
         clock: Callable[[], float] | None = None,
         timer_factory: Callable[..., Any] | None = None,
         wake_callback: Callable[[str], None] | None = None,
+        limits: PedagogicalRuntimeLimits | None = None,
     ) -> None:
         if not isinstance(store, SQLiteAtomicStateStore):
             raise TypeError("store must be a SQLiteAtomicStateStore")
@@ -117,6 +182,7 @@ class PedagogicalRuntime:
         self._clock = clock or time.time
         self._timer_factory = timer_factory or threading.Timer
         self._wake_callback = wake_callback
+        self._limits = limits or PedagogicalRuntimeLimits.from_runtime_settings()
         self._lock = threading.RLock()
         self._timer: Any | None = None
         self._atomic_tx: SQLiteStateTransaction | None = None
@@ -180,12 +246,22 @@ class PedagogicalRuntime:
             episode = self._episode_locked()
             if episode is None:
                 failed = TeachingEpisode("", "", "", (), 0.0, 0.0, status="failed")
-                return ControllerResult(failed, select_next_action(failed, now=current), ())
+                return ControllerResult(
+                    failed,
+                    select_next_action(failed, now=current, limits=self._limits.controller_limits),
+                    (),
+                )
             self._cancel_timer_locked()
             if episode.status == "dwelling":
                 episode = replace(episode, status="observing")
             self._clear_dwell_locked(reason="user_turn")
-            result = observe_user_turn(episode, user_text, evidence=tuple(evidence), now=current)
+            result = observe_user_turn(
+                episode,
+                user_text,
+                evidence=tuple(evidence),
+                now=current,
+                limits=self._limits.controller_limits,
+            )
             self._set_episode_locked(result.episode)
             self._stage_locked()
             self._arm_timer_locked()
@@ -216,7 +292,7 @@ class PedagogicalRuntime:
             ):
                 self._arm_timer_locked()
                 return None
-            action = select_next_action(episode, now=current)
+            action = select_next_action(episode, now=current, limits=self._limits.controller_limits)
             directive = action.directive
             if directive is None:
                 return None
@@ -255,7 +331,11 @@ class PedagogicalRuntime:
                     if not self._state["claim_owner"] or self._state["claim_until"] <= current:
                         return False
                     receipt_episode = replace(episode, status="ready")
-                updated = note_public_commit(receipt_episode, receipt)
+                updated = note_public_commit(
+                    receipt_episode,
+                    receipt,
+                    autonomous=episode.status == "dwelling",
+                )
                 if updated == receipt_episode:
                     return False
                 self._set_episode_locked(updated)
@@ -389,10 +469,9 @@ class PedagogicalRuntime:
             if episode is None or (source_id and source_id != self._state["committed_turn_id"]):
                 return
             updated = note_audio_finished(episode, now=current)
-            if updated.status == "waiting_user" and updated.pending_chunk is not None:
-                updated = replace(updated, status="dwelling")
+            if updated != episode:
                 self._set_episode_locked(updated)
-                self._set_dwell_locked(max(current, self._state["dwell_anchor_at"]))
+                self._clear_dwell_locked(reason="audio_finished")
                 self._stage_locked()
                 self._arm_timer_locked()
 
@@ -434,7 +513,7 @@ class PedagogicalRuntime:
     def _set_dwell_locked(self, anchor: float) -> None:
         anchor = _timestamp(anchor)
         self._state["dwell_anchor_at"] = anchor
-        self._state["dwell_due_at"] = anchor + DWELL_SECONDS
+        self._state["dwell_due_at"] = anchor + self._limits.dwell_seconds
         self._state["claim_owner"] = ""
         self._state["claim_until"] = 0.0
         self._state["claim_token"] = ""
@@ -453,7 +532,7 @@ class PedagogicalRuntime:
         episode = self._episode_locked()
         changed = False
         if episode is not None:
-            updated = expire_if_needed(episode, now=now)
+            updated = expire_if_needed(episode, now=now, limits=self._limits.controller_limits)
             if updated != episode:
                 self._set_episode_locked(updated)
                 self._clear_dwell_locked(reason="episode_expired")
@@ -552,4 +631,9 @@ def ensure_pedagogical_runtime(host: Any) -> PedagogicalRuntime | None:
     return runtime
 
 
-__all__ = ["PEDAGOGY_RUNTIME_SCHEMA", "PedagogicalRuntime", "ensure_pedagogical_runtime"]
+__all__ = [
+    "PEDAGOGY_RUNTIME_SCHEMA",
+    "PedagogicalRuntime",
+    "PedagogicalRuntimeLimits",
+    "ensure_pedagogical_runtime",
+]

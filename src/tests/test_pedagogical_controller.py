@@ -7,6 +7,7 @@ from runtime.pedagogical_contracts import (
     TeachingReceipt,
 )
 from runtime.pedagogical_controller import (
+    PedagogicalLimits,
     expire_if_needed,
     note_audio_finished,
     note_public_commit,
@@ -185,3 +186,11 @@ def test_same_misconception_is_limited_to_one_repair():
 def test_autonomous_budget_exhaustion_forces_wait():
     episode = replace(_episode_with_chunk(), autonomous_chunks_used=2)
     assert select_next_action(episode, now=101.0).kind == "wait"
+
+
+def test_typed_limits_override_autonomous_and_episode_expiry_defaults():
+    limits = PedagogicalLimits(max_autonomous_chunks=0, episode_expiry_seconds=60.0)
+    episode = start_episode(_plan(), now=100.0, limits=limits)
+    assert episode.expires_at == 160.0
+    assert select_next_action(episode, now=101.0, limits=limits).reason == "autonomous_budget_exhausted"
+    assert expire_if_needed(episode, now=160.0, limits=limits).status == "expired"

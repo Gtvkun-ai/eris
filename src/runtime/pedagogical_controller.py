@@ -44,6 +44,36 @@ _KEYED_MISCONCEPTION_PREFIXES = (
 
 
 @dataclass(frozen=True, slots=True)
+class PedagogicalLimits:
+    """Typed, hard-bounded policy inputs for otherwise pure transitions."""
+
+    max_autonomous_chunks: int = AUTONOMOUS_CHUNK_LIMIT
+    max_repair_attempts: int = REPAIR_LIMIT
+    max_consecutive_stalls: int = STALL_LIMIT
+    episode_expiry_seconds: float = float(EPISODE_SECONDS)
+
+    def __post_init__(self) -> None:
+        def bounded_int(value: object, default: int, minimum: int, maximum: int) -> int:
+            try:
+                number = int(value)
+            except (TypeError, ValueError, OverflowError):
+                number = default
+            return max(minimum, min(maximum, number))
+
+        object.__setattr__(self, "max_autonomous_chunks", bounded_int(self.max_autonomous_chunks, 2, 0, 8))
+        object.__setattr__(self, "max_repair_attempts", bounded_int(self.max_repair_attempts, 1, 0, 5))
+        object.__setattr__(self, "max_consecutive_stalls", bounded_int(self.max_consecutive_stalls, 2, 1, 8))
+        try:
+            expiry = float(self.episode_expiry_seconds)
+        except (TypeError, ValueError):
+            expiry = float(EPISODE_SECONDS)
+        object.__setattr__(self, "episode_expiry_seconds", max(60.0, min(86400.0, expiry)))
+
+
+DEFAULT_LIMITS = PedagogicalLimits()
+
+
+@dataclass(frozen=True, slots=True)
 class ControllerAction:
     kind: ActionKind
     reason: str
@@ -69,7 +99,7 @@ def _chunk_for(episode: TeachingEpisode, concept_id: str | None = None) -> Teach
     )
 
 
-def _directive(episode: TeachingEpisode) -> TeachingDirective:
+def _directive(episode: TeachingEpisode, limits: PedagogicalLimits) -> TeachingDirective:
     chunk = episode.pending_chunk or _chunk_for(episode, episode.comprehension.current_concept_id)
     return TeachingDirective(
         episode_id=episode.episode_id,
@@ -84,15 +114,18 @@ def _directive(episode: TeachingEpisode) -> TeachingDirective:
         max_sentences=chunk.max_sentences,
         allow_question=True,
         stop_after_chunk=True,
-        allow_autonomous_resume=episode.autonomous_chunks_used < AUTONOMOUS_CHUNK_LIMIT,
+        allow_autonomous_resume=episode.autonomous_chunks_used < limits.max_autonomous_chunks,
     )
 
 
-def _action(kind: ActionKind, reason: str, episode: TeachingEpisode, *, directive: bool = False) -> ControllerAction:
-    return ControllerAction(kind, reason, _directive(episode) if directive else None)
+def _action(
+    kind: ActionKind, reason: str, episode: TeachingEpisode, *, directive: bool = False,
+    limits: PedagogicalLimits = DEFAULT_LIMITS,
+) -> ControllerAction:
+    return ControllerAction(kind, reason, _directive(episode, limits) if directive else None)
 
 
-def start_episode(plan: TeachingPlan, now: float) -> TeachingEpisode:
+def start_episode(plan: TeachingPlan, now: float, *, limits: PedagogicalLimits = DEFAULT_LIMITS) -> TeachingEpisode:
     """Create a ready episode with a deterministic initial teaching chunk."""
     first = plan.concepts[0]
     episode = TeachingEpisode.new(
@@ -101,20 +134,23 @@ def start_episode(plan: TeachingPlan, now: float) -> TeachingEpisode:
         global_goal=plan.global_goal,
         concepts=plan.concepts,
         now=now,
-        expires_at=now + EPISODE_SECONDS,
+        expires_at=now + limits.episode_expiry_seconds,
     )
     current = ComprehensionState(current_concept_id=first.concept_id)
     return replace(episode, status="ready", comprehension=current, pending_chunk=_chunk_for(episode, first.concept_id))
 
 
-def expire_if_needed(episode: TeachingEpisode, *, now: float) -> TeachingEpisode:
-    if episode.status not in {"completed", "abandoned", "expired"} and now >= episode.expires_at:
+def expire_if_needed(
+    episode: TeachingEpisode, *, now: float, limits: PedagogicalLimits = DEFAULT_LIMITS,
+) -> TeachingEpisode:
+    deadline = min(episode.expires_at, episode.last_activity_at + limits.episode_expiry_seconds)
+    if episode.status not in {"completed", "abandoned", "expired"} and now >= deadline:
         return replace(episode, status="expired")
     return episode
 
 
-def _refresh_activity(episode: TeachingEpisode, now: float) -> TeachingEpisode:
-    return replace(episode, last_activity_at=now, expires_at=now + EPISODE_SECONDS)
+def _refresh_activity(episode: TeachingEpisode, now: float, limits: PedagogicalLimits) -> TeachingEpisode:
+    return replace(episode, last_activity_at=now, expires_at=now + limits.episode_expiry_seconds)
 
 
 def _is_acknowledgement(user_text: str) -> bool:
@@ -220,37 +256,40 @@ def _next_concept_id(episode: TeachingEpisode) -> str | None:
     return None
 
 
-def select_next_action(episode: TeachingEpisode, *, now: float) -> ControllerAction:
-    episode = expire_if_needed(episode, now=now)
+def select_next_action(
+    episode: TeachingEpisode, *, now: float, limits: PedagogicalLimits = DEFAULT_LIMITS,
+) -> ControllerAction:
+    episode = expire_if_needed(episode, now=now, limits=limits)
     if episode.status == "completed":
-        return _action("complete", "all_concepts_mastered", episode)
+        return _action("complete", "all_concepts_mastered", episode, limits=limits)
     if episode.status in {"abandoned", "expired", "failed"}:
-        return _action("abandon", "episode_expired" if episode.status == "expired" else "episode_unavailable", episode)
+        return _action("abandon", "episode_expired" if episode.status == "expired" else "episode_unavailable", episode, limits=limits)
     # Selecting another autonomous action after one recorded stall would create
     # the second consecutive stall, so yield the floor before doing so.
-    if episode.consecutive_stalls >= STALL_LIMIT - 1:
-        return _action("wait", "stall_limit", episode)
-    if episode.autonomous_chunks_used >= AUTONOMOUS_CHUNK_LIMIT:
-        return _action("wait", "autonomous_budget_exhausted", episode)
+    if episode.consecutive_stalls >= limits.max_consecutive_stalls - 1:
+        return _action("wait", "stall_limit", episode, limits=limits)
+    if episode.autonomous_chunks_used >= limits.max_autonomous_chunks:
+        return _action("wait", "autonomous_budget_exhausted", episode, limits=limits)
     if episode.status == "repairing":
-        if episode.repair_attempts >= REPAIR_LIMIT:
-            return _action("wait", "repair_limit", episode)
-        return _action("repair", "candidate_misconception", episode, directive=True)
+        if episode.repair_attempts >= limits.max_repair_attempts:
+            return _action("wait", "repair_limit", episode, limits=limits)
+        return _action("repair", "candidate_misconception", episode, directive=True, limits=limits)
     if episode.status == "speaking":
-        return _action("wait", "audio_in_progress", episode)
+        return _action("wait", "audio_in_progress", episode, limits=limits)
     if episode.status in {"waiting_user", "observing", "dwelling"}:
-        return _action("probe", "awaiting_demonstration", episode, directive=True)
+        return _action("probe", "awaiting_demonstration", episode, directive=True, limits=limits)
     if episode.comprehension.estimated_mastery >= 0.8 and _next_concept_id(episode) is None:
-        return _action("complete", "mastery_threshold", episode)
-    return _action("teach_chunk", "current_concept_ready", episode, directive=True)
+        return _action("complete", "mastery_threshold", episode, limits=limits)
+    return _action("teach_chunk", "current_concept_ready", episode, directive=True, limits=limits)
 
 
 def observe_user_turn(
     episode: TeachingEpisode, user_text: str, *, evidence: tuple[str, ...], now: float,
+    limits: PedagogicalLimits = DEFAULT_LIMITS,
 ) -> ControllerResult:
-    episode = expire_if_needed(episode, now=now)
+    episode = expire_if_needed(episode, now=now, limits=limits)
     if episode.status == "expired":
-        return ControllerResult(episode, _action("abandon", "episode_expired", episode), ("episode_expired",))
+        return ControllerResult(episode, _action("abandon", "episode_expired", episode, limits=limits), ("episode_expired",))
 
     supplied = {str(code) for code in evidence}
     codes: list[str] = []
@@ -260,26 +299,26 @@ def observe_user_turn(
     if "topic_change" in supplied:
         codes.append("topic_change")
         updated = replace(episode, status="abandoned", pending_chunk=None)
-        return ControllerResult(updated, _action("abandon", "topic_changed", updated), tuple(codes))
+        return ControllerResult(updated, _action("abandon", "topic_changed", updated, limits=limits), tuple(codes))
 
     if not acknowledgement:
-        episode = _refresh_activity(episode, now)
+        episode = _refresh_activity(episode, now, limits)
 
     if "eris_corrected" in supplied:
         updated = _begin_repair(episode, episode.comprehension.current_concept_id)
         codes.append("eris_corrected")
-        return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
+        return ControllerResult(updated, select_next_action(updated, now=now, limits=limits), tuple(codes))
 
     if _has_misconception_evidence(supplied):
         updated = _begin_repair(episode, _misconception_key(supplied, episode))
         codes.append("candidate_misconception")
-        return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
+        return ControllerResult(updated, select_next_action(updated, now=now, limits=limits), tuple(codes))
 
     if "focused_question" in supplied:
         state = replace(episode.comprehension, confidence=max(0.0, episode.comprehension.confidence - 0.2))
         updated = replace(episode, status="waiting_user", comprehension=state, consecutive_stalls=episode.consecutive_stalls + 1)
         codes.append("repeated_focused_question")
-        return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
+        return ControllerResult(updated, select_next_action(updated, now=now, limits=limits), tuple(codes))
 
     if not acknowledgement and "topic_change" not in supplied and {"user_paraphrase", "user_application"} & supplied:
         state = replace(
@@ -298,13 +337,15 @@ def observe_user_turn(
             )
         codes.append("demonstrated_understanding")
         return ControllerResult(updated, _action("complete", "all_concepts_mastered", updated) if updated.status == "completed"
-                                else _action("advance", "demonstrated_understanding", updated), tuple(codes))
+                                else _action("advance", "demonstrated_understanding", updated, limits=limits), tuple(codes))
 
     updated = replace(episode, status="waiting_user") if acknowledgement else episode
-    return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
+    return ControllerResult(updated, select_next_action(updated, now=now, limits=limits), tuple(codes))
 
 
-def note_public_commit(episode: TeachingEpisode, receipt: TeachingReceipt) -> TeachingEpisode:
+def note_public_commit(
+    episode: TeachingEpisode, receipt: TeachingReceipt, *, autonomous: bool = True,
+) -> TeachingEpisode:
     """Accept a successful receipt only for the current pending chunk."""
     chunk = episode.pending_chunk
     if (
@@ -318,7 +359,11 @@ def note_public_commit(episode: TeachingEpisode, receipt: TeachingReceipt) -> Te
         return episode
     if episode.status == "repairing":
         return replace(episode, status="speaking", repair_attempts=episode.repair_attempts + 1)
-    return replace(episode, status="speaking", autonomous_chunks_used=episode.autonomous_chunks_used + 1)
+    return replace(
+        episode,
+        status="speaking",
+        autonomous_chunks_used=episode.autonomous_chunks_used + int(bool(autonomous)),
+    )
 
 
 def note_audio_finished(episode: TeachingEpisode, *, now: float) -> TeachingEpisode:
@@ -329,6 +374,6 @@ def note_audio_finished(episode: TeachingEpisode, *, now: float) -> TeachingEpis
 
 
 __all__ = [
-    "ControllerAction", "ControllerResult", "expire_if_needed", "infer_user_evidence", "note_audio_finished",
+    "ControllerAction", "ControllerResult", "PedagogicalLimits", "expire_if_needed", "infer_user_evidence", "note_audio_finished",
     "note_public_commit", "observe_user_turn", "select_next_action", "start_episode",
 ]
