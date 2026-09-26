@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -38,8 +39,14 @@ class _WriterClient:
     model_name = "unit-test-model"
     base_url = "http://localhost/v1"
 
-    def __init__(self) -> None:
+    def __init__(self, payload: Mapping[str, Any] | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.payload = dict(payload or {
+            "should_speak": True,
+            "text": "One bounded teaching chunk.",
+            "speech_text": "One bounded teaching chunk.",
+            "claim_manifest": [],
+        })
 
     def create_chat_completion(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
@@ -47,10 +54,7 @@ class _WriterClient:
             "choices": [{
                 "message": {
                     "content": json.dumps({
-                        "should_speak": True,
-                        "text": "One bounded teaching chunk.",
-                        "speech_text": "One bounded teaching chunk.",
-                        "claim_manifest": [],
+                        **self.payload,
                     })
                 }
             }]
@@ -305,3 +309,79 @@ def test_writer_without_directive_preserves_ordinary_request_shape() -> None:
     assert len(request["messages"]) == 2
     assert "LOCKED TEACHING DIRECTIVE" not in request["messages"][0]["content"]
     assert request["messages"][1] == {"role": "user", "content": "Ordinary chat."}
+
+
+def test_writer_rejects_teaching_reply_over_sentence_budget() -> None:
+    client = _WriterClient({
+        "should_speak": True,
+        "text": "Dependencies impose order.",
+        "speech_text": "Dependencies impose order. Importance is a separate property.",
+        "claim_manifest": [],
+    })
+    router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None))
+    router._run_inference = lambda _tier, func, **_kwargs: func()
+
+    payload = router.generate_public_reply(
+        chat_history=[],
+        user_text="Teach this step.",
+        teaching_directive=replace(_directive(), max_sentences=1, max_ideas=3),
+    )
+
+    assert payload == {}
+
+
+def test_writer_rejects_teaching_reply_over_idea_budget() -> None:
+    client = _WriterClient({
+        "should_speak": True,
+        "text": "Dependencies impose order; importance ranks value; timing describes execution.",
+        "speech_text": "Dependencies impose order.",
+        "claim_manifest": [],
+    })
+    router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None))
+    router._run_inference = lambda _tier, func, **_kwargs: func()
+
+    payload = router.generate_public_reply(
+        chat_history=[],
+        user_text="Teach this step.",
+        teaching_directive=replace(_directive(), max_sentences=4, max_ideas=2),
+    )
+
+    assert payload == {}
+
+
+def test_writer_rejects_teaching_reply_that_claims_controller_authority() -> None:
+    forbidden_texts = (
+        "You understand this concept now.",
+        "This teaching episode is complete.",
+        "Next, I will teach the following concept.",
+    )
+    for text in forbidden_texts:
+        client = _WriterClient({
+            "should_speak": True,
+            "text": text,
+            "speech_text": text,
+            "claim_manifest": [],
+        })
+        router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None))
+        router._run_inference = lambda _tier, func, **_kwargs: func()
+
+        payload = router.generate_public_reply(
+            chat_history=[], user_text="Teach this step.", teaching_directive=_directive()
+        )
+
+        assert payload == {}
+
+
+def test_writer_authority_language_is_unchanged_without_teaching_directive() -> None:
+    client = _WriterClient({
+        "should_speak": True,
+        "text": "This ordinary task is complete.",
+        "speech_text": "This ordinary task is complete.",
+        "claim_manifest": [],
+    })
+    router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None))
+    router._run_inference = lambda _tier, func, **_kwargs: func()
+
+    payload = router.generate_public_reply(chat_history=[], user_text="Is the task done?")
+
+    assert payload["text"] == "This ordinary task is complete."

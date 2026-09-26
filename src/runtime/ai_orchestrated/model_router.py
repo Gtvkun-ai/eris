@@ -1215,6 +1215,60 @@ def _public_text_from_mapping(payload: Mapping[str, Any] | Any) -> str:
     return ""
 
 
+def _teaching_unit_count(text: str, *, ideas: bool) -> int:
+    separators = r"[.!?。！？;；\r\n]+|(?:^|\s)(?:[-*•]|\d+[.)])\s+" if ideas else r"[.!?。！？\r\n]+"
+    return sum(1 for part in re.split(separators, str(text or "")) if part.strip())
+
+
+def _teaching_authority_violation(text: str) -> bool:
+    normalized = normalize_vi(text)
+    patterns = (
+        # The writer cannot decide that comprehension or mastery occurred.
+        r"\b(?:you|learner|student|ban|anh|em|nguoi hoc)\s+(?:(?:now|have|ve|fully|da|a)\s+){0,2}(?:understand|understood|grasped|mastered|hieu|nam duoc)\b",
+        # Completion is a controller transition, not a wording decision.
+        r"\b(?:this\s+|the\s+)?(?:teaching\s+)?(?:episode|lesson|course|chunk|bai hoc|buoi hoc|phan hoc)\s+(?:(?:is|has been|da|a)\s+)?(?:complete|completed|finished|done|hoan thanh|ket thuc|xong)\b",
+        r"\b(?:we|you|chung ta|ban|anh|em)\s+(?:(?:are|re|have|ve|da|a)\s+)?(?:done|completed|finished|xong|hoan thanh|ket thuc)\b",
+        # Selecting or previewing later concepts grants the writer future-plan authority.
+        r"\b(?:the\s+)?next\s+(?:concept|lesson|chunk)\b",
+        r"\b(?:khai niem tiep theo|bai hoc tiep theo|phan hoc tiep theo)\b",
+        r"\b(?:next|after this|later|tiep theo|sau do|phan sau)\b.{0,100}\b(?:teach|explain|cover|learn|move on|day|giai thich|hoc|chuyen sang)\b",
+        r"\b(?:i|we|you|toi|minh|chung ta|ban)\s+(?:will|ll|se)\s+(?:next\s+)?(?:teach|explain|cover|learn|move on|day|giai thich|hoc|chuyen sang)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in patterns):
+        return True
+    lowered = str(text or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "理解できた", "理解した", "もう分かった", "レッスンは完了", "学習は完了",
+            "これで終わり", "次の概念", "次は説明", "次に教",
+        )
+    )
+
+
+def _validate_teaching_writer_payload(
+    payload: Mapping[str, Any] | Any,
+    directive: TeachingDirective,
+) -> tuple[bool, str]:
+    if not isinstance(payload, Mapping):
+        return False, "teaching_writer_payload_missing"
+    from runtime.utterance_spec import UtteranceSpec
+
+    public_text = _public_text_from_mapping(payload)
+    utterance = UtteranceSpec.from_mapping(payload, fallback_text=public_text)
+    surfaces = tuple({utterance.display.text.strip(), utterance.speech.text.strip()} - {""})
+    if not surfaces:
+        return False, "teaching_writer_text_missing"
+    for text in surfaces:
+        if _teaching_unit_count(text, ideas=False) > directive.max_sentences:
+            return False, "teaching_writer_sentence_budget_exceeded"
+        if _teaching_unit_count(text, ideas=True) > directive.max_ideas:
+            return False, "teaching_writer_idea_budget_exceeded"
+        if _teaching_authority_violation(text):
+            return False, "teaching_writer_authority_violation"
+    return True, "ok"
+
+
 def _has_usable_public_reply(payload: Mapping[str, Any]) -> bool:
     return bool(_public_text_from_mapping(payload))
 
@@ -1722,9 +1776,11 @@ class AIRuntimeModelRouter:
                     ensure_ascii=False,
                 )
             )
+        locked_teaching_directive: TeachingDirective | None = None
         if isinstance(teaching_directive, TeachingDirective):
             valid, _reason = validate_directive(teaching_directive)
             if valid and teaching_directive.stop_after_chunk:
+                locked_teaching_directive = teaching_directive
                 projection = {
                     "episode_id": teaching_directive.episode_id,
                     "plan_revision": teaching_directive.plan_revision,
@@ -1886,6 +1942,22 @@ class AIRuntimeModelRouter:
             fallback = getattr(self.llm_service, "fallback_client", None)
             if fallback is not client:
                 payload = call(fallback)
+        if locked_teaching_directive is not None:
+            teaching_valid, teaching_reason = _validate_teaching_writer_payload(
+                payload,
+                locked_teaching_directive,
+            )
+            if not teaching_valid:
+                safe_log(
+                    self.logger,
+                    "debug",
+                    "[ai public reply] rejected teaching writer output reason=%s episode=%s revision=%s chunk=%s",
+                    teaching_reason,
+                    locked_teaching_directive.episode_id,
+                    locked_teaching_directive.plan_revision,
+                    locked_teaching_directive.chunk_id,
+                )
+                return {}
         if not payload:
             # PDF annotation, pages 15-16 and 20: the local fast-path is only an
             # emergency degraded/offline response for exact closed forms. It is
