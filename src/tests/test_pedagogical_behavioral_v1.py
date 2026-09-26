@@ -131,12 +131,18 @@ def test_explicit_eris_correction_enters_repair_and_preserves_user_mastery() -> 
     assert result.episode.comprehension.estimated_mastery == initial.comprehension.estimated_mastery
 
 
-@pytest.mark.parametrize("user_text", ("ok", "", "mm-hmm"))
-def test_acknowledgement_or_silence_emits_nonmastery_evidence(user_text: str) -> None:
+@pytest.mark.parametrize(
+    ("user_text", "expected_evidence"),
+    (("ok", "self_report_understood"), ("", "silence"), ("mm-hmm", "self_report_understood")),
+)
+def test_acknowledgement_or_silence_emits_nonmastery_evidence(
+    user_text: str,
+    expected_evidence: str,
+) -> None:
     initial = _episode()
     result = observe_user_turn(initial, user_text, evidence=("user_paraphrase",), now=1001.0)
 
-    assert result.evidence_codes in {("self_report_understood",), ("silence",)}
+    assert result.evidence_codes == (expected_evidence,)
     assert result.episode.status == "waiting_user"
     assert result.episode.comprehension == initial.comprehension
 
@@ -175,6 +181,10 @@ def test_user_input_during_due_dwell_prevents_claim_or_autonomous_speech(tmp_pat
     clock = _Clock()
     runtime = _runtime(tmp_path, clock)
     assert runtime.start_episode(_episode(status="dwelling"))
+    due_before_user_turn = runtime.snapshot(now=1001.0)
+    assert due_before_user_turn["due"] is True
+    assert due_before_user_turn["pending"] is True
+    assert due_before_user_turn["active_episode"]["pending_chunk"]["chunk_id"] == "motive:r1"
 
     observed = runtime.observe_user_turn(
         "Wait, I need to clarify the distinction first.",
@@ -183,6 +193,9 @@ def test_user_input_during_due_dwell_prevents_claim_or_autonomous_speech(tmp_pat
     )
 
     assert observed.evidence_codes == ("repeated_focused_question",)
+    assert observed.action.kind == "wait"
+    assert observed.action.reason == "stall_limit"
+    assert observed.episode.status == "waiting_user"
     assert runtime.claim_due(worker_id="autonomous", now=1002.0) is None
     snapshot = runtime.snapshot(now=1002.0)
     assert snapshot["claimed"] is False

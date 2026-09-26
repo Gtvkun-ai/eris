@@ -7,9 +7,9 @@ Created `src/tests/test_pedagogical_behavioral_v1.py` with deterministic fixture
 - Correct paraphrase followed by a novel application advances typed mastery and current concept IDs.
 - Repeated misconception evidence enters `repairing` / `repair` without mastery gain.
 - Explicit correction of Eris enters `repairing` and preserves user mastery.
-- `ok`, acknowledgement-only input, silence, and topic change never grant mastery; topic change abandons.
+- `ok`, acknowledgement-only input, and silence emit their exact non-mastery evidence codes; topic change never grants mastery and abandons.
 - A known terminal concept selects `complete` with no unsolicited teaching directive.
-- User input during a due dwell leaves no autonomous claim or speech candidate.
+- User input during a confirmed due dwell wins the race, transitions to `waiting_user`, and leaves no autonomous claim or speech candidate.
 - Restart after a stale dwell lease re-arms the same pending chunk.
 - Stale and duplicate receipts are rejected while the pending chunk remains present.
 
@@ -23,7 +23,7 @@ Command:
 & 'C:/Users/Gtvkun/Documents/GitHub/eris/.venv/Scripts/python.exe' -m pytest -q src/tests/test_pedagogical_behavioral_v1.py
 ```
 
-Outcome: `11 passed in 1.32s`.
+Outcome: `11 passed in 1.39s`.
 
 ### Focused pedagogical suite
 
@@ -33,7 +33,7 @@ Command:
 & 'C:/Users/Gtvkun/Documents/GitHub/eris/.venv/Scripts/python.exe' -m pytest -q src/tests/test_pedagogical_contracts.py src/tests/test_pedagogical_controller.py src/tests/test_pedagogical_runtime.py src/tests/test_pedagogical_plan_builder.py src/tests/test_pedagogical_integration.py src/tests/test_pedagogical_behavioral_v1.py
 ```
 
-Outcome: `82 passed in 4.49s`.
+Outcome: `82 passed in 4.86s`.
 
 ### Requested regression suite
 
