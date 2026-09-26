@@ -36,6 +36,11 @@ _USER_EVIDENCE_CODES = frozenset({
     "user_paraphrase",
     "user_application",
 })
+_KEYED_MISCONCEPTION_PREFIXES = (
+    "misconception:",
+    "misconception_assertion:",
+    "candidate_misconception:",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,10 +131,17 @@ def infer_user_evidence(
 ) -> tuple[str, ...]:
     """Infer only high-confidence controller evidence from one bounded user turn."""
     if explicit_evidence is not None:
-        return tuple(dict.fromkeys(
-            code for code in (str(item or "").strip() for item in explicit_evidence)
-            if code in _USER_EVIDENCE_CODES
-        ))
+        accepted: list[str] = []
+        for item in explicit_evidence:
+            code = str(item or "").strip()
+            if code in _USER_EVIDENCE_CODES:
+                accepted.append(code)
+                continue
+            prefix = next((value for value in _KEYED_MISCONCEPTION_PREFIXES if code.startswith(value)), "")
+            key = code[len(prefix):].strip()[:120] if prefix else ""
+            if key and all(character.isalnum() or character in {"-", "_", "."} for character in key):
+                accepted.append(prefix + key)
+        return tuple(dict.fromkeys(accepted))
     if _is_acknowledgement(user_text):
         return ()
 
@@ -157,8 +169,14 @@ def infer_user_evidence(
     )):
         return ("misconception_assertion",)
     if any(marker in text for marker in (
-        "in this example", "for example", "i would apply", "i can apply",
-        "if i", "apply the", "vi du", "truong hop", "ap dung", "neu minh",
+        "if i understand", "if i got this right", "if im understanding",
+        "neu minh hieu", "neu toi hieu",
+    )):
+        return ()
+    if any(marker in text for marker in (
+        "i would apply", "i can apply", "i will apply", "i would use",
+        "i can use", "i will use", "i used this", "i tried this",
+        "minh se ap dung", "toi se ap dung", "ap dung vao",
     )):
         return ("user_application",)
     if any(marker in text for marker in (
@@ -171,9 +189,15 @@ def infer_user_evidence(
 
 def _misconception_key(evidence: set[str], episode: TeachingEpisode) -> str:
     for code in sorted(evidence):
-        if code.startswith(("misconception:", "misconception_assertion:", "candidate_misconception:")):
+        if code.startswith(_KEYED_MISCONCEPTION_PREFIXES):
             return code.split(":", 1)[1] or episode.comprehension.current_concept_id
     return episode.comprehension.current_concept_id
+
+
+def _has_misconception_evidence(evidence: set[str]) -> bool:
+    return "misconception_assertion" in evidence or any(
+        code.startswith(_KEYED_MISCONCEPTION_PREFIXES) for code in evidence
+    )
 
 
 def _begin_repair(episode: TeachingEpisode, key: str) -> TeachingEpisode:
@@ -246,7 +270,7 @@ def observe_user_turn(
         codes.append("eris_corrected")
         return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))
 
-    if "misconception_assertion" in supplied:
+    if _has_misconception_evidence(supplied):
         updated = _begin_repair(episode, _misconception_key(supplied, episode))
         codes.append("candidate_misconception")
         return ControllerResult(updated, select_next_action(updated, now=now), tuple(codes))

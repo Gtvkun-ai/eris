@@ -317,6 +317,13 @@ def test_inferred_user_evidence_is_conservative_and_explicitly_overridable() -> 
         "user_paraphrase",
     )
     assert infer_user_evidence("ok", explicit_evidence=("user_paraphrase",)) == ("user_paraphrase",)
+    assert infer_user_evidence(
+        "ignored",
+        explicit_evidence=("candidate_misconception:core-7", "misconception_assertion:core_8"),
+    ) == ("candidate_misconception:core-7", "misconception_assertion:core_8")
+    assert infer_user_evidence(
+        "If I understand, for example, I would apply the distinction to a new approach.",
+    ) == ()
 
 
 def test_active_real_application_advances_episode_without_a_model_call(
@@ -340,6 +347,28 @@ def test_active_real_application_advances_episode_without_a_model_call(
     assert directive is None
     assert snapshot["status"] == "ready"
     assert snapshot["comprehension"]["current_concept_id"] == "concept-1"
+
+
+def test_active_hedged_illustration_does_not_award_application_mastery(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(100.0))
+    assert runtime.start_episode(start_episode(_plan(), now=100.0))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="If I understand, for example, I would apply the distinction to a new approach.",
+        turn_id="turn-hedged-example",
+        recent_history=(),
+        now=101.0,
+    )
+
+    snapshot = runtime.snapshot(now=101.0)["active_episode"]
+    assert snapshot["comprehension"]["estimated_mastery"] == 0.0
+    assert snapshot["comprehension"]["current_concept_id"] == "concept-0"
 
 
 def test_active_real_correction_repairs_and_matching_receipt_commits(
@@ -372,6 +401,30 @@ def test_active_real_correction_repairs_and_matching_receipt_commits(
     assert isinstance(directive, TeachingDirective)
     assert committed is True
     assert runtime.snapshot(now=102.0)["active_episode"]["status"] == "speaking"
+
+
+def test_active_explicit_keyed_misconception_enters_matching_repair(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(100.0))
+    assert runtime.start_episode(start_episode(_plan(), now=100.0))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    _, directive = orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="I think this detail is mistaken.",
+        turn_id="turn-keyed-misconception",
+        recent_history=(),
+        now=101.0,
+        evidence=("candidate_misconception:concept-2",),
+    )
+
+    snapshot = runtime.snapshot(now=101.0)["active_episode"]
+    assert isinstance(directive, TeachingDirective)
+    assert snapshot["status"] == "repairing"
+    assert snapshot["repair_concept_id"] == "concept-2"
 
 
 def test_active_real_topic_change_abandons_episode(
