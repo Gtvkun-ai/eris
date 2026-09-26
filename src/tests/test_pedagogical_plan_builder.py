@@ -352,7 +352,13 @@ def test_writer_rejects_teaching_reply_over_idea_budget() -> None:
 def test_writer_rejects_teaching_reply_that_claims_controller_authority() -> None:
     forbidden_texts = (
         "You understand this concept now.",
+        "The learner has understood this concept.",
+        "The student has mastered this lesson.",
+        "The learner understands this concept.",
         "This teaching episode is complete.",
+        "This course is over.",
+        "The course has finished.",
+        "I finished the lesson.",
         "Next, I will teach the following concept.",
     )
     for text in forbidden_texts:
@@ -370,6 +376,24 @@ def test_writer_rejects_teaching_reply_that_claims_controller_authority() -> Non
         )
 
         assert payload == {}
+
+
+def test_writer_allows_future_tense_wording_about_the_current_chunk() -> None:
+    text = "I will explain this current concept."
+    client = _WriterClient({
+        "should_speak": True,
+        "text": text,
+        "speech_text": text,
+        "claim_manifest": [],
+    })
+    router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None))
+    router._run_inference = lambda _tier, func, **_kwargs: func()
+
+    payload = router.generate_public_reply(
+        chat_history=[], user_text="Teach this step.", teaching_directive=_directive()
+    )
+
+    assert payload["text"] == text
 
 
 def test_writer_authority_language_is_unchanged_without_teaching_directive() -> None:

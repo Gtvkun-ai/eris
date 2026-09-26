@@ -1224,15 +1224,17 @@ def _teaching_authority_violation(text: str) -> bool:
     normalized = normalize_vi(text)
     patterns = (
         # The writer cannot decide that comprehension or mastery occurred.
-        r"\b(?:you|learner|student|ban|anh|em|nguoi hoc)\s+(?:(?:now|have|ve|fully|da|a)\s+){0,2}(?:understand|understood|grasped|mastered|hieu|nam duoc)\b",
+        r"\b(?:you|learner|student|ban|anh|em|nguoi hoc)\s+(?:(?:now|has|have|ve|fully|da|a)\s+){0,2}(?:understand|understands|understood|grasped|mastered|masters|hieu|nam duoc)\b",
         # Completion is a controller transition, not a wording decision.
-        r"\b(?:this\s+|the\s+)?(?:teaching\s+)?(?:episode|lesson|course|chunk|bai hoc|buoi hoc|phan hoc)\s+(?:(?:is|has been|da|a)\s+)?(?:complete|completed|finished|done|hoan thanh|ket thuc|xong)\b",
+        r"\b(?:this\s+|the\s+)?(?:teaching\s+)?(?:episode|lesson|course|chunk|bai hoc|buoi hoc|phan hoc)\s+(?:(?:is|has|has been|da|a)\s+)?(?:complete|completed|finished|done|over|hoan thanh|ket thuc|xong)\b",
         r"\b(?:we|you|chung ta|ban|anh|em)\s+(?:(?:are|re|have|ve|da|a)\s+)?(?:done|completed|finished|xong|hoan thanh|ket thuc)\b",
+        r"\b(?:i|we|you|toi|minh|chung ta|ban|anh|em)\s+(?:(?:has|have|ve|da|a)\s+)?(?:completed|finished|ended|hoan thanh|ket thuc)\s+(?:the\s+)?(?:episode|lesson|course|chunk|bai hoc|buoi hoc|phan hoc)\b",
         # Selecting or previewing later concepts grants the writer future-plan authority.
         r"\b(?:the\s+)?next\s+(?:concept|lesson|chunk)\b",
         r"\b(?:khai niem tiep theo|bai hoc tiep theo|phan hoc tiep theo)\b",
         r"\b(?:next|after this|later|tiep theo|sau do|phan sau)\b.{0,100}\b(?:teach|explain|cover|learn|move on|day|giai thich|hoc|chuyen sang)\b",
-        r"\b(?:i|we|you|toi|minh|chung ta|ban)\s+(?:will|ll|se)\s+(?:next\s+)?(?:teach|explain|cover|learn|move on|day|giai thich|hoc|chuyen sang)\b",
+        r"\b(?:i|we|you|toi|minh|chung ta|ban)\s+(?:will|ll|se)\s+(?:move on|chuyen sang)\b",
+        r"\b(?:i|we|you|toi|minh|chung ta|ban)\s+(?:will|ll|se)\s+(?:teach|explain|cover|learn|day|giai thich|hoc)\b.{0,100}\b(?:next|following|other|another|future|tiep theo|khac)\s+(?:concept|lesson|chunk|khai niem|bai hoc|phan hoc)\b",
     )
     if any(re.search(pattern, normalized) for pattern in patterns):
         return True
