@@ -3270,8 +3270,34 @@ class SelfTurnPipeline:
             self._record_result(plan, result="utterance_blocked", gate_reason=gate_reason)
             host._sleep_interruptible(10)
             return True
-        host.ai_stage_planner.apply(decision, plan.performance_hint, state=context.state, channel="autonomous")
-        decision = host._execute_system_action(decision, snapshot=context.perception.snapshot, frame=None)
+        try:
+            host.ai_stage_planner.apply(
+                decision,
+                plan.performance_hint,
+                state=context.state,
+                channel="autonomous",
+            )
+            decision = host._execute_system_action(
+                decision,
+                snapshot=context.perception.snapshot,
+                frame=None,
+            )
+        except Exception as exc:
+            if not isinstance(teaching_directive, TeachingDirective):
+                raise
+            _release_pedagogical_claim(
+                pedagogical_runtime,
+                reason="surface_failed",
+                now=time.time(),
+                claim_token=teaching_claim_token,
+            )
+            host.logger.warning("[pedagogy] autonomous stage/action failed: %s", exc)
+            self._record_result(
+                plan,
+                result="generation_failed",
+                gate_reason="pedagogical_stage_action_failed",
+            )
+            return True
         if isinstance(getattr(decision, "action_result_meta", None), Mapping):
             host.ai_state_reducer.submit(StateEvent.from_mechanical_outcome(
                 dict(decision.action_result_meta),
@@ -3354,11 +3380,28 @@ class SelfTurnPipeline:
             )
             return True
 
-        text, assistant_meta = self.commit_public(
-            decision,
-            channel="autonomous",
-            turn_seq=context.turn_seq,
-        )
+        try:
+            text, assistant_meta = self.commit_public(
+                decision,
+                channel="autonomous",
+                turn_seq=context.turn_seq,
+            )
+        except Exception as exc:
+            if not isinstance(teaching_directive, TeachingDirective):
+                raise
+            _release_pedagogical_claim(
+                pedagogical_runtime,
+                reason="surface_failed",
+                now=time.time(),
+                claim_token=teaching_claim_token,
+            )
+            host.logger.warning("[pedagogy] autonomous public commit failed: %s", exc)
+            self._record_result(
+                plan,
+                result="generation_failed",
+                gate_reason="pedagogical_public_commit_failed",
+            )
+            return True
         if text and discovery_id and discovery_runtime is not None:
             discovery_runtime.mark_spoken(discovery_id, text)
         if not text:

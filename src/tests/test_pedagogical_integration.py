@@ -854,6 +854,119 @@ def test_autonomous_surface_writer_failure_releases_fenced_claim_immediately(
     assert snapshot["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
 
 
+@pytest.mark.parametrize("failure_point", ("stage", "commit"))
+def test_autonomous_surface_exception_releases_fenced_claim_immediately(
+    tmp_path: Any,
+    failure_point: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+    _, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+    assert directive is not None and directive.claim_token
+    monkeypatch.setattr(self_turn_pipeline.time, "time", lambda: 1001.1)
+    host.ai_model_router = SimpleNamespace(
+        generate_public_reply=lambda **_kwargs: {"text": "A bounded teaching probe"},
+    )
+    host._process_pending_user_input = lambda: False
+    host._sleep_interruptible = lambda _seconds: None
+    host._log_raw_llm_output = lambda *_args, **_kwargs: None
+    host.running = True
+    host.logger = SimpleNamespace(
+        debug=lambda *_args, **_kwargs: None,
+        info=lambda *_args, **_kwargs: None,
+        warning=lambda *_args, **_kwargs: None,
+    )
+    decision = SimpleNamespace(
+        text="A bounded teaching probe",
+        director_trace_id="",
+        performance_context={},
+        utterance_turn_id="",
+        speech_act="",
+        action_result_meta=None,
+    )
+    host.parser = SimpleNamespace(parse=lambda _raw: decision)
+    host.ai_autonomous_grounding_validator = SimpleNamespace(
+        validate_surface=lambda *_args, **_kwargs: SimpleNamespace(
+            allowed=True,
+            violation_code="",
+            reason="allowed",
+        ),
+    )
+
+    def apply_stage(*_args: Any, **_kwargs: Any) -> None:
+        if failure_point == "stage":
+            raise RuntimeError("stage failed")
+
+    host.ai_stage_planner = SimpleNamespace(apply=apply_stage)
+    host._execute_system_action = lambda value, **_kwargs: value
+    host._ensure_session_turn_ledger = lambda: SimpleNamespace(revision=0)
+    pipeline = object.__new__(self_turn_pipeline.SelfTurnPipeline)
+    pipeline.host = host
+    pipeline._runtime_language = lambda: "en"  # type: ignore[method-assign]
+    pipeline._runtime_speech_language = lambda: "en"  # type: ignore[method-assign]
+    pipeline._autonomous_grounding_report = lambda *_args, **_kwargs: object()  # type: ignore[method-assign]
+    pipeline._autonomous_utterance_gate = lambda *_args, **_kwargs: (True, "allowed")  # type: ignore[method-assign]
+    pipeline._defer_claimed_continuation = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    pipeline._record_result = lambda *args, **kwargs: None  # type: ignore[method-assign]
+
+    def commit_public(*_args: Any, **_kwargs: Any) -> tuple[str, None]:
+        if failure_point == "commit":
+            raise RuntimeError("commit failed")
+        return "A bounded teaching probe", None
+
+    pipeline.commit_public = commit_public
+    context = SimpleNamespace(
+        recent_history=(),
+        memory_context="",
+        engagement_prompt_context="",
+        perception=SimpleNamespace(
+            screen=SimpleNamespace(prompt_context=lambda: ""),
+            vision_facts=(),
+            snapshot=SimpleNamespace(),
+        ),
+        state=SimpleNamespace(personality_prompt_context=lambda: ""),
+        now=1001.1,
+        turn_seq=7,
+        public_revision=0,
+    )
+    plan = IntentionPlan.from_mapping(
+        {
+            "plan_id": "pedagogy:exception",
+            "speak": True,
+            "motive": "teach_chunk",
+            "topic": directive.current_objective,
+            "semantics": {
+                "turn_kind": "continuation",
+                "speech_act": "teach_chunk",
+                "subject_key": directive.episode_id,
+                "evidence_scope": "conversation",
+            },
+        },
+        channel="autonomous",
+    )
+
+    assert pipeline._surface(
+        plan=plan,
+        context=context,
+        activity=SimpleNamespace(),
+        discovery_grounding="",
+        discovery_id="",
+        discovery_runtime=None,
+        allow_model_generation=True,
+        teaching_directive=directive,
+        pedagogical_runtime=runtime,
+    )
+    snapshot = runtime.snapshot(now=1001.1)
+    assert snapshot["claimed"] is False
+    assert snapshot["delivery_pending"] is False
+    assert snapshot["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
+
+
 def test_autonomous_flag_off_does_not_resolve_or_claim_pedagogy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
