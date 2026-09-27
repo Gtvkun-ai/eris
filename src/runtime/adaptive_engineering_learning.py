@@ -213,9 +213,18 @@ class AdaptiveEngineeringLearning:
       kiểm tra lại".
     """
 
-    def __init__(self, *, path: Path | None = None, logger: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        path: Path | None = None,
+        logger: Any = None,
+        learning_service: Any = None,
+    ) -> None:
         self.path = path or (default_eris_home() / "mentor" / "engineering_learning.json")
         self.logger = logger
+        # Khi được inject, LearningService là durable truth. JSON V81 chỉ còn là
+        # projection/cache để code legacy tiếp tục đọc plan/snapshot không vỡ API.
+        self.learning_service = learning_service
         self.concepts: dict[str, ConceptState] = {item.concept_id: ConceptState() for item in _CONCEPTS}
         self.recent_events: list[dict[str, Any]] = []
         self.updated_at = 0.0
@@ -286,7 +295,7 @@ class AdaptiveEngineeringLearning:
             def demonstrate(concept_id: str, strength: float) -> None:
                 if concept_id in demonstrated or concept_id in misconception_concepts:
                     return
-                self._demonstrate_locked(concept_id, ts, strength=strength)
+                self._demonstrate_locked(concept_id, ts, strength=strength, evidence_ref=evidence_ref)
                 demonstrated.append(concept_id)
 
             if "grounded_hypothesis" in signals:
@@ -322,10 +331,26 @@ class AdaptiveEngineeringLearning:
                 state = self.concepts[concept_id]
                 state.misconception_count += 1
                 state.misconception_codes.append(code)
-                state.mastery -= 0.05 * max(0.30, state.mastery)
-                state.confidence = min(1.0, state.confidence + 0.04)
                 state.last_seen_at = max(state.last_seen_at, ts)
-                state.next_review_at = self._earlier_positive(state.next_review_at, ts + 30 * 60.0)
+                if self.learning_service is not None:
+                    # Candidate rõ từ assertion được ghi thành append-only evidence.
+                    # Mastery thật sau đó được recompute bởi LearningService; adapter
+                    # tuyệt đối không tự trừ mastery thêm lần nữa.
+                    self.learning_service.commit_evidence(
+                        concept_id,
+                        evidence_type="misconception",
+                        strength=1.0,
+                        correct=False,
+                        turn_id=evidence_ref,
+                        error_code=code,
+                        now=ts,
+                    )
+                    self._sync_from_kernel_locked(concept_id)
+                else:
+                    # Compatibility mode cho caller/test cũ chưa inject kernel.
+                    state.mastery -= 0.05 * max(0.30, state.mastery)
+                    state.confidence = min(1.0, state.confidence + 0.04)
+                    state.next_review_at = self._earlier_positive(state.next_review_at, ts + 30 * 60.0)
                 state.clamp()
                 events.append(f"candidate_misconception:{code}")
                 self._event_locked("candidate_misconception", ts, concepts=[concept_id], code=code, ref=evidence_ref)
@@ -524,16 +549,52 @@ class AdaptiveEngineeringLearning:
             return ("diff" in low and any(x in low for x in ("review", "đọc", "xem", "soát", "kiểm tra")))
         return False
 
-    def _demonstrate_locked(self, concept_id: str, ts: float, *, strength: float) -> None:
+    def _demonstrate_locked(
+        self,
+        concept_id: str,
+        ts: float,
+        *,
+        strength: float,
+        evidence_ref: str = "",
+    ) -> None:
         state = self.concepts[concept_id]
         state.demonstrated_count += 1
         state.exposures += 1
         state.last_seen_at = max(state.last_seen_at, ts)
         state.last_demonstrated_at = ts
-        delta = 0.08 * max(0.35, min(1.0, float(strength)))
-        state.mastery += delta * (1.0 - state.mastery)
-        state.confidence = min(1.0, state.confidence + 0.055 * strength)
-        state.next_review_at = ts + self._review_interval_seconds(state)
+
+        if self.learning_service is not None:
+            # Kernel-authoritative mode: chỉ phát evidence, không mutate mastery.
+            self.learning_service.commit_evidence(
+                concept_id,
+                evidence_type="application",
+                strength=max(0.0, min(1.0, float(strength))),
+                correct=True,
+                turn_id=evidence_ref,
+                now=ts,
+            )
+            self._sync_from_kernel_locked(concept_id)
+        else:
+            # Compatibility mode V81 cũ. Xóa branch này sau khi mọi caller đã
+            # dùng LearningService và migration JSON -> SQLite hoàn tất.
+            delta = 0.08 * max(0.35, min(1.0, float(strength)))
+            state.mastery += delta * (1.0 - state.mastery)
+            state.confidence = min(1.0, state.confidence + 0.055 * strength)
+            state.next_review_at = ts + self._review_interval_seconds(state)
+        state.clamp()
+
+    def _sync_from_kernel_locked(self, concept_id: str) -> None:
+        """Đồng bộ projection legacy từ durable truth mà không đọc store private."""
+        if self.learning_service is None:
+            return
+        state = self.concepts[concept_id]
+        record = self.learning_service.get_mastery(concept_id)
+        state.mastery = record.mastery
+        state.confidence = record.confidence
+        reviews = self.learning_service.review_snapshot((concept_id,))
+        review = reviews.get(concept_id)
+        if isinstance(review, Mapping):
+            state.next_review_at = float(review.get("due_at", state.next_review_at) or state.next_review_at)
         state.clamp()
 
     @staticmethod

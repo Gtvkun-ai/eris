@@ -297,12 +297,35 @@ class RuntimeCoordinator(
         # Agent WebSocket service is opt-in only. Eris Code agent bridge never
         # depends on this runtime startup path.
 
+        # Tutor Executive V1: một composition root duy nhất cho learning truth +
+        # tutor cognition. LearningService giữ evidence/mastery deterministic;
+        # TutorExecutive chỉ sở hữu observe/diagnose/strategy/assessment loop.
+        # Chưa giành hot-path delivery của PedagogicalRuntime trong bước migration này.
+        self.learning_service = None
+        self.tutor_executive = None
+        try:
+            from runtime.tutor import build_tutor_runtime
+
+            tutor_bundle = build_tutor_runtime(
+                model_router=getattr(self, "ai_model_router", None),
+                logger=logger,
+            )
+            self.learning_service = tutor_bundle.learning_service
+            self.tutor_executive = tutor_bundle.tutor_executive
+        except Exception as exc:
+            debug = getattr(logger, "debug", None)
+            if callable(debug):
+                debug("[tutor-v1] tutor runtime unavailable: %s", exc)
+
         # V80 Engineering Mentor tồn tại độc lập với coding extension/observer link.
         # Nó chỉ giữ skill projection + teaching policy, tuyệt đối không có coding authority.
         self.engineering_mentor_service = None
         try:
             from runtime.engineering_mentor import EngineeringMentorService
-            self.engineering_mentor_service = EngineeringMentorService(logger=logger)
+            self.engineering_mentor_service = EngineeringMentorService(
+                logger=logger,
+                learning_service=self.learning_service,
+            )
         except Exception as exc:
             debug = getattr(logger, "debug", None)
             if callable(debug):

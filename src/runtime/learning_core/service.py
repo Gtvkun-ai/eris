@@ -312,6 +312,16 @@ class LearningService:
             items = self._store.load_review_items(kp_ids)
         return due_items(items, now=ts)
 
+    def review_snapshot(self, kp_ids: Sequence[str] | None = None) -> dict[str, dict]:
+        """Read-only projection kp_id -> ReviewItem cho adapter/debug runtime.
+
+        Không cho caller chạm trực tiếp LearningStore chỉ để đồng bộ một projection
+        legacy. Scheduler/DB vẫn thuộc LearningService.
+        """
+        with self._lock:
+            items = self._store.load_review_items(list(kp_ids) if kp_ids is not None else None)
+        return {item.kp_id: item.to_dict() for item in items}
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

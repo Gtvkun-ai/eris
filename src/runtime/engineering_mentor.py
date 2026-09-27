@@ -895,6 +895,7 @@ class EngineeringMentorService:
         learning_path: Path | None = None,
         tool_literacy_path: Path | None = None,
         calibration_path: Path | None = None,
+        learning_service: Any = None,
         logger: Any = None,
     ) -> None:
         self.logger = logger
@@ -911,7 +912,11 @@ class EngineeringMentorService:
         self.ledger = MentorInterventionLedger(
             path=runtime_path, evaluation_path=evaluation_path, logger=logger
         )
-        self.learning = AdaptiveEngineeringLearning(path=learning_path, logger=logger)
+        self.learning = AdaptiveEngineeringLearning(
+            path=learning_path,
+            logger=logger,
+            learning_service=learning_service,
+        )
         # V82 chỉ tư vấn tool/evidence, không sở hữu hay thực thi bất kỳ tool nào.
         self.tool_literacy = EngineeringToolLiteracy(path=tool_literacy_path, logger=logger)
         # V85 chỉ đánh giá outcome observable của mentor; không gọi thêm model/agent.
