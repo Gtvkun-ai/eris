@@ -784,6 +784,76 @@ def test_autonomous_failure_releases_claim_without_receipt(
     assert runtime.claim_due(worker_id="retry", now=1001.1) is not None
 
 
+def test_autonomous_surface_writer_failure_releases_fenced_claim_immediately(
+    tmp_path: Any,
+) -> None:
+    clock = _Clock()
+    runtime = _durable_pedagogy(tmp_path, clock)
+    assert runtime.start_episode(_teaching_episode())
+    host = _autonomous_host(runtime, clock)
+    _, directive = self_turn_pipeline._claim_due_pedagogical_continuation(
+        host, worker_id="self-turn", now=1001.0, interaction_busy=False,
+    )
+    assert directive is not None and directive.claim_token
+    host.ai_model_router = SimpleNamespace(generate_public_reply=lambda **_kwargs: {})
+    host._process_pending_user_input = lambda: False
+    host._sleep_interruptible = lambda _seconds: None
+    host.running = True
+    host.logger = SimpleNamespace(
+        debug=lambda *_args, **_kwargs: None,
+        info=lambda *_args, **_kwargs: None,
+        warning=lambda *_args, **_kwargs: None,
+    )
+    pipeline = object.__new__(self_turn_pipeline.SelfTurnPipeline)
+    pipeline.host = host
+    pipeline._runtime_language = lambda: "en"  # type: ignore[method-assign]
+    pipeline._runtime_speech_language = lambda: "en"  # type: ignore[method-assign]
+    pipeline._defer_claimed_continuation = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    pipeline._record_result = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    context = SimpleNamespace(
+        recent_history=(),
+        memory_context="",
+        engagement_prompt_context="",
+        perception=SimpleNamespace(
+            screen=SimpleNamespace(prompt_context=lambda: ""),
+            vision_facts=(),
+        ),
+        state=SimpleNamespace(personality_prompt_context=lambda: ""),
+        now=1001.1,
+        turn_seq=7,
+    )
+    plan = IntentionPlan.from_mapping(
+        {
+            "plan_id": "pedagogy:writer-failure",
+            "speak": True,
+            "motive": "teach_chunk",
+            "topic": directive.current_objective,
+            "semantics": {
+                "turn_kind": "continuation",
+                "speech_act": "teach_chunk",
+                "subject_key": directive.episode_id,
+                "evidence_scope": "conversation",
+            },
+        },
+        channel="autonomous",
+    )
+
+    assert pipeline._surface(
+        plan=plan,
+        context=context,
+        activity=SimpleNamespace(),
+        discovery_grounding="",
+        discovery_id="",
+        discovery_runtime=None,
+        allow_model_generation=True,
+        teaching_directive=directive,
+        pedagogical_runtime=runtime,
+    )
+    snapshot = runtime.snapshot(now=1001.1)
+    assert snapshot["claimed"] is False
+    assert snapshot["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
+
+
 def test_autonomous_flag_off_does_not_resolve_or_claim_pedagogy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

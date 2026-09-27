@@ -3051,6 +3051,11 @@ class SelfTurnPipeline:
         pedagogical_runtime: Any | None = None,
     ) -> bool:
         host = self.host
+        teaching_claim_token = (
+            teaching_directive.claim_token
+            if isinstance(teaching_directive, TeachingDirective)
+            else ""
+        )
         payload = dict(prebuilt_payload or {})
         if not payload and allow_model_generation and teaching_directive is not None:
             try:
@@ -3116,6 +3121,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason="user_input_before_commit")
             _release_pedagogical_claim(
                 pedagogical_runtime, reason="user_input_before_commit", now=context.now,
+                claim_token=teaching_claim_token,
             )
             self.trace_store.append("outcome", {
                 "trace_id": str(payload.get("event_trace_id") or plan.plan_id),
@@ -3130,6 +3136,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason="public_generation_failed")
             _release_pedagogical_claim(
                 pedagogical_runtime, reason="public_generation_failed", now=context.now,
+                claim_token=teaching_claim_token,
             )
             host.logger.warning(
                 "[ai autonomous] public generation failed kind=%s subject=%s",
@@ -3197,6 +3204,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason=gate_reason)
             _release_pedagogical_claim(
                 pedagogical_runtime, reason=gate_reason, now=context.now,
+                claim_token=teaching_claim_token,
             )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             host.logger.warning(
@@ -3238,6 +3246,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason=gate_reason)
             _release_pedagogical_claim(
                 pedagogical_runtime, reason=gate_reason, now=context.now,
+                claim_token=teaching_claim_token,
             )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=12.0)
             host.logger.warning(
@@ -3298,6 +3307,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason=gate_reason)
             _release_pedagogical_claim(
                 pedagogical_runtime, reason=gate_reason, now=context.now,
+                claim_token=teaching_claim_token,
             )
             self._defer_claimed_continuation(plan, reason=gate_reason, seconds=0.25)
             self.trace_store.append("outcome", {
@@ -3335,6 +3345,7 @@ class SelfTurnPipeline:
                 pedagogical_runtime,
                 reason="pedagogical_receipt_stage_failed",
                 now=time.time(),
+                claim_token=teaching_claim_token,
             )
             self._record_result(
                 plan,
@@ -3354,6 +3365,7 @@ class SelfTurnPipeline:
             self._release_seed_lease(candidate, reason="no_public_text")
             _release_pedagogical_claim(
                 pedagogical_runtime, reason="no_public_text", now=context.now,
+                claim_token=teaching_claim_token,
             )
             self._defer_claimed_continuation(plan, reason="no_public_text", seconds=0.75)
             self._record_result(plan, result="stage_silence", gate_reason="no_public_text")
