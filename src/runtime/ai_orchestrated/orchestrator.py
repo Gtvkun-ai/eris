@@ -1794,6 +1794,87 @@ class AIChatOrchestrator:
         )
         planning_snapshot["grounding_context"] = grounding_context
 
+        # V-next: mọi foreground user turn đều đi qua một generic agent loop
+        # trước public writer. Tutor/coding/research/companion chỉ là role trong
+        # loop; chúng không sở hữu một vòng đời chat riêng. Loop này KHÔNG public
+        # chain-of-thought. Nó chỉ commit typed Cognitive/Execution/Discourse plan.
+        agent_turn_result = None
+        try:
+            from runtime.agent_loop import ensure_agent_turn_runtime
+
+            agent_turn_runtime = ensure_agent_turn_runtime(host)
+            try:
+                from runtime.runtime_settings_store import runtime_bool
+                _voice_mode = bool(runtime_bool("tts", "enabled", default=True))
+            except Exception:
+                _voice_mode = True
+            # Ưu tiên một conversation/thread id ổn định nếu host có cung cấp.
+            # ``runtime_session_id`` chỉ là fallback cuối: nó đủ cho một process
+            # nhưng có thể đổi sau restart. Việc resolve theo thứ tự này giúp
+            # DisclosureArc tự nhiên được nâng cấp lên continuity qua restart
+            # khi ConversationRuntime sau này expose ``conversation_id``/``thread_id``.
+            _agent_session_id = str(
+                getattr(host, "conversation_id", "")
+                or getattr(host, "thread_id", "")
+                or getattr(host, "runtime_session_id", "")
+                or "default"
+            ).strip()
+            agent_turn_result = agent_turn_runtime.prepare_turn(
+                turn_id=turn_id,
+                session_id=_agent_session_id,
+                user_text=user_text,
+                recent_history=tuple(planning_snapshot.get("recent_public_history", ()) or ()),
+                runtime_context={
+                    "agent_execution_route": agent_execution_route,
+                    "teaching_active": bool(teaching_directive is not None),
+                    "explicit_tool_route": bool(
+                        str(directive_payload.get("status", "") or "") == "selected"
+                    ),
+                    "voice_mode": _voice_mode,
+                    "conversation_status": {
+                        "handoff": handoff_state.to_dict(),
+                        "trajectory": trajectory_state.to_dict(),
+                    },
+                    "previous_public_excerpt": previous_assistant_for_repair[-1200:],
+                },
+            )
+            agent_turn_payload = agent_turn_result.to_dict()
+            planning_snapshot["agent_turn"] = agent_turn_payload
+            host.last_agent_turn = agent_turn_payload
+
+            # DiscoursePlan là contract nói chuyện của writer: chia ý thành nhịp
+            # như người, progressive disclosure, không dump nguyên analysis map.
+            discourse_context = "\n\n".join(part for part in (
+                discourse_context,
+                "AGENT_TURN_LOOP_V2: " + json.dumps(
+                    agent_turn_payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
+                  "Say ONLY discourse_plan.beats for this turn. continuation.deferred_threads are intentionally NOT for this reply. "
+                  "Respect speech_budget.hard_max_words and speech_budget.max_beats even when cognitive_plan knows much more. "
+                  "Realize beats as natural spoken conversation, lead with the strongest useful point, use short transitions, "
+                  "and stop at the planned breakpoint instead of dumping the rest. continuation_anchor may shape the final line "
+                  "as a natural open thread, but never append generic 'muốn tôi nói thêm không?' filler. "
+                  "If tutor_role.directive exists, obey its pedagogical intent and max_sentences. If response_relation=clarification "
+                  "for a pending_previous_move, clarify/rephrase the exact delivered question without grading, advancing, or revealing the expected answer. "
+                  "Otherwise, if the tutor directive requires_user_response, ask/perform that single teaching move and STOP; do not answer the question yourself. "
+                  "Never expose hidden reasoning. cognitive_plan/execution_plan are private coverage state, not text to quote.",
+            ) if str(part).strip())
+            planning_snapshot["discourse_context"] = discourse_context
+        except Exception as exc:
+            # Agent loop là bắt buộc về kiến trúc nhưng availability của public
+            # chat vẫn fail-soft: writer tiếp tục với pipeline hiện có và telemetry
+            # ghi rõ degraded để không biến một worker phụ thành single point of failure.
+            host.last_agent_turn = {
+                "schema": "eris.agent_turn.v2",
+                "status": "degraded",
+                "reason": type(exc).__name__,
+            }
+            host.logger.warning("[agent-turn] foreground loop degraded: %s", exc)
+        latency_trace.mark("agent_turn_loop")
+
         latency_trace.mark("executive")
         chat_plan = host.ai_intention_planner.plan_chat(
             planning_snapshot,
@@ -2675,6 +2756,17 @@ class AIChatOrchestrator:
             assistant_meta=assistant_meta,
             now=time.time(),
         )
+        # Unified agent/tutor receipt: TeachingMove chỉ được tính là đã dạy
+        # sau khi public surface commit thành công. Agent reasoning trước đó không
+        # được phép tự tăng teach_count/mastery chỉ vì nó *định* nói.
+        if agent_turn_result is not None:
+            try:
+                agent_turn_runtime.commit_public_delivery(
+                    successful=bool(public_text),
+                    public_text=public_text,
+                )
+            except Exception as exc:
+                host.logger.debug("[agent-turn] tutor delivery receipt degraded: %s", exc)
         # Foreground chat consumed this exact user event. Keep any later
         # associative material private instead of letting it become a second reply.
         # This MUST live in the chat scope where user_text/turn_id actually exist.
@@ -2824,11 +2916,20 @@ class AIChatOrchestrator:
             }
             and not bool(getattr(decision, "failure_meta", None))
         )
+        # Unified disclosure pacing có quyền *giữ floor cho user*. Nếu turn vừa
+        # cố tình defer thread hoặc tutor đang chờ response, các runtime social cũ
+        # không được tự schedule afterbeat/conversation_arc rồi nói tiếp sau audio.
+        # Agenda/memory vẫn có thể cập nhật; chỉ autonomous speech continuation bị chặn.
+        agent_reserves_user_floor = bool(
+            agent_turn_result is not None
+            and getattr(agent_turn_result, "reserves_user_floor", False)
+        )
+
         if valid_social_commit:
             semantic_payload = typed_frame.to_dict() if typed_frame is not None else {}
             assistant_act_payload = assistant_act.to_dict() if callable(getattr(assistant_act, "to_dict", None)) else dict(assistant_act or {})
             commit_now = time.time()
-            if social_continuation_runtime is not None:
+            if social_continuation_runtime is not None and not agent_reserves_user_floor:
                 try:
                     social_continuation_runtime.schedule_from_social_plan(
                         social_plan,
@@ -2841,6 +2942,8 @@ class AIChatOrchestrator:
                     )
                 except Exception as exc:
                     host.logger.debug("[social continuation] schedule failed: %s", exc)
+            elif agent_reserves_user_floor:
+                host.logger.debug("[agent-turn] social afterbeat suppressed: user floor reserved")
             if social_agenda_store is not None:
                 try:
                     agenda_update = social_plan.get("agenda_update", {})
@@ -2853,7 +2956,11 @@ class AIChatOrchestrator:
                     host.logger.debug("[social agenda] update failed: %s", exc)
             arc_payload = social_plan.get("conversation_arc")
             scheduled_arc = False
-            if isinstance(arc_payload, Mapping) and conversation_arc_runtime is not None:
+            if (
+                isinstance(arc_payload, Mapping)
+                and conversation_arc_runtime is not None
+                and not agent_reserves_user_floor
+            ):
                 try:
                     scheduled_arc = conversation_arc_runtime.schedule_from_model(
                         arc_payload,

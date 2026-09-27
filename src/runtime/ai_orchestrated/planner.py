@@ -19,11 +19,11 @@ class IntentionPlanner:
     def plan_chat(self, snapshot: Mapping[str, Any], *, turn_seq: int) -> IntentionPlan:
         semantic_policy = SemanticAuthorityPolicy.from_runtime()
 
-        # PDF annotation, pages 4 and 12-13: normal chat no longer pays for a
-        # separate remote planner before the public writer.  The main writer
-        # returns semantic_frame + wording in one call.  A remote planner remains
-        # only for explicit action/tool turns so existing capabilities are not
-        # amputated in the name of shaving milliseconds.
+        # Semantic intention planner này vẫn local cho normal chat: nó không còn
+        # là nơi "suy nghĩ một lần rồi writer nói luôn". Foreground cognitive /
+        # execution / discourse planning hiện thuộc runtime.agent_loop và có thể
+        # chạy nhiều vòng trước khi tới đây. Giữ IntentionPlanner local giúp nó
+        # chỉ làm compatibility projection, tránh tạo thêm semantic authority.
         needs_tool_planner = bool(snapshot.get("explicit_tool_route", False))
         if semantic_policy.primary_model_first and not needs_tool_planner:
             plan = IntentionPlan.from_mapping(

@@ -401,6 +401,9 @@ class TutorState:
     session_goal: str = ""
     hypotheses: tuple[LearnerHypothesis, ...] = ()
     last_move: TeachingMove | None = None
+    # Exact public wording đã thực sự được delivery ở move gần nhất. Assessor dùng
+    # field này để chấm đúng câu user đã nghe, không chỉ chấm theo intent trước writer.
+    last_delivery_text: str = ""
     turn_count: int = 0
     consecutive_stalls: int = 0
     started_at: float = 0.0
@@ -412,6 +415,7 @@ class TutorState:
         object.__setattr__(self, "kp_id", _id(self.kp_id))
         object.__setattr__(self, "session_goal", _text(self.session_goal, 600))
         object.__setattr__(self, "hypotheses", tuple(self.hypotheses[:_MAX_HYPOTHESES]))
+        object.__setattr__(self, "last_delivery_text", _text(self.last_delivery_text, 1600))
         try:
             turns = int(self.turn_count)
         except (TypeError, ValueError, OverflowError):
@@ -433,6 +437,7 @@ class TutorState:
             "session_goal": self.session_goal,
             "hypotheses": [item.to_dict() for item in self.hypotheses],
             "last_move": self.last_move.to_writer_dict() if self.last_move else None,
+            "last_delivery_text": self.last_delivery_text,
             "turn_count": self.turn_count,
             "consecutive_stalls": self.consecutive_stalls,
             "started_at": self.started_at,

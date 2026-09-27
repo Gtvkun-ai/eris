@@ -206,7 +206,13 @@ class TutorExecutive:
         )
         return assessment, decision
 
-    def commit_delivery(self, decision: TutorDecision, *, successful: bool = True) -> None:
+    def commit_delivery(
+        self,
+        decision: TutorDecision,
+        *,
+        successful: bool = True,
+        public_text: str = "",
+    ) -> None:
         """Commit side-effect chỉ sau khi public delivery thực sự thành công.
 
         Điều này giữ invariant: Eris *định nói* không đồng nghĩa Eris *đã dạy*.
@@ -218,6 +224,14 @@ class TutorExecutive:
             move = decision.move
             if move.move_id and move.move_id in self._committed_move_ids:
                 return
+            # Bind semantic move -> exact delivered wording. Turn sau assessor sẽ
+            # nhìn cả TeachingMove lẫn câu public thật mà user đã nghe/đọc.
+            if str(public_text or "").strip():
+                self._state = replace(
+                    self._state,
+                    last_delivery_text=str(public_text),
+                    updated_at=time.time(),
+                )
             if move.kind in {"explain", "counterexample", "analogy", "worked_example", "repair"}:
                 self.learning.note_taught(move.kp_id)
             if step.kind == "advance" and step.kp_id:

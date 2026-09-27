@@ -359,3 +359,16 @@ def test_low_confidence_assessment_does_not_rewrite_hypothesis_state(tmp_path) -
     assert hypotheses
     assert hypotheses[0]["status"] == "active"
     assert hypotheses[0]["confidence"] == 0.86
+
+
+def test_delivery_receipt_binds_exact_public_text_for_next_assessment(tmp_path) -> None:
+    service = _service(tmp_path)
+    executive = TutorExecutive(service)
+    decision = executive.plan_next_move("Dạy tôi", turn_id="turn-1", now=1000.0)
+    assert decision is not None
+
+    exact_text = "Nếu Kafka đã nhận message nhưng DB rollback ngay sau đó, consumer có biết DB vừa rollback không?"
+    executive.commit_delivery(decision, successful=True, public_text=exact_text)
+
+    snapshot = executive.snapshot()
+    assert snapshot["state"]["last_delivery_text"] == exact_text

@@ -213,7 +213,8 @@ class RuntimeTutorReasoner:
         raw = self._call(
             system=(
                 "Bạn là semantic assessor của Eris Tutor. Chỉ trả JSON theo schema; không xuất chain-of-thought. "
-                "Đánh giá câu trả lời dựa trên mục tiêu của previous_move và knowledge point hiện tại, không chấm văn phong. "
+                "Đánh giá câu trả lời dựa trên knowledge point, previous_move VÀ tutor_state.last_delivery_text. "
+                "last_delivery_text là câu public chính xác user đã nhận; khi wording thực tế khác intent ban đầu, phải chấm theo câu đã delivery. Không chấm văn phong. "
                 "PASS khi user thể hiện mental model đúng; PARTIAL khi lõi đúng nhưng thiếu một dependency quan trọng; "
                 "FAIL khi có lỗi khái niệm rõ; UNCERTAIN khi evidence không đủ hoặc user không thật sự trả lời. "
                 "Nếu không chắc, phải dùng uncertain thay vì đoán. Chỉ mô tả misconception cụ thể khi câu trả lời thật sự chứng minh nó."
