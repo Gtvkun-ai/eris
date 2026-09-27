@@ -22,7 +22,7 @@ def test_catalog_covers_every_runtime_setting_without_secrets() -> None:
 
     assert catalog["schema_version"] == 18
     assert set(fields) == _default_paths()
-    assert len(catalog["sections"]) == 25
+    assert len(catalog["sections"]) == 26
     assert all(item["owner"] == "brain_runtime" for item in fields.values())
     assert fields["tts.provider"]["surface"] == "voice"
     assert fields["chat.reasoning_effort"]["surface"] == "advanced"

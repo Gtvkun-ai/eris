@@ -82,6 +82,38 @@ from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATU
 from screen import build_screen_text_runtime
 
 
+def _settle_pedagogical_delivery_event(
+    host,
+    *,
+    event_type: str,
+    turn_id: str,
+    now: float | None = None,
+    final_segment: bool = True,
+) -> bool:
+    terminal = str(event_type or "").strip().lower()
+    success_events = {"audio_done", "no_tts"}
+    failure_events = {"audio_failed", "audio_cancelled", "audio_localization_failed"}
+    if terminal not in success_events | failure_events:
+        return False
+    if terminal in success_events and not final_segment:
+        return False
+    try:
+        from runtime.pedagogical_runtime import ensure_pedagogical_runtime
+
+        runtime = ensure_pedagogical_runtime(host)
+        if runtime is None:
+            return False
+        return bool(
+            runtime.settle_delivery(
+                turn_id=str(turn_id or "")[:120],
+                successful=terminal in success_events,
+                now=float(now if now is not None else time.time()),
+            )
+        )
+    except Exception:
+        return False
+
+
 class PublicOutputRuntimeMixin:
     def _stage_channel_blocked(self, channel: str, *, requester_id: str = "") -> bool:
         try:
@@ -532,6 +564,7 @@ class PublicOutputRuntimeMixin:
                 or ""
             )
             clock = getattr(self, "interaction_clock", None)
+            final_segment = True
             if clock is not None:
                 try:
                     try:
@@ -616,6 +649,13 @@ class PublicOutputRuntimeMixin:
             self._handle_tts_playback_event(
                 event, stage_frame=event_stage_frame,
                 trace_id=str(payload.get("event_trace_id") or getattr(event_stage_frame, "turn_id", "") or ""),
+            )
+            _settle_pedagogical_delivery_event(
+                self,
+                event_type=event_type,
+                turn_id=event_turn_id,
+                now=float(getattr(event, "timestamp", time.time()) or time.time()),
+                final_segment=final_segment,
             )
 
         # TTS: đọc to câu vừa nói với emotion context (valence/arousal/stance).
@@ -702,6 +742,12 @@ class PublicOutputRuntimeMixin:
                 except Exception:
                     pass
             send_text_payload("no_tts" if sync_text else "immediate")
+            _settle_pedagogical_delivery_event(
+                self,
+                event_type="no_tts",
+                turn_id=str(stage_frame.turn_id or ""),
+                now=time.time(),
+            )
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Chat public được Architecture C ghi ở đúng commit point; không append trùng.

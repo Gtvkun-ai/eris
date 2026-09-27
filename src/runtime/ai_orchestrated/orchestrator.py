@@ -8,6 +8,7 @@ grounding/runtime. Main model không phải đi qua một phiên họp trước 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -29,7 +30,16 @@ from runtime.reply_obligation import enforce_reply_obligation
 from runtime.cognition.normalization import normalize_vi
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
+from runtime.pedagogical_contracts import TeachingDirective, TeachingReceipt, normalize_episode
+from runtime.pedagogical_controller import (
+    infer_user_evidence,
+    select_next_action,
+    start_episode as start_teaching_episode,
+)
+from runtime.pedagogical_plan_builder import TeachingPlanBuilder
+from runtime.pedagogical_runtime import ensure_pedagogical_runtime
 from runtime.runtime_status import emit_runtime_status
+from runtime.runtime_settings_store import runtime_bool
 from runtime.world_state import attach_world_state_projection
 from runtime.chess.surface import (
     authoritative_chess_answer_text,
@@ -509,6 +519,197 @@ def _decision_from_discourse_surface(host: Any, surface: DiscourseSurface, *, us
     return decision
 
 
+def _pedagogy_enabled(host: Any) -> bool:
+    explicit = getattr(host, "pedagogical_controller_enabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    return runtime_bool("pedagogy", "enabled", default=False)
+
+
+def _explicit_pedagogical_activation(user_text: str) -> bool:
+    text = normalize_vi(user_text)
+    markers = (
+        "chi toi", "chi minh", "day toi", "day minh", "teach me", "tutor me",
+        "help me learn", "help me study", "i want to learn", "i need to learn",
+        "muon hoc", "dang hoc", "muon hieu", "that su hieu", "hieu cho toi goc",
+        "giai thich ky", "giai thich chi tiet", "giai thich sau", "tu goc",
+        "explain deeply", "in detail", "from first principles", "walk me through",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _bounded_pedagogical_history(history: Any) -> tuple[dict[str, str], ...]:
+    projected: list[dict[str, str]] = []
+    for item in tuple(history or ())[-6:]:
+        if not isinstance(item, Mapping):
+            continue
+        role = str(item.get("role", "") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = " ".join(str(item.get("content", "") or "").split()).strip()[:600]
+        if content:
+            projected.append({"role": role, "content": content})
+    return tuple(projected)
+
+
+def _bounded_pedagogical_turn(user_text: Any) -> str:
+    return " ".join(str(user_text or "").split()).strip()[:1200]
+
+
+def _notify_pedagogical_audio_finished(
+    host: Any,
+    timestamp: float,
+    *,
+    source_turn_id: str = "",
+) -> bool:
+    """Forward a real playback edge to the enabled teaching runtime."""
+    if not _pedagogy_enabled(host) or float(timestamp or 0.0) <= 0.0:
+        return False
+    runtime = ensure_pedagogical_runtime(host)
+    if runtime is None:
+        return False
+    try:
+        runtime.notify_audio_finished(
+            float(timestamp), source_turn_id=str(source_turn_id or "")[:120],
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _prepare_pedagogical_turn(
+    host: Any,
+    *,
+    user_text: str,
+    turn_id: str,
+    recent_history: Any,
+    now: float,
+    evidence: tuple[str, ...] | None = None,
+) -> tuple[Any | None, TeachingDirective | None]:
+    """Select one foreground teaching directive before ordinary chat planning."""
+    if not _pedagogy_enabled(host):
+        return None, None
+    runtime = ensure_pedagogical_runtime(host)
+    if runtime is None:
+        return None, None
+    try:
+        snapshot = runtime.snapshot(now=now)
+    except Exception:
+        return runtime, None
+    active = snapshot.get("active_episode") if isinstance(snapshot, Mapping) else None
+    status = str(active.get("status", "") or "").strip().lower() if isinstance(active, Mapping) else ""
+    if isinstance(active, Mapping) and status not in {"completed", "abandoned", "expired", "failed"}:
+        try:
+            bounded_turn = _bounded_pedagogical_turn(user_text)
+            episode = normalize_episode(active)
+            current_concept = next(
+                (
+                    concept
+                    for concept in (episode.concepts if episode is not None else ())
+                    if concept.concept_id == episode.comprehension.current_concept_id
+                ),
+                None,
+            )
+            result = runtime.observe_user_turn(
+                bounded_turn,
+                evidence=infer_user_evidence(
+                    bounded_turn,
+                    explicit_evidence=evidence,
+                    current_concept=current_concept,
+                ),
+                now=now,
+            )
+        except Exception:
+            return runtime, None
+        directive = getattr(getattr(result, "action", None), "directive", None)
+        return runtime, directive if isinstance(directive, TeachingDirective) else None
+
+    if not _explicit_pedagogical_activation(user_text):
+        return runtime, None
+    builder = (
+        getattr(host, "ai_teaching_plan_builder", None)
+        or getattr(host, "pedagogical_plan_builder", None)
+    )
+    if builder is None:
+        router = getattr(host, "ai_model_router", None)
+        if router is None:
+            return runtime, None
+        builder = TeachingPlanBuilder(router)
+    request_context = {
+        "explicit_plan_request": True,
+        "turn_id": str(turn_id or "")[:120],
+        "current_turn": _bounded_pedagogical_turn(user_text),
+        "recent_public_history": list(_bounded_pedagogical_history(recent_history)),
+    }
+    try:
+        plan = builder.build(request_context)
+        if plan is None:
+            return runtime, None
+        episode = start_teaching_episode(plan, now=now)
+        if not runtime.start_episode(episode):
+            return runtime, None
+        return runtime, select_next_action(episode, now=now).directive
+    except Exception:
+        return runtime, None
+
+
+def _generate_public_reply(
+    router: Any,
+    *,
+    teaching_directive: TeachingDirective | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    if teaching_directive is not None:
+        kwargs["teaching_directive"] = teaching_directive
+    return router.generate_public_reply(**kwargs)
+
+
+def _commit_pedagogical_receipt(
+    runtime: Any,
+    directive: TeachingDirective | None,
+    *,
+    public_text: str,
+    turn_id: str,
+    decision: Any,
+    payload: Mapping[str, Any] | None,
+    assistant_meta: Mapping[str, Any] | None,
+    now: float,
+) -> bool:
+    if runtime is None or not isinstance(directive, TeachingDirective):
+        return False
+    parse_mode = str(getattr(decision, "parse_mode", "") or "").strip().lower()
+    grounding_risk = payload.get("grounding_risk") if isinstance(payload, Mapping) else None
+    grounding_failed = isinstance(grounding_risk, Mapping) and grounding_risk.get("allowed") is False
+    deterministic_fallback = bool(payload and payload.get("utterance_degraded"))
+    if (
+        not str(public_text or "").strip()
+        or assistant_meta is None
+        or not bool(getattr(decision, "should_speak", False))
+        or bool(getattr(decision, "failure_meta", None))
+        or parse_mode in {
+            "typed_discourse_fallback", "authoritative_chess_result", "chess_surface_unavailable",
+        }
+        or grounding_failed
+        or deterministic_fallback
+    ):
+        return False
+    signature = "sha256:" + hashlib.sha256(
+        str(public_text).encode("utf-8", errors="replace")
+    ).hexdigest()
+    receipt = TeachingReceipt(
+        episode_id=directive.episode_id,
+        plan_revision=directive.plan_revision,
+        chunk_id=directive.chunk_id,
+        turn_id=turn_id,
+        text_signature=signature,
+        successful=True,
+    )
+    try:
+        return bool(runtime.commit_receipt(receipt, now=now))
+    except Exception:
+        return False
+
+
 class AIChatOrchestrator:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -825,6 +1026,14 @@ class AIChatOrchestrator:
         prior_public_history = tuple(host._chat_history_for_llm(limit=16))
         if previous_public_context and not prior_public_history:
             prior_public_history = ({"role": "assistant", "content": previous_public_context},)
+        pedagogical_runtime, teaching_directive = _prepare_pedagogical_turn(
+            host,
+            user_text=user_text,
+            turn_id=turn_id,
+            recent_history=prior_public_history,
+            now=cycle_start,
+        )
+        latency_trace.mark("pedagogy")
         previous_assistant_for_repair = ""
         for _item in reversed(prior_public_history):
             if isinstance(_item, Mapping) and str(_item.get("role", "") or "").lower() == "assistant":
@@ -1728,7 +1937,9 @@ class AIChatOrchestrator:
         payload: dict[str, Any] = {}
         host._set_background_memory_digest_remote_inflight(True)
         try:
-            payload = host.ai_model_router.generate_public_reply(
+            payload = _generate_public_reply(
+                host.ai_model_router,
+                teaching_directive=teaching_directive,
                 chat_history=history,
                 user_text=user_message,
                 memory_context=compiled_context.memory,
@@ -1752,7 +1963,9 @@ class AIChatOrchestrator:
                 and not no_fallback_mode_enabled()
                 and not _deepseek_web_authority_mode()
             ):
-                payload = host.ai_model_router.generate_public_reply(
+                payload = _generate_public_reply(
+                    host.ai_model_router,
+                    teaching_directive=teaching_directive,
                     chat_history=history,
                     user_text=user_message,
                     memory_context=compiled_context.memory,
@@ -2013,7 +2226,9 @@ class AIChatOrchestrator:
                 # khác (ví dụ "disagreement" -> "Không. Tôi vẫn nghĩ vậy."),
                 # ép wording-only retry. Nếu provider lại hỏng thì dùng một câu
                 # repair deterministic hẹp, không bịa thêm fact mới.
-                repair_retry = host.ai_model_router.generate_public_reply(
+                repair_retry = _generate_public_reply(
+                    host.ai_model_router,
+                    teaching_directive=teaching_directive,
                     chat_history=history,
                     user_text=user_message,
                     memory_context=compiled_context.memory,
@@ -2165,7 +2380,9 @@ class AIChatOrchestrator:
                 else:
                     # Với claim perception/action thật sự, vẫn cho writer một lần
                     # sửa wording để không làm yếu grounding boundary.
-                    retry_payload = host.ai_model_router.generate_public_reply(
+                    retry_payload = _generate_public_reply(
+                        host.ai_model_router,
+                        teaching_directive=teaching_directive,
                         chat_history=history,
                         user_text=user_message,
                         memory_context=compiled_context.memory,
@@ -2446,6 +2663,18 @@ class AIChatOrchestrator:
             assistant_meta_extra=assistant_discourse_meta,
             idempotency_key=_chat_commit_idempotency_key(host, turn_id),
         )
+        # The teaching controller advances only after the public surface has
+        # committed. Keep this ahead of every follow-on continuation receipt.
+        _commit_pedagogical_receipt(
+            pedagogical_runtime,
+            teaching_directive,
+            public_text=public_text,
+            turn_id=turn_id,
+            decision=decision,
+            payload=payload if isinstance(payload, Mapping) else None,
+            assistant_meta=assistant_meta,
+            now=time.time(),
+        )
         # Foreground chat consumed this exact user event. Keep any later
         # associative material private instead of letting it become a second reply.
         # This MUST live in the chat scope where user_text/turn_id actually exist.
@@ -2650,6 +2879,11 @@ class AIChatOrchestrator:
                     and not bool(getattr(clock, "audio_active", False))
                 )
                 if playback_already_done:
+                    _notify_pedagogical_audio_finished(
+                        host,
+                        audio_finished_at,
+                        source_turn_id=turn_id,
+                    )
                     if social_continuation_runtime is not None:
                         try:
                             social_continuation_runtime.notify_audio_finished(
