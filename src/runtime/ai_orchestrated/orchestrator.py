@@ -30,7 +30,7 @@ from runtime.reply_obligation import enforce_reply_obligation
 from runtime.cognition.normalization import normalize_vi
 from runtime.subject_initiative_runtime import build_initiative_runtime_context
 from runtime.observability import ensure_observability
-from runtime.pedagogical_contracts import TeachingDirective, TeachingReceipt
+from runtime.pedagogical_contracts import TeachingDirective, TeachingReceipt, normalize_episode
 from runtime.pedagogical_controller import (
     infer_user_evidence,
     select_next_action,
@@ -601,9 +601,22 @@ def _prepare_pedagogical_turn(
     if isinstance(active, Mapping) and status not in {"completed", "abandoned", "expired", "failed"}:
         try:
             bounded_turn = _bounded_pedagogical_turn(user_text)
+            episode = normalize_episode(active)
+            current_concept = next(
+                (
+                    concept
+                    for concept in (episode.concepts if episode is not None else ())
+                    if concept.concept_id == episode.comprehension.current_concept_id
+                ),
+                None,
+            )
             result = runtime.observe_user_turn(
                 bounded_turn,
-                evidence=infer_user_evidence(bounded_turn, explicit_evidence=evidence),
+                evidence=infer_user_evidence(
+                    bounded_turn,
+                    explicit_evidence=evidence,
+                    current_concept=current_concept,
+                ),
                 now=now,
             )
         except Exception:

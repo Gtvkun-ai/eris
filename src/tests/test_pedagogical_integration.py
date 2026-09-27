@@ -303,6 +303,11 @@ def test_active_episode_observation_receives_only_a_bounded_current_turn(
 
 
 def test_inferred_user_evidence_is_conservative_and_explicitly_overridable() -> None:
+    current_concept = TeachingConcept(
+        "core-7",
+        "Core 7 means escaping stuckness through a new approach.",
+        "Explain how Core 7 escapes stuckness.",
+    )
     assert infer_user_evidence("ok") == ()
     assert infer_user_evidence("In this example, I would use the distinction to choose a new approach.") == (
         "user_application",
@@ -313,9 +318,16 @@ def test_inferred_user_evidence_is_conservative_and_explicitly_overridable() -> 
     assert infer_user_evidence("Let's change the topic and discuss something else.") == ("topic_change",)
     assert infer_user_evidence("Why does that make the distinction important?") == ("focused_question",)
     assert infer_user_evidence("Core 7 just means talking a lot.") == ("misconception_assertion",)
-    assert infer_user_evidence("In other words, the distinction changes the next action.") == (
+    assert infer_user_evidence(
+        "In other words, Core 7 escapes stuckness by choosing a new approach.",
+        current_concept=current_concept,
+    ) == (
         "user_paraphrase",
     )
+    assert infer_user_evidence(
+        "In other words, planets orbit stars.",
+        current_concept=current_concept,
+    ) == ()
     assert infer_user_evidence("ok", explicit_evidence=("user_paraphrase",)) == ("user_paraphrase",)
     assert infer_user_evidence(
         "ignored",
@@ -369,6 +381,50 @@ def test_active_hedged_illustration_does_not_award_application_mastery(
     snapshot = runtime.snapshot(now=101.0)["active_episode"]
     assert snapshot["comprehension"]["estimated_mastery"] == 0.0
     assert snapshot["comprehension"]["current_concept_id"] == "concept-0"
+
+
+def test_active_phrase_shaped_but_unrelated_paraphrase_does_not_advance(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(1000.0))
+    assert runtime.start_episode(_teaching_episode(status="ready"))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="In other words, planets orbit stars.",
+        turn_id="turn-unrelated-paraphrase",
+        recent_history=(),
+        now=1001.0,
+    )
+
+    snapshot = runtime.snapshot(now=1001.0)["active_episode"]
+    assert snapshot["comprehension"]["estimated_mastery"] == 0.0
+    assert snapshot["comprehension"]["current_concept_id"] == "first"
+
+
+def test_active_concept_linked_paraphrase_advances_current_concept(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _durable_pedagogy(tmp_path, _Clock(1000.0))
+    assert runtime.start_episode(_teaching_episode(status="ready"))
+    host = SimpleNamespace(pedagogical_controller_enabled=True)
+    monkeypatch.setattr(orchestrator, "ensure_pedagogical_runtime", lambda _host: runtime)
+
+    orchestrator._prepare_pedagogical_turn(
+        host,
+        user_text="In other words, the first concept is what I need to understand first.",
+        turn_id="turn-linked-paraphrase",
+        recent_history=(),
+        now=1001.0,
+    )
+
+    snapshot = runtime.snapshot(now=1001.0)["active_episode"]
+    assert snapshot["comprehension"]["estimated_mastery"] > 0.0
+    assert snapshot["comprehension"]["current_concept_id"] == "second"
 
 
 def test_active_real_correction_repairs_and_matching_receipt_commits(
@@ -597,7 +653,7 @@ def test_user_turn_wins_against_due_autonomous_teaching_chunk(tmp_path: Any) -> 
     assert runtime.snapshot(now=1002.0)["claimed"] is False
 
 
-def test_foreground_audio_finished_waits_for_user_without_repeating_chunk(tmp_path: Any) -> None:
+def test_foreground_audio_finished_anchors_claimable_dwell_without_repeating_chunk(tmp_path: Any) -> None:
     clock = _Clock()
     runtime = _durable_pedagogy(tmp_path, clock)
     assert runtime.start_episode(_teaching_episode(status="ready"))
@@ -632,11 +688,12 @@ def test_foreground_audio_finished_waits_for_user_without_repeating_chunk(tmp_pa
     )
 
     assert early is None
-    assert later is None
+    assert later is not None
+    assert later.chunk_id != initial.chunk_id
     assert duplicate is None
     snapshot = runtime.snapshot(now=1003.1)
-    assert snapshot["active_episode"]["status"] == "waiting_user"
-    assert snapshot["claimed"] is False
+    assert snapshot["active_episode"]["status"] == "dwelling"
+    assert snapshot["claimed"] is True
 
 
 def test_successful_autonomous_surface_commits_one_receipt(tmp_path: Any) -> None:
@@ -718,7 +775,7 @@ def test_autonomous_failure_releases_claim_without_receipt(
     assert directive is not None
 
     assert self_turn_pipeline._release_pedagogical_claim(
-        runtime, reason=reason, now=1001.1,
+        runtime, reason=reason, now=1001.1, claim_token=directive.claim_token,
     )
     snapshot = runtime.snapshot(now=1001.1)
     assert snapshot["claimed"] is False
@@ -752,7 +809,7 @@ def test_due_directive_routes_through_initiative_before_autonomous_surface(
 ) -> None:
     directive = TeachingDirective(
         "episode", 2, "chunk", "goal", "objective", "claim", "contrast",
-        "allowed", 2, 4, True, True, True,
+        "allowed", 2, 4, True, True, True, "claim:token",
     )
     runtime = SimpleNamespace()
     initiative_calls: list[Any] = []
@@ -815,7 +872,7 @@ def test_due_directive_routes_through_initiative_before_autonomous_surface(
     assert len(initiative_calls) == 1
     candidate = initiative_calls[0][1]
     assert candidate.source == "pedagogical_runtime"
-    assert candidate.claim_token == "episode:2:chunk"
+    assert candidate.claim_token == "claim:token"
     assert surface_calls[0]["teaching_directive"] is directive
     assert surface_calls[0]["pedagogical_runtime"] is runtime
 

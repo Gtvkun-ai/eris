@@ -113,6 +113,19 @@ def test_claim_is_leased_and_cannot_be_duplicated_while_live(tmp_path):
     assert runtime.snapshot(now=1001.1)["claimed"] is True
 
 
+def test_stale_worker_token_cannot_stage_or_release_reclaimed_chunk(tmp_path):
+    runtime = _runtime(tmp_path)
+    assert runtime.start_episode(_episode(status="dwelling"))
+    first = runtime.claim_due(worker_id="worker-a", now=1001.0, lease_seconds=0.5)
+    assert first is not None and first.claim_token
+    second = runtime.claim_due(worker_id="worker-b", now=1001.6, lease_seconds=5.0)
+    assert second is not None and second.claim_token != first.claim_token
+    receipt = _receipt(episode_id=second.episode_id, revision=second.plan_revision, chunk_id=second.chunk_id)
+    assert not runtime.stage_receipt(receipt, now=1001.7, claim_token=first.claim_token)
+    assert not runtime.release_claim("surface_failed", now=1001.7, claim_token=first.claim_token)
+    assert runtime.stage_receipt(receipt, now=1001.7, claim_token=second.claim_token)
+
+
 def test_claimed_dwell_directive_commits_once_and_advances_episode(tmp_path):
     runtime = _runtime(tmp_path)
     assert runtime.start_episode(_episode(status="dwelling"))
@@ -124,8 +137,8 @@ def test_claimed_dwell_directive_commits_once_and_advances_episode(tmp_path):
         chunk_id=directive.chunk_id,
     )
     assert not runtime.commit_receipt(_receipt(chunk_id="stale"), now=1001.05)
-    assert runtime.commit_receipt(receipt, now=1001.1)
-    assert not runtime.commit_receipt(receipt, now=1001.2)
+    assert runtime.commit_receipt(receipt, now=1001.1, claim_token=directive.claim_token)
+    assert not runtime.commit_receipt(receipt, now=1001.2, claim_token=directive.claim_token)
     snapshot = runtime.snapshot(now=1001.2)
     assert snapshot["active_episode"]["status"] == "speaking"
     assert snapshot["active_episode"]["autonomous_chunks_used"] == 1
@@ -144,19 +157,23 @@ def test_receipt_is_idempotent_and_mismatched_identity_is_rejected(tmp_path):
     assert snapshot["active_episode"]["autonomous_chunks_used"] == 0
 
 
-def test_foreground_audio_completion_waits_for_user_without_rearming_same_chunk(tmp_path):
+def test_foreground_audio_completion_enters_claimable_dwell_without_repeating_chunk(tmp_path):
     clock = _Clock()
     runtime = _runtime(tmp_path, clock)
     assert runtime.start_episode(_episode())
+    initial_chunk_id = _episode().pending_chunk.chunk_id
     assert runtime.commit_receipt(_receipt())
     runtime.notify_audio_finished(1010.0, source_turn_id="turn:1")
-    snapshot = runtime.snapshot(now=1010.0)
-    assert snapshot["active_episode"]["status"] == "waiting_user"
-    assert snapshot["dwell_anchor_at"] == 0.0
-    assert runtime.claim_due(worker_id="worker", now=1011.0) is None
+    early = runtime.snapshot(now=1010.0)
+    assert early["active_episode"]["status"] == "dwelling"
+    assert early["dwell_anchor_at"] == 1010.0
+    assert runtime.claim_due(worker_id="worker", now=1010.5) is None
+    directive = runtime.claim_due(worker_id="worker", now=1011.0)
+    assert directive is not None
+    assert directive.chunk_id != initial_chunk_id
 
 
-def test_runtime_limits_clamp_dwell_and_foreground_audio_does_not_repeat_chunk(tmp_path):
+def test_runtime_limits_clamp_dwell_and_foreground_audio_claims_next_chunk_once(tmp_path):
     clock = _Clock()
     limits = PedagogicalRuntimeLimits(minimum_dwell_seconds=2.0, maximum_dwell_seconds=3.0)
     runtime = PedagogicalRuntime(
@@ -166,12 +183,16 @@ def test_runtime_limits_clamp_dwell_and_foreground_audio_does_not_repeat_chunk(t
         limits=limits,
     )
     assert runtime.start_episode(_episode())
+    initial_chunk_id = _episode().pending_chunk.chunk_id
     assert runtime.commit_receipt(_receipt(), now=1000.5)
     runtime.notify_audio_finished(1010.0, source_turn_id="turn:1")
     snapshot = runtime.snapshot(now=1010.0)
-    assert snapshot["active_episode"]["status"] == "waiting_user"
+    assert snapshot["active_episode"]["status"] == "dwelling"
     assert snapshot["active_episode"]["autonomous_chunks_used"] == 0
-    assert runtime.claim_due(worker_id="worker", now=1012.0) is None
+    assert runtime.claim_due(worker_id="worker", now=1011.9) is None
+    directive = runtime.claim_due(worker_id="worker", now=1012.0)
+    assert directive is not None
+    assert directive.chunk_id != initial_chunk_id
 
 
 def test_runtime_loads_registered_pedagogy_limits(monkeypatch):
@@ -240,7 +261,7 @@ def test_audio_finish_uses_runtime_expiry_limit_for_active_episode(tmp_path):
     assert runtime.start_episode(episode)
     assert runtime.commit_receipt(_receipt(), now=1001.0)
     runtime.notify_audio_finished(2000.0, source_turn_id="turn:1")
-    assert runtime.snapshot(now=2000.0)["active_episode"]["status"] == "waiting_user"
+    assert runtime.snapshot(now=2000.0)["active_episode"]["status"] == "dwelling"
 
 
 def test_claimed_autonomous_receipt_consumes_once_and_does_not_rearm_same_chunk(tmp_path):
@@ -249,7 +270,7 @@ def test_claimed_autonomous_receipt_consumes_once_and_does_not_rearm_same_chunk(
     directive = runtime.claim_due(worker_id="worker", now=1001.0)
     assert directive is not None
     receipt = _receipt(episode_id=directive.episode_id, revision=directive.plan_revision, chunk_id=directive.chunk_id)
-    assert runtime.commit_receipt(receipt, now=1001.1)
+    assert runtime.commit_receipt(receipt, now=1001.1, claim_token=directive.claim_token)
     runtime.notify_audio_finished(1002.0, source_turn_id="turn:1")
     snapshot = runtime.snapshot(now=1002.0)
     assert snapshot["active_episode"]["status"] == "waiting_user"

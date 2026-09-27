@@ -7,6 +7,7 @@ from typing import Literal
 from runtime.cognition.normalization import normalize_vi
 from runtime.pedagogical_contracts import (
     ComprehensionState,
+    TeachingConcept,
     TeachingChunk,
     TeachingDirective,
     TeachingEpisode,
@@ -41,6 +42,11 @@ _KEYED_MISCONCEPTION_PREFIXES = (
     "misconception_assertion:",
     "candidate_misconception:",
 )
+_SEMANTIC_STOPWORDS = frozenset({
+    "about", "after", "also", "and", "are", "because", "before", "but", "by",
+    "does", "for", "from", "have", "how", "into", "its", "need", "other", "that",
+    "the", "their", "then", "this", "through", "what", "when", "which", "with", "would",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,10 +166,27 @@ def _is_acknowledgement(user_text: str) -> bool:
     return not canonical or canonical in ACKNOWLEDGEMENTS
 
 
+def _semantic_terms(value: str) -> frozenset[str]:
+    return frozenset(
+        word
+        for word in normalize_vi(value)[:1200].split()
+        if len(word) >= 3 and word not in _SEMANTIC_STOPWORDS
+    )
+
+
+def _is_concept_linked_paraphrase(user_text: str, current_concept: TeachingConcept | None) -> bool:
+    if not isinstance(current_concept, TeachingConcept):
+        return False
+    concept_terms = _semantic_terms(f"{current_concept.description} {current_concept.objective}")
+    user_terms = _semantic_terms(user_text)
+    return len(concept_terms & user_terms) >= 2
+
+
 def infer_user_evidence(
     user_text: str,
     *,
     explicit_evidence: tuple[str, ...] | None = None,
+    current_concept: TeachingConcept | None = None,
 ) -> tuple[str, ...]:
     """Infer only high-confidence controller evidence from one bounded user turn."""
     if explicit_evidence is not None:
@@ -219,7 +242,7 @@ def infer_user_evidence(
         "in other words", "what i understand", "so it means", "that means",
         "nghia la", "noi cach khac", "minh hieu la", "tuc la",
     )):
-        return ("user_paraphrase",)
+        return ("user_paraphrase",) if _is_concept_linked_paraphrase(user_text, current_concept) else ()
     return ()
 
 
@@ -357,11 +380,20 @@ def note_public_commit(
         or receipt.chunk_id != chunk.chunk_id
     ):
         return episode
+    next_revision = episode.plan_revision + 1
+    next_episode = replace(episode, plan_revision=next_revision)
+    next_chunk = _chunk_for(next_episode, episode.comprehension.current_concept_id)
     if episode.status == "repairing":
-        return replace(episode, status="speaking", repair_attempts=episode.repair_attempts + 1)
+        return replace(
+            next_episode,
+            status="speaking",
+            pending_chunk=next_chunk,
+            repair_attempts=episode.repair_attempts + 1,
+        )
     return replace(
-        episode,
+        next_episode,
         status="speaking",
+        pending_chunk=next_chunk,
         autonomous_chunks_used=episode.autonomous_chunks_used + int(bool(autonomous)),
     )
 

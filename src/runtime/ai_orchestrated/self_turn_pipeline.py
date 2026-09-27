@@ -118,6 +118,7 @@ def _claim_due_pedagogical_continuation(
             runtime,
             reason="invalid_autonomous_directive",
             now=now,
+            claim_token=directive.claim_token,
         )
         return runtime, None
     return runtime, directive
@@ -129,6 +130,7 @@ def _release_pedagogical_claim(
     reason: str,
     now: float | None = None,
     delay_seconds: float = 0.0,
+    claim_token: str = "",
 ) -> bool:
     release = getattr(runtime, "release_claim", None)
     if not callable(release):
@@ -139,6 +141,7 @@ def _release_pedagogical_claim(
                 str(reason or "autonomous_attempt_failed")[:120],
                 now=now,
                 delay_seconds=delay_seconds,
+                claim_token=str(claim_token or "")[:120],
             )
         )
     except Exception:
@@ -173,7 +176,7 @@ def _stage_pedagogical_autonomous_receipt(
     if not callable(stage):
         return False
     try:
-        return bool(stage(receipt, now=now))
+        return bool(stage(receipt, now=now, claim_token=directive.claim_token))
     except Exception:
         return False
 
@@ -2849,9 +2852,7 @@ class SelfTurnPipeline:
         if directive is None:
             return None
 
-        claim_key = ":".join(
-            (directive.episode_id, str(directive.plan_revision), directive.chunk_id)
-        )
+        claim_key = directive.claim_token
         from .social_candidate import SocialSpeechCandidate
 
         candidate = SocialSpeechCandidate(
@@ -2883,13 +2884,13 @@ class SelfTurnPipeline:
         )
         initiative = getattr(host, "ai_initiative_controller", None)
         if initiative is None:
-            _release_pedagogical_claim(runtime, reason="initiative_controller_unavailable", now=now)
+            _release_pedagogical_claim(runtime, reason="initiative_controller_unavailable", now=now, claim_token=directive.claim_token)
             return True
         try:
             decision = initiative.decide(blackboard, candidate)
         except Exception as exc:
             host.logger.debug("[pedagogy] initiative gate failed: %s", exc)
-            _release_pedagogical_claim(runtime, reason="initiative_gate_failed", now=now)
+            _release_pedagogical_claim(runtime, reason="initiative_gate_failed", now=now, claim_token=directive.claim_token)
             return True
         if not bool(getattr(decision, "should_speak", False)):
             _release_pedagogical_claim(
@@ -2897,6 +2898,7 @@ class SelfTurnPipeline:
                 reason=str(getattr(decision, "reason", "initiative_deferred") or "initiative_deferred"),
                 now=now,
                 delay_seconds=0.5,
+                claim_token=directive.claim_token,
             )
             return True
         teaching_plan = replace(
@@ -2940,7 +2942,7 @@ class SelfTurnPipeline:
             speech_intent=teaching_intent,
         )
         if host._process_pending_user_input():
-            _release_pedagogical_claim(runtime, reason="user_input_preempted", now=now)
+            _release_pedagogical_claim(runtime, reason="user_input_preempted", now=now, claim_token=directive.claim_token)
             return bool(getattr(host, "running", True))
 
         speech_intent = getattr(decision, "speech_intent", None)
@@ -2955,6 +2957,7 @@ class SelfTurnPipeline:
                     runtime,
                     reason=str(getattr(preflight, "reason", "grounding_preflight_rejected")),
                     now=now,
+                    claim_token=directive.claim_token,
                 )
                 return True
 

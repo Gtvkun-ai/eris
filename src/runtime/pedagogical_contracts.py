@@ -232,9 +232,10 @@ class TeachingDirective:
     allow_question: bool
     stop_after_chunk: bool
     allow_autonomous_resume: bool
+    claim_token: str = ""
 
     def __post_init__(self) -> None:
-        for name in ("episode_id", "chunk_id"):
+        for name in ("episode_id", "chunk_id", "claim_token"):
             object.__setattr__(self, name, _text(getattr(self, name), MAX_ID))
         for name in ("global_goal", "current_objective", "claim", "contrast", "example_policy"):
             object.__setattr__(self, name, _text(getattr(self, name)))

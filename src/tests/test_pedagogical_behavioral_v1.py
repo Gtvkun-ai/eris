@@ -237,8 +237,8 @@ def test_duplicate_or_stale_receipt_is_rejected_while_pending_chunk_remains(tmp_
     assert after_stale["claimed"] is True
 
     accepted = TeachingReceipt(directive.episode_id, directive.plan_revision, directive.chunk_id, turn_id="accepted")
-    assert runtime.commit_receipt(accepted, now=1001.2) is True
-    assert runtime.commit_receipt(accepted, now=1001.3) is False
+    assert runtime.commit_receipt(accepted, now=1001.2, claim_token=directive.claim_token) is True
+    assert runtime.commit_receipt(accepted, now=1001.3, claim_token=directive.claim_token) is False
     after_duplicate = runtime.snapshot(now=1001.3)
-    assert after_duplicate["active_episode"]["pending_chunk"]["chunk_id"] == directive.chunk_id
+    assert after_duplicate["active_episode"]["pending_chunk"]["chunk_id"] != directive.chunk_id
     assert after_duplicate["active_episode"]["status"] == "speaking"

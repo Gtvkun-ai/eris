@@ -122,6 +122,16 @@ def _counter(value: Any) -> int:
         return 0
 
 
+def _boolean(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    if isinstance(value, (int, float)):
+        return value == 1
+    return False
+
+
 def _empty_state() -> dict[str, Any]:
     return {
         "schema": PEDAGOGY_RUNTIME_SCHEMA,
@@ -134,6 +144,7 @@ def _empty_state() -> dict[str, Any]:
         "claim_token": "",
         "pending_receipt": None,
         "committed_turn_id": "",
+        "last_commit_autonomous": False,
         "cancel_reason": "",
     }
 
@@ -156,6 +167,7 @@ def _state_from_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
             )
             if candidate.episode_id and candidate.chunk_id and candidate.turn_id:
                 pending_receipt = candidate.to_dict()
+                pending_receipt["claim_token"] = _identifier(receipt_data.get("claim_token"))
         except (TypeError, ValueError):
             pending_receipt = None
     state = _empty_state()
@@ -169,6 +181,7 @@ def _state_from_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
         claim_token=_identifier(data.get("claim_token")),
         pending_receipt=pending_receipt,
         committed_turn_id=_identifier(data.get("committed_turn_id")),
+        last_commit_autonomous=_boolean(data.get("last_commit_autonomous", False)),
         cancel_reason=_identifier(data.get("cancel_reason")),
     )
     return state
@@ -324,14 +337,15 @@ class PedagogicalRuntime:
             self._state["claim_owner"] = owner
             self._state["claim_until"] = current + lease
             self._state["claim_token"] = _identifier(
-                f"{episode.episode_id}:{episode.plan_revision}:{episode.pending_chunk.chunk_id}:{owner}"
+                f"{episode.episode_id}:{episode.plan_revision}:{episode.pending_chunk.chunk_id}:{owner}:{int(current * 1000)}"
             )
+            directive = replace(directive, claim_token=self._state["claim_token"])
             self._stage_locked()
             self._arm_timer_locked()
             self._emit("directive_claimed", episode, action=action.kind, reason=action.reason)
             return directive
 
-    def commit_receipt(self, receipt: TeachingReceipt, *, now: float | None = None) -> bool:
+    def commit_receipt(self, receipt: TeachingReceipt, *, now: float | None = None, claim_token: str = "") -> bool:
         if not isinstance(receipt, TeachingReceipt) or not receipt.successful:
             return False
         current = self._now(now)
@@ -354,19 +368,22 @@ class PedagogicalRuntime:
                     # public attempt. Convert only this transient projection to
                     # the controller's receipt-valid state; the stored episode
                     # remains dwelling until a successful receipt consumes it.
-                    if not self._state["claim_owner"] or self._state["claim_until"] <= current:
+                    if (not self._state["claim_owner"] or self._state["claim_until"] <= current
+                            or _identifier(claim_token) != self._state["claim_token"]):
                         return False
                     receipt_episode = replace(episode, status="ready")
+                autonomous_commit = episode.status == "dwelling"
                 updated = note_public_commit(
                     receipt_episode,
                     receipt,
-                    autonomous=episode.status == "dwelling",
+                    autonomous=autonomous_commit,
                 )
                 if updated == receipt_episode:
                     return False
                 self._set_episode_locked(updated)
                 self._clear_dwell_locked(reason="public_commit")
                 self._state["committed_turn_id"] = _identifier(receipt.turn_id)
+                self._state["last_commit_autonomous"] = autonomous_commit
                 self._stage_locked()
                 self._arm_timer_locked()
                 committed = True
@@ -386,6 +403,7 @@ class PedagogicalRuntime:
         *,
         now: float | None = None,
         delay_seconds: float = 0.0,
+        claim_token: str = "",
     ) -> bool:
         """Release a live autonomous lease without consuming its teaching chunk."""
         current = self._now(now)
@@ -401,6 +419,7 @@ class PedagogicalRuntime:
                 or episode.status != "dwelling"
                 or episode.pending_chunk is None
                 or not self._state["claim_owner"]
+                or _identifier(claim_token) != self._state["claim_token"]
             ):
                 return False
             self._state["claim_owner"] = ""
@@ -414,7 +433,7 @@ class PedagogicalRuntime:
             self._emit("claim_released", episode, action="release", reason=reason)
             return True
 
-    def stage_receipt(self, receipt: TeachingReceipt, *, now: float | None = None) -> bool:
+    def stage_receipt(self, receipt: TeachingReceipt, *, now: float | None = None, claim_token: str = "") -> bool:
         """Durably bind a public attempt to its live claim until TTS settles."""
         if not isinstance(receipt, TeachingReceipt) or not receipt.successful or not receipt.turn_id:
             return False
@@ -432,12 +451,14 @@ class PedagogicalRuntime:
                 or receipt.chunk_id != chunk.chunk_id
                 or not self._state["claim_owner"]
                 or self._state["claim_until"] <= current
+                or _identifier(claim_token) != self._state["claim_token"]
             ):
                 return False
             existing = self._state.get("pending_receipt")
             if isinstance(existing, Mapping):
-                return existing == receipt.to_dict()
+                return {name: existing.get(name) for name in receipt.__dataclass_fields__} == receipt.to_dict()
             self._state["pending_receipt"] = receipt.to_dict()
+            self._state["pending_receipt"]["claim_token"] = _identifier(claim_token)
             self._state["claim_until"] = max(self._state["claim_until"], current + 120.0)
             self._stage_locked()
             self._arm_timer_locked()
@@ -461,6 +482,7 @@ class PedagogicalRuntime:
             raw = self._state.get("pending_receipt")
             if not isinstance(raw, Mapping):
                 return False
+            staged_claim_token = _identifier(raw.get("claim_token"))
             try:
                 receipt = TeachingReceipt(
                     episode_id=raw.get("episode_id", ""),
@@ -486,7 +508,7 @@ class PedagogicalRuntime:
                 self._emit("delivery_failed", episode, action="release", reason="delivery_failed")
                 return True
 
-        if receipt is None or not self.commit_receipt(receipt, now=current):
+        if receipt is None or not self.commit_receipt(receipt, now=current, claim_token=staged_claim_token):
             return False
         self.notify_audio_finished(current, source_turn_id=receipt.turn_id)
         return True
@@ -505,8 +527,19 @@ class PedagogicalRuntime:
                 limits=self._limits.controller_limits,
             )
             if updated != episode:
+                if (
+                    episode.status == "speaking"
+                    and updated.status == "waiting_user"
+                    and episode.pending_chunk is not None
+                    and not bool(self._state.get("last_commit_autonomous", False))
+                ):
+                    updated = replace(updated, status="dwelling")
                 self._set_episode_locked(updated)
-                self._clear_dwell_locked(reason="audio_finished")
+                if updated.status == "dwelling":
+                    self._set_dwell_locked(current)
+                    self._state["last_commit_autonomous"] = False
+                else:
+                    self._clear_dwell_locked(reason="audio_finished")
                 self._stage_locked()
                 self._arm_timer_locked()
                 self._emit("audio_finished", updated, action="wait", reason="audio_finished")
