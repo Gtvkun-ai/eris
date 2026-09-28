@@ -173,13 +173,22 @@ class TurnSpeechBudget:
     hard_max_words: int = 180
     max_beats: int = 2
     target_seconds: float = 24.0
+    hard_max_seconds: float = 36.0
 
     def normalized(self) -> "TurnSpeechBudget":
         target = max(20, min(900, int(self.target_words)))
         hard = max(target, min(1800, int(self.hard_max_words)))
         beats = max(1, min(8, int(self.max_beats)))
         seconds = max(5.0, min(180.0, float(self.target_seconds)))
-        return replace(self, target_words=target, hard_max_words=hard, max_beats=beats, target_seconds=seconds)
+        hard_seconds = max(seconds, min(240.0, float(self.hard_max_seconds)))
+        return replace(
+            self,
+            target_words=target,
+            hard_max_words=hard,
+            max_beats=beats,
+            target_seconds=seconds,
+            hard_max_seconds=hard_seconds,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         item = self.normalized()
@@ -188,6 +197,7 @@ class TurnSpeechBudget:
             "hard_max_words": item.hard_max_words,
             "max_beats": item.max_beats,
             "target_seconds": round(item.target_seconds, 1),
+            "hard_max_seconds": round(item.hard_max_seconds, 1),
         }
 
     @classmethod
@@ -199,6 +209,10 @@ class TurnSpeechBudget:
                 hard_max_words=int(data.get("hard_max_words", 180) or 180),
                 max_beats=int(data.get("max_beats", 2) or 2),
                 target_seconds=float(data.get("target_seconds", 24.0) or 24.0),
+                hard_max_seconds=float(
+                    data.get("hard_max_seconds", float(data.get("target_seconds", 24.0) or 24.0) * 1.5)
+                    or 36.0
+                ),
             ).normalized()
         except (TypeError, ValueError):
             return cls()

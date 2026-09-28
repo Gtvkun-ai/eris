@@ -18,10 +18,10 @@ from .contracts import (
     TurnDecision,
 )
 from .director import ConversationDirector
-from .reasoner import RuntimeModelTurnReasoner, TurnReasoner
+from .reasoner import DeterministicFallbackTurnReasoner, RuntimeModelTurnReasoner, TurnReasoner
 from .pacing import DisclosureArcLedger, DisclosureArcState
 from .tutor_role import TutorRoleContribution, TutorRoleCoordinator
-from .runtime import TurnAgentRuntime, ensure_agent_turn_runtime
+from .runtime import TurnAgentRuntime, build_degraded_turn_result, ensure_agent_turn_runtime
 
 __all__ = [
     "AgentTurnResult",
@@ -32,6 +32,7 @@ __all__ = [
     "CompletionVerdict",
     "ConversationDirector",
     "ContinuationPlan",
+    "DeterministicFallbackTurnReasoner",
     "DialogueBeat",
     "DisclosureArcLedger",
     "DisclosureArcState",
@@ -46,6 +47,7 @@ __all__ = [
     "TurnSpeechBudget",
     "TurnAction",
     "TurnAgentRuntime",
+    "build_degraded_turn_result",
     "TurnDecision",
     "TurnReasoner",
     "ensure_agent_turn_runtime",

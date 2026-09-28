@@ -19,6 +19,7 @@ from .contracts import (
     DiscoursePlan,
     TurnSpeechBudget,
 )
+from .speech import estimate_beat, words_for_seconds
 
 
 _WORD_RE = re.compile(r"[^\wÀ-ỹ]+", re.UNICODE)
@@ -90,6 +91,7 @@ class ConversationDirector:
         *,
         voice_mode: bool,
         explicit_exhaustive_request: bool = False,
+        tts_speed: float = 1.0,
     ) -> DiscoursePlan:
         """Cắt public disclosure theo *nhịp người nghe*, không theo token budget.
 
@@ -106,6 +108,7 @@ class ConversationDirector:
                 hard_max_words=1200 if not voice_mode else 420,
                 max_beats=6 if not voice_mode else 4,
                 target_seconds=150.0 if not voice_mode else 65.0,
+                hard_max_seconds=210.0 if not voice_mode else 90.0,
             )
         elif disclosure_mode == DisclosureMode.DEEP_DIALOGUE:
             default_budget = TurnSpeechBudget(
@@ -113,6 +116,7 @@ class ConversationDirector:
                 hard_max_words=420 if not voice_mode else 180,
                 max_beats=3 if not voice_mode else 2,
                 target_seconds=65.0 if not voice_mode else 28.0,
+                hard_max_seconds=90.0 if not voice_mode else 40.0,
             )
         else:
             default_budget = TurnSpeechBudget(
@@ -120,22 +124,38 @@ class ConversationDirector:
                 hard_max_words=240 if not voice_mode else 120,
                 max_beats=2 if not voice_mode else 1,
                 target_seconds=36.0 if not voice_mode else 20.0,
+                hard_max_seconds=52.0 if not voice_mode else 30.0,
             )
 
         # Model được phép đề xuất ngắn hơn mặc định. Nó không được phép tự nâng
         # hard cap vô hạn, đặc biệt trong voice mode.
+        target_seconds = min(proposed.target_seconds, default_budget.target_seconds)
+        hard_seconds = min(proposed.hard_max_seconds, default_budget.hard_max_seconds)
+        # Trong voice mode, word cap phải đi theo *thời gian nghe* và tốc độ TTS.
+        # Model không được nâng cap bằng cách trả target_words lớn.
+        time_word_target = words_for_seconds(target_seconds, speed=tts_speed)
+        time_word_hard = words_for_seconds(hard_seconds, speed=tts_speed)
         budget = TurnSpeechBudget(
-            target_words=min(proposed.target_words, default_budget.target_words),
-            hard_max_words=min(proposed.hard_max_words, default_budget.hard_max_words),
+            target_words=min(proposed.target_words, default_budget.target_words, time_word_target) if voice_mode else min(proposed.target_words, default_budget.target_words),
+            hard_max_words=min(proposed.hard_max_words, default_budget.hard_max_words, time_word_hard) if voice_mode else min(proposed.hard_max_words, default_budget.hard_max_words),
             max_beats=min(proposed.max_beats, default_budget.max_beats),
-            target_seconds=min(proposed.target_seconds, default_budget.target_seconds),
+            target_seconds=target_seconds,
+            hard_max_seconds=hard_seconds,
         ).normalized()
 
         visible: list[DialogueBeat] = []
         held: list[DialogueBeat] = []
+        estimated_seconds = 0.0
         for beat in plan.beats:
-            if len(visible) < budget.max_beats:
+            beat_seconds = estimate_beat(beat, speed=tts_speed).seconds if voice_mode else 0.0
+            would_exceed_time = bool(
+                voice_mode
+                and visible
+                and estimated_seconds + beat_seconds > budget.target_seconds
+            )
+            if len(visible) < budget.max_beats and not would_exceed_time:
                 visible.append(beat)
+                estimated_seconds += beat_seconds
             else:
                 held.append(beat)
 
@@ -151,6 +171,7 @@ class ConversationDirector:
                 *plan.style_notes,
                 f"PUBLIC WORD BUDGET: aim about {budget.target_words} words; hard stop at {budget.hard_max_words} words.",
                 f"PUBLIC BEAT BUDGET: at most {budget.max_beats} dialogue beat(s) this turn.",
+                f"PUBLIC SPEECH TIME: target about {budget.target_seconds:.0f}s; hard stop about {budget.hard_max_seconds:.0f}s at TTS speed {float(tts_speed):.2f}x.",
                 "Khi đủ budget, dừng ở breakpoint tự nhiên; không cố hoàn thành toàn bộ analysis map.",
             ),
             12,

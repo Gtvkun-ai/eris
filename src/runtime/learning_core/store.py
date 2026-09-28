@@ -158,6 +158,45 @@ class LearningStore:
                 self._conn = None
 
     # ------------------------------------------------------------------
+    # Small runtime metadata
+    # ------------------------------------------------------------------
+
+    def set_meta(self, key: str, value: Any) -> None:
+        """Persist một JSON value nhỏ trong ``schema_meta``.
+
+        Dùng cho con trỏ runtime như active_path/active_kp. Không dùng bảng này
+        để lưu evidence hoặc mastery; hai loại dữ liệu đó có bảng authoritative riêng.
+        """
+        meta_key = str(key or "").strip()[:120]
+        if not meta_key:
+            raise ValueError("meta key is required")
+        payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            self._db().execute(
+                """
+                INSERT INTO schema_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (meta_key, payload),
+            )
+            self._db().commit()
+
+    def get_meta(self, key: str, default: Any = None) -> Any:
+        meta_key = str(key or "").strip()[:120]
+        if not meta_key:
+            return default
+        with self._lock:
+            row = self._db().execute(
+                "SELECT value FROM schema_meta WHERE key = ?", (meta_key,)
+            ).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return default
+
+    # ------------------------------------------------------------------
     # LearningPath CRUD
     # ------------------------------------------------------------------
 

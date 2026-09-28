@@ -1799,44 +1799,51 @@ class AIChatOrchestrator:
         # loop; chúng không sở hữu một vòng đời chat riêng. Loop này KHÔNG public
         # chain-of-thought. Nó chỉ commit typed Cognitive/Execution/Discourse plan.
         agent_turn_result = None
+        # Voice state/speed được resolve một lần và dùng chung cho cả planning lẫn
+        # post-writer hard guard. Như vậy planner không nghĩ 20s nhưng writer/TTS
+        # lại được phép phát 90s do đọc setting khác thời điểm.
+        try:
+            from runtime.runtime_settings_store import runtime_bool, runtime_float
+            _voice_mode = bool(runtime_bool("tts", "enabled", default=True))
+            _tts_speed = float(runtime_float("tts", "speed", default=1.0) or 1.0)
+        except Exception:
+            _voice_mode = True
+            _tts_speed = 1.0
+
+        # ConversationArc cần key ổn định qua restart. Khi UI có conversation_id
+        # thật thì dùng nó; Eris single-user fallback về một foreground key bền,
+        # tuyệt đối không dùng runtime_session_id vì ID đó sinh lại mỗi process.
+        _agent_session_id = str(
+            getattr(host, "conversation_id", "")
+            or getattr(host, "thread_id", "")
+            or planning_snapshot.get("conversation_id", "")
+            or planning_snapshot.get("thread_id", "")
+            or "foreground:primary"
+        ).strip()
+        _agent_runtime_context = {
+            "agent_execution_route": agent_execution_route,
+            "teaching_active": bool(teaching_directive is not None),
+            "explicit_tool_route": bool(
+                str(directive_payload.get("status", "") or "") == "selected"
+            ),
+            "voice_mode": _voice_mode,
+            "tts_speed": _tts_speed,
+            "conversation_status": {
+                "handoff": handoff_state.to_dict(),
+                "trajectory": trajectory_state.to_dict(),
+            },
+            "previous_public_excerpt": previous_assistant_for_repair[-1200:],
+        }
         try:
             from runtime.agent_loop import ensure_agent_turn_runtime
 
             agent_turn_runtime = ensure_agent_turn_runtime(host)
-            try:
-                from runtime.runtime_settings_store import runtime_bool
-                _voice_mode = bool(runtime_bool("tts", "enabled", default=True))
-            except Exception:
-                _voice_mode = True
-            # Ưu tiên một conversation/thread id ổn định nếu host có cung cấp.
-            # ``runtime_session_id`` chỉ là fallback cuối: nó đủ cho một process
-            # nhưng có thể đổi sau restart. Việc resolve theo thứ tự này giúp
-            # DisclosureArc tự nhiên được nâng cấp lên continuity qua restart
-            # khi ConversationRuntime sau này expose ``conversation_id``/``thread_id``.
-            _agent_session_id = str(
-                getattr(host, "conversation_id", "")
-                or getattr(host, "thread_id", "")
-                or getattr(host, "runtime_session_id", "")
-                or "default"
-            ).strip()
             agent_turn_result = agent_turn_runtime.prepare_turn(
                 turn_id=turn_id,
                 session_id=_agent_session_id,
                 user_text=user_text,
                 recent_history=tuple(planning_snapshot.get("recent_public_history", ()) or ()),
-                runtime_context={
-                    "agent_execution_route": agent_execution_route,
-                    "teaching_active": bool(teaching_directive is not None),
-                    "explicit_tool_route": bool(
-                        str(directive_payload.get("status", "") or "") == "selected"
-                    ),
-                    "voice_mode": _voice_mode,
-                    "conversation_status": {
-                        "handoff": handoff_state.to_dict(),
-                        "trajectory": trajectory_state.to_dict(),
-                    },
-                    "previous_public_excerpt": previous_assistant_for_repair[-1200:],
-                },
+                runtime_context=_agent_runtime_context,
             )
             agent_turn_payload = agent_turn_result.to_dict()
             planning_snapshot["agent_turn"] = agent_turn_payload
@@ -1853,7 +1860,7 @@ class AIChatOrchestrator:
                 )
                 + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
                   "Say ONLY discourse_plan.beats for this turn. continuation.deferred_threads are intentionally NOT for this reply. "
-                  "Respect speech_budget.hard_max_words and speech_budget.max_beats even when cognitive_plan knows much more. "
+                  "Respect speech_budget.hard_max_words, speech_budget.hard_max_seconds and speech_budget.max_beats even when cognitive_plan knows much more. "
                   "Realize beats as natural spoken conversation, lead with the strongest useful point, use short transitions, "
                   "and stop at the planned breakpoint instead of dumping the rest. continuation_anchor may shape the final line "
                   "as a natural open thread, but never append generic 'muốn tôi nói thêm không?' filler. "
@@ -1864,15 +1871,40 @@ class AIChatOrchestrator:
             ) if str(part).strip())
             planning_snapshot["discourse_context"] = discourse_context
         except Exception as exc:
-            # Agent loop là bắt buộc về kiến trúc nhưng availability của public
-            # chat vẫn fail-soft: writer tiếp tục với pipeline hiện có và telemetry
-            # ghi rõ degraded để không biến một worker phụ thành single point of failure.
-            host.last_agent_turn = {
-                "schema": "eris.agent_turn.v2",
-                "status": "degraded",
-                "reason": type(exc).__name__,
-            }
-            host.logger.warning("[agent-turn] foreground loop degraded: %s", exc)
+            # Không được tụt về planner->writer legacy. Nếu model-backed agent loop
+            # hỏng, chạy deterministic one-iteration agent contract rồi vẫn bắt
+            # writer tuân DiscoursePlan/speech budget.
+            host.logger.warning("[agent-turn] model-backed foreground loop degraded: %s", exc)
+            try:
+                from runtime.agent_loop import build_degraded_turn_result
+                agent_turn_result = build_degraded_turn_result(
+                    turn_id=turn_id,
+                    user_text=user_text,
+                    session_id=_agent_session_id,
+                    recent_history=tuple(planning_snapshot.get("recent_public_history", ()) or ()),
+                    runtime_context=_agent_runtime_context,
+                    logger=getattr(host, "logger", None),
+                )
+                agent_turn_payload = agent_turn_result.to_dict()
+                planning_snapshot["agent_turn"] = agent_turn_payload
+                host.last_agent_turn = agent_turn_payload
+                discourse_context = "\n\n".join(part for part in (
+                    discourse_context,
+                    "AGENT_TURN_LOOP_DEGRADED: " + json.dumps(
+                        agent_turn_payload, ensure_ascii=False, separators=(",", ":")
+                    )
+                    + ". HARD RULE: say only discourse_plan.beats; respect speech budget; do not expose hidden reasoning.",
+                ) if str(part).strip())
+                planning_snapshot["discourse_context"] = discourse_context
+            except Exception as fallback_exc:
+                # Catastrophic fail-safe: record loudly. Đây là trường hợp duy nhất
+                # agent_turn contract có thể vắng mặt và cần operator attention.
+                host.last_agent_turn = {
+                    "schema": "eris.agent_turn.v3",
+                    "status": "catastrophic_degraded",
+                    "reason": type(fallback_exc).__name__,
+                }
+                host.logger.error("[agent-turn] deterministic fallback also failed: %s", fallback_exc)
         latency_trace.mark("agent_turn_loop")
 
         latency_trace.mark("executive")
@@ -2068,6 +2100,64 @@ class AIChatOrchestrator:
         finally:
             host._set_background_memory_digest_remote_inflight(False)
         latency_trace.mark("writer")
+
+        # V3 speech hard guard: prompt/director là lớp chính, nhưng model vẫn có
+        # thể đôi lúc xổ dài. Trước khi semantic/stage/TTS pipeline commit, đo lại
+        # output thật và cắt ở sentence boundary nếu vượt hard speech budget.
+        # Guard chỉ active khi TTS bật; text-only report không bị cắt máy móc.
+        if payload and agent_turn_result is not None and _voice_mode:
+            try:
+                from runtime.agent_loop.speech import enforce_public_speech_budget
+
+                _speech_budget = agent_turn_result.state.discourse.speech_budget
+                _display_raw = str(payload.get("text", "") or "").strip()
+                _speech_raw = str(payload.get("speech_text", "") or "").strip()
+                _display_guard = enforce_public_speech_budget(
+                    _display_raw, _speech_budget, speed=_tts_speed
+                )
+                _speech_guard = enforce_public_speech_budget(
+                    _speech_raw, _speech_budget, speed=_tts_speed
+                ) if _speech_raw else None
+                _clipped = bool(_display_guard.clipped or (_speech_guard and _speech_guard.clipped))
+                if _display_guard.clipped:
+                    payload["text"] = _display_guard.text
+                if _speech_guard is not None and _speech_guard.clipped:
+                    payload["speech_text"] = _speech_guard.text
+
+                # Nếu provider trả nested utterance thì top-level field một mình
+                # không đủ vì UtteranceSpec ưu tiên nested display/speech. Đồng bộ
+                # lại cùng hard-guarded surface để TTS không hồi sinh bản dài cũ.
+                _utterance = payload.get("utterance")
+                if _clipped and isinstance(_utterance, Mapping):
+                    _utterance = dict(_utterance)
+                    _display = _utterance.get("display")
+                    if isinstance(_display, Mapping) and _display_guard.clipped:
+                        _display = dict(_display)
+                        _display["text"] = _display_guard.text
+                        _utterance["display"] = _display
+                    _speech = _utterance.get("speech")
+                    if isinstance(_speech, Mapping) and _speech_guard is not None and _speech_guard.clipped:
+                        _speech = dict(_speech)
+                        _speech["text"] = _speech_guard.text
+                        _utterance["speech"] = _speech
+                    payload["utterance"] = _utterance
+
+                host.last_agent_speech_guard = {
+                    "schema": "eris.agent_speech_guard.v1",
+                    "clipped": _clipped,
+                    "budget": _speech_budget.to_dict(),
+                    "tts_speed": round(float(_tts_speed), 3),
+                    "display": _display_guard.estimate.to_dict(),
+                    "speech": _speech_guard.estimate.to_dict() if _speech_guard is not None else {},
+                }
+                if _clipped:
+                    host.logger.warning(
+                        "[agent-speech] hard-clipped writer output before TTS turn=%s budget=%s",
+                        turn_seq,
+                        _speech_budget.to_dict(),
+                    )
+            except Exception as exc:
+                host.logger.debug("[agent-speech] guard degraded: %s", exc)
 
         # The public writer has finished its remote generation. Only now may the
         # queued slow Neuro review start, so it cannot steal provider capacity

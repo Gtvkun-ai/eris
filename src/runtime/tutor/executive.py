@@ -34,6 +34,7 @@ from runtime.tutor.contracts import (
 )
 from runtime.tutor.policy import TutorGuardrailPolicy
 from runtime.tutor.reasoner import ConservativeTutorReasoner, TutorReasoner
+from runtime.tutor.session_store import TutorSessionLedger
 
 
 class TutorExecutive:
@@ -47,6 +48,7 @@ class TutorExecutive:
         policy: TutorGuardrailPolicy | None = None,
         semantic_commit_confidence: float = 0.68,
         session_ttl_seconds: float = 2 * 3600.0,
+        session_ledger: TutorSessionLedger | None = None,
         logger: Any = None,
     ) -> None:
         if not isinstance(learning_service, LearningService):
@@ -57,12 +59,14 @@ class TutorExecutive:
         self.semantic_commit_confidence = max(0.50, min(0.95, float(semantic_commit_confidence)))
         self.session_ttl_seconds = max(300.0, min(24 * 3600.0, float(session_ttl_seconds)))
         self.logger = logger
-        self._state = TutorState()
+        self.session_ledger = session_ledger or TutorSessionLedger(logger=logger)
+        restored = self.session_ledger.load()
+        self._state = restored.state
         # Receipt/assessment đều có thể bị retry bởi transport/runtime. Hai ledger
         # nhỏ này giữ side-effect idempotent trong process hiện tại. Durable truth
         # vẫn do LearningStore dedupe bằng evidence_id.
-        self._committed_move_ids: dict[str, None] = {}
-        self._assessed_response_keys: dict[str, None] = {}
+        self._committed_move_ids: dict[str, None] = {item: None for item in restored.committed_move_ids}
+        self._assessed_response_keys: dict[str, None] = {item: None for item in restored.assessed_response_keys}
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
@@ -118,6 +122,7 @@ class TutorExecutive:
                 updated_at=ts,
             )
             self._state = state
+            self._persist_session_locked()
             return TutorDecision(step, diagnosis, envelope, move, state)
 
     def observe_response(
@@ -172,7 +177,30 @@ class TutorExecutive:
             self._assessed_response_keys[response_key] = None
             while len(self._assessed_response_keys) > 128:
                 self._assessed_response_keys.pop(next(iter(self._assessed_response_keys)))
+            self._persist_session_locked()
             return assessment
+
+    def suspend_pending_move(self, *, reason: str = "user_interrupt", now: float | None = None) -> bool:
+        """Hủy quyền chấm của TeachingMove đang chờ khi user đổi hướng.
+
+        Nếu không clear ở đây, turn sau TutorRoleCoordinator sẽ nhìn ``last_move``
+        cũ và có thể chấm một câu hoàn toàn không liên quan như câu trả lời bài học.
+        Learning mastery/evidence không bị động tới; chỉ session interaction bị yield.
+        """
+        ts = float(now if now is not None else time.time())
+        with self._lock:
+            move = self._state.last_move
+            if move is None or not move.requires_user_response:
+                return False
+            self._state = replace(
+                self._state,
+                last_move=None,
+                last_delivery_text="",
+                updated_at=ts,
+            )
+            self._persist_session_locked()
+            self._log("debug", "[tutor] pending move suspended reason=%s", str(reason or "user_interrupt"))
+            return True
 
     def process_turn(
         self,
@@ -240,6 +268,7 @@ class TutorExecutive:
                 self._committed_move_ids[move.move_id] = None
                 while len(self._committed_move_ids) > 128:
                     self._committed_move_ids.pop(next(iter(self._committed_move_ids)))
+            self._persist_session_locked()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -251,6 +280,21 @@ class TutorExecutive:
                 "committed_move_count": len(self._committed_move_ids),
                 "assessed_response_count": len(self._assessed_response_keys),
             }
+
+    def _persist_session_locked(self) -> None:
+        """Persist bounded tutor session projection. Caller đang giữ ``_lock``.
+
+        Failure ở đây không được phá public chat; durable learning truth vẫn nằm
+        trong LearningStore. Ledger này chỉ phục vụ resume tự nhiên/idempotency.
+        """
+        try:
+            self.session_ledger.commit(
+                self._state,
+                committed_move_ids=tuple(self._committed_move_ids),
+                assessed_response_keys=tuple(self._assessed_response_keys),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log("debug", "[tutor-session] persist degraded: %s", exc)
 
     # ------------------------------------------------------------------
     # Internal composition helpers

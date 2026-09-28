@@ -61,6 +61,7 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
                 "hard_max_words": {"type": "integer", "minimum": 30, "maximum": 1800},
                 "max_beats": {"type": "integer", "minimum": 1, "maximum": 8},
                 "target_seconds": {"type": "number", "minimum": 5.0, "maximum": 180.0},
+                "hard_max_seconds": {"type": "number", "minimum": 8.0, "maximum": 240.0},
             },
         },
         "continuation": {
@@ -117,6 +118,24 @@ class TurnReasoner(Protocol):
         runtime_context: Mapping[str, Any],
     ) -> TurnDecision:
         ...
+
+
+class DeterministicFallbackTurnReasoner:
+    """Fallback typed tối thiểu để *mọi* foreground turn vẫn có root loop.
+
+    Đây không giả vờ reasoning bằng regex. Nó chỉ bảo đảm kiến trúc không rơi
+    ngược về pipeline planner->writer legacy khi model router đang unavailable.
+    """
+
+    def decide(
+        self,
+        *,
+        user_text: str,
+        recent_history: Sequence[Mapping[str, Any]],
+        state: Mapping[str, Any],
+        runtime_context: Mapping[str, Any],
+    ) -> TurnDecision:
+        return heuristic_fallback_decision(user_text, state=state, runtime_context=runtime_context)
 
 
 class RuntimeModelTurnReasoner:
@@ -215,7 +234,7 @@ def _bounded_runtime_context(context: Mapping[str, Any]) -> dict[str, Any]:
     allow = {
         "agent_execution_route", "teaching_active", "explicit_tool_route",
         "conversation_status", "previous_public_excerpt", "requested_depth",
-        "voice_mode", "disclosure_arc", "tutor_role",
+        "voice_mode", "tts_speed", "disclosure_arc", "tutor_role",
     }
 
     def bounded(value: Any, *, depth: int = 0) -> Any:
@@ -272,7 +291,8 @@ def heuristic_fallback_decision(
         "response_mode": "normal",
         "disclosure_mode": "conversational",
         "speech_budget": {
-            "target_words": 100, "hard_max_words": 180, "max_beats": 2, "target_seconds": 24.0
+            "target_words": 100, "hard_max_words": 180, "max_beats": 2,
+            "target_seconds": 24.0, "hard_max_seconds": 36.0
         },
         "continuation": {
             "active_thread": "", "deferred_threads": [], "continuation_anchor": "", "next_if_continue": ""
@@ -294,6 +314,7 @@ def heuristic_fallback_decision(
 
 __all__ = [
     "AGENT_TURN_DECISION_SCHEMA",
+    "DeterministicFallbackTurnReasoner",
     "RuntimeModelTurnReasoner",
     "TurnReasoner",
     "heuristic_fallback_decision",

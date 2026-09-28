@@ -156,10 +156,18 @@ class TutorRoleCoordinator:
             changed = bool(directive) or changed
 
         elif relation == ResponseRelation.INTERRUPT:
-            # User đổi chủ đề: không chấm và không tự kéo lesson trở lại trong turn này.
+            # User đổi chủ đề: không chấm và không tự kéo lesson trở lại. Quan trọng
+            # hơn, clear pending move ở TutorExecutive để turn *sau* cũng không chấm
+            # nhầm câu mới theo câu hỏi cũ. Đây là yield thật, không chỉ local flag.
             self._pending_previous = False
             directive = None
             changed = previous.directive is not None
+            suspend = getattr(self.executive, "suspend_pending_move", None)
+            if callable(suspend):
+                try:
+                    suspend(reason="user_interrupt")
+                except Exception as exc:  # noqa: BLE001
+                    self._log("debug", "[agent-tutor-role] suspend pending degraded: %s", exc)
 
         elif relation == ResponseRelation.CLARIFICATION:
             # User đang hỏi lại chính câu tutor. Giữ previous move làm context, nhưng

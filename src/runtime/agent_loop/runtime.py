@@ -27,7 +27,7 @@ from .contracts import (
 )
 from .director import ConversationDirector
 from .pacing import DisclosureArcLedger
-from .reasoner import RuntimeModelTurnReasoner, TurnReasoner
+from .reasoner import DeterministicFallbackTurnReasoner, RuntimeModelTurnReasoner, TurnReasoner
 from .tutor_role import TutorRoleCoordinator
 
 
@@ -190,10 +190,15 @@ class TurnAgentRuntime:
         # Voice/TTS là pacing concern, không phải reasoning concern. Agent được
         # nghĩ sâu như cũ, nhưng public speech bị cắt ngắn để user còn chen vào.
         voice_mode = bool(context.get("voice_mode", False))
+        try:
+            tts_speed = float(context.get("tts_speed", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            tts_speed = 1.0
         paced = self.director.apply_turn_pacing(
             speakable,
             voice_mode=voice_mode,
             explicit_exhaustive_request=(speakable.disclosure_mode == DisclosureMode.REPORT),
+            tts_speed=tts_speed,
         )
 
         # Tutor question cần response => một beat là đủ, rồi HARD WAIT sau delivery.
@@ -208,6 +213,7 @@ class TurnAgentRuntime:
                     hard_max_words=min(paced.speech_budget.hard_max_words, 110 if voice_mode else 170),
                     max_beats=1,
                     target_seconds=min(paced.speech_budget.target_seconds, 20.0 if voice_mode else 30.0),
+                    hard_max_seconds=min(paced.speech_budget.hard_max_seconds, 28.0 if voice_mode else 45.0),
                 ).normalized(),
             )
             state = replace(state, status="waiting_user")
@@ -307,6 +313,38 @@ def _external_action_needed(context: Mapping[str, Any]) -> bool:
     return str(route.get("action", "none") or "none").strip().lower() in {"execute", "consult", "clarify"}
 
 
+def build_degraded_turn_result(
+    *,
+    turn_id: str,
+    user_text: str,
+    session_id: str = "foreground:primary",
+    recent_history: Sequence[Mapping[str, Any]] = (),
+    runtime_context: Mapping[str, Any] | None = None,
+    logger: Any = None,
+) -> AgentTurnResult:
+    """Deterministic emergency path vẫn giữ *agent-loop contract*.
+
+    Mục đích của hàm này là tránh kiến trúc tụt ngược về ``planner -> writer``
+    legacy khi structured worker/router có lỗi. Nó không cố reasoning sâu; chỉ
+    tạo một typed one-iteration turn để downstream writer còn bị ràng buộc bởi
+    DiscoursePlan và speech budget.
+    """
+    runtime = TurnAgentRuntime(
+        DeterministicFallbackTurnReasoner(),
+        budget=LoopBudget(soft_iterations=1, hard_iterations=1, max_wall_seconds=3.0),
+        tutor_role=TutorRoleCoordinator(None, logger=logger),
+        logger=logger,
+    )
+    result = runtime.prepare_turn(
+        turn_id=turn_id,
+        user_text=user_text,
+        session_id=session_id,
+        recent_history=recent_history,
+        runtime_context=runtime_context or {},
+    )
+    return replace(result, degraded=True, completion_reason="deterministic_agent_fallback")
+
+
 def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
     runtime = getattr(host, "agent_turn_runtime", None)
     if isinstance(runtime, TurnAgentRuntime):
@@ -318,8 +356,6 @@ def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
             )
         return runtime
     router = getattr(host, "ai_model_router", None)
-    if router is None:
-        raise RuntimeError("ai_model_router is required before creating TurnAgentRuntime")
 
     atomic_store = None
     try:
@@ -328,8 +364,13 @@ def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
     except Exception:
         atomic_store = None
 
+    reasoner: TurnReasoner
+    if router is None:
+        reasoner = DeterministicFallbackTurnReasoner()
+    else:
+        reasoner = RuntimeModelTurnReasoner(router, logger=getattr(host, "logger", None))
     runtime = TurnAgentRuntime(
-        RuntimeModelTurnReasoner(router, logger=getattr(host, "logger", None)),
+        reasoner,
         arc_ledger=DisclosureArcLedger(
             atomic_store=atomic_store,
             logger=getattr(host, "logger", None),
@@ -344,4 +385,4 @@ def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
     return runtime
 
 
-__all__ = ["TurnAgentRuntime", "ensure_agent_turn_runtime"]
+__all__ = ["TurnAgentRuntime", "build_degraded_turn_result", "ensure_agent_turn_runtime"]

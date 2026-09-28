@@ -444,6 +444,36 @@ class TutorState:
             "updated_at": self.updated_at,
         }
 
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any] | None) -> "TutorState":
+        """Khôi phục *session cognition* sau restart mà không lưu chain-of-thought.
+
+        Chỉ những kết luận audit được mới được hydrate: hypothesis, teaching move
+        gần nhất và exact public wording đã phát. Mastery/evidence vẫn thuộc
+        LearningService/SQLite và không bao giờ được suy ra từ snapshot này.
+        """
+        raw = data if isinstance(data, Mapping) else {}
+        hypotheses = tuple(
+            LearnerHypothesis.from_mapping(item)
+            for item in raw.get("hypotheses", ())
+            if isinstance(item, Mapping)
+        )
+        move_raw = raw.get("last_move")
+        last_move = TeachingMove.from_mapping(move_raw) if isinstance(move_raw, Mapping) else None
+        return cls(
+            session_id=raw.get("session_id", ""),
+            path_id=raw.get("path_id", ""),
+            kp_id=raw.get("kp_id", ""),
+            session_goal=raw.get("session_goal", ""),
+            hypotheses=hypotheses,
+            last_move=last_move,
+            last_delivery_text=raw.get("last_delivery_text", ""),
+            turn_count=raw.get("turn_count", 0),
+            consecutive_stalls=raw.get("consecutive_stalls", 0),
+            started_at=raw.get("started_at", 0.0),
+            updated_at=raw.get("updated_at", 0.0),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TutorObservation:

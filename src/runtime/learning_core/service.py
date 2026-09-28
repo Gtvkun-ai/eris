@@ -81,6 +81,9 @@ class LearningService:
         self._session_counts: dict[str, _KPSession] = {}   # kp_id → _KPSession
         self._active_path_id: str = ""
         self._active_kp_id: str = ""
+        # Active learning pointer cần sống qua restart để TutorExecutive có thể
+        # resume đúng bài đang dạy. Mastery/evidence vẫn được load từ bảng riêng.
+        self._restore_runtime_state()
 
     # ------------------------------------------------------------------
     # Path management
@@ -100,6 +103,7 @@ class LearningService:
             self._active_path_id = path_id
             self._active_kp_id = path.knowledge_points[0].kp_id if path.knowledge_points else ""
             self._session_counts = {}
+            self._persist_runtime_state_locked()
             return True
 
     def active_path(self) -> LearningPath | None:
@@ -283,6 +287,50 @@ class LearningService:
         """Move active KP pointer forward after advance/complete step."""
         with self._lock:
             self._active_kp_id = kp_id
+            self._persist_runtime_state_locked()
+
+    # ------------------------------------------------------------------
+    # Durable runtime pointer helpers
+    # ------------------------------------------------------------------
+
+    def _restore_runtime_state(self) -> None:
+        """Restore active path/KP pointer; fail closed nếu metadata đã stale."""
+        try:
+            raw = self._store.get_meta("learning_runtime_v1", {})
+        except Exception:
+            raw = {}
+        if not isinstance(raw, dict):
+            return
+        path_id = str(raw.get("active_path_id", "") or "").strip()[:120]
+        kp_id = str(raw.get("active_kp_id", "") or "").strip()[:120]
+        if not path_id:
+            return
+        try:
+            path = self._store.load_path(path_id)
+        except Exception:
+            path = None
+        if path is None:
+            return
+        valid_kps = set(path.kp_ids)
+        self._active_path_id = path_id
+        self._active_kp_id = kp_id if kp_id in valid_kps else (path.kp_ids[0] if path.kp_ids else "")
+
+    def _persist_runtime_state_locked(self) -> None:
+        try:
+            self._store.set_meta(
+                "learning_runtime_v1",
+                {
+                    "active_path_id": self._active_path_id,
+                    "active_kp_id": self._active_kp_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger = self._logger
+            if logger is not None:
+                try:
+                    logger.debug("[learning] runtime pointer persist degraded: %s", exc)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Mastery snapshot

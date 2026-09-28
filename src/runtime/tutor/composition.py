@@ -12,6 +12,7 @@ from typing import Any
 from runtime.learning_core import LearningService, LearningStore
 from runtime.tutor.executive import TutorExecutive
 from runtime.tutor.model_reasoner import RuntimeTutorReasoner
+from runtime.tutor.session_store import TutorSessionLedger
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,18 @@ def build_tutor_runtime(
     reasoner = None
     if callable(getattr(model_router, "invoke_structured_worker", None)):
         reasoner = RuntimeTutorReasoner(model_router, logger=logger)
-    executive = TutorExecutive(learning, reasoner=reasoner, logger=logger)
+    atomic_store = None
+    try:
+        from runtime.ai_orchestrated.atomic_state import atomic_store_from_env
+        atomic_store = atomic_store_from_env(logger=logger)
+    except Exception:
+        atomic_store = None
+    executive = TutorExecutive(
+        learning,
+        reasoner=reasoner,
+        session_ledger=TutorSessionLedger(atomic_store=atomic_store, logger=logger),
+        logger=logger,
+    )
     return TutorRuntimeBundle(learning, executive)
 
 
