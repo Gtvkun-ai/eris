@@ -1398,6 +1398,49 @@ class AIRuntimeModelRouter:
         self.logger = logger
         self.budget_policy = budget_policy
 
+    @staticmethod
+    def _client_inference_profile(client: Any) -> tuple[str | None, str]:
+        """Trả về ``(resource_class, backend)`` của client nếu xác định được.
+
+        Đây là lớp tách nghĩa quan trọng của V4:
+
+        - ``cognitive_lane``: request đang làm việc gì (turn executive, tutor...).
+        - ``backend``: request đi qua transport/provider nào (DS2API, API ngoài...).
+        - ``resource_class``: request có chiếm local VRAM hay không.
+        - ``tier``: nhãn legacy để caller cũ và telemetry cũ không bị vỡ.
+
+        Không được suy ra ``remote/local`` chỉ từ chuỗi tier. Một DS2API gateway có
+        thể chạy tại 127.0.0.1 nhưng model thật vẫn là remote, nên worker client
+        được phép khai báo ``inference_resource_class`` / ``inference_backend`` tường minh.
+        """
+        if client is None:
+            return None, ""
+
+        declared_class = str(getattr(client, "inference_resource_class", "") or "").strip().lower()
+        declared_backend = str(getattr(client, "inference_backend", "") or "").strip()
+        if declared_class in {"remote_api", "local_light", "local_heavy", "vision_local", "unknown"}:
+            return declared_class, declared_backend or type(client).__name__
+
+        base_url = str(getattr(client, "base_url", "") or "").strip().lower()
+        worker_role = str(getattr(client, "worker_role", "") or "").strip().lower()
+        provider_circuit = str(getattr(client, "provider_circuit_id", "") or "").strip().lower()
+
+        # DeepSeek role worker qua DS2API/Whale2API. Gateway là localhost, nhưng
+        # inference thật không chiếm VRAM của Eris.
+        if worker_role or "#deepseek_web:" in provider_circuit or any(
+            marker in base_url for marker in ("127.0.0.1:6011", "127.0.0.1:6015", "localhost:6011", "localhost:6015")
+        ):
+            return "remote_api", declared_backend or "ds2api_deepseek_web"
+
+        # API ngoài rõ ràng là remote. Localhost khác DS2API để lại None để
+        # ModelBudgetPolicy dùng compatibility rule cũ; không tự đoán nó là remote.
+        if base_url.startswith(("https://", "http://")) and not any(
+            host in base_url for host in ("127.0.0.1", "localhost", "0.0.0.0")
+        ):
+            return "remote_api", declared_backend or "openai_compatible_remote"
+
+        return None, declared_backend or type(client).__name__
+
     def _run_inference(
         self,
         tier: str,
@@ -1405,6 +1448,9 @@ class AIRuntimeModelRouter:
         *,
         reason: str,
         priority: int,
+        resource_class: str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
     ) -> Any:
         # PDF annotation, pages 6-9: the local VRAM scheduler and the remote
         # inference broker solve different problems.  Keep the former, but
@@ -1413,7 +1459,15 @@ class AIRuntimeModelRouter:
         from runtime.inference_broker import inference_context
 
         reason_key = str(reason or "").strip().lower()
-        if "public_reply" in reason_key and "autonomous" not in reason_key:
+        cognitive_key = str(cognitive_lane or "").strip().lower()
+
+        # V4: broker lane phải đi theo *vai trò nhận thức thật* trước, không đi
+        # theo tên model/tier legacy. Turn executive và tutor đang phục vụ trực
+        # tiếp user turn là dependency bắt buộc của foreground chat, nên không
+        # được rơi xuống ``post_observer`` chỉ vì legacy tier là subconscious_4b.
+        if cognitive_key == "turn_executive" or cognitive_key.startswith("tutor:"):
+            lane = "chat_tool_required"
+        elif "public_reply" in reason_key and "autonomous" not in reason_key:
             lane = "chat_main"
         elif "neuro_continuation" in reason_key:
             lane = "neuro_continuation"
@@ -1457,7 +1511,13 @@ class AIRuntimeModelRouter:
             lane,
             optional=optional,
             coalesce_key=coalesce_key,
-            metadata={"router_reason": reason, "model_tier": tier},
+            metadata={
+                "router_reason": reason,
+                "model_tier": tier,  # legacy compatibility label
+                "cognitive_lane": str(cognitive_lane or reason_key),
+                "model_backend": str(backend or ""),
+                "resource_class": str(resource_class or "legacy_infer"),
+            },
         ):
             policy = self.budget_policy
             if policy is not None and callable(getattr(policy, "run_queued", None)):
@@ -1466,6 +1526,9 @@ class AIRuntimeModelRouter:
                     func,
                     reason=reason,
                     priority=priority,
+                    resource_class=resource_class,
+                    backend=backend,
+                    cognitive_lane=cognitive_lane,
                 )
             else:
                 res = func()
@@ -1546,6 +1609,7 @@ class AIRuntimeModelRouter:
         inference_tier: str = "subconscious_4b",
         priority: int | None = None,
         timeout_seconds: float | None = None,
+        cognitive_lane: str = "",
     ) -> dict[str, Any]:
         if client is None:
             return {}
@@ -1576,11 +1640,15 @@ class AIRuntimeModelRouter:
                     timeout=timeout_seconds,
                 )
 
+            resource_class, backend = self._client_inference_profile(client)
             raw = self._run_inference(
                 inference_tier,
                 invoke,
                 reason=name,
                 priority=int(priority if priority is not None else (45 if "deep" in name else 35)),
+                resource_class=resource_class,
+                backend=backend,
+                cognitive_lane=str(cognitive_lane or name),
             )
             parsed = _json(_content(raw), public_reply=False)
             return _unwrap_schema_payload(parsed, schema)
@@ -1602,11 +1670,19 @@ class AIRuntimeModelRouter:
         inference_tier: str = "subconscious_4b",
         priority: int | None = None,
         timeout_seconds: float | None = None,
+        cognitive_lane: str = "",
     ) -> dict[str, Any]:
-        """Public transport boundary for typed role-owned workers.
+        """Transport boundary cho typed role-owned workers.
 
-        Domain modules own prompts and schemas; the router only provides the
-        common inference budget, JSON boundary and provider call mechanics.
+        Domain module sở hữu prompt/schema và truyền ``cognitive_lane`` để nói
+        *request đang làm việc gì*. Router đọc client để xác định ``backend`` và
+        ``resource_class``. ``inference_tier`` chỉ còn là nhãn compatibility cho
+        scheduler/caller cũ.
+
+        Nhờ tách này, một DeepSeek worker qua DS2API có thể đồng thời là:
+        ``cognitive_lane=turn_executive`` + ``backend=ds2api_deepseek_web`` +
+        ``resource_class=remote_api`` + ``inference_tier=subconscious_4b``.
+        Bốn giá trị đó không còn bị đánh đồng với nhau.
         """
 
         return self._call(
@@ -1620,6 +1696,7 @@ class AIRuntimeModelRouter:
             inference_tier=inference_tier,
             priority=priority,
             timeout_seconds=timeout_seconds,
+            cognitive_lane=cognitive_lane,
         )
 
     def plan_teaching_episode(self, *, request_context: Mapping[str, Any]) -> Mapping[str, Any]:

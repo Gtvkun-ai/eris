@@ -266,7 +266,12 @@ class RuntimeTutorReasoner:
                 name=name,
                 max_tokens=max_tokens,
                 reasoning_effort="medium",
+                # Tutor không sở hữu root agent loop. Đây chỉ là một typed
+                # pedagogical worker; ``cognitive_lane`` giúp telemetry/queue biết
+                # request đang làm diagnosis/move/assessment nào mà không đánh
+                # đồng nó với tên model hay resource class.
                 inference_tier="subconscious_4b",
+                cognitive_lane=f"tutor:{name}",
                 priority=priority,
                 timeout_seconds=30.0,
             )

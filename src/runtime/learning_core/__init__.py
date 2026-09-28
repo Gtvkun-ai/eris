@@ -1,10 +1,18 @@
-"""DeepTutor learning kernel ported into Eris.
+"""Learning kernel duoc Eris adaptation tu y tuong/algorithm cua DeepTutor.
 
-This package is pure Python with no I/O except through LearningStore.
-Nothing here imports runtime, companion, voice, or TTS subsystems.
+Boundary can nho:
+- Package nay la deterministic learning substrate, KHONG phai root agent.
+- DeepTutor-derived phan duoc giu: contracts, mastery gate, navigation policy,
+  scheduler/review, choice grading va pending-interaction mechanics.
+- Eris tu so huu: activation vao hoi thoai, TutorReasoner, TurnAgentLoop,
+  ConversationDirector, voice pacing, persistence integration va public writer.
 
-Ported from HKUDS/DeepTutor @ ef2d9e5c (Apache 2.0).
-See THIRD_PARTY_NOTICES.md at repo root.
+Khong module nao trong package nay duoc phep import/so huu TTS, public writer,
+conversation pacing hay autonomous foreground lifecycle. Neu can mot capability
+ngoai learning kernel, hay dua no qua LearningService/TutorRole boundary.
+
+Nguon adaptation: HKUDS/DeepTutor @ ef2d9e5c, Apache License 2.0.
+Xem THIRD_PARTY_NOTICES.md o repo root.
 """
 from __future__ import annotations
 

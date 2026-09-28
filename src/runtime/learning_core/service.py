@@ -1,21 +1,44 @@
-"""LearningService: orchestrates the learning kernel for Eris.
+"""LearningService - bien gioi deterministic cua he hoc tap Eris.
 
-This is the single entry-point that Eris runtime components call.
-It owns:
-- Loading/storing paths, mastery, evidence, reviews, interactions
-- Recomputing mastery after each evidence commit
-- Updating the SRS queue
-- Providing the next TutorStep for the orchestrator
+VAI TRO CUA MODULE NAY
+----------------------
+Day la *mot cua vao duy nhat* de runtime ghi/duyet su that hoc tap ben vung:
 
-It does NOT:
-- Generate LLM text (teach_chunk, quiz questions, Feynman prompts)
-- Call TTS or public writer
-- Access Eris companion/voice/autonomy subsystems directly
+- LearningEvidence: user da the hien bang chung gi?
+- MasteryRecord: muc do nam vung duoc tinh lai tu evidence.
+- LearningPath / KnowledgePoint: dang hoc path/concept nao.
+- PendingInteraction: cau hoi nao dang cho user tra loi.
+- ReviewItem: khi nao can on lai theo scheduler.
 
-Those are in engineering_mentor.py / pedagogical_runtime.py; they call this
-service and consume TutorStep to build directives.
+NHUNG GI MODULE NAY CO QUYEN QUYET
+----------------------------------
+1. Evidence nao duoc append vao store.
+2. Mastery duoc recompute deterministic ra sao.
+3. Gate hoc tap co pass hay chua.
+4. Review nao den han.
+5. TutorStep ke tiep theo policy deterministic la gi.
 
-Thread safety: one RLock per service instance.
+NHUNG GI MODULE NAY *KHONG* DUOC QUYET
+--------------------------------------
+1. Khong tu bat tutor trong mot cuoc tro chuyen.
+2. Khong chon Eris nen noi bao nhieu cau trong turn hien tai.
+3. Khong viet public text, khong goi TTS, khong so huu conversation pacing.
+4. Khong tu suy dien user da hieu chi vi Eris vua giai thich xong.
+5. Khong duoc nhan raw chain-of-thought cua model lam evidence.
+
+OWNER KHI PHOI HOP VOI AGENT LOOP
+----------------------------------
+TurnAgentLoop         -> root lifecycle cua moi user turn.
+TutorRole/TutorReasoner -> de xuat pedagogical intent (probe/teach/practice/assess).
+ConversationDirector -> quyet dinh turn nay tiet lo bao nhieu va dung o dau.
+LearningService       -> chi commit su that hoc tap deterministic.
+
+Quy tac cot loi: "LLM de xuat; deterministic kernel commit". Nho boundary nay,
+DeepTutor-derived logic chi la learning kernel ben trong Eris, khong tro thanh
+mot agent thu hai tranh quyen voi root TurnAgentLoop.
+
+Thread safety: mot RLock cho moi LearningService instance; production nen dung
+mot instance/process va inject xuong cac adapter thay vi tu tao service moi.
 """
 from __future__ import annotations
 

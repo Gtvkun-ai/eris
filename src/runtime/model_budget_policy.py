@@ -14,8 +14,18 @@ nhưng có thêm hàng đợi inference dùng chung:
 - hook unload sau khi request xong;
 - snapshot biết main cognition đang active/recent, thay vì chỉ đoán bằng log đẹp.
 
-Nói ngắn: mọi model nặng phải xin chìa khóa trước khi chui vào VRAM. Một phát minh
-vĩ đại ngang việc đóng cửa tủ lạnh sau khi mở, nhưng repo AI thường quên cả chuyện đó.
+Nói ngắn: mọi model *local nặng* phải xin chìa khóa trước khi chui vào VRAM. Một
+phát minh vĩ đại ngang việc đóng cửa tủ lạnh sau khi mở, nhưng repo AI thường quên
+cả chuyện đó.
+
+V4 tách ba khái niệm từng bị trộn vào cùng một chuỗi ``ModelTier``:
+
+- ``cognitive_lane``: request đang làm vai trò nhận thức gì;
+- ``backend``: request đi qua DS2API/API/local transport nào;
+- ``resource_class``: inference thật sự dùng tài nguyên local hay remote.
+
+``ModelTier`` vẫn tồn tại để tương thích ngược, nhưng scheduler không còn được phép
+suy ra "DS2API == local 4B" chỉ vì caller dùng nhãn ``subconscious_4b``.
 """
 
 from __future__ import annotations
@@ -31,7 +41,17 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Iterator, Literal
 
+# ``ModelTier`` là tên legacy đã tồn tại từ trước. Tên này từng bị dùng để
+# biểu diễn cả "vai trò nhận thức" lẫn "model local nào đang chiếm VRAM".
+# V4 giữ lại nó để không phá caller cũ, nhưng không còn xem nó là nguồn sự thật
+# duy nhất để suy ra tài nguyên nữa.
 ModelTier = Literal["sensory_0_6b", "subconscious_4b", "main_cognition", "vision_compressor", "unknown"]
+
+# Tài nguyên thật của một inference. Đây mới là thứ scheduler phải dùng để
+# quyết định VRAM/cooldown. Ví dụ: một worker DeepSeek đi qua DS2API có thể vẫn
+# mang legacy tier ``subconscious_4b`` nhưng resource_class phải là ``remote_api``.
+ResourceClass = Literal["remote_api", "local_light", "local_heavy", "vision_local", "unknown"]
+
 BudgetVerdict = Literal["allow", "block", "kill"]
 QueueStatus = Literal["queued", "running", "cancelled", "finished", "vetoed", "timeout"]
 
@@ -122,6 +142,13 @@ class BudgetDecision:
     cooldown_seconds: float = 0.0
     hard_veto: bool = False
     debug: dict[str, Any] = field(default_factory=dict)
+    # Ba trục này có ý nghĩa khác nhau:
+    # - tier: nhãn legacy để caller cũ vẫn chạy;
+    # - resource_class: tài nguyên thật local/remote;
+    # - backend/cognitive_lane: telemetry để biết request đến từ đâu và đang làm gì.
+    resource_class: ResourceClass = "unknown"
+    backend: str = ""
+    cognitive_lane: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +159,9 @@ class BudgetDecision:
             "resource_snapshot": self.resource_snapshot.to_dict(),
             "cooldown_seconds": self.cooldown_seconds,
             "hard_veto": self.hard_veto,
+            "resource_class": self.resource_class,
+            "backend": self.backend,
+            "cognitive_lane": self.cognitive_lane,
             "debug": self.debug,
         }
 
@@ -141,6 +171,9 @@ class ModelQueueEntry:
     request_id: str
     tier: ModelTier
     reason: str = ""
+    resource_class: ResourceClass = "unknown"
+    backend: str = ""
+    cognitive_lane: str = ""
     priority: int = 0
     enqueued_at: float = field(default_factory=time.time)
     timeout_seconds: float = 0.0
@@ -154,6 +187,9 @@ class ModelQueueEntry:
             "request_id": self.request_id,
             "tier": self.tier,
             "reason": self.reason,
+            "resource_class": self.resource_class,
+            "backend": self.backend,
+            "cognitive_lane": self.cognitive_lane,
             "priority": self.priority,
             "enqueued_at": self.enqueued_at,
             "age_seconds": max(0.0, time.time() - self.enqueued_at),
@@ -173,6 +209,9 @@ class InferenceLease:
     started_at: float
     decision: BudgetDecision
     cancel_event: threading.Event | None = None
+    resource_class: ResourceClass = "unknown"
+    backend: str = ""
+    cognitive_lane: str = ""
 
     @property
     def age_seconds(self) -> float:
@@ -192,6 +231,9 @@ class InferenceLease:
             "tier": self.tier,
             "reason": self.reason,
             "priority": self.priority,
+            "resource_class": self.resource_class,
+            "backend": self.backend,
+            "cognitive_lane": self.cognitive_lane,
             "started_at": self.started_at,
             "age_seconds": self.age_seconds,
             "cancelled": self.cancelled,
@@ -326,15 +368,37 @@ class ModelBudgetPolicy:
         resource_snapshot: ResourceSnapshot | None = None,
         reason: str = "",
         ignore_active_lock: bool = False,
+        resource_class: ResourceClass | str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
     ) -> BudgetDecision:
+        """Quyết định một inference có được chạy hay không.
+
+        QUAN TRỌNG V4:
+        ``tier`` chỉ còn là nhãn compatibility. Scheduler ưu tiên
+        ``resource_class`` để biết request có chiếm local VRAM hay không.
+        Vì vậy DeepSeek qua DS2API có thể mang tier ``subconscious_4b`` mà vẫn
+        không bị áp cooldown/VRAM của model local 4B.
+        """
+        resolved_class = self._normalize_resource_class(tier, resource_class)
         if not self.config.enabled:
             snapshot = resource_snapshot or self.capture()
-            return BudgetDecision("allow", True, tier, "budget_policy_disabled", snapshot, debug={"reason": reason})
+            return BudgetDecision(
+                "allow",
+                True,
+                tier,
+                "budget_policy_disabled",
+                snapshot,
+                debug={"reason": reason},
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
+            )
         snapshot = resource_snapshot or self.capture()
         now = time.time()
-        cooldown = self._cooldown_for(tier, now)
-        uses_remote_api = self._uses_remote_api(tier)
-        heavy_tier = self._is_heavy_tier(tier)
+        cooldown = self._cooldown_for(tier, now, resolved_class)
+        uses_remote_api = self._uses_remote_api(tier, resolved_class)
+        heavy_tier = self._is_heavy_tier(tier, resolved_class)
         reserved_vram = self._active_reserved_vram_mb(snapshot)
         external_vram_used = max(0.0, snapshot.external_vram_used_mb or (snapshot.vram_used_mb - reserved_vram))
         external_vram_percent = 0.0
@@ -353,6 +417,9 @@ class ModelBudgetPolicy:
             "external_vram_used_mb": round(external_vram_used, 2),
             "external_vram_percent": round(external_vram_percent, 2),
             "resource_guard_enabled": bool(getattr(self.config, "resource_guard_enabled", False)),
+            "resource_class": resolved_class,
+            "backend": str(backend or ""),
+            "cognitive_lane": str(cognitive_lane or ""),
         }
 
         if not getattr(self.config, "resource_guard_enabled", False):
@@ -365,6 +432,9 @@ class ModelBudgetPolicy:
                 hard_veto=False,
                 cooldown_seconds=0.0,
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
         if snapshot.gpu_temperature_c >= self.config.gpu_temp_block_c > 0:
@@ -377,9 +447,12 @@ class ModelBudgetPolicy:
                 resource_snapshot=snapshot,
                 hard_veto=True,
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
-        if self._should_force_vision(tier):
+        if self._should_force_vision(tier, resolved_class):
             ignored_reasons = self._resource_block_reasons(
                 tier,
                 snapshot=snapshot,
@@ -399,9 +472,12 @@ class ModelBudgetPolicy:
                 hard_veto=False,
                 cooldown_seconds=0.0,
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
-        if self._should_force_local_gguf_main(tier):
+        if self._should_force_local_gguf_main(tier, resolved_class):
             ignored_reasons = self._resource_block_reasons(
                 tier,
                 snapshot=snapshot,
@@ -421,6 +497,9 @@ class ModelBudgetPolicy:
                 hard_veto=False,
                 cooldown_seconds=0.0,
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
         if heavy_tier and cooldown > 0.0:
@@ -433,6 +512,9 @@ class ModelBudgetPolicy:
                 cooldown_seconds=cooldown,
                 hard_veto=False,
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
         resource_reasons = self._resource_block_reasons(
@@ -452,9 +534,12 @@ class ModelBudgetPolicy:
                 hard_veto=False,
                 cooldown_seconds=max(cooldown, self.config.queue_poll_seconds),
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
-        if heavy_tier and not ignore_active_lock and self._has_incompatible_active_lease(tier):
+        if heavy_tier and not ignore_active_lock and self._has_incompatible_active_lease(tier, resolved_class):
             return BudgetDecision(
                 verdict="block",
                 allowed=False,
@@ -464,6 +549,9 @@ class ModelBudgetPolicy:
                 hard_veto=False,
                 cooldown_seconds=max(cooldown, self.config.queue_poll_seconds),
                 debug=debug,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
 
         return BudgetDecision(
@@ -475,6 +563,9 @@ class ModelBudgetPolicy:
             hard_veto=False,
             cooldown_seconds=cooldown,
             debug=debug,
+            resource_class=resolved_class,
+            backend=str(backend or ""),
+            cognitive_lane=str(cognitive_lane or ""),
         )
 
     # ------------------------------------------------------------------
@@ -491,6 +582,9 @@ class ModelBudgetPolicy:
         resource_snapshot: ResourceSnapshot | None = None,
         cancel_event: threading.Event | None = None,
         request_id: str | None = None,
+        resource_class: ResourceClass | str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
     ) -> Iterator[InferenceLease]:
         lease = self.acquire_lease(
             tier,
@@ -500,6 +594,9 @@ class ModelBudgetPolicy:
             resource_snapshot=resource_snapshot,
             cancel_event=cancel_event,
             request_id=request_id,
+            resource_class=resource_class,
+            backend=backend,
+            cognitive_lane=cognitive_lane,
         )
         try:
             yield lease
@@ -518,6 +615,9 @@ class ModelBudgetPolicy:
         cancel_event: threading.Event | None = None,
         request_id: str | None = None,
         unload_callback: Callable[[], Any] | None = None,
+        resource_class: ResourceClass | str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
         **kwargs: Any,
     ) -> Any:
         """Chạy một inference qua queue và lease.
@@ -535,6 +635,9 @@ class ModelBudgetPolicy:
             resource_snapshot=resource_snapshot,
             cancel_event=cancel_event,
             request_id=request_id,
+            resource_class=resource_class,
+            backend=backend,
+            cognitive_lane=cognitive_lane,
         ) as active_lease:
             active_lease.check_cancelled()
             try:
@@ -556,9 +659,13 @@ class ModelBudgetPolicy:
         resource_snapshot: ResourceSnapshot | None = None,
         cancel_event: threading.Event | None = None,
         request_id: str | None = None,
+        resource_class: ResourceClass | str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
     ) -> InferenceLease:
-        force_vision = self._should_force_vision(tier)
-        force_local_main = self._should_force_local_gguf_main(tier)
+        resolved_class = self._normalize_resource_class(tier, resource_class)
+        force_vision = self._should_force_vision(tier, resolved_class)
+        force_local_main = self._should_force_local_gguf_main(tier, resolved_class)
         if force_vision:
             priority = max(int(priority), int(self.config.vision_force_run_priority))
             timeout_seconds = self.config.vision_force_run_queue_timeout_seconds
@@ -573,6 +680,9 @@ class ModelBudgetPolicy:
                 tier,
                 resource_snapshot=resource_snapshot,
                 reason=reason,
+                resource_class=resolved_class,
+                backend=backend,
+                cognitive_lane=cognitive_lane,
             )
             if not decision.allowed:
                 raise RuntimeError(f"model_budget_veto:{tier}:{decision.reason}")
@@ -584,10 +694,13 @@ class ModelBudgetPolicy:
                 started_at=time.time(),
                 decision=decision,
                 cancel_event=cancel_event,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
             with self._lock:
                 self._active_leases[lease.request_id] = lease
-                self.mark_started(tier)
+                self.mark_started(tier, resource_class=resolved_class)
             return lease
 
         with self._condition:
@@ -602,6 +715,9 @@ class ModelBudgetPolicy:
                 timeout_seconds=max(0.0, timeout),
                 sequence=self._sequence,
                 cancel_event=cancel_event,
+                resource_class=resolved_class,
+                backend=str(backend or ""),
+                cognitive_lane=str(cognitive_lane or ""),
             )
             self._queue.append(entry)
             self._sort_queue_locked()
@@ -623,7 +739,7 @@ class ModelBudgetPolicy:
                 if self._queue_head_locked() is not entry:
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
-                if self._has_incompatible_active_lease_locked(tier):
+                if self._has_incompatible_active_lease_locked(tier, resolved_class):
                     self._condition.wait(self._wait_seconds(entry, now))
                     continue
 
@@ -634,6 +750,9 @@ class ModelBudgetPolicy:
                     resource_snapshot=resource_snapshot,
                     reason=reason,
                     ignore_active_lock=True,
+                    resource_class=resolved_class,
+                    backend=backend,
+                    cognitive_lane=cognitive_lane,
                 )
                 entry.last_budget_decision = decision
                 if not decision.allowed:
@@ -655,9 +774,12 @@ class ModelBudgetPolicy:
                     started_at=time.time(),
                     decision=decision,
                     cancel_event=cancel_event,
+                    resource_class=resolved_class,
+                    backend=str(backend or ""),
+                    cognitive_lane=str(cognitive_lane or ""),
                 )
                 self._active_leases[lease.request_id] = lease
-                self.mark_started(tier)
+                self.mark_started(tier, resource_class=resolved_class)
                 self._condition.notify_all()
                 self._log("debug", "[model queue] acquired tier=%s request=%s reason=%s", tier, request_id, reason)
                 return lease
@@ -668,7 +790,7 @@ class ModelBudgetPolicy:
         with self._condition:
             existing = self._active_leases.pop(lease.request_id, None)
             if existing is not None:
-                self.mark_finished(existing.tier)
+                self.mark_finished(existing.tier, resource_class=existing.resource_class)
                 self._log("debug", "[model queue] released tier=%s request=%s age=%.2fs", existing.tier, existing.request_id, existing.age_seconds)
             self._condition.notify_all()
 
@@ -710,22 +832,47 @@ class ModelBudgetPolicy:
     # ------------------------------------------------------------------
     # Legacy-compatible markers
     # ------------------------------------------------------------------
-    def mark_started(self, tier: ModelTier) -> None:
+    def mark_started(self, tier: ModelTier, *, resource_class: ResourceClass | str | None = None) -> None:
+        # Remote API không được làm bẩn cooldown marker của model local. Nếu không,
+        # một DS2API call mang nhãn ``subconscious_4b`` sẽ làm local 4B bị cooldown
+        # oan dù nó không hề dùng VRAM máy người dùng.
+        resolved = self._normalize_resource_class(tier, resource_class)
+        if resolved == "remote_api":
+            return
         now = time.time()
         if tier == "main_cognition":
             self.last_main_started_at = now
         elif tier in {"subconscious_4b", "vision_compressor"}:
             self.last_4b_started_at = now
 
-    def mark_finished(self, tier: ModelTier) -> None:
+    def mark_finished(self, tier: ModelTier, *, resource_class: ResourceClass | str | None = None) -> None:
+        resolved = self._normalize_resource_class(tier, resource_class)
+        if resolved == "remote_api":
+            return
         now = time.time()
         if tier == "main_cognition":
             self.last_main_finished_at = now
         elif tier in {"subconscious_4b", "vision_compressor"}:
             self.last_4b_finished_at = now
 
-    def veto_or_raise(self, tier: ModelTier, *, resource_snapshot: ResourceSnapshot | None = None, reason: str = "") -> BudgetDecision:
-        decision = self.can_run(tier, resource_snapshot=resource_snapshot, reason=reason)
+    def veto_or_raise(
+        self,
+        tier: ModelTier,
+        *,
+        resource_snapshot: ResourceSnapshot | None = None,
+        reason: str = "",
+        resource_class: ResourceClass | str | None = None,
+        backend: str = "",
+        cognitive_lane: str = "",
+    ) -> BudgetDecision:
+        decision = self.can_run(
+            tier,
+            resource_snapshot=resource_snapshot,
+            reason=reason,
+            resource_class=resource_class,
+            backend=backend,
+            cognitive_lane=cognitive_lane,
+        )
         if not decision.allowed:
             raise RuntimeError(f"model_budget_veto:{tier}:{decision.reason}")
         return decision
@@ -733,7 +880,9 @@ class ModelBudgetPolicy:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-    def _cooldown_for(self, tier: str, now: float) -> float:
+    def _cooldown_for(self, tier: str, now: float, resource_class: ResourceClass | str | None = None) -> float:
+        if self._normalize_resource_class(tier, resource_class) == "remote_api":
+            return 0.0
         if tier == "main_cognition":
             return max(0.0, self.config.main_cooldown_seconds - (now - self.last_main_started_at))
         if tier in {"subconscious_4b", "vision_compressor"}:
@@ -765,24 +914,54 @@ class ModelBudgetPolicy:
             notes.append(f"nvidia_smi_unavailable:{type(exc).__name__}")
             return 0.0, 0.0, 0.0, 0.0
 
-    def _is_heavy_tier(self, tier: str) -> bool:
-        return tier in self.HEAVY_TIERS and not self._uses_remote_api(tier)
+    def _normalize_resource_class(
+        self,
+        tier: str,
+        resource_class: ResourceClass | str | None = None,
+    ) -> ResourceClass:
+        """Chuẩn hoá hint tài nguyên về một giá trị ổn định.
 
-    def _uses_remote_api(self, tier: str) -> bool:
-        return tier == "main_cognition" and bool(getattr(self.config, "remote_api_enabled", False))
+        Caller V4 nên truyền explicit ``resource_class``. Fallback bên dưới chỉ
+        tồn tại để caller legacy vẫn giữ nghĩa cũ trong giai đoạn migration.
+        """
+        raw = str(resource_class or "").strip().lower()
+        if raw in {"remote_api", "local_light", "local_heavy", "vision_local", "unknown"}:
+            return raw  # type: ignore[return-value]
+        if tier == "sensory_0_6b":
+            return "local_light"
+        if tier == "vision_compressor":
+            return "vision_local"
+        if tier == "main_cognition":
+            return "remote_api" if bool(getattr(self.config, "remote_api_enabled", False)) else "local_heavy"
+        if tier == "subconscious_4b":
+            return "local_heavy"
+        return "unknown"
 
-    def _should_force_vision(self, tier: str) -> bool:
-        return tier == "vision_compressor" and bool(getattr(self.config, "vision_force_run", False))
+    def _is_heavy_tier(self, tier: str, resource_class: ResourceClass | str | None = None) -> bool:
+        return self._normalize_resource_class(tier, resource_class) in {"local_heavy", "vision_local"}
 
-    def _should_force_local_gguf_main(self, tier: str) -> bool:
+    def _uses_remote_api(self, tier: str, resource_class: ResourceClass | str | None = None) -> bool:
+        return self._normalize_resource_class(tier, resource_class) == "remote_api"
+
+    def _should_force_vision(self, tier: str, resource_class: ResourceClass | str | None = None) -> bool:
+        return (
+            tier == "vision_compressor"
+            and self._normalize_resource_class(tier, resource_class) == "vision_local"
+            and bool(getattr(self.config, "vision_force_run", False))
+        )
+
+    def _should_force_local_gguf_main(self, tier: str, resource_class: ResourceClass | str | None = None) -> bool:
         """main_cognition chạy local GGUF (remote API tắt) → ép chạy: nó là não duy nhất."""
         return (
             tier == "main_cognition"
-            and not self._uses_remote_api(tier)
+            and not self._uses_remote_api(tier, resource_class)
             and bool(getattr(self.config, "force_local_gguf_enabled", False))
         )
 
-    def _estimated_vram_need_mb(self, tier: str) -> float:
+    def _estimated_vram_need_mb(self, tier: str, resource_class: ResourceClass | str | None = None) -> float:
+        resolved = self._normalize_resource_class(tier, resource_class)
+        if resolved == "remote_api":
+            return 0.0
         if tier == "main_cognition":
             return max(0.0, float(self.config.local_main_vram_reservation_mb))
         if tier == "subconscious_4b":
@@ -802,7 +981,7 @@ class ModelBudgetPolicy:
         )
 
     def _reserved_vram_for_active_leases_locked(self) -> float:
-        return sum(self._estimated_vram_need_mb(lease.tier) for lease in self._active_leases.values())
+        return sum(self._estimated_vram_need_mb(lease.tier, lease.resource_class) for lease in self._active_leases.values())
 
     def _active_reserved_vram_mb(self, snapshot: ResourceSnapshot) -> float:
         reserved = float(getattr(snapshot, "eris_reserved_vram_mb", 0.0) or 0.0)
@@ -811,9 +990,11 @@ class ModelBudgetPolicy:
         with self._lock:
             return self._reserved_vram_for_active_leases_locked()
 
-    def _has_incompatible_active_lease(self, tier: ModelTier) -> bool:
+    def _has_incompatible_active_lease(
+        self, tier: ModelTier, resource_class: ResourceClass | str | None = None
+    ) -> bool:
         with self._lock:
-            return self._has_incompatible_active_lease_locked(tier)
+            return self._has_incompatible_active_lease_locked(tier, resource_class)
 
     def _resource_block_reasons(
         self,
@@ -867,10 +1048,12 @@ class ModelBudgetPolicy:
     def _remove_queue_entry_locked(self, request_id: str) -> None:
         self._queue = [entry for entry in self._queue if entry.request_id != request_id]
 
-    def _has_incompatible_active_lease_locked(self, tier: ModelTier) -> bool:
-        if not self._is_heavy_tier(tier):
+    def _has_incompatible_active_lease_locked(
+        self, tier: ModelTier, resource_class: ResourceClass | str | None = None
+    ) -> bool:
+        if not self._is_heavy_tier(tier, resource_class):
             return False
-        return any(self._is_heavy_tier(lease.tier) for lease in self._active_leases.values())
+        return any(self._is_heavy_tier(lease.tier, lease.resource_class) for lease in self._active_leases.values())
 
     def _wait_seconds(self, entry: ModelQueueEntry, now: float, *, decision: BudgetDecision | None = None) -> float:
         poll = max(0.05, float(self.config.queue_poll_seconds))

@@ -398,6 +398,16 @@ class JsonlWorkerClient:
         self.model_name = getattr(client, "model_name", "")
         self.configured_model_name = getattr(client, "configured_model_name", self.model_name)
         self.key_pool = getattr(client, "key_pool", None)
+
+        # V4 - khai báo profile inference một cách tường minh.
+        #
+        # Worker trong module này KHÔNG phải model local 4B. Nó là DeepSeek Web
+        # worker đi qua DS2API/Whale2API gateway. ``base_url`` có thể là localhost
+        # (vì gateway chạy trên máy người dùng), nhưng model thật vẫn nằm ở remote.
+        # Gắn metadata ngay trên client giúp router/scheduler không phải đoán tài
+        # nguyên từ tên tier legacy như ``subconscious_4b``.
+        self.inference_backend = "ds2api_deepseek_web"
+        self.inference_resource_class = "remote_api"
         self._actor_lock = threading.Lock()
         self._actor_enabled = _env_flag(
             f"ERIS_DS_{self.worker_role.upper()}_ACTOR",

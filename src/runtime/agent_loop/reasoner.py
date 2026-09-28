@@ -153,8 +153,14 @@ class RuntimeModelTurnReasoner:
         state: Mapping[str, Any],
         runtime_context: Mapping[str, Any],
     ) -> TurnDecision:
+        # Root TurnAgentLoop nên ưu tiên worker ``executive`` đúng nghĩa.
+        # Trước V4 đoạn này lấy ``deep_client`` (social critic) trước, nên ownership
+        # bị mờ: executive loop có thể đang dùng một role worker khác chỉ vì nó
+        # "sâu" hơn. Fallback vẫn giữ để rollout không làm chat chết nếu executive
+        # worker chưa được cấu hình.
         client = (
-            getattr(self.router, "deep_client", None)
+            getattr(self.router, "executive_client", None)
+            or getattr(self.router, "deep_client", None)
             or getattr(self.router, "seed_client", None)
             or getattr(self.router, "surface_client", None)
             or getattr(getattr(self.router, "llm_service", None), "client", None)
@@ -200,7 +206,11 @@ class RuntimeModelTurnReasoner:
                 name="eris_agent_turn_executive",
                 max_tokens=1450,
                 reasoning_effort="medium",
+                # ``subconscious_4b`` chỉ là legacy tier để caller/scheduler cũ
+                # vẫn tương thích. Cognitive role thật của request được khai báo
+                # riêng; backend/resource_class sẽ được router đọc từ DS2API client.
                 inference_tier="subconscious_4b",
+                cognitive_lane="turn_executive",
                 priority=68,
                 timeout_seconds=_worker_timeout_seconds(),
             )
