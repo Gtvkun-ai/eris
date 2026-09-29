@@ -55,7 +55,7 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
         "speech_budget": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["target_words", "hard_max_words", "max_beats", "target_seconds"],
+            "required": ["max_beats"],
             "properties": {
                 "target_words": {"type": "integer", "minimum": 20, "maximum": 1200},
                 "hard_max_words": {"type": "integer", "minimum": 30, "maximum": 1800},
@@ -196,7 +196,7 @@ class RuntimeModelTurnReasoner:
                     "nhưng vẫn đang đối thoại, report chỉ khi user thật sự yêu cầu một câu trả lời đầy đủ/báo cáo. "
                     "Trong conversational mode thường chỉ nói 1-2 ý, giữ các ý còn lại trong continuation.deferred_threads. "
                     "continuation_anchor là ý mở tự nhiên cho lượt sau, không phải câu hỏi generic kiểu 'bạn có muốn biết thêm không'. "
-                    "Nếu runtime_context.voice_mode=true, ưu tiên speech_budget rất ngắn: người nghe phải có cơ hội chen vào. "
+                    "Nếu runtime_context.voice_mode=true, điều khiển nhịp bằng số DialogueBeat được reveal (thường 1 beat ở conversational mode) để người nghe có cơ hội chen vào. Không dùng word/time hard cap và không yêu cầu writer nén câu. "
                     "Không biến mọi beat thành heading, không nhắc lại cùng một ý. "
                     "decision_summary chỉ ghi lý do vận hành cực ngắn như 'còn thiếu ví dụ và verification'; "
                     "không ghi quá trình suy luận nội bộ chi tiết."
@@ -230,13 +230,23 @@ class RuntimeModelTurnReasoner:
 
 
 def _worker_timeout_seconds() -> float:
-    """Một iteration foreground phải nhanh; loop có budget tổng riêng."""
-    raw = str(os.getenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", "6.0") or "6.0").strip()
+    """Kế thừa deadline foreground, trừ khi worker có cấu hình riêng."""
+    foreground_raw = str(
+        os.getenv("ERIS_FOREGROUND_HARD_DEADLINE_SEC", "90.0") or "90.0"
+    ).strip()
+    try:
+        foreground_timeout = float(foreground_raw)
+    except (TypeError, ValueError):
+        foreground_timeout = 90.0
+    raw = str(
+        os.getenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", str(foreground_timeout))
+        or str(foreground_timeout)
+    ).strip()
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        value = 6.0
-    return max(2.0, min(12.0, value))
+        value = foreground_timeout
+    return max(2.0, value)
 
 
 def _bounded_runtime_context(context: Mapping[str, Any]) -> dict[str, Any]:
@@ -300,10 +310,7 @@ def heuristic_fallback_decision(
         "tutor_response_relation": "none",
         "response_mode": "normal",
         "disclosure_mode": "conversational",
-        "speech_budget": {
-            "target_words": 100, "hard_max_words": 180, "max_beats": 2,
-            "target_seconds": 24.0, "hard_max_seconds": 36.0
-        },
+        "speech_budget": {"max_beats": 2},
         "continuation": {
             "active_thread": "", "deferred_threads": [], "continuation_anchor": "", "next_if_continue": ""
         },

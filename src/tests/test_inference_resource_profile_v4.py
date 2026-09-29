@@ -181,6 +181,23 @@ def test_turn_agent_reasoner_prefers_dedicated_executive_worker():
     assert router.seen_kwargs["inference_tier"] == "subconscious_4b"
 
 
+def test_turn_agent_worker_timeout_defaults_to_foreground_deadline(monkeypatch):
+    from runtime.agent_loop.reasoner import _worker_timeout_seconds
+
+    monkeypatch.delenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", raising=False)
+    monkeypatch.setenv("ERIS_FOREGROUND_HARD_DEADLINE_SEC", "90")
+
+    assert _worker_timeout_seconds() == 90.0
+
+
+def test_turn_agent_worker_timeout_has_no_upper_cap(monkeypatch):
+    from runtime.agent_loop.reasoner import _worker_timeout_seconds
+
+    monkeypatch.setenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", "180")
+
+    assert _worker_timeout_seconds() == 180.0
+
+
 def test_turn_executive_cognitive_lane_is_required_foreground_broker_lane(monkeypatch):
     """Không để legacy tier kéo root executive xuống post_observer optional."""
     from contextlib import contextmanager

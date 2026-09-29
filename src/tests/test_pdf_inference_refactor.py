@@ -547,6 +547,8 @@ def test_degraded_fastpath_only_handles_exact_closed_forms(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_DEGRADED_CHAT_FASTPATH", "1")
     greeting = build_degraded_reply("Xin chào!", language_hint="vi")
     assert greeting["degraded_fastpath"] is True
+    assert greeting["text"] == "Chào. Tôi nhận được tin nhắn rồi."
+    assert greeting["speech_text"] == "こんにちは。メッセージは受け取ったよ。"
     assert greeting["semantic_frame"]["user_act"] == "greeting"
     assert greeting["semantic_frame"]["tool_intent"] == "none"
 

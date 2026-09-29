@@ -404,6 +404,34 @@ def _elevenlabs_api_key() -> str:
     return token
 
 
+def _elevenlabs_auth_configured_fast() -> bool:
+    """Return whether ElevenLabs auth exists without network/quota sync.
+
+    Startup must not block the chat loop on Firebase/ElevenLabs checks. The
+    real token refresh still happens in the warm-up thread or on first speech.
+    """
+    from eris_secrets import get_secret
+
+    if _CACHED_BEARER_TOKEN and time.time() < _CACHED_BEARER_EXPIRES_AT:
+        return True
+    if _direct_elevenlabs_api_key():
+        return True
+    if str(get_secret("ELEVENLABS_BEARER_TOKEN") or "").strip():
+        return True
+    if (
+        str(get_secret("ELEVENLABS_REFRESH_TOKEN") or "").strip()
+        and str(get_secret("FIREBASE_API_KEY") or "").strip()
+    ):
+        return True
+    try:
+        from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL
+
+        return bool(GLOBAL_ELEVEN_POOL.has_accounts())
+    except Exception as exc:
+        logger.debug("[TTS/ElevenLabsPool] Fast auth check error: %s", exc)
+        return False
+
+
 def _elevenlabs_base_url() -> str:
     return str(os.environ.get("ERIS_ELEVENLABS_BASE_URL", "https://api.elevenlabs.io") or "").strip().rstrip("/")
 
@@ -2891,7 +2919,7 @@ class TtsEngine:
             except ImportError:
                 logger.warning("[TTS] requests chưa cài. Chạy: pip install requests")
                 return
-            if not _elevenlabs_api_key():
+            if not _elevenlabs_auth_configured_fast():
                 logger.warning(
                     "[TTS] Missing ElevenLabs auth: account pool/Firebase refresh token "
                     "or ELEVENLABS_API_KEY/ERIS_ELEVENLABS_API_KEY is required."

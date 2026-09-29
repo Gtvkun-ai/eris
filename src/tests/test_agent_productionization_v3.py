@@ -77,7 +77,7 @@ def test_tutor_session_ledger_restores_exact_delivered_move(tmp_path: Path) -> N
     assert restored.committed_move_ids == ("m0",)
 
 
-def test_voice_speech_budget_uses_seconds_and_clips_before_tts() -> None:
+def test_voice_speech_observer_never_mutates_writer_text() -> None:
     budget = TurnSpeechBudget(
         target_words=35,
         hard_max_words=55,
@@ -87,12 +87,13 @@ def test_voice_speech_budget_uses_seconds_and_clips_before_tts() -> None:
     )
     text = " ".join(["Đây là một câu giải thích khá dài về kiến trúc agent."] * 35)
     result = enforce_public_speech_budget(text, budget, speed=1.0)
-    assert result.clipped is True
-    assert result.estimate.seconds <= budget.hard_max_seconds * 1.20
-    assert result.estimate.words <= int(budget.hard_max_words * 1.20)
+    assert result.clipped is False
+    assert result.text == text
+    assert result.reason == "observe_only_no_runtime_mutation"
+    assert result.estimate.seconds > 0
 
 
-def test_director_voice_budget_changes_with_tts_speed() -> None:
+def test_director_voice_guidance_does_not_change_with_tts_speed() -> None:
     director = ConversationDirector()
     plan = DiscoursePlan(
         disclosure_mode=DisclosureMode.CONVERSATIONAL,
@@ -107,8 +108,8 @@ def test_director_voice_budget_changes_with_tts_speed() -> None:
     )
     slow = director.apply_turn_pacing(plan, voice_mode=True, tts_speed=0.85)
     fast = director.apply_turn_pacing(plan, voice_mode=True, tts_speed=1.15)
-    assert slow.speech_budget.target_words < fast.speech_budget.target_words
-    assert slow.speech_budget.hard_max_words < fast.speech_budget.hard_max_words
+    # TTS speed chỉ còn là telemetry; runtime không biến nó thành word/time cap.
+    assert slow.speech_budget == fast.speech_budget
 
 
 class _Router:

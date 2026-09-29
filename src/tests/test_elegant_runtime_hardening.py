@@ -171,8 +171,8 @@ def test_required_greeting_cannot_silently_disappear() -> None:
     assert result.requirement is ReplyRequirement.REQUIRED
     assert result.repaired is True
     assert result.payload["should_speak"] is True
-    assert result.payload["text"] == "Chào bạn. Tôi đây."
-    assert result.payload["speech_text"] == "こんにちは。ここにいるよ。"
+    assert result.payload["text"] == "Chào. Tôi nhận được tin nhắn rồi."
+    assert result.payload["speech_text"] == "こんにちは。メッセージは受け取ったよ。"
     assert result.payload["speech_language"] == "ja"
 
 

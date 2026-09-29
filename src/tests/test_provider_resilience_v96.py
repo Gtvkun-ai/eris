@@ -178,6 +178,14 @@ def test_chat_orchestrator_installs_one_foreground_deadline_for_whole_turn(monke
     assert str(seen["cancel_scope"]).startswith("user_turn:")
 
 
+def test_foreground_hard_deadline_accepts_ninety_seconds(monkeypatch) -> None:
+    from runtime.ai_orchestrated.orchestrator import _foreground_hard_deadline_seconds
+
+    monkeypatch.setenv("ERIS_FOREGROUND_HARD_DEADLINE_SEC", "90")
+
+    assert _foreground_hard_deadline_seconds() == 90.0
+
+
 def test_broker_policy_rejection_does_not_poison_provider_health() -> None:
     from llm.client import ChainedFallbackClient
     from runtime.inference_broker import InferenceRejected, inference_context

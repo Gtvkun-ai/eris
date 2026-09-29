@@ -78,9 +78,9 @@ def build_degraded_reply(user_text: str, *, language_hint: str = "vi") -> dict[s
 
     if cue in _GREETING_FORMS:
         text, display_language, speech_text = _paired_surface(language, {
-            "en": "Hi. I'm here.",
-            "ja": "こんにちは。ここにいるよ。",
-            "vi": "Chào bạn. Tôi đây.",
+            "en": "Hi. I got your message.",
+            "ja": "こんにちは。メッセージは受け取ったよ。",
+            "vi": "Chào. Tôi nhận được tin nhắn rồi.",
         })
         frame = {
             "turn_kind": "chat_response",

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Ước lượng thời lượng speech và hard guard cho public voice turn.
+"""Ước lượng thời lượng speech cho public voice turn.
 
-Đây KHÔNG phải tokenizer và không cố dự đoán waveform chính xác tuyệt đối.
-Mục tiêu của nó là một guardrail ổn định: nếu writer lỡ xổ 1.000+ chữ thì runtime
-phát hiện *trước khi TTS* và cắt ở breakpoint câu tự nhiên thay vì để voice đọc
-một tràng dài.
+Quan trọng: module này **không có quyền biên tập public text**. Từ V6, mọi
+word/second budget chỉ là telemetry hoặc guidance trước writer. Sau khi public
+writer đã sinh câu, runtime chỉ được đo/ghi log; không được cắt, rút gọn, nối
+hoặc thay token vì pacing.
 """
 from __future__ import annotations
 
@@ -94,53 +94,21 @@ def enforce_public_speech_budget(
     *,
     speed: float = 1.0,
 ) -> SpeechGuardResult:
-    """Hard-stop public wording ở sentence boundary nếu writer vượt speech cap.
+    """Đo public speech nhưng **không được sửa lời của writer**.
 
-    Writer prompt vẫn là lớp chính để câu văn tự nhiên. Guard này là seatbelt:
-    bình thường không chạm text; chỉ can thiệp khi output vượt hard word/time cap.
+    Từ V6, runtime không còn quyền cắt, rút gọn hay chèn dấu ``…`` vào câu
+    mà LLM public writer đã sinh. ``TurnSpeechBudget`` chỉ còn là metadata/pacing
+    guidance dùng *trước* writer để ConversationDirector chọn beat nào nên nói.
+
+    Hàm này được giữ tên cũ để các caller/test/extension cũ không vỡ API. Tuy
+    nhiên nó cố ý là observer thuần: output ``text`` luôn giống input đã chuẩn
+    hóa whitespace đầu/cuối, ``clipped`` luôn False. Nếu output dài, telemetry
+    có thể ghi nhận để cải thiện prompt/DiscoursePlan ở lượt sau; runtime tuyệt
+    đối không tự biên tập câu chữ sau writer.
     """
     raw = str(text or "").strip()
     estimate = estimate_speech(raw, speed=speed)
-    normalized = budget.normalized()
-    hard_seconds = normalized.hard_max_seconds
-    if estimate.words <= normalized.hard_max_words and estimate.seconds <= hard_seconds:
-        return SpeechGuardResult(raw, estimate, False, "within_budget")
-
-    sentences = [part.strip() for part in _SENTENCE_SPLIT_RE.split(raw) if part.strip()]
-    if not sentences:
-        sentences = [raw]
-
-    kept: list[str] = []
-    for sentence in sentences:
-        candidate = " ".join((*kept, sentence)).strip()
-        cand_est = estimate_speech(candidate, speed=speed)
-        if kept and (cand_est.words > normalized.hard_max_words or cand_est.seconds > hard_seconds):
-            break
-        kept.append(sentence)
-        if cand_est.words >= normalized.hard_max_words or cand_est.seconds >= hard_seconds:
-            break
-
-    clipped = " ".join(kept).strip()
-    # Một câu duy nhất có thể dài bất thường. Khi đó hard-cut theo word count là
-    # phương án cuối; hiếm và vẫn tốt hơn để TTS đọc hàng nghìn chữ.
-    if clipped:
-        clipped_est = estimate_speech(clipped, speed=speed)
-    else:
-        clipped_est = SpeechEstimate(0, 0, 0, 0.0)
-    if not clipped or clipped_est.words > normalized.hard_max_words * 1.15 or clipped_est.seconds > hard_seconds * 1.15:
-        tokens = raw.split()
-        word_cap = max(12, normalized.hard_max_words)
-        clipped = " ".join(tokens[:word_cap]).strip()
-        if clipped and clipped != raw:
-            clipped = clipped.rstrip(" ,;:") + "…"
-        clipped_est = estimate_speech(clipped, speed=speed)
-
-    return SpeechGuardResult(
-        clipped or raw,
-        clipped_est if clipped else estimate,
-        bool(clipped and clipped != raw),
-        "hard_speech_budget" if clipped and clipped != raw else "unable_to_clip",
-    )
+    return SpeechGuardResult(raw, estimate, False, "observe_only_no_runtime_mutation")
 
 
 __all__ = [

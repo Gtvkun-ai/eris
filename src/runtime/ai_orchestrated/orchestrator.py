@@ -97,7 +97,7 @@ def _foreground_hard_deadline_seconds() -> float:
             value = runtime_float("chat", "foreground_hard_deadline_seconds", default=20.0)
     except (TypeError, ValueError, ImportError):
         value = 20.0
-    return max(5.0, min(45.0, float(value)))
+    return max(5.0, min(90.0, float(value)))
 
 
 def _orchestrator_boundary_note(host: Any, operation: str, exc: Exception) -> None:
@@ -1860,8 +1860,8 @@ class AIChatOrchestrator:
                 )
                 + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
                   "Say ONLY discourse_plan.beats for this turn. continuation.deferred_threads are intentionally NOT for this reply. "
-                  "Respect speech_budget.hard_max_words, speech_budget.hard_max_seconds and speech_budget.max_beats even when cognitive_plan knows much more. "
-                  "Realize beats as natural spoken conversation, lead with the strongest useful point, use short transitions, "
+                  "speech_budget word/time fields are NON-BINDING pacing hints only; never truncate or unnaturally compress a thought to hit them. "
+                  "The semantic beat selection is the contract: realize those beats naturally, lead with the strongest useful point, use short transitions, "
                   "and stop at the planned breakpoint instead of dumping the rest. continuation_anchor may shape the final line "
                   "as a natural open thread, but never append generic 'muốn tôi nói thêm không?' filler. "
                   "If tutor_role.directive exists, obey its pedagogical intent and max_sentences. If response_relation=clarification "
@@ -1893,7 +1893,7 @@ class AIChatOrchestrator:
                     "AGENT_TURN_LOOP_DEGRADED: " + json.dumps(
                         agent_turn_payload, ensure_ascii=False, separators=(",", ":")
                     )
-                    + ". HARD RULE: say only discourse_plan.beats; respect speech budget; do not expose hidden reasoning.",
+                    + ". HARD RULE: say only discourse_plan.beats; word/time speech budget is advisory only; do not expose hidden reasoning.",
                 ) if str(part).strip())
                 planning_snapshot["discourse_context"] = discourse_context
             except Exception as fallback_exc:
@@ -2101,63 +2101,29 @@ class AIChatOrchestrator:
             host._set_background_memory_digest_remote_inflight(False)
         latency_trace.mark("writer")
 
-        # V3 speech hard guard: prompt/director là lớp chính, nhưng model vẫn có
-        # thể đôi lúc xổ dài. Trước khi semantic/stage/TTS pipeline commit, đo lại
-        # output thật và cắt ở sentence boundary nếu vượt hard speech budget.
-        # Guard chỉ active khi TTS bật; text-only report không bị cắt máy móc.
+        # V6 immutable public-surface rule:
+        # Sau khi public writer đã sinh text/speech_text, runtime KHÔNG được cắt,
+        # rút gọn hay thay token chỉ vì pacing/TTS. Ta chỉ đo để telemetry và dùng
+        # kết quả đó cải thiện DiscoursePlan/prompt ở *lượt sau*.
         if payload and agent_turn_result is not None and _voice_mode:
             try:
-                from runtime.agent_loop.speech import enforce_public_speech_budget
+                from runtime.agent_loop.speech import estimate_speech
 
-                _speech_budget = agent_turn_result.state.discourse.speech_budget
                 _display_raw = str(payload.get("text", "") or "").strip()
                 _speech_raw = str(payload.get("speech_text", "") or "").strip()
-                _display_guard = enforce_public_speech_budget(
-                    _display_raw, _speech_budget, speed=_tts_speed
-                )
-                _speech_guard = enforce_public_speech_budget(
-                    _speech_raw, _speech_budget, speed=_tts_speed
-                ) if _speech_raw else None
-                _clipped = bool(_display_guard.clipped or (_speech_guard and _speech_guard.clipped))
-                if _display_guard.clipped:
-                    payload["text"] = _display_guard.text
-                if _speech_guard is not None and _speech_guard.clipped:
-                    payload["speech_text"] = _speech_guard.text
-
-                # Nếu provider trả nested utterance thì top-level field một mình
-                # không đủ vì UtteranceSpec ưu tiên nested display/speech. Đồng bộ
-                # lại cùng hard-guarded surface để TTS không hồi sinh bản dài cũ.
-                _utterance = payload.get("utterance")
-                if _clipped and isinstance(_utterance, Mapping):
-                    _utterance = dict(_utterance)
-                    _display = _utterance.get("display")
-                    if isinstance(_display, Mapping) and _display_guard.clipped:
-                        _display = dict(_display)
-                        _display["text"] = _display_guard.text
-                        _utterance["display"] = _display
-                    _speech = _utterance.get("speech")
-                    if isinstance(_speech, Mapping) and _speech_guard is not None and _speech_guard.clipped:
-                        _speech = dict(_speech)
-                        _speech["text"] = _speech_guard.text
-                        _utterance["speech"] = _speech
-                    payload["utterance"] = _utterance
-
+                _display_est = estimate_speech(_display_raw, speed=_tts_speed)
+                _speech_est = estimate_speech(_speech_raw, speed=_tts_speed) if _speech_raw else None
                 host.last_agent_speech_guard = {
-                    "schema": "eris.agent_speech_guard.v1",
-                    "clipped": _clipped,
-                    "budget": _speech_budget.to_dict(),
+                    "schema": "eris.agent_speech_observer.v2",
+                    "mutated": False,
+                    "policy": "observe_only_writer_surface_immutable",
+                    "guidance": agent_turn_result.state.discourse.speech_budget.to_dict(),
                     "tts_speed": round(float(_tts_speed), 3),
-                    "display": _display_guard.estimate.to_dict(),
-                    "speech": _speech_guard.estimate.to_dict() if _speech_guard is not None else {},
+                    "display": _display_est.to_dict(),
+                    "speech": _speech_est.to_dict() if _speech_est is not None else {},
                 }
-                if _clipped:
-                    host.logger.warning(
-                        "[agent-speech] hard-clipped writer output before TTS turn=%s budget=%s",
-                        turn_seq,
-                        _speech_budget.to_dict(),
-                    )
             except Exception as exc:
-                host.logger.debug("[agent-speech] guard degraded: %s", exc)
+                host.logger.debug("[agent-speech] observer degraded: %s", exc)
 
         # The public writer has finished its remote generation. Only now may the
         # queued slow Neuro review start, so it cannot steal provider capacity

@@ -163,10 +163,13 @@ class ExecutionPlan:
 
 @dataclass(frozen=True, slots=True)
 class TurnSpeechBudget:
-    """Ngân sách *nói*, tách hoàn toàn khỏi token/reasoning budget.
+    """Guidance về nhịp nói, tách khỏi token/reasoning budget.
 
-    Đây là guardrail quan trọng cho TTS: agent có thể suy nghĩ rất sâu, nhưng
-    voice turn chỉ nên chứa một lượng ý mà người nghe còn theo kịp.
+    ``target_*`` giúp ConversationDirector lập kế hoạch disclosure *trước* khi
+    writer chạy. ``hard_max_*`` được giữ để tương thích schema V2/V3/V5 nhưng
+    **không còn là hard cap** và tuyệt đối không được dùng để cắt public text.
+    Runtime có thể chọn ít beat hơn; writer được toàn quyền diễn đạt beat đã
+    chọn bằng câu tự nhiên, dài/ngắn bao nhiêu tùy ngữ cảnh.
     """
 
     target_words: int = 110
@@ -176,11 +179,14 @@ class TurnSpeechBudget:
     hard_max_seconds: float = 36.0
 
     def normalized(self) -> "TurnSpeechBudget":
-        target = max(20, min(900, int(self.target_words)))
-        hard = max(target, min(1800, int(self.hard_max_words)))
-        beats = max(1, min(8, int(self.max_beats)))
-        seconds = max(5.0, min(180.0, float(self.target_seconds)))
-        hard_seconds = max(seconds, min(240.0, float(self.hard_max_seconds)))
+        # Không đặt upper cap cho lời nói. Các giá trị này chỉ là guidance/telemetry.
+        # ``max_beats`` vẫn là số beat ConversationDirector muốn *reveal* trong
+        # lượt này; nó không giới hạn số câu/từ mà writer dùng để diễn đạt beat.
+        target = max(1, int(self.target_words))
+        hard = max(target, int(self.hard_max_words))
+        beats = max(1, int(self.max_beats))
+        seconds = max(0.1, float(self.target_seconds))
+        hard_seconds = max(seconds, float(self.hard_max_seconds))
         return replace(
             self,
             target_words=target,

@@ -201,20 +201,16 @@ class TurnAgentRuntime:
             tts_speed=tts_speed,
         )
 
-        # Tutor question cần response => một beat là đủ, rồi HARD WAIT sau delivery.
+        # Tutor question cần response => chỉ reveal đúng một teaching beat rồi HARD
+        # WAIT. Quan trọng: đây là semantic pacing, KHÔNG phải word/time cap. Writer
+        # được quyền diễn đạt teaching beat đó trọn vẹn và tự nhiên.
         if bool(self.last_tutor_role.get("waiting_for_user")):
             one_beat = paced.beats[:1]
             paced = replace(
                 paced,
                 beats=one_beat,
                 user_response_required=True,
-                speech_budget=TurnSpeechBudget(
-                    target_words=min(paced.speech_budget.target_words, 70 if voice_mode else 110),
-                    hard_max_words=min(paced.speech_budget.hard_max_words, 110 if voice_mode else 170),
-                    max_beats=1,
-                    target_seconds=min(paced.speech_budget.target_seconds, 20.0 if voice_mode else 30.0),
-                    hard_max_seconds=min(paced.speech_budget.hard_max_seconds, 28.0 if voice_mode else 45.0),
-                ).normalized(),
+                speech_budget=replace(paced.speech_budget, max_beats=1),
             )
             state = replace(state, status="waiting_user")
             completion_reason = "tutor_requires_user_response"

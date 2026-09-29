@@ -148,6 +148,28 @@ def test_eleven_renderer_uses_warm_tag_without_touching_public_text():
     assert rendered.endswith('Tôi "hiểu rồi".')
 
 
+def test_elevenlabs_startup_auth_check_does_not_sync_pool(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ERIS_ELEVENLABS_API_KEY", raising=False)
+
+    class _Pool:
+        def has_accounts(self):
+            return True
+
+        def sync_subscription(self, _account_id):
+            raise AssertionError("startup auth check must not sync ElevenLabs")
+
+    monkeypatch.setattr(tts, "_direct_elevenlabs_api_key", lambda: "")
+
+    import eris_secrets
+    import runtime.elevenlabs_pool_db as pool_db
+
+    monkeypatch.setattr(eris_secrets, "get_secret", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(pool_db, "GLOBAL_ELEVEN_POOL", _Pool())
+
+    assert tts._elevenlabs_auth_configured_fast() is True
+
+
 def test_eleven_stream_uses_single_clip_metadata(monkeypatch):
     monkeypatch.setattr(tts, "_get_elevenlabs_token", lambda **_kwargs: ("api_key", "test-key", 0))
     monkeypatch.setattr(tts, "_elevenlabs_base_url", lambda: "https://api.elevenlabs.io")

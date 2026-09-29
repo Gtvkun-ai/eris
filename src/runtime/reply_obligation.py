@@ -71,11 +71,11 @@ def _minimal_surface(frame: SemanticFrame | None, *, language_hint: str) -> tupl
     act = str(getattr(frame, "user_act", "") or "").strip().lower() if frame else ""
     if act == "greeting":
         display = {
-            "en": "Hi. I'm here.",
-            "ja": "こんにちは。ここにいるよ。",
-            "vi": "Chào bạn. Tôi đây.",
-        }.get(language, "Chào bạn. Tôi đây.")
-        return display, "こんにちは。ここにいるよ。", "social"
+            "en": "Hi. I got your message.",
+            "ja": "こんにちは。メッセージは受け取ったよ。",
+            "vi": "Chào. Tôi nhận được tin nhắn rồi.",
+        }.get(language, "Chào. Tôi nhận được tin nhắn rồi.")
+        return display, "こんにちは。メッセージは受け取ったよ。", "social"
     if act == "acknowledgement":
         display = {
             "en": "Got it.",

@@ -206,13 +206,10 @@ class UtteranceEvaluator:
             quality = min(quality, 0.38)
             verdict = "drop"
 
-        # ``Tôi đây`` là filler khi Eris tự chen vô cớ, nhưng là câu đáp hợp lệ
-        # cho ``xin chào Eris``. Lỗi cũ bỏ qua speech act của user, đánh rớt lời
-        # chào rồi tầng repair mới phun ra câu “chưa đủ căn cứ”. Chỉ miễn đúng
-        # lượt chào ngắn; toàn bộ guard còn lại vẫn chạy như cũ.
-        if any(pattern in normalized for pattern in self._GENERIC_FILLER) and not (
-            (channel_name == "chat" and greeting_turn) or explicit_presence_pull
-        ):
+        # ``Tôi đây`` remains valid only when the user explicitly pulls presence.
+        # A direct chat greeting should still get a real greeting surface, not an
+        # attendance ping.
+        if any(pattern in normalized for pattern in self._GENERIC_FILLER) and not explicit_presence_pull:
             issues.append("generic_presence_filler")
             quality = min(quality, 0.34)
             verdict = "rewrite"
