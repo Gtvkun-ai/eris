@@ -7,6 +7,8 @@ from .contracts import (
     BeatKind,
     CognitivePlan,
     ContinuationPlan,
+    ConversationSpeechPlan,
+    SpeechContinuationMode,
     DialogueBeat,
     DisclosureMode,
     DiscoursePlan,
@@ -20,6 +22,7 @@ from .contracts import (
 from .director import ConversationDirector
 from .reasoner import DeterministicFallbackTurnReasoner, RuntimeModelTurnReasoner, TurnReasoner
 from .pacing import DisclosureArcLedger, DisclosureArcState
+from .speech_plan import SpeechPlanLedger, SpeechPlanSnapshot
 from .tutor_role import TutorRoleContribution, TutorRoleCoordinator
 from .runtime import TurnAgentRuntime, build_degraded_turn_result, ensure_agent_turn_runtime
 
@@ -32,6 +35,10 @@ __all__ = [
     "CompletionVerdict",
     "ConversationDirector",
     "ContinuationPlan",
+    "ConversationSpeechPlan",
+    "SpeechContinuationMode",
+    "SpeechPlanLedger",
+    "SpeechPlanSnapshot",
     "DeterministicFallbackTurnReasoner",
     "DialogueBeat",
     "DisclosureArcLedger",

@@ -2,8 +2,9 @@
 """Generic foreground TurnAgentRuntime — root loop duy nhất của mọi chat.
 
 Mỗi user message đi qua runtime này. Tutor/coding/research/companion chỉ là role.
-Runtime không public chain-of-thought; nó tích lũy typed state rồi mới giao cho
-public writer một DiscoursePlan đã được cắt theo nhịp hội thoại/TTS.
+Từ V7, chính root executive trong agent loop sở hữu cả *disclosure decision*:
+ý nào nói ngay, ý nào giữ lại, lúc nào WAIT và lúc nào COMPLETE. Runtime chỉ
+validate + project quyết định đó; không tự cắt/chọn semantic beat thay agent.
 """
 from __future__ import annotations
 
@@ -18,15 +19,15 @@ from .contracts import (
     AgentTurnResult,
     AgentTurnState,
     CognitivePlan,
-    DisclosureMode,
+    ConversationSpeechPlan,
     DiscoursePlan,
     ExecutionPlan,
     LoopBudget,
     TurnDecision,
-    TurnSpeechBudget,
 )
 from .director import ConversationDirector
 from .pacing import DisclosureArcLedger
+from .speech_plan import SpeechPlanLedger, SpeechPlanSnapshot
 from .reasoner import DeterministicFallbackTurnReasoner, RuntimeModelTurnReasoner, TurnReasoner
 from .tutor_role import TutorRoleCoordinator
 
@@ -40,6 +41,7 @@ class TurnAgentRuntime:
         completion_gate: CompletionGate | None = None,
         budget: LoopBudget | None = None,
         arc_ledger: DisclosureArcLedger | None = None,
+        speech_plan_ledger: SpeechPlanLedger | None = None,
         tutor_role: TutorRoleCoordinator | None = None,
         logger: Any | None = None,
     ) -> None:
@@ -48,10 +50,15 @@ class TurnAgentRuntime:
         self.completion_gate = completion_gate or CompletionGate()
         self.budget = (budget or LoopBudget()).normalized()
         self.arc_ledger = arc_ledger or DisclosureArcLedger(logger=logger)
+        self.speech_plan_ledger = speech_plan_ledger or SpeechPlanLedger(logger=logger)
         self.tutor_role = tutor_role or TutorRoleCoordinator(None, logger=logger)
         self.logger = logger
         self.last_result: AgentTurnResult | None = None
         self.last_tutor_role: Mapping[str, Any] = {}
+        # Cơ học single-user foreground: bind delivery/audio về session agent vừa
+        # commit. Đây không phải semantic ownership; chỉ là routing receipt.
+        self._last_session_id: str = "default"
+        self._awaiting_audio_session_id: str = ""
 
     def prepare_turn(
         self,
@@ -61,6 +68,7 @@ class TurnAgentRuntime:
         session_id: str = "default",
         recent_history: Sequence[Mapping[str, Any]] = (),
         runtime_context: Mapping[str, Any] | None = None,
+        continuation_wake: Mapping[str, Any] | None = None,
     ) -> AgentTurnResult:
         """Chạy agent loop cho đúng *một* user turn.
 
@@ -71,15 +79,30 @@ class TurnAgentRuntime:
         sid = str(session_id or "default")[:180]
         prior_arc = self.arc_ledger.load(sid)
         context["disclosure_arc"] = prior_arc.to_dict()
+        prior_speech = self.speech_plan_ledger.load(sid)
+        # V8: đưa lại đúng kế hoạch nói dài hạn mà ROOT AGENT đã lập ở turn trước.
+        # Runtime chỉ lưu/khôi phục; không tự chọn planned_thread nào để nói.
+        context["conversation_speech_plan"] = prior_speech.to_dict()
+        if continuation_wake:
+            context["continuation_wake"] = dict(continuation_wake)
+        else:
+            # User turn thật preempt timer cũ, nhưng semantic plan vẫn được giữ
+            # nguyên trong snapshot để agent tự đọc và re-plan.
+            self.speech_plan_ledger.note_user_turn(sid)
 
         # Tutor role được chuẩn bị TRƯỚC iteration đầu nếu không có pending answer.
         # Nếu đang chờ câu trả lời cũ, root semantic executive sẽ phân loại relation
         # trước; chỉ relation=answer mới được TutorExecutive chấm thành evidence.
-        tutor_contribution = self.tutor_role.begin_turn(
-            turn_id=turn_id,
-            user_text=user_text,
-            recent_history=recent_history,
-        )
+        if continuation_wake:
+            # Auto continuation không giả làm user turn mới. Giữ projection tutor
+            # hiện tại; nếu tutor đang WAIT_USER thì validation sẽ chặn auto continue.
+            tutor_contribution = self.tutor_role._last_contribution  # compatibility-safe internal snapshot
+        else:
+            tutor_contribution = self.tutor_role.begin_turn(
+                turn_id=turn_id,
+                user_text=user_text,
+                recent_history=recent_history,
+            )
         context["tutor_role"] = tutor_contribution.to_dict()
 
         state = AgentTurnState(
@@ -87,6 +110,7 @@ class TurnAgentRuntime:
             user_text=str(user_text or "")[:16000],
             session_id=sid,
             discourse=DiscoursePlan(style_notes=self.director.DEFAULT_STYLE_NOTES),
+            speech_plan=prior_speech.plan,
         )
         previous_fingerprint = ""
         degraded = False
@@ -115,19 +139,24 @@ class TurnAgentRuntime:
 
             # Root executive vừa phân loại relation với tutor pending move. Adapter
             # có thể commit evidence hoặc sinh TeachingMove mới, nhưng KHÔNG public.
-            tutor_update = self.tutor_role.apply_root_decision(
-                decision,
-                user_text=state.user_text,
-                turn_id=turn_id,
-                recent_history=recent_history,
-            )
+            if continuation_wake:
+                tutor_update = tutor_contribution
+            else:
+                tutor_update = self.tutor_role.apply_root_decision(
+                    decision,
+                    user_text=state.user_text,
+                    turn_id=turn_id,
+                    recent_history=recent_history,
+                )
             self.last_tutor_role = tutor_update.to_dict()
             context["tutor_role"] = self.last_tutor_role
 
-            merged_discourse = self.director.merge(
+            # V7: discourse của iteration mới nhất là snapshot có chủ đích do
+            # root executive quyết. Runtime không merge/dedupe/truncate semantic
+            # beat vì như vậy runtime sẽ lén trở thành một discourse policy khác.
+            merged_discourse = self.director.accept_agent_snapshot(
                 state.discourse,
                 decision.discourse,
-                max_beats=self.budget.max_beats,
             )
             execution = ExecutionPlan(
                 completed_items=decision.completed_items,
@@ -146,13 +175,45 @@ class TurnAgentRuntime:
                 cognitive=cognitive,
                 execution=execution,
                 discourse=merged_discourse,
+                speech_plan=decision.speech_plan,
                 progress=max(state.progress, decision.progress),
                 uncertainty=min(state.uncertainty, decision.uncertainty),
                 stall_count=stall_count,
                 decision_summaries=summaries,
             )
 
+            # Runtime chỉ validate disclosure contract. Nếu invalid, agent phải
+            # tự re-plan ở iteration kế tiếp; runtime tuyệt đối không chọn/sửa beat.
+            disclosure_validation = self.director.validate_agent_plan(
+                decision.discourse,
+                speech_plan=decision.speech_plan,
+                completion_candidate=bool(decision.completion_candidate),
+                waiting_for_user=bool(self.last_tutor_role.get("waiting_for_user")),
+            )
+            if disclosure_validation.valid:
+                context.pop("agent_contract_feedback", None)
+                context.pop("agent_disclosure_feedback", None)
+            else:
+                context["agent_contract_feedback"] = {
+                    "valid": False,
+                    "reason": disclosure_validation.reason,
+                    "instruction": "Root executive phải tự sửa disclosure plan; runtime sẽ không sửa thay.",
+                }
+                # Compatibility key cho V7 tests/callers; cùng một validation result,
+                # không phải policy thứ hai.
+                context["agent_disclosure_feedback"] = dict(context["agent_contract_feedback"])
+
             verdict = self.completion_gate.evaluate(state=state, decision=decision, budget=self.budget)
+            if (
+                not disclosure_validation.valid
+                and iteration + 1 < self.budget.hard_iterations
+            ):
+                verdict = replace(
+                    verdict,
+                    stop=False,
+                    status="running",
+                    reason="agent_disclosure_replan",
+                )
 
             # Nếu tutor vừa tạo/chuyển TeachingMove trong iteration này thì model
             # cần được thấy directive mới ở iteration kế tiếp trước khi COMPLETE.
@@ -185,41 +246,26 @@ class TurnAgentRuntime:
             completion_reason = completion_reason or "degraded_runtime_completion"
             degraded = True
 
-        speakable = self.director.ensure_speakable(state.discourse, objective=state.cognitive.objective)
+        # V7: public plan là phép chiếu đúng ``say_now`` mà root agent đã quyết.
+        # Không voice heuristic, không max-beat heuristic, không tự sinh deferred,
+        # không fallback proposition. Nếu agent chọn 3 beat thì writer nhận cả 3.
+        # Nếu agent chọn 1 beat thì writer nhận đúng 1.
+        public_plan = self.director.project_for_writer(state.discourse)
 
-        # Voice/TTS là pacing concern, không phải reasoning concern. Agent được
-        # nghĩ sâu như cũ, nhưng public speech bị cắt ngắn để user còn chen vào.
-        voice_mode = bool(context.get("voice_mode", False))
-        try:
-            tts_speed = float(context.get("tts_speed", 1.0) or 1.0)
-        except (TypeError, ValueError):
-            tts_speed = 1.0
-        paced = self.director.apply_turn_pacing(
-            speakable,
-            voice_mode=voice_mode,
-            explicit_exhaustive_request=(speakable.disclosure_mode == DisclosureMode.REPORT),
-            tts_speed=tts_speed,
-        )
-
-        # Tutor question cần response => chỉ reveal đúng một teaching beat rồi HARD
-        # WAIT. Quan trọng: đây là semantic pacing, KHÔNG phải word/time cap. Writer
-        # được quyền diễn đạt teaching beat đó trọn vẹn và tự nhiên.
+        # Tutor lifecycle có quyền buộc WAIT, nhưng không có quyền chọn câu/beat.
+        # Root executive đã phải tự tạo đúng một public teaching beat khi tutor
+        # đang chờ user; validation phía trên sẽ yêu cầu re-plan nếu contract sai.
         if bool(self.last_tutor_role.get("waiting_for_user")):
-            one_beat = paced.beats[:1]
-            paced = replace(
-                paced,
-                beats=one_beat,
-                user_response_required=True,
-                speech_budget=replace(paced.speech_budget, max_beats=1),
-            )
+            public_plan = replace(public_plan, user_response_required=True)
             state = replace(state, status="waiting_user")
             completion_reason = "tutor_requires_user_response"
 
-        state = replace(state, discourse=paced)
+        state = replace(state, discourse=public_plan)
 
         # Commit *kế hoạch tiếp tục*, không tự schedule speech. User turn kế tiếp
         # sẽ đọc state này và được quyền steering/replan.
         continuation = state.discourse.continuation
+        speech_plan = state.speech_plan
         discussed = tuple(
             beat.proposition for beat in state.discourse.beats if beat.proposition
         )
@@ -231,6 +277,20 @@ class TurnAgentRuntime:
             deferred_threads=continuation.deferred_threads,
             continuation_anchor=continuation.continuation_anchor,
             next_if_continue=continuation.next_if_continue,
+            speech_goal=speech_plan.conversation_goal,
+            planned_threads=speech_plan.planned_threads,
+            next_intent=speech_plan.next_intent,
+            continuation_mode=speech_plan.continuation_mode.value,
+            resume_reason=speech_plan.resume_trigger,
+            plan_status="agent_owned",
+        )
+
+        # Persist ĐÚNG snapshot SpeechPlan do executive ở iteration cuối commit.
+        # Không merge với plan cũ, không suy diễn từ discourse/voice mode.
+        self.speech_plan_ledger.commit_agent_plan(
+            sid,
+            plan=state.speech_plan,
+            turn_id=state.turn_id,
         )
 
         result = AgentTurnResult(
@@ -253,9 +313,65 @@ class TurnAgentRuntime:
         )
         return result
 
-    def commit_public_delivery(self, *, successful: bool, public_text: str = "") -> None:
-        """Public receipt hook; tutor side-effect chỉ xảy ra sau delivery thật."""
+    def commit_public_delivery(
+        self,
+        *,
+        successful: bool,
+        public_text: str = "",
+        turn_id: str = "",
+        session_id: str = "",
+    ) -> None:
+        """Public receipt: wording đã immutable; runtime chỉ ghi delivery lifecycle."""
         self.tutor_role.commit_public_delivery(successful=successful, public_text=public_text)
+        sid = str(session_id or self._last_session_id or "default")[:180]
+        if successful:
+            self.speech_plan_ledger.note_public_delivery(
+                sid, turn_id=turn_id, public_text=public_text
+            )
+            self._awaiting_audio_session_id = sid
+
+    def note_audio_finished(self, *, session_id: str = "") -> SpeechPlanSnapshot:
+        """TTS receipt -> schedule/yield đúng mode agent đã chọn, không chọn content."""
+        sid = str(session_id or self._awaiting_audio_session_id or self._last_session_id or "default")[:180]
+        snap = self.speech_plan_ledger.note_audio_finished(sid)
+        self._awaiting_audio_session_id = ""
+        return snap
+
+    def speech_plan_snapshot(self, *, session_id: str = "") -> SpeechPlanSnapshot:
+        sid = str(session_id or self._last_session_id or "default")[:180]
+        return self.speech_plan_ledger.load(sid)
+
+    def prepare_continuation_turn(
+        self,
+        *,
+        session_id: str = "",
+        recent_history: Sequence[Mapping[str, Any]] = (),
+        runtime_context: Mapping[str, Any] | None = None,
+    ) -> AgentTurnResult | None:
+        """Wake cơ học -> gọi LẠI root agent; không replay câu hay thread từ runtime."""
+        sid = str(session_id or self._last_session_id or "default")[:180]
+        token = f"speech-wake:{time.time_ns()}"
+        claimed = self.speech_plan_ledger.claim_auto_continue(sid, token=token)
+        if claimed is None:
+            return None
+        try:
+            result = self.prepare_turn(
+                turn_id=f"speech-cont:{time.time_ns()}",
+                user_text="",
+                session_id=sid,
+                recent_history=recent_history,
+                runtime_context=runtime_context or {},
+                continuation_wake={
+                    "authorized": True,
+                    "claim_token": token,
+                    "previous_plan": claimed.plan.to_dict(),
+                    "previous_public_text": claimed.last_public_text,
+                },
+            )
+            return result
+        except Exception:
+            self.speech_plan_ledger.release_claim(sid, token=token, retry_seconds=0.75)
+            raise
 
     @staticmethod
     def _merge_cognitive(current: CognitivePlan, incoming: CognitivePlan) -> CognitivePlan:
@@ -276,7 +392,9 @@ class TurnAgentRuntime:
             "work": decision.cognitive.work_items,
             "remaining": decision.remaining_items,
             "beats": [beat.proposition for beat in decision.discourse.beats],
-            "thread": decision.discourse.continuation.active_thread,
+            "thread": decision.speech_plan.current_thread or decision.discourse.continuation.active_thread,
+            "next_intent": decision.speech_plan.next_intent,
+            "continuation_mode": decision.speech_plan.continuation_mode.value,
         }, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
 
@@ -368,6 +486,10 @@ def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
     runtime = TurnAgentRuntime(
         reasoner,
         arc_ledger=DisclosureArcLedger(
+            atomic_store=atomic_store,
+            logger=getattr(host, "logger", None),
+        ),
+        speech_plan_ledger=SpeechPlanLedger(
             atomic_store=atomic_store,
             logger=getattr(host, "logger", None),
         ),

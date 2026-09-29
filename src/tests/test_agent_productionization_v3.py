@@ -108,8 +108,8 @@ def test_director_voice_guidance_does_not_change_with_tts_speed() -> None:
     )
     slow = director.apply_turn_pacing(plan, voice_mode=True, tts_speed=0.85)
     fast = director.apply_turn_pacing(plan, voice_mode=True, tts_speed=1.15)
-    # TTS speed chỉ còn là telemetry; runtime không biến nó thành word/time cap.
-    assert slow.speech_budget == fast.speech_budget
+    # V7: TTS/voice không được quyết định semantic disclosure trong runtime.
+    assert slow == fast == plan
 
 
 class _Router:

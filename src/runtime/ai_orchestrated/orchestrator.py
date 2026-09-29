@@ -1835,6 +1835,11 @@ class AIChatOrchestrator:
             "previous_public_excerpt": previous_assistant_for_repair[-1200:],
         }
         try:
+            from runtime.runtime_status import emit_runtime_status
+            emit_runtime_status(
+                host, activity="agent_turn", phase="thinking",
+                label="Eris • đang suy nghĩ…", active=True, tone="active", priority=96,
+            )
             from runtime.agent_loop import ensure_agent_turn_runtime
 
             agent_turn_runtime = ensure_agent_turn_runtime(host)
@@ -1849,8 +1854,9 @@ class AIChatOrchestrator:
             planning_snapshot["agent_turn"] = agent_turn_payload
             host.last_agent_turn = agent_turn_payload
 
-            # DiscoursePlan là contract nói chuyện của writer: chia ý thành nhịp
-            # như người, progressive disclosure, không dump nguyên analysis map.
+            # DiscoursePlan là contract do ROOT AGENT EXECUTIVE tự quyết. Runtime
+            # không còn chọn số beat/ý thay agent; writer chỉ hiện thực đúng các
+            # beat ``say_now`` đã được agent loop project vào plan cuối.
             discourse_context = "\n\n".join(part for part in (
                 discourse_context,
                 "AGENT_TURN_LOOP_V2: " + json.dumps(
@@ -1859,9 +1865,10 @@ class AIChatOrchestrator:
                     separators=(",", ":"),
                 )
                 + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
-                  "Say ONLY discourse_plan.beats for this turn. continuation.deferred_threads are intentionally NOT for this reply. "
-                  "speech_budget word/time fields are NON-BINDING pacing hints only; never truncate or unnaturally compress a thought to hit them. "
-                  "The semantic beat selection is the contract: realize those beats naturally, lead with the strongest useful point, use short transitions, "
+                  "Say ONLY discourse_plan.beats for this turn. These beats were selected by the root agent executive itself; runtime did not curate or truncate them. "
+                  "continuation.deferred_threads are the executive's intentional hold-back state and are NOT for this reply. "
+                  "speech_budget fields are legacy NON-BINDING metadata only; never truncate or unnaturally compress a thought to hit them. "
+                  "The agent-selected semantic beats are the contract: realize them naturally, lead with the strongest useful point, use short transitions, "
                   "and stop at the planned breakpoint instead of dumping the rest. continuation_anchor may shape the final line "
                   "as a natural open thread, but never append generic 'muốn tôi nói thêm không?' filler. "
                   "If tutor_role.directive exists, obey its pedagogical intent and max_sentences. If response_relation=clarification "
@@ -2048,6 +2055,14 @@ class AIChatOrchestrator:
         host.last_public_context_compilation = compiled_context.to_dict()
         latency_trace.mark("writer_context")
         payload: dict[str, Any] = {}
+        try:
+            from runtime.runtime_status import emit_runtime_status
+            emit_runtime_status(
+                host, activity="agent_turn", phase="preparing_speech",
+                label="Eris • đang chuẩn bị nói…", active=True, tone="active", priority=97,
+            )
+        except Exception:
+            pass
         host._set_background_memory_digest_remote_inflight(True)
         try:
             payload = _generate_public_reply(
@@ -2820,6 +2835,8 @@ class AIChatOrchestrator:
                 agent_turn_runtime.commit_public_delivery(
                     successful=bool(public_text),
                     public_text=public_text,
+                    turn_id=turn_id,
+                    session_id=_agent_session_id,
                 )
             except Exception as exc:
                 host.logger.debug("[agent-turn] tutor delivery receipt degraded: %s", exc)

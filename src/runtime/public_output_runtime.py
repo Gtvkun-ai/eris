@@ -950,12 +950,82 @@ class PublicOutputRuntimeMixin:
                 record["segment_id"],
                 str(getattr(event, "text", "") or "")[:120],
             )
+            try:
+                from runtime.runtime_status import emit_runtime_status
+                emit_runtime_status(
+                    self, activity="agent_turn", phase="speaking",
+                    label="Eris • đang nói…", active=True, tone="active", priority=100,
+                )
+            except Exception:
+                pass
         elif event_type == "audio_done":
             self.logger.info(
                 "[TTS:event] audio_done turn=%s segment=%s",
                 record["turn_id"],
                 record["segment_id"],
             )
+            # V8: audio chỉ chuyển *lifecycle* của SpeechPlan mà ROOT AGENT đã
+            # lập. Runtime không nhìn planned_threads để chọn nội dung và cũng
+            # không phát một câu tiếp theo từ cache. AUTO_CONTINUE chỉ tạo timer
+            # đánh thức cognition; chính TurnAgentLoop phải quyết lại ở wake đó.
+            try:
+                final_segment = int(record.get("segment_id", 0) or 0) >= max(
+                    0, int(record.get("segment_count", 1) or 1) - 1
+                )
+            except Exception:
+                final_segment = True
+            if final_segment:
+                try:
+                    from runtime.agent_loop import ensure_agent_turn_runtime
+                    from runtime.runtime_status import emit_runtime_status
+
+                    agent_runtime = ensure_agent_turn_runtime(self)
+                    snapshot = agent_runtime.note_audio_finished()
+                    mode = snapshot.plan.continuation_mode.value
+
+                    if mode == "yield_user":
+                        emit_runtime_status(
+                            self, activity="agent_turn", phase="waiting_user",
+                            label="Eris • đang chờ bạn", active=False, tone="muted",
+                            priority=90, notice_ms=5000,
+                        )
+                    elif mode == "auto_continue":
+                        emit_runtime_status(
+                            self, activity="agent_turn", phase="continuation_ready",
+                            label="Eris • còn một ý…", active=True, tone="active",
+                            priority=92, notice_ms=0,
+                        )
+                        delay = max(0.0, float(snapshot.due_at or 0.0) - time.time())
+
+                        # Cancel timer cơ học cũ nếu có. Semantic cancellation nằm
+                        # trong SpeechPlanLedger khi user turn mới tới.
+                        prior_timer = getattr(self, "_agent_speech_wake_timer", None)
+                        if prior_timer is not None:
+                            try:
+                                prior_timer.cancel()
+                            except Exception:
+                                pass
+
+                        def _wake_agent_speech_plan() -> None:
+                            wake = getattr(self, "_wake_autonomous_loop", None)
+                            if not callable(wake):
+                                return
+                            try:
+                                wake("agent_speech_plan_due")
+                            except TypeError:
+                                wake(reason="agent_speech_plan_due")
+
+                        timer = threading.Timer(delay, _wake_agent_speech_plan)
+                        timer.daemon = True
+                        self._agent_speech_wake_timer = timer
+                        timer.start()
+                    else:
+                        emit_runtime_status(
+                            self, activity="agent_turn", phase="done",
+                            label="", active=False, tone="muted", priority=50, notice_ms=0,
+                        )
+                except Exception as exc:
+                    self.logger.debug("[agent-speech-plan] post-audio lifecycle degraded: %s", exc)
         elif event_type == "audio_failed":
             self.logger.warning(
                 "[TTS:event] audio_failed turn=%s segment=%s error=%s reason=%s",

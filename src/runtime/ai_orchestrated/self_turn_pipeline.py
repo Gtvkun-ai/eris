@@ -556,6 +556,16 @@ class SelfTurnPipeline:
         phase_started = time.monotonic()
         context = self._assemble_context(perception)
         context_ms = (time.monotonic() - phase_started) * 1000.0
+
+        # V8: continuation do ROOT AGENT tự cam kết có priority hơn social
+        # initiative cũ, nhưng user vẫn luôn thắng. Runtime chỉ gọi lại AgentLoop;
+        # không materialize planned_thread thành text.
+        if self._run_due_agent_speech_continuation(
+            context=context,
+            interaction_busy=interaction_busy,
+        ):
+            return host.running
+
         phase_started = time.monotonic()
         planner_snapshot, discovery_runtime = self._planner_snapshot(context)
         # V26: cùng một motive context được dùng cho chat và self-turn. Random
@@ -3033,6 +3043,184 @@ class SelfTurnPipeline:
             missing_evidence=[] if (fresh_screen or not screen_scope) else ["grounded_screen_evidence"],
         )
 
+    def _run_due_agent_speech_continuation(
+        self,
+        *,
+        context: SelfTurnBundle,
+        interaction_busy: bool,
+    ) -> bool:
+        """Materialize một continuation bằng cách **gọi lại root AgentLoop**.
+
+        Hàm này cố ý không biết "ý kế tiếp" là gì. Nó chỉ:
+        1) hỏi ledger xem agent có AUTO_CONTINUE đến hạn không;
+        2) gọi ``prepare_continuation_turn`` để agent tự re-evaluate plan;
+        3) nếu agent vẫn muốn public, chuyển đúng discourse snapshot mới sang writer.
+
+        User input, chat đang chạy hoặc interaction busy luôn preempt. Runtime
+        không replay ``last_public_text`` và không lấy ``planned_threads[0]``.
+        """
+        host = self.host
+        if interaction_busy or bool(getattr(host, "_chat_processing", False)):
+            return False
+        try:
+            from runtime.agent_loop import ensure_agent_turn_runtime
+            from runtime.runtime_status import emit_runtime_status
+
+            agent_runtime = ensure_agent_turn_runtime(host)
+            sid = str(
+                getattr(host, "conversation_id", "")
+                or getattr(host, "thread_id", "")
+                or "foreground:primary"
+            ).strip()[:180]
+            pending = agent_runtime.speech_plan_snapshot(session_id=sid)
+            if not pending.auto_continue_due:
+                return False
+
+            # Race cuối cùng: user chen ngay trước claim thì user thắng.
+            if host._process_pending_user_input():
+                agent_runtime.speech_plan_ledger.note_user_turn(sid)
+                return True
+
+            emit_runtime_status(
+                host,
+                activity="agent_turn",
+                phase="thinking",
+                label="Eris • đang suy nghĩ…",
+                active=True,
+                tone="active",
+                priority=96,
+            )
+            result = agent_runtime.prepare_continuation_turn(
+                session_id=sid,
+                recent_history=context.recent_history,
+                runtime_context={
+                    "voice_mode": True,
+                    "conversation_status": {"source": "agent_speech_plan_wake"},
+                },
+            )
+            if result is None:
+                return False
+
+            public_beats = tuple(
+                beat for beat in result.state.discourse.beats
+                if beat.say_now and str(beat.proposition or "").strip()
+            )
+            if not public_beats:
+                # Agent đã được wake và tự quyết không nói. Runtime tôn trọng.
+                mode = result.state.speech_plan.continuation_mode.value
+                if mode == "yield_user":
+                    emit_runtime_status(
+                        host, activity="agent_turn", phase="waiting_user",
+                        label="Eris • đang chờ bạn", active=False, tone="muted",
+                        priority=90, notice_ms=5000,
+                    )
+                else:
+                    emit_runtime_status(
+                        host, activity="agent_turn", phase="done",
+                        label="", active=False, tone="muted", priority=50,
+                    )
+                return True
+
+            # IntentionPlan ở đây chỉ là adapter cho Stage/Surface cũ. Semantic
+            # content đến từ root agent result; adapter không được đổi thread.
+            topic = "\n".join(f"- {beat.proposition}" for beat in public_beats)
+            plan = IntentionPlan.from_mapping(
+                {
+                    "plan_id": f"agent-speech:{context.turn_seq}:{int(time.time() * 1000)}",
+                    "owner": "intent_planner",
+                    "speak": True,
+                    "motive": "continue_agent_speech_plan",
+                    "strategy": "agent_authored_continuation",
+                    "value_focus": "conversation_continuity",
+                    "topic": topic[:240],
+                    "importance": 0.72,
+                    "intrusion_risk": 0.05,
+                    "confidence": 0.85,
+                    "semantic_owner": "shared",
+                    "trigger_owner": "eris",
+                    "source_kind": "agent_speech_plan",
+                    "source_ref": sid,
+                    "why_now": "root agent explicitly authorized auto continuation",
+                    "user_triggered": False,
+                    "semantics": {
+                        "turn_kind": "conversation",
+                        "speech_act": "continue_agent_speech_plan",
+                        "subject_key": result.state.speech_plan.current_thread or result.state.speech_plan.topic or "conversation",
+                        "evidence_scope": "conversation",
+                        "continuation_key": result.state.speech_plan.plan_id or sid,
+                    },
+                    "notes": "semantic owner = root TurnAgentLoop; runtime adapter only",
+                },
+                channel="autonomous",
+            )
+
+            emit_runtime_status(
+                host,
+                activity="agent_turn",
+                phase="preparing_speech",
+                label="Eris • đang chuẩn bị nói…",
+                active=True,
+                tone="active",
+                priority=97,
+            )
+            discourse_context = (
+                "AGENT_SPEECH_CONTINUATION_V8: "
+                + json.dumps(result.to_dict(), ensure_ascii=False, separators=(",", ":"))
+                + ". PUBLIC WRITER RULE: realize ONLY dialogue beats with say_now=true from this NEW agent snapshot. "
+                  "The long-term speech plan is context, not extra text. Do not expose hidden reasoning, "
+                  "do not append held/planned threads, and do not shorten or expand because of runtime caps."
+            )
+            payload = host.ai_model_router.generate_public_reply(
+                chat_history=context.recent_history,
+                user_text="",
+                memory_context=context.memory_context,
+                grounding_context="\n".join(
+                    part for part in (
+                        context.perception.screen.prompt_context(),
+                        "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
+                    ) if part
+                ),
+                personality_context=context.state.personality_prompt_context(),
+                engagement_context=context.engagement_prompt_context,
+                discourse_context=discourse_context,
+                planned_intention=plan,
+                allow_fallback=not no_fallback_mode_enabled(),
+                language_hint=self._runtime_language(),
+                speech_language_hint=self._runtime_speech_language(),
+            )
+            if not payload:
+                emit_runtime_status(
+                    host, activity="agent_turn", phase="degraded",
+                    label="Eris • chưa nói được", active=False, tone="warning",
+                    priority=90, notice_ms=1800,
+                )
+                return True
+
+            from runtime.public_lifecycle import lifecycle_for
+            lifecycle_turn_id = str(plan.plan_id)
+            host._active_public_lifecycle_turn_id = lifecycle_turn_id
+            lifecycle_for(host).begin(
+                turn_id=lifecycle_turn_id,
+                channel="autonomous",
+                reason="agent_speech_plan_composing",
+                received=False,
+            )
+            return self._surface(
+                plan=plan,
+                context=context,
+                activity=context.activity,
+                discovery_grounding="",
+                discovery_id="",
+                discovery_runtime=None,
+                prebuilt_payload=payload,
+                allow_model_generation=False,
+                candidate=None,
+            )
+        except Exception as exc:
+            host.logger.warning("[agent-speech-plan] continuation wake degraded: %s", exc)
+            return False
+
+
     def _surface(
         self,
         *,
@@ -3421,6 +3609,22 @@ class SelfTurnPipeline:
             host._sleep_interruptible(10)
             return True
 
+        is_agent_speech_plan = str(getattr(plan, "source_kind", "") or "") == "agent_speech_plan"
+        if is_agent_speech_plan:
+            # Receipt quay về cùng root AgentLoop. Đây là nơi lifecycle biết câu
+            # mới đã public thật; không có semantic continuation nào được social
+            # runtime cũ tự sinh thêm.
+            try:
+                from runtime.agent_loop import ensure_agent_turn_runtime
+                ensure_agent_turn_runtime(host).commit_public_delivery(
+                    successful=True,
+                    public_text=text,
+                    turn_id=delivery_turn_id,
+                    session_id=str(getattr(plan, "source_ref", "") or "foreground:primary"),
+                )
+            except Exception as exc:
+                host.logger.debug("[agent-speech-plan] autonomous delivery receipt degraded: %s", exc)
+
         autonomous_turn_id = f"autonomous:{context.turn_seq}"
 
         host.last_autonomous_spoken_at = time.time()
@@ -3509,51 +3713,47 @@ class SelfTurnPipeline:
                 )
             except Exception as exc:
                 host.logger.debug("[random chat seed] spoken receipt failed: %s", exc)
-        # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
-        # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
-        self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
-        social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
-        if social_continuation_runtime is not None:
+        # Root SpeechPlan đã có continuation owner riêng. Với lane này, runtime
+        # social cũ KHÔNG được lập thêm follow-up/arc/agenda sau lưng AgentLoop.
+        committed_social_plan = {}
+        if not is_agent_speech_plan:
+            # Chỉ ghi nhận sau public commit thành công. Nếu Surface/TTS pipeline không
+            # tạo được text, reminder vẫn còn due để thử lại thay vì bị mất oan.
+            self.followup_appraisal.note_spoken(plan, now=host.last_autonomous_spoken_at)
+            social_continuation_runtime = getattr(host, "ai_social_continuation_runtime", None)
+            if social_continuation_runtime is not None:
+                try:
+                    social_continuation_runtime.note_spoken(
+                        plan, text, now=host.last_autonomous_spoken_at,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[social continuation] completion note failed: %s", exc)
+            conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
+            if conversation_arc_runtime is not None:
+                try:
+                    conversation_arc_runtime.note_spoken(
+                        plan, text, now=host.last_autonomous_spoken_at,
+                    )
+                except Exception as exc:
+                    host.logger.debug("[conversation arc] completion note failed: %s", exc)
+            social_agenda_store = getattr(host, "ai_social_agenda_store", None)
+            if social_agenda_store is not None:
+                try:
+                    social_agenda_store.note_spoken(plan, now=host.last_autonomous_spoken_at)
+                except Exception as exc:
+                    host.logger.debug("[social agenda] completion note failed: %s", exc)
             try:
-                social_continuation_runtime.note_spoken(
-                    plan,
-                    text,
-                    now=host.last_autonomous_spoken_at,
+                from .social_plan_commit import activate_social_plan_after_public_commit
+                committed_social_plan = activate_social_plan_after_public_commit(
+                    host, payload, source_turn_id=autonomous_turn_id, source_text=text,
+                    source_turn_seq=context.turn_seq,
                 )
             except Exception as exc:
-                host.logger.debug("[social continuation] completion note failed: %s", exc)
-        conversation_arc_runtime = getattr(host, "ai_conversation_arc_runtime", None)
-        if conversation_arc_runtime is not None:
-            try:
-                conversation_arc_runtime.note_spoken(
-                    plan,
-                    text,
-                    now=host.last_autonomous_spoken_at,
-                )
-            except Exception as exc:
-                host.logger.debug("[conversation arc] completion note failed: %s", exc)
-        social_agenda_store = getattr(host, "ai_social_agenda_store", None)
-        if social_agenda_store is not None:
-            try:
-                social_agenda_store.note_spoken(plan, now=host.last_autonomous_spoken_at)
-            except Exception as exc:
-                host.logger.debug("[social agenda] completion note failed: %s", exc)
-        try:
-            from .social_plan_commit import activate_social_plan_after_public_commit
-
-            committed_social_plan = activate_social_plan_after_public_commit(
-                host,
-                payload,
-                source_turn_id=autonomous_turn_id,
-                source_text=text,
-                source_turn_seq=context.turn_seq,
-            )
-        except Exception as exc:
-            committed_social_plan = {}
-            host.logger.debug("[social plan commit] autonomous activation failed: %s", exc)
-        initiative = getattr(host, "ai_initiative_controller", None)
-        if initiative is not None:
-            initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
+                committed_social_plan = {}
+                host.logger.debug("[social plan commit] autonomous activation failed: %s", exc)
+            initiative = getattr(host, "ai_initiative_controller", None)
+            if initiative is not None:
+                initiative.record_spoken(plan, now=host.last_autonomous_spoken_at, channel="autonomous")
         if plan.strategy:
             host.ai_state_reducer.submit(StateEvent.from_pending_strategy(
                 PendingStrategyUse(

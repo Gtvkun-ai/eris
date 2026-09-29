@@ -50,6 +50,12 @@ class DisclosureArcState:
     deferred_threads: tuple[str, ...] = ()
     continuation_anchor: str = ""
     next_if_continue: str = ""
+    speech_goal: str = ""
+    planned_threads: tuple[str, ...] = ()
+    next_intent: str = ""
+    continuation_mode: str = "none"
+    resume_reason: str = ""
+    plan_status: str = "ready"
     version: int = 0
     updated_at: float = 0.0
 
@@ -63,6 +69,12 @@ class DisclosureArcState:
             "deferred_threads": list(self.deferred_threads),
             "continuation_anchor": self.continuation_anchor,
             "next_if_continue": self.next_if_continue,
+            "speech_goal": self.speech_goal,
+            "planned_threads": list(self.planned_threads),
+            "next_intent": self.next_intent,
+            "continuation_mode": self.continuation_mode,
+            "resume_reason": self.resume_reason,
+            "plan_status": self.plan_status,
             "version": self.version,
             "updated_at": self.updated_at,
         }
@@ -78,6 +90,12 @@ class DisclosureArcState:
             deferred_threads=_items(data.get("deferred_threads"), 16),
             continuation_anchor=_compact(data.get("continuation_anchor"), 500),
             next_if_continue=_compact(data.get("next_if_continue"), 500),
+            speech_goal=_compact(data.get("speech_goal"), 700),
+            planned_threads=_items(data.get("planned_threads"), 16),
+            next_intent=_compact(data.get("next_intent"), 600),
+            continuation_mode=_compact(data.get("continuation_mode"), 40) or "none",
+            resume_reason=_compact(data.get("resume_reason"), 240),
+            plan_status=_compact(data.get("plan_status"), 40) or "ready",
             version=max(0, int(data.get("version", 0) or 0)),
             updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
         )
@@ -121,6 +139,12 @@ class DisclosureArcLedger:
         deferred_threads: tuple[str, ...],
         continuation_anchor: str,
         next_if_continue: str,
+        speech_goal: str = "",
+        planned_threads: tuple[str, ...] = (),
+        next_intent: str = "",
+        continuation_mode: str = "none",
+        resume_reason: str = "",
+        plan_status: str = "ready",
         now: float | None = None,
     ) -> DisclosureArcState:
         prior = self.load(session_id)
@@ -134,6 +158,12 @@ class DisclosureArcLedger:
             deferred_threads=_items(deferred_threads, 16),
             continuation_anchor=_compact(continuation_anchor, 500),
             next_if_continue=_compact(next_if_continue, 500),
+            speech_goal=_compact(speech_goal, 700) or prior.speech_goal,
+            planned_threads=_items(planned_threads, 16),
+            next_intent=_compact(next_intent, 600),
+            continuation_mode=_compact(continuation_mode, 40) or "none",
+            resume_reason=_compact(resume_reason, 240),
+            plan_status=_compact(plan_status, 40) or "ready",
             version=prior.version + 1,
             updated_at=ts,
         )

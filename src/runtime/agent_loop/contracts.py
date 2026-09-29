@@ -67,6 +67,24 @@ class DisclosureMode(str, Enum):
     REPORT = "report"
 
 
+class SpeechContinuationMode(str, Enum):
+    """Agent quyết định vòng nói sẽ tiếp tục thế nào sau khi audio kết thúc.
+
+    NONE:
+        Không có continuation đã cam kết. Turn kết thúc bình thường.
+    YIELD_USER:
+        Agent chủ động nhường lượt cho user. Runtime chỉ giữ plan để turn sau
+        agent đọc lại; runtime KHÔNG tự phát tiếp.
+    AUTO_CONTINUE:
+        Agent chủ động muốn tiếp tục sau một nhịp nghỉ. Runtime chỉ đặt wake-up
+        cơ học rồi gọi LẠI TurnAgentLoop; không được phát câu đã cache.
+    """
+
+    NONE = "none"
+    YIELD_USER = "yield_user"
+    AUTO_CONTINUE = "auto_continue"
+
+
 class ResponseRelation(str, Enum):
     """Quan hệ của user turn hiện tại với câu hỏi tutor trước đó.
 
@@ -163,13 +181,12 @@ class ExecutionPlan:
 
 @dataclass(frozen=True, slots=True)
 class TurnSpeechBudget:
-    """Guidance về nhịp nói, tách khỏi token/reasoning budget.
+    """Metadata/gợi ý do *agent executive* có thể dùng khi tự lập discourse plan.
 
-    ``target_*`` giúp ConversationDirector lập kế hoạch disclosure *trước* khi
-    writer chạy. ``hard_max_*`` được giữ để tương thích schema V2/V3/V5 nhưng
-    **không còn là hard cap** và tuyệt đối không được dùng để cắt public text.
-    Runtime có thể chọn ít beat hơn; writer được toàn quyền diễn đạt beat đã
-    chọn bằng câu tự nhiên, dài/ngắn bao nhiêu tùy ngữ cảnh.
+    Từ V7 runtime không dùng object này để chọn beat, cắt beat hay cắt public text.
+    Các field được giữ chủ yếu để tương thích schema/telemetry. Chính agent loop
+    nhìn ``voice_mode`` + ngữ cảnh rồi quyết ``DialogueBeat.say_now`` và
+    ``continuation.deferred_threads``.
     """
 
     target_words: int = 110
@@ -261,11 +278,91 @@ class ContinuationPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class DiscoursePlan:
-    """Kế hoạch nói ra ngoài, độc lập với kế hoạch nhận thức/thực thi.
+class ConversationSpeechPlan:
+    """Kế hoạch nói dài hạn do **root agent** tự lập.
 
-    Agent có thể đã phân tích 8 ý, nhưng ``speech_budget`` + ``continuation``
-    quyết định turn public này chỉ được tiết lộ 1-2 ý và giữ phần còn lại.
+    Đây là planning artifact public-safe, KHÔNG phải chain-of-thought và cũng
+    KHÔNG phải câu thoại đã viết sẵn. Runtime chỉ được persist lifecycle rồi đưa
+    nguyên snapshot lại cho AgentLoop khi user trả lời hoặc khi agent đã tự chọn
+    ``AUTO_CONTINUE``.
+
+    Runtime tuyệt đối không được nhìn ``planned_threads`` / ``next_intent`` rồi
+    tự materialize thành lời nói.
+    """
+
+    plan_id: str = ""
+    topic: str = ""
+    conversation_goal: str = ""
+    current_thread: str = ""
+    discussed: tuple[str, ...] = ()
+    planned_threads: tuple[str, ...] = ()
+    next_intent: str = ""
+    continuation_mode: SpeechContinuationMode = SpeechContinuationMode.NONE
+    resume_trigger: str = ""
+    pause_seconds: float = 0.0
+
+    @property
+    def owns_future_turn(self) -> bool:
+        """True khi chính agent đã cam kết còn lifecycle continuation."""
+        return self.continuation_mode in {
+            SpeechContinuationMode.YIELD_USER,
+            SpeechContinuationMode.AUTO_CONTINUE,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "topic": self.topic,
+            "conversation_goal": self.conversation_goal,
+            "current_thread": self.current_thread,
+            "discussed": list(self.discussed),
+            "planned_threads": list(self.planned_threads),
+            "next_intent": self.next_intent,
+            "continuation_mode": self.continuation_mode.value,
+            "resume_trigger": self.resume_trigger,
+            "pause_seconds": round(max(0.0, float(self.pause_seconds)), 3),
+        }
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> "ConversationSpeechPlan":
+        data = raw if isinstance(raw, Mapping) else {}
+        try:
+            mode = SpeechContinuationMode(
+                str(data.get("continuation_mode", "none") or "none").strip().lower()
+            )
+        except ValueError:
+            mode = SpeechContinuationMode.NONE
+        try:
+            pause = max(0.0, min(30.0, float(data.get("pause_seconds", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            pause = 0.0
+        return cls(
+            plan_id=_clean(data.get("plan_id"), 180),
+            topic=_clean(data.get("topic"), 500),
+            conversation_goal=_clean(data.get("conversation_goal"), 700),
+            current_thread=_clean(data.get("current_thread"), 420),
+            discussed=_tuple_text(
+                data.get("discussed") if isinstance(data.get("discussed"), Sequence) else (),
+                limit=16, item_limit=360,
+            ),
+            planned_threads=_tuple_text(
+                data.get("planned_threads") if isinstance(data.get("planned_threads"), Sequence) else (),
+                limit=16, item_limit=420,
+            ),
+            next_intent=_clean(data.get("next_intent"), 700),
+            continuation_mode=mode,
+            resume_trigger=_clean(data.get("resume_trigger"), 120),
+            pause_seconds=pause,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoursePlan:
+    """Kế hoạch nói ra ngoài do root agent executive sở hữu.
+
+    ``DialogueBeat.say_now`` là quyết định semantic của agent: beat nào được nói
+    ở turn hiện tại. ``continuation.deferred_threads`` cũng do agent tự chọn.
+    Runtime chỉ project đúng quyết định này cho writer, không tự giới hạn 1-2 beat.
     """
 
     response_mode: str = "normal"
@@ -275,6 +372,7 @@ class DiscoursePlan:
     user_response_required: bool = False
     speech_budget: TurnSpeechBudget = field(default_factory=TurnSpeechBudget)
     continuation: ContinuationPlan = field(default_factory=ContinuationPlan)
+    speech_plan: ConversationSpeechPlan = field(default_factory=ConversationSpeechPlan)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -285,6 +383,7 @@ class DiscoursePlan:
             "user_response_required": self.user_response_required,
             "speech_budget": self.speech_budget.to_dict(),
             "continuation": self.continuation.to_dict(),
+            "speech_plan": self.speech_plan.to_dict(),
         }
 
 
@@ -322,6 +421,7 @@ class TurnDecision:
     action: TurnAction = TurnAction.COMPLETE
     cognitive: CognitivePlan = field(default_factory=CognitivePlan)
     discourse: DiscoursePlan = field(default_factory=DiscoursePlan)
+    speech_plan: ConversationSpeechPlan = field(default_factory=ConversationSpeechPlan)
     completed_items: tuple[str, ...] = ()
     remaining_items: tuple[str, ...] = ()
     progress: float = 0.0
@@ -387,6 +487,12 @@ class TurnDecision:
             continuation=ContinuationPlan.from_mapping(
                 data.get("continuation") if isinstance(data.get("continuation"), Mapping) else None
             ),
+            speech_plan=ConversationSpeechPlan.from_mapping(
+                data.get("speech_plan") if isinstance(data.get("speech_plan"), Mapping) else None
+            ),
+        )
+        speech_plan = ConversationSpeechPlan.from_mapping(
+            data.get("speech_plan") if isinstance(data.get("speech_plan"), Mapping) else None
         )
         try:
             progress = min(1.0, max(0.0, float(data.get("progress", 0.0) or 0.0)))
@@ -406,6 +512,7 @@ class TurnDecision:
             action=action,
             cognitive=cognitive,
             discourse=discourse,
+            speech_plan=speech_plan,
             completed_items=_tuple_text(data.get("completed_items") if isinstance(data.get("completed_items"), Sequence) else ()),
             remaining_items=_tuple_text(data.get("remaining_items") if isinstance(data.get("remaining_items"), Sequence) else ()),
             progress=progress,
@@ -426,6 +533,7 @@ class AgentTurnState:
     cognitive: CognitivePlan = field(default_factory=CognitivePlan)
     execution: ExecutionPlan = field(default_factory=ExecutionPlan)
     discourse: DiscoursePlan = field(default_factory=DiscoursePlan)
+    speech_plan: ConversationSpeechPlan = field(default_factory=ConversationSpeechPlan)
     progress: float = 0.0
     uncertainty: float = 1.0
     stall_count: int = 0
@@ -441,6 +549,7 @@ class AgentTurnState:
             "cognitive_plan": self.cognitive.to_dict(),
             "execution_plan": self.execution.to_dict(),
             "discourse_plan": self.discourse.to_dict(),
+            "conversation_speech_plan": self.speech_plan.to_dict(),
             "progress": round(self.progress, 3),
             "uncertainty": round(self.uncertainty, 3),
             "stall_count": self.stall_count,
@@ -450,7 +559,7 @@ class AgentTurnState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.agent_turn.v2",
+            "schema": "eris.agent_turn.v8",
             **self.to_model_dict(),
         }
 
@@ -468,16 +577,34 @@ class AgentTurnResult:
 
     @property
     def reserves_user_floor(self) -> bool:
-        """True khi runtime đã cố ý dừng để user có nhịp chen vào."""
+        """True khi AGENT đã chủ động nhường nhịp cho user.
+
+        Compatibility: V7 plan cũ chưa có speech_plan authority; khi mode=NONE
+        nhưng continuation.deferred_threads có dữ liệu, coi đó là legacy yield.
+        Runtime không tự sinh deferred thread mới.
+        """
         discourse = self.state.discourse
         progressive_mode = discourse.disclosure_mode in {
             DisclosureMode.CONVERSATIONAL,
             DisclosureMode.DEEP_DIALOGUE,
         }
+        mode = self.state.speech_plan.continuation_mode
+        legacy_yield = bool(
+            mode == SpeechContinuationMode.NONE
+            and discourse.continuation.deferred_threads
+        )
         return bool(
             progressive_mode
-            and (discourse.user_response_required or discourse.continuation.deferred_threads)
+            and (
+                discourse.user_response_required
+                or mode == SpeechContinuationMode.YIELD_USER
+                or legacy_yield
+            )
         )
+
+    @property
+    def owns_continuation(self) -> bool:
+        return self.state.speech_plan.owns_future_turn
 
     def to_dict(self) -> dict[str, Any]:
         payload = self.state.to_dict()
@@ -497,10 +624,12 @@ __all__ = [
     "DialogueBeat",
     "DisclosureMode",
     "ContinuationPlan",
+    "ConversationSpeechPlan",
     "DiscoursePlan",
     "ExecutionPlan",
     "LoopBudget",
     "ResponseRelation",
+    "SpeechContinuationMode",
     "TurnSpeechBudget",
     "TurnAction",
     "TurnDecision",

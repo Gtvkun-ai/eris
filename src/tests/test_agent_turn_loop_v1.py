@@ -115,9 +115,9 @@ def test_deep_analysis_can_decompose_verify_then_complete() -> None:
 
     assert result.state.status == "complete"
     assert result.model_iterations == 3
+    # V7: mỗi iteration trả một discourse snapshot hoàn chỉnh; iteration cuối
+    # là authority hiện tại, runtime không tự merge semantic beat từ vòng cũ.
     assert [b.proposition for b in result.state.discourse.beats] == [
-        "Vấn đề gốc nằm ở lifecycle.",
-        "State ownership đang bị chia đôi.",
         "Từ đó kiến trúc nên dùng một TurnAgentLoop thống nhất.",
     ]
 
