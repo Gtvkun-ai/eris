@@ -1832,6 +1832,15 @@ class AIChatOrchestrator:
                 "handoff": handoff_state.to_dict(),
                 "trajectory": trajectory_state.to_dict(),
             },
+            # Affect/engagement chỉ là tín hiệu cho CHÍNH executive tự quyết
+            # desired_shape và public_beats; runtime không chuyển chúng thành cap.
+            "affective_voice_state": affective_voice.to_dict(),
+            "affective_voice_context": affective_voice.prompt_context(),
+            "conversation_trajectory": trajectory_state.to_dict(),
+            "engagement_context": engagement_context,
+            "active_concerns": planning_snapshot.get("active_concerns", []),
+            "personality_summary": personality_context,
+            "relationship_summary": relationship_context,
             "previous_public_excerpt": previous_assistant_for_repair[-1200:],
         }
         try:
@@ -1854,9 +1863,8 @@ class AIChatOrchestrator:
             planning_snapshot["agent_turn"] = agent_turn_payload
             host.last_agent_turn = agent_turn_payload
 
-            # DiscoursePlan là contract do ROOT AGENT EXECUTIVE tự quyết. Runtime
-            # không còn chọn số beat/ý thay agent; writer chỉ hiện thực đúng các
-            # beat ``say_now`` đã được agent loop project vào plan cuối.
+            # DiscoursePlan.public_beats là contract do ROOT AGENT tự quyết.
+            # Runtime không có held beat/say_now riêng và không curate lại nội dung.
             discourse_context = "\n\n".join(part for part in (
                 discourse_context,
                 "AGENT_TURN_LOOP_V2: " + json.dumps(
@@ -1865,12 +1873,11 @@ class AIChatOrchestrator:
                     separators=(",", ":"),
                 )
                 + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
-                  "Say ONLY discourse_plan.beats for this turn. These beats were selected by the root agent executive itself; runtime did not curate or truncate them. "
-                  "continuation.deferred_threads are the executive's intentional hold-back state and are NOT for this reply. "
-                  "speech_budget fields are legacy NON-BINDING metadata only; never truncate or unnaturally compress a thought to hit them. "
-                  "The agent-selected semantic beats are the contract: realize them naturally, lead with the strongest useful point, use short transitions, "
-                  "and stop at the planned breakpoint instead of dumping the rest. continuation_anchor may shape the final line "
-                  "as a natural open thread, but never append generic 'muốn tôi nói thêm không?' filler. "
+                  "Say ONLY discourse_plan.public_beats for this turn. These beats were selected by the root agent executive itself; runtime did not curate or truncate them. "
+                  "conversation_speech_plan is long-term context, NOT extra text to dump. planned_threads/next_intent are held by the agent for future re-planning. "
+                  "conversation_speech_plan.desired_shape describes the feel of this turn and may explicitly ask for a short handoff, a deep explanation, or a long enthusiastic nerd burst; it is not a runtime cap. "
+                  "turn_projection is also agent-owned. If turn_projection.verbal_bridge_hint is non-empty, use it only as a NATURAL ending/transition cue while realizing the selected public_beats; never quote the hint, never add new factual content, and never let runtime-style filler replace the writer's own phrasing. floor=hold may sound slightly open-ended if the public beats support it; floor=yield should feel resolved. "
+                  "Realize every public beat naturally, lead with the strongest useful point, and never append generic 'muốn tôi nói thêm không?' filler unless the agent actually selected such a beat. "
                   "If tutor_role.directive exists, obey its pedagogical intent and max_sentences. If response_relation=clarification "
                   "for a pending_previous_move, clarify/rephrase the exact delivered question without grading, advancing, or revealing the expected answer. "
                   "Otherwise, if the tutor directive requires_user_response, ask/perform that single teaching move and STOP; do not answer the question yourself. "
@@ -1900,7 +1907,7 @@ class AIChatOrchestrator:
                     "AGENT_TURN_LOOP_DEGRADED: " + json.dumps(
                         agent_turn_payload, ensure_ascii=False, separators=(",", ":")
                     )
-                    + ". HARD RULE: say only discourse_plan.beats; word/time speech budget is advisory only; do not expose hidden reasoning.",
+                    + ". HARD RULE: say only discourse_plan.public_beats; conversation_speech_plan is context only; turn_projection may shape the natural turn-ending but never adds content; do not expose hidden reasoning.",
                 ) if str(part).strip())
                 planning_snapshot["discourse_context"] = discourse_context
             except Exception as fallback_exc:
@@ -1912,6 +1919,19 @@ class AIChatOrchestrator:
                     "reason": type(fallback_exc).__name__,
                 }
                 host.logger.error("[agent-turn] deterministic fallback also failed: %s", fallback_exc)
+        if agent_turn_result is not None:
+            try:
+                from runtime.turn_projection_runtime import emit_turn_projection
+
+                emit_turn_projection(
+                    host,
+                    agent_turn_result.state.turn_projection,
+                    turn_id=turn_id,
+                    session_id=_agent_session_id,
+                )
+            except Exception as exc:
+                host.logger.debug("[turn-projection] stage mirror degraded: %s", exc)
+
         latency_trace.mark("agent_turn_loop")
 
         latency_trace.mark("executive")
@@ -2132,7 +2152,6 @@ class AIChatOrchestrator:
                     "schema": "eris.agent_speech_observer.v2",
                     "mutated": False,
                     "policy": "observe_only_writer_surface_immutable",
-                    "guidance": agent_turn_result.state.discourse.speech_budget.to_dict(),
                     "tts_speed": round(float(_tts_speed), 3),
                     "display": _display_est.to_dict(),
                     "speech": _speech_est.to_dict() if _speech_est is not None else {},

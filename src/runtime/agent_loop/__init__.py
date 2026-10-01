@@ -1,61 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Unified foreground agent loop cho mọi chat turn của ERIS."""
+"""Unified foreground AgentLoop V11.
+
+Core export cố tình nhỏ: agent state, public beats, long-term speech plan, validator,
+reasoner và runtime. API disclosure/pacing V6–V9 không còn là authority của hot path.
+"""
 from .completion import CompletionGate, CompletionVerdict
 from .contracts import (
     AgentTurnResult,
     AgentTurnState,
     BeatKind,
     CognitivePlan,
-    ContinuationPlan,
     ConversationSpeechPlan,
-    SpeechContinuationMode,
     DialogueBeat,
-    DisclosureMode,
     DiscoursePlan,
     ExecutionPlan,
     LoopBudget,
     ResponseRelation,
-    TurnSpeechBudget,
+    SpeechContinuationMode,
+    TurnFloor,
+    TurnProjection,
     TurnAction,
     TurnDecision,
 )
-from .director import ConversationDirector
 from .reasoner import DeterministicFallbackTurnReasoner, RuntimeModelTurnReasoner, TurnReasoner
-from .pacing import DisclosureArcLedger, DisclosureArcState
 from .speech_plan import SpeechPlanLedger, SpeechPlanSnapshot
 from .tutor_role import TutorRoleContribution, TutorRoleCoordinator
+from .validator import SpeechPlanValidation, SpeechPlanValidator
 from .runtime import TurnAgentRuntime, build_degraded_turn_result, ensure_agent_turn_runtime
 
 __all__ = [
-    "AgentTurnResult",
-    "AgentTurnState",
-    "BeatKind",
-    "CognitivePlan",
-    "CompletionGate",
-    "CompletionVerdict",
-    "ConversationDirector",
-    "ContinuationPlan",
-    "ConversationSpeechPlan",
-    "SpeechContinuationMode",
-    "SpeechPlanLedger",
-    "SpeechPlanSnapshot",
-    "DeterministicFallbackTurnReasoner",
-    "DialogueBeat",
-    "DisclosureArcLedger",
-    "DisclosureArcState",
-    "DisclosureMode",
-    "DiscoursePlan",
-    "ExecutionPlan",
-    "LoopBudget",
-    "ResponseRelation",
-    "RuntimeModelTurnReasoner",
-    "TutorRoleContribution",
-    "TutorRoleCoordinator",
-    "TurnSpeechBudget",
-    "TurnAction",
-    "TurnAgentRuntime",
-    "build_degraded_turn_result",
-    "TurnDecision",
-    "TurnReasoner",
-    "ensure_agent_turn_runtime",
+    "AgentTurnResult", "AgentTurnState", "BeatKind", "CognitivePlan",
+    "CompletionGate", "CompletionVerdict", "ConversationSpeechPlan",
+    "DeterministicFallbackTurnReasoner", "DialogueBeat", "DiscoursePlan",
+    "ExecutionPlan", "LoopBudget", "ResponseRelation", "RuntimeModelTurnReasoner",
+    "SpeechContinuationMode", "SpeechPlanLedger", "SpeechPlanSnapshot",
+    "TurnFloor", "TurnProjection",
+    "SpeechPlanValidation", "SpeechPlanValidator", "TutorRoleContribution",
+    "TutorRoleCoordinator", "TurnAction", "TurnAgentRuntime", "TurnDecision",
+    "TurnReasoner", "build_degraded_turn_result", "ensure_agent_turn_runtime",
 ]

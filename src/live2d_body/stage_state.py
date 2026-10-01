@@ -290,6 +290,10 @@ class Live2DStageState:
         self._motion = "stand"
         self._speaking = False
         self._thinking = False
+        # Agent-owned turn projection. Renderer chỉ biểu diễn tín hiệu này; nó
+        # không tự suy floor từ voice length, continuation hay timeout.
+        self._turn_floor = "open"
+        self._continuation_feel = "neutral"
         self._last_event_type = ""
         now = time.monotonic()
         self._last_event_at = now
@@ -359,6 +363,10 @@ class Live2DStageState:
             self._handle_affect_event(payload)
             return
 
+        if event_type == "turn_projection":
+            self._handle_turn_projection(payload)
+            return
+
         # Một số frontend gói affect chung trong stage_state. Nhận nhưng không
         # cho nó thay đổi emotion tường minh nếu payload không yêu cầu.
         data = payload.get("data")
@@ -376,6 +384,11 @@ class Live2DStageState:
             self._motion_at = now
 
         if event_type in {"received", "thinking_started", "content_committed", "audio_buffering"}:
+            # received/thinking_started đánh dấu cognition mới: projection của
+            # lượt trước hết hiệu lực cho đến khi root agent commit projection mới.
+            if event_type in {"received", "thinking_started"}:
+                self._turn_floor = "open"
+                self._continuation_feel = "neutral"
             # Content may already be committed while its bubble remains hidden
             # waiting for ElevenLabs. The body keeps the same visible thinking
             # state until playback truly starts.
@@ -421,17 +434,70 @@ class Live2DStageState:
                 # vẫn dừng ngay. Nhờ vậy log có thể lặp, nhưng cái miệng không bị
                 # ba bản sao hành chính cùng lao vào bóp cổ giữa một câu.
                 return
-            self._thinking = False
             self._speaking = False
             self._speech.stop()
             self._speech_deadline = -1.0e9
             self._active_speech_key = ("", 0)
-            self._motion = motion or "stand"
-            self._motion_at = now
+            if event_type in {"audio_playback_done", "audio_done"} and self._turn_floor == "hold":
+                # Agent nói "tôi chưa xong": giữ một pose chuẩn bị nói tiếp thay
+                # vì settle về stand. Đây chỉ là body-language projection.
+                self._thinking = True
+                hold_motion, hold_emotion = self._projection_pose(self._continuation_feel)
+                self._motion = hold_motion
+                self._motion_at = now
+                self._emotion = hold_emotion
+                self._emotion_at = now
+            else:
+                self._thinking = False
+                self._motion = motion or "stand"
+                self._motion_at = now
         elif event_type == "thinking_finished":
             self._thinking = False
             self._motion = motion or "stand"
             self._motion_at = now
+
+
+    def _handle_turn_projection(self, payload: Mapping[str, Any]) -> None:
+        """Nhận exact floor projection do root AgentLoop phát ra.
+
+        Không có heuristic semantic ở đây. ``continuation_feel`` chỉ được map
+        sang pose trình diễn; nội dung/lifecycle continuation vẫn thuộc agent.
+        """
+
+        data = payload.get("data") if isinstance(payload.get("data"), Mapping) else payload
+        assert isinstance(data, Mapping)
+        floor = str(data.get("floor", "open") or "open").strip().lower()
+        if floor not in {"hold", "yield", "open"}:
+            floor = "open"
+        feel = str(data.get("continuation_feel", "neutral") or "neutral").strip().lower()
+        if feel not in {"neutral", "thinking", "eager", "soft", "playful"}:
+            feel = "neutral"
+        self._turn_floor = floor
+        self._continuation_feel = feel
+
+        # Khi agent đã quyết HOLD trong lúc writer/TTS còn chuẩn bị, cho body biết
+        # trước bằng pose nhỏ. Nếu đang nói thì speech animation vẫn ưu tiên.
+        if floor == "hold" and not self._speaking:
+            motion, emotion = self._projection_pose(feel)
+            self._thinking = True
+            self._motion = motion
+            self._motion_at = time.monotonic()
+            self._emotion = emotion
+            self._emotion_at = self._motion_at
+        elif floor == "yield" and not self._speaking:
+            self._thinking = False
+            self._motion = "stand"
+            self._motion_at = time.monotonic()
+
+    @staticmethod
+    def _projection_pose(feel: str) -> tuple[str, str]:
+        return {
+            "thinking": ("thinking_small", "thinking"),
+            "eager": ("lean_in_small", "curious"),
+            "soft": ("lean_in_small", "warm_soft"),
+            "playful": ("tilt_head", "mischief_soft"),
+            "neutral": ("thinking_small", "focused"),
+        }.get(str(feel or "neutral"), ("thinking_small", "thinking"))
 
 
     def _terminal_event_owns_active_speech(self, event_key: tuple[str, int]) -> bool:

@@ -15,9 +15,8 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
         "situation_summary", "objective", "task_shape", "active_roles",
         "work_items", "completed_items", "remaining_items", "uncertainties",
         "next_action", "progress", "uncertainty", "completion_candidate",
-        "requires_user_response", "tutor_response_relation", "response_mode",
-        "disclosure_mode", "speech_budget", "continuation", "speech_plan", "dialogue_beats",
-        "style_notes", "decision_summary",
+        "requires_user_response", "tutor_response_relation",
+        "speech_plan", "turn_projection", "public_beats", "style_notes", "decision_summary",
     ],
     "properties": {
         "situation_summary": {"type": "string"},
@@ -47,41 +46,13 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["none", "answer", "clarification", "interrupt"],
         },
-        "response_mode": {"type": "string", "enum": ["brief", "normal", "deep", "progressive"]},
-        "disclosure_mode": {
-            "type": "string",
-            "enum": ["conversational", "deep_dialogue", "report"],
-        },
-        "speech_budget": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["max_beats"],
-            "properties": {
-                "target_words": {"type": "integer", "minimum": 20, "maximum": 1200},
-                "hard_max_words": {"type": "integer", "minimum": 30, "maximum": 1800},
-                "max_beats": {"type": "integer", "minimum": 1, "maximum": 8},
-                "target_seconds": {"type": "number", "minimum": 5.0, "maximum": 180.0},
-                "hard_max_seconds": {"type": "number", "minimum": 8.0, "maximum": 240.0},
-            },
-        },
-        "continuation": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["active_thread", "deferred_threads", "continuation_anchor", "next_if_continue"],
-            "properties": {
-                "active_thread": {"type": "string"},
-                "deferred_threads": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
-                "continuation_anchor": {"type": "string"},
-                "next_if_continue": {"type": "string"},
-            },
-        },
         "speech_plan": {
             "type": "object",
             "additionalProperties": False,
             "required": [
                 "plan_id", "topic", "conversation_goal", "current_thread",
                 "discussed", "planned_threads", "next_intent",
-                "continuation_mode", "resume_trigger", "pause_seconds",
+                "desired_shape", "continuation_mode", "resume_trigger", "pause_seconds",
             ],
             "properties": {
                 "plan_id": {"type": "string"},
@@ -91,6 +62,7 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
                 "discussed": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
                 "planned_threads": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
                 "next_intent": {"type": "string"},
+                "desired_shape": {"type": "string"},
                 "continuation_mode": {
                     "type": "string",
                     "enum": ["none", "yield_user", "auto_continue"],
@@ -99,15 +71,28 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
                 "pause_seconds": {"type": "number", "minimum": 0.0, "maximum": 30.0},
             },
         },
-        "dialogue_beats": {
+        "turn_projection": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["floor", "continuation_feel", "verbal_bridge_hint"],
+            "properties": {
+                "floor": {"type": "string", "enum": ["hold", "yield", "open"]},
+                "continuation_feel": {
+                    "type": "string",
+                    "enum": ["neutral", "thinking", "eager", "soft", "playful"],
+                },
+                "verbal_bridge_hint": {"type": "string"},
+            },
+        },
+        "public_beats": {
             "type": "array",
-            "maxItems": 8,
+            "maxItems": 16,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": [
                     "kind", "proposition", "communicative_goal", "relation_to_previous",
-                    "detail_level", "needs_example", "say_now",
+                    "detail_level", "needs_example",
                 ],
                 "properties": {
                     "kind": {
@@ -122,7 +107,6 @@ AGENT_TURN_DECISION_SCHEMA: dict[str, Any] = {
                     "relation_to_previous": {"type": "string"},
                     "detail_level": {"type": "string", "enum": ["brief", "normal", "deep"]},
                     "needs_example": {"type": "boolean"},
-                    "say_now": {"type": "boolean"},
                 },
             },
         },
@@ -217,16 +201,20 @@ class RuntimeModelTurnReasoner:
                     "tutor_response_relation=answer|clarification|interrupt|none; chỉ 'answer' mới được semantic assessor chấm. "
                     "DialogueBeat phải tự nhiên như người nói. Quan trọng: cognitive coverage KHÔNG đồng nghĩa public disclosure. "
                     "BẠN — root executive — là authority DUY NHẤT quyết định ý nào được nói ở turn này. Runtime phía dưới sẽ KHÔNG tự cắt, chọn, dedupe hay chuyển beat sang deferred. "
-                    "Mỗi iteration phải trả lại một discourse plan hoàn chỉnh hiện tại: đánh say_now=true chính xác cho các beat muốn public NGAY; say_now=false cho beat không muốn public. "
-                    "Nếu muốn giữ một hướng cho turn sau, hãy lập speech_plan DÀI HẠN bằng plain structure: topic/goal/discussed/planned_threads/active_thread/next_intent. "
+                    "Mỗi iteration phải trả lại public_beats hoàn chỉnh cho CHÍNH lượt này. Ý nào chưa nói thì ĐỪNG đưa vào public_beats; hãy giữ hướng đó trong speech_plan.planned_threads/next_intent. "
+                    "Lập speech_plan DÀI HẠN bằng plain structure: topic/goal/discussed/planned_threads/current_thread/next_intent. "
                     "speech_plan là kế hoạch của CHÍNH BẠN, không phải lời thoại cache. Runtime chỉ lưu rồi đưa lại ở lần sau; runtime không được tự chọn planned_thread nào để nói. "
                     "Chọn speech_plan.continuation_mode=yield_user khi muốn nói một nhịp rồi chờ user; auto_continue chỉ khi chính bạn muốn được đánh thức lại sau audio để tự quyết tiếp; none khi không có nghĩa vụ nối tiếp. "
-                    "Nếu muốn giữ một hướng cho turn sau, continuation legacy có thể mirror thông tin tương thích, nhưng speech_plan mới là authority dài hạn. "
-                    "Hãy chọn disclosure_mode: conversational cho hỏi đáp khám phá bình thường, deep_dialogue khi user muốn đào sâu nhưng vẫn đang đối thoại, report chỉ khi user thật sự yêu cầu câu trả lời đầy đủ/báo cáo. "
-                    "Nếu runtime_context.voice_mode=true, tự cân nhắc nhịp nói như một phần của reasoning xã hội: đôi khi 1 beat là đủ, đôi khi 2-3 beat mới tự nhiên. Không có luật runtime ép còn 1 beat. "
-                    "speech_budget chỉ là metadata legacy/telemetry, KHÔNG phải authority. Không dùng word/time hard cap và không yêu cầu writer nén câu. "
-                    "Nếu runtime_context.agent_disclosure_feedback báo invalid, hãy tự sửa discourse plan ở iteration này; runtime sẽ không sửa thay. "
-                    "continuation_anchor là ý mở tự nhiên cho lượt sau, không phải câu hỏi generic kiểu 'bạn có muốn biết thêm không'. "
+                    "QUAN TRỌNG: không mặc định rằng nói ngắn là tốt. desired_shape mô tả hình dạng CHÍNH BẠN muốn tạo ra: có thể là 'một câu rồi nhường user', 'đào sâu vài ý', hoặc 'nerd burst dài, hứng thú và nối nhiều liên hệ'. Đây là ý định semantic, KHÔNG phải word/time cap. "
+                    "Hãy dùng affective_voice_state, conversation_trajectory, engagement_context và nội dung thực tế như tín hiệu xã hội để tự quyết desired_shape; không hardcode kiểu curiosity cao => nói dài. "
+                    "Nếu runtime_context.voice_mode=true, voice chỉ là một tín hiệu trải nghiệm, KHÔNG phải lý do tự động nói ngắn. Khi mạch đang hay và user engaged, bạn có thể chủ động nói dài trong chính public_beats đã chọn. "
+                    "Không lập word/time/max-beat budget và không dùng disclosure mode. Core chỉ có public_beats + speech_plan. "
+                    "Tách riêng TURN PROJECTION khỏi speech_plan: turn_projection.floor=hold|yield|open là cách CHÍNH BẠN muốn quản lý ranh giới lượt nói sau câu hiện tại. "
+                    "hold = muốn người dùng cảm nhận rằng bạn chưa nói xong và có thể nói tiếp ngay; yield = chủ động nhường lượt; open = không giữ cũng không ép nhường, user có thể chen tự nhiên. "
+                    "continuation_feel=thinking|eager|soft|playful|neutral chỉ là tín hiệu trình diễn public-safe cho avatar/UI; runtime có thể map sang pose nhưng không được suy ra nội dung. "
+                    "verbal_bridge_hint là gợi ý cực ngắn cho public writer về nhịp kết câu nếu bạn muốn tín hiệu bằng lời kiểu 'còn một chỗ nữa'; KHÔNG viết nguyên câu thoại bắt buộc và không dùng nó để thêm thông tin ngoài public_beats. "
+                    "Floor projection và continuation_mode là hai khái niệm riêng: speech_plan nói liệu cognition có được wake lại hay chờ user; turn_projection nói user nên cảm nhận bạn đang giữ hay nhường floor. Hãy giữ chúng nhất quán nhưng đừng dùng runtime để tự suy ra cái này từ cái kia. "
+                    "Nếu runtime_context.agent_contract_feedback báo invalid, hãy tự sửa discourse plan ở iteration này; runtime sẽ không sửa thay. "
                     "Ngoài discourse của lượt hiện tại, BẮT BUỘC lập speech_plan dài hạn. speech_plan là kế hoạch semantic public-safe của CHÍNH BẠN, không phải câu public viết sẵn. "
                     "continuation_mode=yield_user khi muốn nói xong rồi chờ user; auto_continue khi chính bạn muốn chủ động nói tiếp sau một nhịp; none khi không có continuation. "
                     "Nếu auto_continue, ghi next_intent/planned_threads và pause_seconds hợp lý. Runtime chỉ cất plan và đánh thức BẠN lại sau audio; runtime tuyệt đối không phát lại câu cache và không tự chọn thread. "
@@ -289,7 +277,9 @@ def _bounded_runtime_context(context: Mapping[str, Any]) -> dict[str, Any]:
     allow = {
         "agent_execution_route", "teaching_active", "explicit_tool_route",
         "conversation_status", "previous_public_excerpt", "requested_depth",
-        "voice_mode", "tts_speed", "disclosure_arc", "conversation_speech_plan", "tutor_role",
+        "voice_mode", "tts_speed", "conversation_speech_plan", "tutor_role",
+        "affective_voice_state", "affective_voice_context", "conversation_trajectory",
+        "engagement_context", "active_concerns", "personality_summary", "relationship_summary",
         "agent_contract_feedback", "continuation_wake",
     }
 
@@ -344,12 +334,6 @@ def heuristic_fallback_decision(
         "completion_candidate": True,
         "requires_user_response": False,
         "tutor_response_relation": "none",
-        "response_mode": "normal",
-        "disclosure_mode": "conversational",
-        "speech_budget": {"max_beats": 2},
-        "continuation": {
-            "active_thread": "", "deferred_threads": [], "continuation_anchor": "", "next_if_continue": ""
-        },
         "speech_plan": {
             "plan_id": "fallback",
             "topic": text[:300],
@@ -358,18 +342,23 @@ def heuristic_fallback_decision(
             "discussed": [],
             "planned_threads": [],
             "next_intent": "",
+            "desired_shape": "một lượt nói tự nhiên, không bị ép ngắn hay dài",
             "continuation_mode": "yield_user",
             "resume_trigger": "user_reply",
             "pause_seconds": 0.0,
         },
-        "dialogue_beats": [{
+        "turn_projection": {
+            "floor": "yield",
+            "continuation_feel": "neutral",
+            "verbal_bridge_hint": "",
+        },
+        "public_beats": [{
             "kind": "explanation",
             "proposition": "Trả lời thẳng yêu cầu hiện tại, ưu tiên ý quan trọng trước rồi mới mở rộng khi cần.",
             "communicative_goal": "đáp ứng user mà không dump cấu trúc máy móc",
             "relation_to_previous": "continue",
             "detail_level": "normal",
             "needs_example": False,
-            "say_now": True,
         }],
         "style_notes": ["nói tự nhiên", "không lộ chain-of-thought", "không lặp ý"],
         "decision_summary": "fallback typed plan vì semantic worker không khả dụng",

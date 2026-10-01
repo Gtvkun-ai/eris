@@ -982,19 +982,30 @@ class PublicOutputRuntimeMixin:
                     agent_runtime = ensure_agent_turn_runtime(self)
                     snapshot = agent_runtime.note_audio_finished()
                     mode = snapshot.plan.continuation_mode.value
+                    floor = snapshot.turn_projection.floor.value
 
-                    if mode == "yield_user":
+                    # UI/floor signaling phải bám đúng projection do root agent
+                    # chọn, không suy ra từ continuation_mode. Scheduler phía dưới
+                    # vẫn dùng continuation_mode vì đó là lifecycle cognition.
+                    if floor == "hold":
                         emit_runtime_status(
-                            self, activity="agent_turn", phase="waiting_user",
-                            label="Eris • đang chờ bạn", active=False, tone="muted",
-                            priority=90, notice_ms=5000,
-                        )
-                    elif mode == "auto_continue":
-                        emit_runtime_status(
-                            self, activity="agent_turn", phase="continuation_ready",
+                            self, activity="agent_turn", phase="holding_floor",
                             label="Eris • còn một ý…", active=True, tone="active",
                             priority=92, notice_ms=0,
                         )
+                    elif floor == "yield":
+                        emit_runtime_status(
+                            self, activity="agent_turn", phase="waiting_user",
+                            label="Eris • đang chờ bạn", active=False, tone="muted",
+                            priority=90, notice_ms=3500,
+                        )
+                    else:
+                        emit_runtime_status(
+                            self, activity="agent_turn", phase="open_floor",
+                            label="", active=False, tone="muted", priority=50, notice_ms=0,
+                        )
+
+                    if mode == "auto_continue":
                         delay = max(0.0, float(snapshot.due_at or 0.0) - time.time())
 
                         # Cancel timer cơ học cũ nếu có. Semantic cancellation nằm
@@ -1019,11 +1030,6 @@ class PublicOutputRuntimeMixin:
                         timer.daemon = True
                         self._agent_speech_wake_timer = timer
                         timer.start()
-                    else:
-                        emit_runtime_status(
-                            self, activity="agent_turn", phase="done",
-                            label="", active=False, tone="muted", priority=50, notice_ms=0,
-                        )
                 except Exception as exc:
                     self.logger.debug("[agent-speech-plan] post-audio lifecycle degraded: %s", exc)
         elif event_type == "audio_failed":

@@ -3101,18 +3101,38 @@ class SelfTurnPipeline:
             if result is None:
                 return False
 
+            try:
+                from runtime.turn_projection_runtime import emit_turn_projection
+
+                emit_turn_projection(
+                    host,
+                    result.state.turn_projection,
+                    turn_id=result.state.turn_id,
+                    session_id=sid,
+                    reason="agent_speech_continuation_projection",
+                )
+            except Exception as exc:
+                host.logger.debug("[turn-projection] continuation mirror degraded: %s", exc)
+
             public_beats = tuple(
-                beat for beat in result.state.discourse.beats
-                if beat.say_now and str(beat.proposition or "").strip()
+                beat for beat in result.state.discourse.public_beats
+                if str(beat.proposition or "").strip()
             )
             if not public_beats:
                 # Agent đã được wake và tự quyết không nói. Runtime tôn trọng.
-                mode = result.state.speech_plan.continuation_mode.value
-                if mode == "yield_user":
+                # UI/body floor phải bám turn_projection, không suy từ lifecycle.
+                floor = result.state.turn_projection.floor.value
+                if floor == "hold":
+                    emit_runtime_status(
+                        host, activity="agent_turn", phase="holding_floor",
+                        label="Eris • còn một ý…", active=True, tone="active",
+                        priority=92, notice_ms=0,
+                    )
+                elif floor == "yield":
                     emit_runtime_status(
                         host, activity="agent_turn", phase="waiting_user",
                         label="Eris • đang chờ bạn", active=False, tone="muted",
-                        priority=90, notice_ms=5000,
+                        priority=90, notice_ms=3500,
                     )
                 else:
                     emit_runtime_status(
@@ -3166,9 +3186,9 @@ class SelfTurnPipeline:
             discourse_context = (
                 "AGENT_SPEECH_CONTINUATION_V8: "
                 + json.dumps(result.to_dict(), ensure_ascii=False, separators=(",", ":"))
-                + ". PUBLIC WRITER RULE: realize ONLY dialogue beats with say_now=true from this NEW agent snapshot. "
-                  "The long-term speech plan is context, not extra text. Do not expose hidden reasoning, "
-                  "do not append held/planned threads, and do not shorten or expand because of runtime caps."
+                + ". PUBLIC WRITER RULE: realize ONLY discourse_plan.public_beats from this NEW agent snapshot. "
+                  "The long-term speech plan is context, not extra text. turn_projection is agent-owned; if verbal_bridge_hint is present, realize it only as a natural turn-ending cue without adding facts or quoting the hint. "
+                  "Do not expose hidden reasoning, do not append held/planned threads, and do not shorten or expand because of runtime caps."
             )
             payload = host.ai_model_router.generate_public_reply(
                 chat_history=context.recent_history,

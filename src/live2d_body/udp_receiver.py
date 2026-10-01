@@ -76,7 +76,7 @@ class Live2DStageReceiver:
                     if accepted and event_type in {
                         "speaking", "audio_start", "audio_playback_started",
                         "audio_done", "audio_playback_done", "audio_cancelled",
-                        "audio_failed", "interrupted", "degraded",
+                        "audio_failed", "interrupted", "degraded", "turn_projection",
                     }:
                         print(
                             "[Live2D][Stage] "

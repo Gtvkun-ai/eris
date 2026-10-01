@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """Durable lifecycle cho kế hoạch nói dài hạn do **root agent** sở hữu.
 
-Boundary quan trọng của V8:
+Boundary quan trọng của V11:
 
-- Agent quyết định semantic: nói gì bây giờ, giữ thread nào, yield user hay
-  auto-continue, và nếu auto-continue thì muốn nghỉ bao lâu.
+- Agent quyết định semantic: nói gì bây giờ, giữ thread nào, muốn chiếm floor
+  kiểu gì (yield/normal/deepen/nerd_burst/...), yield user hay auto-continue,
+  và nếu auto-continue thì muốn nghỉ bao lâu.
+- Runtime không có khái niệm "voice thì phải ngắn". NERD_BURST/MONOLOGUE là
+  agent-owned intent hợp lệ và được persist nguyên vẹn như các intent khác.
 - Runtime KHÔNG chọn nội dung, KHÔNG biến planned thread thành câu public,
   KHÔNG phát lại một câu đã cache.
 - Runtime chỉ giữ snapshot nguyên vẹn, đánh dấu lifecycle delivery/audio và khi
@@ -18,7 +21,7 @@ from dataclasses import dataclass, replace
 import time
 from typing import Any, Mapping
 
-from .contracts import ConversationSpeechPlan, SpeechContinuationMode
+from .contracts import ConversationSpeechPlan, SpeechContinuationMode, TurnProjection
 
 try:
     from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
@@ -36,6 +39,7 @@ class SpeechPlanSnapshot:
 
     session_id: str = "default"
     plan: ConversationSpeechPlan = ConversationSpeechPlan()
+    turn_projection: TurnProjection = TurnProjection()
     status: str = "idle"
     last_turn_id: str = ""
     last_public_text: str = ""
@@ -46,9 +50,10 @@ class SpeechPlanSnapshot:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "eris.agent_speech_plan.v1",
+            "schema": "eris.agent_speech_plan.v3",
             "session_id": self.session_id,
             "plan": self.plan.to_dict(),
+            "turn_projection": self.turn_projection.to_dict(),
             "status": self.status,
             "last_turn_id": self.last_turn_id,
             "last_public_text": self.last_public_text,
@@ -73,6 +78,9 @@ class SpeechPlanSnapshot:
             session_id=_clean(data.get("session_id", session_id), 180) or session_id,
             plan=ConversationSpeechPlan.from_mapping(
                 data.get("plan") if isinstance(data.get("plan"), Mapping) else None
+            ),
+            turn_projection=TurnProjection.from_mapping(
+                data.get("turn_projection") if isinstance(data.get("turn_projection"), Mapping) else None
             ),
             status=_clean(data.get("status"), 80) or "idle",
             last_turn_id=_clean(data.get("last_turn_id"), 180),
@@ -157,6 +165,7 @@ class SpeechPlanLedger:
         session_id: str,
         *,
         plan: ConversationSpeechPlan,
+        turn_projection: TurnProjection,
         turn_id: str,
     ) -> SpeechPlanSnapshot:
         """Lưu nguyên snapshot semantic mới nhất của agent, không merge heuristic."""
@@ -165,6 +174,7 @@ class SpeechPlanLedger:
             lambda prior, now: SpeechPlanSnapshot(
                 session_id=prior.session_id,
                 plan=plan,
+                turn_projection=turn_projection,
                 status="planned" if plan.owns_future_turn else "idle",
                 last_turn_id=_clean(turn_id, 180),
                 last_public_text=prior.last_public_text,
@@ -204,7 +214,13 @@ class SpeechPlanLedger:
     def note_user_turn(self, session_id: str) -> SpeechPlanSnapshot:
         """User luôn thắng auto-continuation; semantic plan vẫn giữ để agent đọc lại."""
         def update(prior: SpeechPlanSnapshot, now: float) -> SpeechPlanSnapshot:
-            return replace(prior, status="user_replied", due_at=0.0, claim_token="")
+            return replace(
+                prior,
+                turn_projection=TurnProjection(),
+                status="user_replied",
+                due_at=0.0,
+                claim_token="",
+            )
         return self._mutate(session_id, update)
 
     def claim_auto_continue(self, session_id: str, *, token: str, now: float | None = None) -> SpeechPlanSnapshot | None:
