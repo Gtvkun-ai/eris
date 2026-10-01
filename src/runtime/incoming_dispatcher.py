@@ -127,7 +127,24 @@ class IncomingMessageDispatcher:
         except (TypeError, ValueError):
             timestamp = float(self.clock())
         owner._capture_speech_interrupt_for_user(user_text, timestamp=timestamp)
-        owner._supersede_tts_for_new_user_turn("user_chat_supersede")
+
+        # V12: backchannel ngắn trong lúc Eris đang phát audio là tín hiệu nghe,
+        # không mặc định là steering. Vì vậy không hủy audio/generation chỉ vì
+        # "ừ/à/đúng rồi". Khi audio không bận, cùng câu đó vẫn là một user turn
+        # bình thường và đi qua root agent như mọi input khác.
+        try:
+            from runtime.conversation import InterruptKind, classify_interrupt
+            interrupt = classify_interrupt(user_text, final=True)
+            clock = getattr(owner, "interaction_clock", None)
+            speech_busy = bool(getattr(clock, "speech_floor_busy", False))
+            if interrupt.kind == InterruptKind.BACKCHANNEL and speech_busy:
+                owner.logger.debug("[conversation-v12] preserved audio on backchannel=%r", user_text[:80])
+                return
+            if interrupt.cancel_audio:
+                owner._supersede_tts_for_new_user_turn("user_chat_supersede")
+        except Exception:
+            # Fail-safe cũ: nếu classifier unavailable, ưu tiên barge-in thật sự.
+            owner._supersede_tts_for_new_user_turn("user_chat_supersede")
         owner._run_chat_cycle(user_text, user_timestamp=timestamp)
 
     def _handle_force_speak(self, _msg: dict[str, Any]) -> None:

@@ -27,6 +27,7 @@ from .speech_plan import SpeechPlanLedger, SpeechPlanSnapshot
 from .tutor_role import TutorRoleContribution, TutorRoleCoordinator
 from .validator import SpeechPlanValidation, SpeechPlanValidator
 from .runtime import TurnAgentRuntime, build_degraded_turn_result, ensure_agent_turn_runtime
+from runtime.conversation.legacy_adapter import V12AgentTurnRuntime
 
 __all__ = [
     "AgentTurnResult", "AgentTurnState", "BeatKind", "CognitivePlan",
@@ -37,5 +38,5 @@ __all__ = [
     "TurnFloor", "TurnProjection",
     "SpeechPlanValidation", "SpeechPlanValidator", "TutorRoleContribution",
     "TutorRoleCoordinator", "TurnAction", "TurnAgentRuntime", "TurnDecision",
-    "TurnReasoner", "build_degraded_turn_result", "ensure_agent_turn_runtime",
+    "TurnReasoner", "V12AgentTurnRuntime", "build_degraded_turn_result", "ensure_agent_turn_runtime",
 ]

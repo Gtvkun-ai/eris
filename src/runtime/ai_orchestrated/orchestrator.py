@@ -1859,30 +1859,41 @@ class AIChatOrchestrator:
                 recent_history=tuple(planning_snapshot.get("recent_public_history", ()) or ()),
                 runtime_context=_agent_runtime_context,
             )
-            agent_turn_payload = agent_turn_result.to_dict()
+            # V12: model protocol cuối chỉ còn NextConversationMove. Adapter V11
+            # tồn tại một chiều cho consumer cũ, nhưng writer nhận contract V12
+            # trực tiếp và không còn được nhồi giant planning JSON.
+            payload_fn = getattr(agent_turn_runtime, "payload_for", None)
+            agent_turn_payload = (
+                payload_fn(agent_turn_result)
+                if callable(payload_fn)
+                else agent_turn_result.to_dict()
+            )
             planning_snapshot["agent_turn"] = agent_turn_payload
             host.last_agent_turn = agent_turn_payload
 
-            # DiscoursePlan.public_beats là contract do ROOT AGENT tự quyết.
-            # Runtime không có held beat/say_now riêng và không curate lại nội dung.
-            discourse_context = "\n\n".join(part for part in (
-                discourse_context,
-                "AGENT_TURN_LOOP_V2: " + json.dumps(
-                    agent_turn_payload,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                + ". PUBLIC WRITER RULE: discourse_plan is a HARD communication contract, not a suggestion and not literal headings. "
-                  "Say ONLY discourse_plan.public_beats for this turn. These beats were selected by the root agent executive itself; runtime did not curate or truncate them. "
-                  "conversation_speech_plan is long-term context, NOT extra text to dump. planned_threads/next_intent are held by the agent for future re-planning. "
-                  "conversation_speech_plan.desired_shape describes the feel of this turn and may explicitly ask for a short handoff, a deep explanation, or a long enthusiastic nerd burst; it is not a runtime cap. "
-                  "turn_projection is also agent-owned. If turn_projection.verbal_bridge_hint is non-empty, use it only as a NATURAL ending/transition cue while realizing the selected public_beats; never quote the hint, never add new factual content, and never let runtime-style filler replace the writer's own phrasing. floor=hold may sound slightly open-ended if the public beats support it; floor=yield should feel resolved. "
-                  "Realize every public beat naturally, lead with the strongest useful point, and never append generic 'muốn tôi nói thêm không?' filler unless the agent actually selected such a beat. "
-                  "If tutor_role.directive exists, obey its pedagogical intent and max_sentences. If response_relation=clarification "
-                  "for a pending_previous_move, clarify/rephrase the exact delivered question without grading, advancing, or revealing the expected answer. "
-                  "Otherwise, if the tutor directive requires_user_response, ask/perform that single teaching move and STOP; do not answer the question yourself. "
-                  "Never expose hidden reasoning. cognitive_plan/execution_plan are private coverage state, not text to quote.",
-            ) if str(part).strip())
+            next_move = agent_turn_payload.get("next_conversation_move", {})
+            if isinstance(next_move, Mapping) and next_move:
+                planning_snapshot["next_conversation_move"] = dict(next_move)
+                discourse_context = "\n\n".join(part for part in (
+                    discourse_context,
+                    "ROOT_CONVERSATION_MOVE_V12: " + json.dumps(
+                        next_move, ensure_ascii=False, separators=(",", ":")
+                    )
+                    + ". WRITER CONTRACT: intent/say/delivery are authored by the root agent. "
+                      "Realize `say` naturally in your own wording while preserving its meaning and grounding. "
+                      "Do not invent a new topic, deferred thread, question, teaching step, or continuation. "
+                      "`delivery` is only a presentation hint; `after` is lifecycle metadata and must not be narrated. "
+                      "There is no sentence/beat/time cap. Do not expose hidden reasoning or internal runtime fields.",
+                ) if str(part).strip())
+            else:
+                # Rollback-safe compatibility only. Production bootstrap V12 luôn
+                # có next_conversation_move; nhánh này không sở hữu semantics mới.
+                discourse_context = "\n\n".join(part for part in (
+                    discourse_context,
+                    "LEGACY_AGENT_ADAPTER: " + json.dumps(
+                        agent_turn_payload, ensure_ascii=False, separators=(",", ":")
+                    ) + ". Say only the adapter public content; do not infer extra threads.",
+                ) if str(part).strip())
             planning_snapshot["discourse_context"] = discourse_context
         except Exception as exc:
             # Không được tụt về planner->writer legacy. Nếu model-backed agent loop
@@ -1904,10 +1915,10 @@ class AIChatOrchestrator:
                 host.last_agent_turn = agent_turn_payload
                 discourse_context = "\n\n".join(part for part in (
                     discourse_context,
-                    "AGENT_TURN_LOOP_DEGRADED: " + json.dumps(
+                    "LEGACY_AGENT_DEGRADED_ADAPTER: " + json.dumps(
                         agent_turn_payload, ensure_ascii=False, separators=(",", ":")
                     )
-                    + ". HARD RULE: say only discourse_plan.public_beats; conversation_speech_plan is context only; turn_projection may shape the natural turn-ending but never adds content; do not expose hidden reasoning.",
+                    + ". HARD RULE: use only adapter public content; do not create extra semantic threads; do not expose hidden reasoning.",
                 ) if str(part).strip())
                 planning_snapshot["discourse_context"] = discourse_context
             except Exception as fallback_exc:
@@ -1921,16 +1932,26 @@ class AIChatOrchestrator:
                 host.logger.error("[agent-turn] deterministic fallback also failed: %s", fallback_exc)
         if agent_turn_result is not None:
             try:
-                from runtime.turn_projection_runtime import emit_turn_projection
-
-                emit_turn_projection(
-                    host,
-                    agent_turn_result.state.turn_projection,
-                    turn_id=turn_id,
-                    session_id=_agent_session_id,
-                )
+                move_payload = planning_snapshot.get("next_conversation_move", {})
+                if isinstance(move_payload, Mapping) and move_payload:
+                    from runtime.conversation import emit_delivery_hint
+                    emit_delivery_hint(
+                        host,
+                        str(move_payload.get("delivery", "") or ""),
+                        turn_id=turn_id,
+                        session_id=_agent_session_id,
+                    )
+                else:
+                    # Compatibility-only path cho test/rollback V11.
+                    from runtime.turn_projection_runtime import emit_turn_projection
+                    emit_turn_projection(
+                        host,
+                        agent_turn_result.state.turn_projection,
+                        turn_id=turn_id,
+                        session_id=_agent_session_id,
+                    )
             except Exception as exc:
-                host.logger.debug("[turn-projection] stage mirror degraded: %s", exc)
+                host.logger.debug("[conversation-v12] delivery presentation degraded: %s", exc)
 
         latency_trace.mark("agent_turn_loop")
 

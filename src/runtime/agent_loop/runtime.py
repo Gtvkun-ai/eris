@@ -428,17 +428,28 @@ def build_degraded_turn_result(
     return replace(result, degraded=True, completion_reason="deterministic_agent_fallback")
 
 
-def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
+def ensure_agent_turn_runtime(host: Any):
+    """Trả runtime public conversation hiện hành.
+
+    Từ V12, hot path dùng :class:`ConversationKernel`. ``TurnAgentRuntime`` V11
+    vẫn còn trong module chỉ để test/consumer legacy chưa migrate; nó không còn
+    được bootstrap cho foreground production.
+    """
+    from runtime.conversation import (
+        ConversationKernel,
+        ConversationSessionStore,
+        DeterministicRootAgent,
+        RuntimeModelRootAgent,
+    )
+    from runtime.conversation.legacy_adapter import V12AgentTurnRuntime
+
     runtime = getattr(host, "agent_turn_runtime", None)
-    if isinstance(runtime, TurnAgentRuntime):
-        # Tutor có thể được bootstrap sau agent runtime trong một số test fixture.
-        if runtime.tutor_role.executive is None and getattr(host, "tutor_executive", None) is not None:
+    if isinstance(runtime, V12AgentTurnRuntime):
+        if getattr(runtime.tutor_role, "executive", None) is None and getattr(host, "tutor_executive", None) is not None:
             runtime.tutor_role = TutorRoleCoordinator(
-                getattr(host, "tutor_executive", None),
-                logger=getattr(host, "logger", None),
+                getattr(host, "tutor_executive", None), logger=getattr(host, "logger", None)
             )
         return runtime
-    router = getattr(host, "ai_model_router", None)
 
     atomic_store = None
     try:
@@ -447,24 +458,29 @@ def ensure_agent_turn_runtime(host: Any) -> TurnAgentRuntime:
     except Exception:
         atomic_store = None
 
-    reasoner: TurnReasoner
-    if router is None:
-        reasoner = DeterministicFallbackTurnReasoner()
-    else:
-        reasoner = RuntimeModelTurnReasoner(router, logger=getattr(host, "logger", None))
-    runtime = TurnAgentRuntime(
-        reasoner,
-        speech_plan_ledger=SpeechPlanLedger(
+    router = getattr(host, "ai_model_router", None)
+    root_agent = (
+        RuntimeModelRootAgent(router, logger=getattr(host, "logger", None))
+        if router is not None
+        else DeterministicRootAgent()
+    )
+    kernel = ConversationKernel(
+        root_agent,
+        store=ConversationSessionStore(
             atomic_store=atomic_store,
-            logger=getattr(host, "logger", None),
-        ),
-        tutor_role=TutorRoleCoordinator(
-            getattr(host, "tutor_executive", None),
             logger=getattr(host, "logger", None),
         ),
         logger=getattr(host, "logger", None),
     )
+    runtime = V12AgentTurnRuntime(
+        kernel,
+        tutor_role=TutorRoleCoordinator(
+            getattr(host, "tutor_executive", None), logger=getattr(host, "logger", None)
+        ),
+        logger=getattr(host, "logger", None),
+    )
     host.agent_turn_runtime = runtime
+    host.conversation_kernel = kernel
     return runtime
 
 

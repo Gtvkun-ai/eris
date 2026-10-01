@@ -748,6 +748,13 @@ class PublicOutputRuntimeMixin:
                 turn_id=str(stage_frame.turn_id or ""),
                 now=time.time(),
             )
+            try:
+                from runtime.agent_loop import ensure_agent_turn_runtime
+                ensure_agent_turn_runtime(self).note_audio_finished(
+                    delivery_id=str(stage_frame.turn_id or "")
+                )
+            except Exception as exc:
+                self.logger.debug("[conversation-v12] no-tts delivery settle degraded: %s", exc)
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Chat public được Architecture C ghi ở đúng commit point; không append trùng.
@@ -980,29 +987,22 @@ class PublicOutputRuntimeMixin:
                     from runtime.runtime_status import emit_runtime_status
 
                     agent_runtime = ensure_agent_turn_runtime(self)
-                    snapshot = agent_runtime.note_audio_finished()
+                    snapshot = agent_runtime.note_audio_finished(delivery_id=str(record.get("turn_id", "") or ""))
                     mode = snapshot.plan.continuation_mode.value
-                    floor = snapshot.turn_projection.floor.value
-
-                    # UI/floor signaling phải bám đúng projection do root agent
-                    # chọn, không suy ra từ continuation_mode. Scheduler phía dưới
-                    # vẫn dùng continuation_mode vì đó là lifecycle cognition.
-                    if floor == "hold":
+                    # V12 status UI phản ánh phase cơ học thật, không còn floor
+                    # semantic. Có lease => cognition sẽ được wake lại; không có
+                    # lease => lượt hiện tại đã trả quyền về user.
+                    if mode == "auto_continue":
                         emit_runtime_status(
-                            self, activity="agent_turn", phase="holding_floor",
-                            label="Eris • còn một ý…", active=True, tone="active",
+                            self, activity="agent_turn", phase="continuation_pending",
+                            label="Eris • đang nghĩ tiếp…", active=True, tone="active",
                             priority=92, notice_ms=0,
-                        )
-                    elif floor == "yield":
-                        emit_runtime_status(
-                            self, activity="agent_turn", phase="waiting_user",
-                            label="Eris • đang chờ bạn", active=False, tone="muted",
-                            priority=90, notice_ms=3500,
                         )
                     else:
                         emit_runtime_status(
-                            self, activity="agent_turn", phase="open_floor",
-                            label="", active=False, tone="muted", priority=50, notice_ms=0,
+                            self, activity="agent_turn", phase="waiting_user",
+                            label="", active=False, tone="muted",
+                            priority=50, notice_ms=0,
                         )
 
                     if mode == "auto_continue":
