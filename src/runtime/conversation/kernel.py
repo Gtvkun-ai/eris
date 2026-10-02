@@ -70,8 +70,51 @@ class ConversationKernel:
         self.logger = logger
         self._delivery_lock = threading.RLock()
         self._delivery_turns: dict[str, KernelTurn] = {}
+        self._event_condition = threading.Condition(threading.RLock())
+        self._event_results: dict[str, ConversationRunResult] = {}
+        self._events_inflight: set[str] = set()
 
     def handle_event(
+        self,
+        event: ConversationEvent,
+        *,
+        recent_history: Sequence[Mapping[str, Any]] = (),
+        runtime_context: Mapping[str, Any] | None = None,
+    ) -> ConversationRunResult:
+        event_id = str(event.event_id or "")[:240]
+        if not event_id:
+            return self._handle_event_once(
+                event,
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+            )
+        with self._event_condition:
+            while event_id in self._events_inflight:
+                self._event_condition.wait()
+            cached = self._event_results.get(event_id)
+            if cached is not None:
+                return cached
+            self._events_inflight.add(event_id)
+        try:
+            result = self._handle_event_once(
+                event,
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+            )
+        except Exception:
+            with self._event_condition:
+                self._events_inflight.discard(event_id)
+                self._event_condition.notify_all()
+            raise
+        with self._event_condition:
+            if len(self._event_results) >= 512:
+                self._event_results.pop(next(iter(self._event_results)))
+            self._event_results[event_id] = result
+            self._events_inflight.discard(event_id)
+            self._event_condition.notify_all()
+        return result
+
+    def _handle_event_once(
         self,
         event: ConversationEvent,
         *,

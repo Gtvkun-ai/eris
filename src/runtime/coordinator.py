@@ -479,9 +479,8 @@ class RuntimeCoordinator(
                 mode="redirect",
             )
 
-        # Close the autonomy loop: terminal coding-agent work becomes fresh Eris context
-        # and wakes the self-turn loop. We do not make the executor speak directly;
-        # Subject Core still owns wording/personality and can judge the result.
+        # Terminal coding work becomes a typed capability event. The worker never
+        # writes public history or chooses wording; RootAgent owns that decision.
         if event_type in {"task_completed", "task_failed"}:
             terminal_key = f"frontstage_terminal:{event_type}"
             if terminal_key not in marks:
@@ -490,18 +489,28 @@ class RuntimeCoordinator(
                     data = event.get("data") if isinstance(event.get("data"), dict) else {}
                     final_text = str(data.get("final", "") or event.get("detail", "") or event.get("summary", "") or "").strip()
                     goal = str(task.get("clarified_goal", "") or task.get("goal", "") or "").strip()
-                    status_label = "COMPLETED" if event_type == "task_completed" else "FAILED"
-                    note = (
-                        f"[BACKSTAGE AGENT {status_label}]\n"
-                        f"Task: {goal[:1200]}\n"
-                        f"Result: {final_text[:6000]}\n"
-                        "This is fresh execution evidence from the Eris coding subbrain/Agent Harness. Review it as Eris, "
-                        "then proactively tell the user the meaningful result when appropriate. "
-                        "Do not collapse frontstage identity into backstage execution; report the verified result, not invented steps."
+                    from collections import deque
+                    from runtime.capabilities import WorkResult
+
+                    result = WorkResult(
+                        status="completed" if event_type == "task_completed" else "failed",
+                        summary=final_text[:16000],
+                        artifact_refs=tuple(str(item)[:1000] for item in task.get("changed_files", ()) or ()),
+                        metadata={
+                            "task_id": str(task_id or "")[:180],
+                            "goal": goal[:2000],
+                            "event_type": event_type,
+                        },
                     )
-                    append_history = getattr(self, "_append_chat_history", None)
-                    if callable(append_history):
-                        append_history("system", note)
+                    pending = getattr(self, "_pending_conversation_capability_events", None)
+                    if pending is None:
+                        pending = deque(maxlen=128)
+                        self._pending_conversation_capability_events = pending
+                    pending.append({
+                        "event_id": f"work:{task_id}:{event_type}",
+                        "kind": "work_result",
+                        "metadata": {"work_capability": result.to_dict()},
+                    })
                     wake = getattr(self, "_wake_autonomous_loop", None)
                     if callable(wake):
                         wake(f"agent_{event_type}:{task_id}")

@@ -322,9 +322,7 @@ def test_terminal_agent_event_wakes_eris_frontstage(tmp_path):
     coordinator.agent_supervisor = AgentSupervisorBridge(store=store, event_bus=_Events())
     coordinator._agent_supervisor_marks = {}
     coordinator.logger = None
-    history = []
     wakes = []
-    coordinator._append_chat_history = lambda role, content, **kwargs: history.append((role, content))
     coordinator._wake_autonomous_loop = lambda reason="": wakes.append(reason)
 
     event = store.append_event(
@@ -338,9 +336,12 @@ def test_terminal_agent_event_wakes_eris_frontstage(tmp_path):
     event["task_id"] = task_id
     coordinator._supervise_agent_event(event)
 
-    assert history and history[-1][0] == "system"
-    assert "BACKSTAGE AGENT COMPLETED" in history[-1][1]
-    assert "Fixed routing" in history[-1][1]
+    pending = coordinator._pending_conversation_capability_events
+    assert len(pending) == 1
+    queued = pending[0]
+    assert queued["kind"] == "work_result"
+    assert queued["metadata"]["work_capability"]["status"] == "completed"
+    assert "Fixed routing" in queued["metadata"]["work_capability"]["summary"]
     assert wakes and wakes[-1].startswith("agent_task_completed:")
 
 

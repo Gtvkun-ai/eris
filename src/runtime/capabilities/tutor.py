@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from runtime.conversation.contracts import DeliveryReceipt
+
 
 @dataclass(frozen=True, slots=True)
 class TutorAdvice:
@@ -64,12 +66,12 @@ class TutorCapability:
             self._log("debug", "[tutor-capability-v12] degraded: %s", exc)
             return TutorAdvice(active=bool(assessment), assessment=assessment)
 
-    def commit_delivery(self, *, successful: bool, public_text: str = "") -> None:
+    def observe_delivery_receipt(self, receipt: DeliveryReceipt) -> None:
         if self.executive is None or self._last_decision is None:
             return
         try:
             self.executive.commit_delivery(
-                self._last_decision, successful=successful, public_text=public_text
+                self._last_decision, successful=bool(receipt.successful)
             )
         except Exception as exc:  # noqa: BLE001
             self._log("debug", "[tutor-capability-v12] receipt degraded: %s", exc)

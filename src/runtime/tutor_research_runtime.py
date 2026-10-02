@@ -5,7 +5,6 @@ Extracted from RuntimeCoordinator so the composition root stops owning every pol
 """
 from __future__ import annotations
 
-import random
 import re
 import threading
 import time
@@ -359,14 +358,7 @@ class TutorResearchRuntimeMixin:
 
 
     def _maybe_start_self_declared_tutor_search(self, decision: Decision, *, user_text: str, frame=None) -> Decision:
-        """Nếu Eris tự nói "đợi em tra", biến lời hứa đó thành hành động thật.
-
-        Đây là lớp tự do có kiểm soát: pre-detector có thể lọt câu hỏi lái, nhưng
-        main brain vẫn được phép tự nhận ra cần search. Khi nó surface lời hứa
-        search/kiểm tra, runtime spawn Tutor ở nền và thay câu lượt này bằng
-        nhịp chờ ngắn, không để nó vừa hứa tra vừa đoán luôn. Rất tiếc cho thói
-        quen bịa tự tin, nó không qua cửa này.
-        """
+        """Start private research work without editing the public decision."""
 
         try:
             if decision is None:
@@ -377,7 +369,6 @@ class TutorResearchRuntimeMixin:
                 or getattr(self, "_research_in_flight", False)
             )
             from runtime.tutor_self_search_bridge import (
-                build_self_search_wait_text,
                 detect_self_search_request,
             )
 
@@ -405,10 +396,11 @@ class TutorResearchRuntimeMixin:
                 runtime_float = getattr(self, "_tutor_runtime_float", None)
                 floor = runtime_float("tutor", "low_confidence_clarify_threshold", default=0.55) if callable(runtime_float) else 0.55
                 if anchor_resolution_needs_clarification(SimpleNamespace(**anchor_meta), confidence_floor=floor):
-                    decision.text = "Tôi biết vụ này cần tra, nhưng neo hiện tại hơi mù. Bạn chỉ rõ tôi đang tra phần nào đã, kẻo tôi lại search nhầm như một cái GPS bị xúc phạm."
-                    decision.action = "tutor_anchor_clarify"
-                    decision.should_speak = True
-                    decision.confidence = min(float(getattr(decision, "confidence", 0.72) or 0.72), 0.55)
+                    self._last_tutor_self_search_signal = {
+                        "status": "needs_clarification",
+                        "topic": topic,
+                        "anchor_resolution": anchor_meta,
+                    }
                     return decision
             except Exception as exc:
                 self._tutor_boundary_note("self search anchor guard", exc)
@@ -431,21 +423,12 @@ class TutorResearchRuntimeMixin:
                 "không dùng Deep Research API hoặc Google grounding"
             )
             self._fire_research_followup(topic, context=context, mode=mode)
-
-            decision.text = build_self_search_wait_text(mode=mode, topic=topic)
-            decision.intent = "world_knowledge"
-            decision.action = "tutor_self_search_wait"
-            decision.should_speak = True
-            decision.confidence = min(float(getattr(decision, "confidence", 0.72) or 0.72), 0.72)
-            decision.reasoning_tags = tuple(dict.fromkeys((
-                *tuple(getattr(decision, "reasoning_tags", ()) or ()),
-                "tutor_self_declared_wait",
-                "quick_search" if mode == "quick_search" else "research_followup",
-            )))
-            decision.debug_trace = self._join_debug_trace(
-                getattr(decision, "debug_trace", ""),
-                f"self_declared_tutor_search:{mode}:{getattr(self_search_decision, 'reason', '')}",
-            )
+            self._last_tutor_self_search_signal = {
+                "status": "started",
+                "topic": topic,
+                "mode": mode,
+                "anchor_resolution": anchor_meta,
+            }
             try:
                 if frame is not None:
                     frame.debug_notes.append(
@@ -528,103 +511,69 @@ class TutorResearchRuntimeMixin:
                     self._tutor_boundary_note("stale result reason log", exc)
                 return
 
-        answer = str(answer or "").strip()
-        if answer:
-            if str(mode or "research") == "quick_search":
-                lead = random.choice((
-                    "Em search nhanh ra rồi nè. ",
-                    "Rồi, em kiểm tra nhanh được thế này. ",
-                    "Em vừa tra nhanh xong. ",
-                ))
-            else:
-                lead = random.choice((
-                    "Rồi, em tra xong rồi nha. ",
-                    "Đây ạ, em vừa tra được: ",
-                    "Em tra ra rồi nè. ",
-                ))
-            text = f"{lead}{answer}"
-        else:
-            text = random.choice((
-                "Em lục một vòng mà chưa ra cái gì chắc chắn về vụ này. Em chưa dám nói bừa đâu.",
-                "Hừm, vụ này em tra chưa tới nơi. Để em đào lại sau rồi nói bạn nghe.",
-            ))
-        artifact = {}
-        research_thread = {}
-        research_metrics = {}
-        memory_decision = {}
-        try:
-            artifact = dict(getattr(self, "_last_tutor_research_artifact", {}) or {})
-            research_thread = dict(getattr(self, "_last_tutor_research_thread", {}) or {})
-            research_metrics = dict(getattr(self, "_last_tutor_research_metrics", {}) or {})
-            memory_decision = dict(getattr(self, "_last_tutor_research_memory_decision", {}) or {})
-        except Exception:
-            artifact = {}
-            research_thread = {}
-            research_metrics = {}
-            memory_decision = {}
-        verification_status = ""
-        try:
-            verification_status = str((artifact.get("verification") or {}).get("overall_status") or "")
-        except Exception:
-            verification_status = ""
-        decision = Decision(
-            text=text,
-            animation="stand",
-            intent="world_knowledge",
-            action="tutor_search_followup" if str(mode or "research") == "quick_search" else "tutor_followup",
-            reasoning_tags=(
-                "tutor_grounded",
-                "quick_search" if str(mode or "research") == "quick_search" else "research_followup",
-                f"verification:{verification_status}" if verification_status else "verification:unknown",
-            ),
-            should_speak=True,
-            confidence=0.78 if answer else 0.35,
-            parse_mode="chat",
-            debug_trace=f"{str(mode or 'research')}_followup; topic={str(topic)[:120]}; verification={verification_status or 'unknown'}",
+        from runtime.capabilities import ResearchCapability
+        from runtime.conversation import ConversationEvent
+        from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+        answer_text = str(answer or "").strip()
+        artifact = dict(getattr(self, "_last_tutor_research_artifact", {}) or {})
+        research_thread = dict(getattr(self, "_last_tutor_research_thread", {}) or {})
+        research_metrics = dict(getattr(self, "_last_tutor_research_metrics", {}) or {})
+        memory_decision = dict(getattr(self, "_last_tutor_research_memory_decision", {}) or {})
+        metadata = {
+            "mode": str(mode or "research"),
+            "job_id": str(job_id or "")[:180],
+            "anchor_resolution": dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {}),
+            "research_thread": research_thread,
+            "research_metrics": research_metrics,
+            "research_memory_policy": memory_decision,
+            "evidence_bundle_id": str(artifact.get("bundle_id") or ""),
+            "verification": dict(artifact.get("verification") or {}),
+        }
+        capability = getattr(self, "research_capability", None)
+        if not isinstance(capability, ResearchCapability):
+            capability = ResearchCapability()
+            self.research_capability = capability
+        result = capability.result(
+            topic=str(topic or ""),
+            summary=answer_text,
+            status="completed" if answer_text else "failed",
+            evidence_refs=tuple(str(item) for item in artifact.get("evidence_refs", ()) or ()),
+            metadata=metadata,
+            result_id=f"research:{job_id}" if job_id else "",
         )
-        # Tutor follow-up dùng cùng public commit/stage transport. Wording không
-        # đi qua legacy style guards; evidence bundle mới là authority.
-        try:
-            from actions.capability_registry import canonicalize_action_id
-            decision.system_action = canonicalize_action_id(decision.system_action)
-        except Exception as exc:
-            self._tutor_boundary_note("canonicalize tutor action", exc)
-        try:
-            from runtime.public_surface_commit import GLOBAL_PUBLIC_SURFACE_COMMITTER
-            commit_surfaces = GLOBAL_PUBLIC_SURFACE_COMMITTER.build(decision.text)
-            public_text = commit_surfaces.display_text
-            memory_text = commit_surfaces.memory_text
-        except Exception:
-            public_text = str(decision.text or "").strip()
-            memory_text = public_text
-        if public_text:
-            if memory_text:
-                self._append_chat_history("assistant", memory_text, invalid=False)
-            ledger_meta = {
-                "intent": decision.intent,
-                "parse_mode": decision.parse_mode,
-                "source": "tutor_followup",
-                "research_mode": str(mode or "research"),
-                "research_job_id": str(job_id or ""),
-            }
-            anchor_meta = dict(getattr(self, "_last_tutor_anchor_resolution", {}) or {})
-            if anchor_meta:
-                ledger_meta["anchor_resolution"] = anchor_meta
-            if research_thread:
-                ledger_meta["research_thread"] = research_thread
-            if artifact:
-                ledger_meta["evidence_bundle_id"] = str(artifact.get("bundle_id") or "")
-                ledger_meta["verification"] = dict(artifact.get("verification") or {})
-            if research_metrics:
-                ledger_meta["research_metrics"] = research_metrics
-            if memory_decision:
-                ledger_meta["research_memory_policy"] = memory_decision
-            self._ensure_session_turn_ledger().record_assistant(
-                public_text,
-                meta=ledger_meta,
-            )
-            self.last_chat_answer = public_text
-        self._send_decision_to_body(decision, channel="chat")
+
+        session_id = str(
+            getattr(self, "conversation_id", "")
+            or getattr(self, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        kernel = ensure_conversation_kernel(self)
+        history_reader = getattr(self, "_chat_history_for_llm", None)
+        if callable(history_reader):
+            history = tuple(history_reader(limit=8))
+        else:
+            history = tuple(getattr(self, "chat_history", ()) or ())[-8:]
+        event = ConversationEvent(
+            event_id=result.result_id,
+            session_id=session_id,
+            kind="research_result",
+            generation=kernel.snapshot(session_id).generation,
+            metadata={"research_capability": result.to_dict()},
+        )
+        run = kernel.handle_event(
+            event,
+            recent_history=history,
+            runtime_context={"research_capability": result.to_dict()},
+        )
+        self.last_conversation_run = {
+            "schema": "eris.conversation_run.v12",
+            "event_id": run.event.event_id,
+            "generation": run.event.generation,
+            "status": run.status,
+            "delivery_id": run.delivery_id,
+            "decision": run.decision.to_dict() if callable(getattr(run.decision, "to_dict", None)) else {},
+        }
 
 
 __all__ = ["TutorResearchRuntimeMixin"]

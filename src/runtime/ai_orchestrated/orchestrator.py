@@ -821,6 +821,36 @@ class AIChatOrchestrator:
             kind="user_turn",
             text=str(user_text or "")[:16000],
         )
+        from runtime.capabilities import ResearchCapability, TutorCapability, WorkCapability
+
+        tutor_capability = getattr(host, "tutor_capability", None)
+        if not isinstance(tutor_capability, TutorCapability):
+            tutor_capability = TutorCapability(
+                getattr(host, "tutor_executive", None),
+                logger=getattr(host, "logger", None),
+            )
+            host.tutor_capability = tutor_capability
+        tutor_advice = tutor_capability.advise(
+            user_text=str(user_text or ""),
+            turn_id=event.event_id,
+            recent_history=history,
+            response_to_previous=bool(getattr(host, "_tutor_waiting_for_response", False)),
+        )
+        host._tutor_waiting_for_response = tutor_advice.expects_learner_response
+
+        work_capability = getattr(host, "work_capability", None)
+        if not isinstance(work_capability, WorkCapability):
+            work_capability = WorkCapability(
+                getattr(host, "agent_harness", None),
+                logger=getattr(host, "logger", None),
+            )
+            host.work_capability = work_capability
+        research_capability = getattr(host, "research_capability", None)
+        research_snapshot = (
+            research_capability.snapshot()
+            if isinstance(research_capability, ResearchCapability)
+            else None
+        )
         runtime_context = {
             "previous_public_excerpt": str(previous_public_context or "")[-1200:],
             "interrupt_context": str(speech_interrupt_context or "")[:2400],
@@ -829,6 +859,9 @@ class AIChatOrchestrator:
             "memory_context": str(getattr(host, "last_memory_context", "") or "")[:8000],
             "grounding_context": str(getattr(host, "last_grounding_context", "") or "")[:10000],
             "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
+            "tutor_capability": tutor_advice.to_dict(),
+            "work_capability": work_capability.snapshot().to_dict(),
+            "research_capability": research_snapshot.to_dict() if research_snapshot is not None else {},
             "language_hint": _runtime_language(),
             "speech_language_hint": _runtime_speech_language(),
         }
@@ -3827,11 +3860,15 @@ class AIAutonomousOrchestrator:
         *,
         metadata: Mapping[str, Any] | None = None,
         sleep_after: bool = True,
+        event_id: str = "",
     ) -> Any:
         """Submit a non-user opportunity to the single conversation authority."""
 
         signal_kind = str(kind or "").strip().lower()
-        if signal_kind not in {"autonomous_signal", "social_signal", "opening_signal"}:
+        if signal_kind not in {
+            "autonomous_signal", "social_signal", "opening_signal",
+            "tutor_result", "work_result", "research_result",
+        }:
             raise ValueError(f"unsupported_conversation_signal:{signal_kind}")
         host = self.host
         if signal_kind != "opening_signal":
@@ -3854,7 +3891,7 @@ class AIAutonomousOrchestrator:
             or "foreground:primary"
         ).strip()[:180]
         kernel = ensure_conversation_kernel(host)
-        if signal_kind == "autonomous_signal":
+        if signal_kind != "opening_signal":
             phase = getattr(kernel.snapshot(sid).phase, "value", "")
             if phase in {"thinking", "writing", "delivering"}:
                 sleep = getattr(host, "_sleep_interruptible", None)
@@ -3901,6 +3938,10 @@ class AIAutonomousOrchestrator:
             "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
             "previous_public_excerpt": str(getattr(host, "last_text", "") or "")[-1200:],
         }
+        for capability_key in ("tutor_capability", "work_capability", "research_capability"):
+            capability_value = signal_metadata.get(capability_key)
+            if isinstance(capability_value, Mapping):
+                runtime_context[capability_key] = dict(capability_value)
         if state is not None:
             personality_summary = getattr(state, "personality_prompt_context", None)
             relationship = getattr(state, "relationship", None)
@@ -3926,7 +3967,7 @@ class AIAutonomousOrchestrator:
         if result is None:
             result = kernel.handle_event(
                 ConversationEvent(
-                    event_id=f"{signal_kind}:{time.time_ns()}",
+                    event_id=str(event_id or f"{signal_kind}:{time.time_ns()}")[:240],
                     session_id=sid,
                     kind=signal_kind,
                     generation=kernel.snapshot(sid).generation,
@@ -4156,7 +4197,32 @@ class AIAutonomousOrchestrator:
     def run_iteration(self) -> bool:
         """Run one mechanical opportunity through the V12 conversation authority."""
 
-        self._run_v12_signal("autonomous_signal")
+        from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+        host = self.host
+        sid = str(
+            getattr(host, "conversation_id", "")
+            or getattr(host, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        kernel = ensure_conversation_kernel(host)
+        lease = kernel.continuation.peek(sid)
+        if lease is not None and lease.due_at <= time.time():
+            self._run_v12_signal("autonomous_signal")
+            return bool(getattr(host, "running", True))
+
+        pending = getattr(host, "_pending_conversation_capability_events", None)
+        item = pending[0] if pending else None
+        if isinstance(item, Mapping):
+            result = self._run_v12_signal(
+                str(item.get("kind", "") or ""),
+                metadata=item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {},
+                event_id=str(item.get("event_id", "") or ""),
+            )
+            if result is not None:
+                pending.popleft()
+        else:
+            self._run_v12_signal("autonomous_signal")
         return bool(getattr(self.host, "running", True))
 
 
