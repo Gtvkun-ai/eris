@@ -3,8 +3,8 @@
 from .agent import DeterministicRootAgent, RootAgent, RuntimeModelRootAgent
 from .continuation import ContinuationLeaseScheduler
 from .contracts import (
-    ConversationAfter, ConversationEvent, ConversationSessionState, ContinuationLease,
-    DeliveryReceipt, InterruptKind, NextConversationMove, RunPhase,
+    ConversationAfter, ConversationDecision, ConversationEvent, ConversationSessionState,
+    ContinuationLease, DeliveryReceipt, InterruptKind, NextConversationMove, NoReply, RunPhase,
 )
 from .delivery import SurfaceEnvelope
 from .interrupts import InterruptDecision, classify_interrupt
@@ -14,9 +14,9 @@ from .receipts import DeliveryReceiptLedger
 from .session_store import ConversationSessionStore
 
 __all__ = [
-    "ConversationAfter", "ConversationEvent", "ConversationKernel", "ConversationSessionState",
+    "ConversationAfter", "ConversationDecision", "ConversationEvent", "ConversationKernel", "ConversationSessionState",
     "ContinuationLease", "ContinuationLeaseScheduler", "DeliveryReceipt", "DeliveryReceiptLedger",
     "DeterministicRootAgent", "InterruptDecision", "InterruptKind", "KernelTurn",
-    "NextConversationMove", "PresentationHint", "RootAgent", "RunPhase", "RuntimeModelRootAgent",
+    "NextConversationMove", "NoReply", "PresentationHint", "RootAgent", "RunPhase", "RuntimeModelRootAgent",
     "SurfaceEnvelope", "ConversationSessionStore", "classify_interrupt", "emit_delivery_hint", "map_delivery",
 ]

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, TypeAlias
 import time
 import uuid
 
@@ -90,12 +90,40 @@ class NextConversationMove:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": "eris.next_conversation_move.v12",
+            "kind": "move",
             "move_id": self.move_id,
             "intent": self.intent,
             "say": self.say,
             "delivery": self.delivery,
             "after": self.after.value,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class NoReply:
+    """Root-agent decision to finish an event without public speech."""
+
+    reason: str
+    decision_id: str = field(default_factory=lambda: f"decision:{uuid.uuid4().hex}")
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> "NoReply":
+        data = raw if isinstance(raw, Mapping) else {}
+        return cls(
+            reason=_text(data.get("reason"), 500) or "no_reply",
+            decision_id=_text(data.get("decision_id"), 180) or f"decision:{uuid.uuid4().hex}",
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "eris.conversation_no_reply.v12",
+            "kind": "no_reply",
+            "decision_id": self.decision_id,
+            "reason": self.reason,
+        }
+
+
+ConversationDecision: TypeAlias = NoReply | NextConversationMove
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +246,7 @@ class DeliveryReceipt:
 
 
 __all__ = [
-    "ConversationAfter", "ConversationEvent", "ConversationSessionState",
+    "ConversationAfter", "ConversationDecision", "ConversationEvent", "ConversationSessionState",
     "ContinuationLease", "DeliveryReceipt", "InterruptKind", "NextConversationMove",
-    "RunPhase",
+    "NoReply", "RunPhase",
 ]

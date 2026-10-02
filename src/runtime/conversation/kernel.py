@@ -10,9 +10,11 @@ from typing import Any, Mapping, Sequence
 from .agent import RootAgent
 from .contracts import (
     ConversationAfter,
+    ConversationEvent,
     ConversationSessionState,
     DeliveryReceipt,
     NextConversationMove,
+    NoReply,
     RunPhase,
 )
 from .continuation import ContinuationLeaseScheduler
@@ -66,13 +68,21 @@ class ConversationKernel:
                 phase=RunPhase.THINKING,
             ),
         )
-        move = self.agent.decide(
-            user_text=str(user_text or ""),
+        event = ConversationEvent.user_turn(
+            session_id=sid,
+            text=str(user_text or ""),
+            generation=state.generation,
+        )
+        decision = self.agent.decide(
+            event=event,
             recent_history=recent_history,
             note=state.note,
             runtime_context=dict(runtime_context or {}),
-            continuation=False,
         )
+        if isinstance(decision, NoReply):
+            self.store.mutate(sid, lambda prior, now: replace(prior, phase=RunPhase.WAITING_USER))
+            raise RuntimeError("user_turn_no_reply")
+        move = decision
         self.store.mutate(
             sid,
             lambda prior, now: replace(prior, active_move_id=move.move_id, phase=RunPhase.WRITING),
@@ -90,14 +100,32 @@ class ConversationKernel:
         run_id = f"run:{uuid.uuid4().hex}"
         self.store.mutate(sid, lambda prior, now: replace(prior, active_run_id=run_id, phase=RunPhase.THINKING))
         try:
-            move = self.agent.decide(
-                user_text="",
+            event = ConversationEvent(
+                event_id=f"continuation:{lease.lease_id}",
+                session_id=sid,
+                kind="continuation_due",
+                generation=state.generation,
+                metadata={"continuation_lease": lease.to_dict()},
+            )
+            decision = self.agent.decide(
+                event=event,
                 recent_history=recent_history,
                 note=state.note,
                 runtime_context={**dict(runtime_context or {}), "continuation_lease": lease.to_dict()},
-                continuation=True,
             )
             self.continuation.consume(lease)
+            if isinstance(decision, NoReply):
+                self.store.mutate(
+                    sid,
+                    lambda prior, now: replace(
+                        prior,
+                        active_run_id="",
+                        active_move_id="",
+                        phase=RunPhase.WAITING_USER,
+                    ),
+                )
+                return None
+            move = decision
             self.store.mutate(
                 sid,
                 lambda prior, now: replace(prior, active_move_id=move.move_id, phase=RunPhase.WRITING),
