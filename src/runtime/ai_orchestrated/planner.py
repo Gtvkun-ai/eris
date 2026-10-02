@@ -21,13 +21,13 @@ class IntentionPlanner:
 
         # Semantic intention planner này vẫn local cho normal chat: nó không còn
         # là nơi "suy nghĩ một lần rồi writer nói luôn". Foreground cognitive /
-        # execution / discourse planning hiện thuộc runtime.agent_loop và có thể
+        # execution / discourse planning hiện thuộc ConversationKernel root và có thể
         # chạy nhiều vòng trước khi tới đây. Giữ IntentionPlanner local giúp nó
         # chỉ làm compatibility projection, tránh tạo thêm semantic authority.
         agent_turn = snapshot.get("agent_turn") if isinstance(snapshot.get("agent_turn"), Mapping) else None
         needs_tool_planner = bool(snapshot.get("explicit_tool_route", False))
         if agent_turn is not None:
-            # Unified TurnAgentLoop là semantic owner của foreground planning.
+            # RootAgent là semantic owner của foreground planning.
             # IntentionPlan chỉ còn là projection tương thích cho downstream cũ;
             # tuyệt đối không gọi thêm một planner model để diễn giải lại objective.
             cognitive = agent_turn.get("cognitive_plan") if isinstance(agent_turn.get("cognitive_plan"), Mapping) else {}

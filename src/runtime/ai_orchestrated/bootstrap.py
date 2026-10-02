@@ -29,7 +29,6 @@ from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architec
 from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
-from .surface_intent import SurfaceIntentEngine
 from .social_agenda import SocialAgendaStore
 from .social_execution import status as social_execution_status
 from .social_initiative import SocialInitiativeEngine
@@ -137,9 +136,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             return value if isinstance(value, Mapping) else {}
         return {}
 
-    def load_conversation_arc_state() -> Mapping[str, Any]:
-        return load_aux_state("conversation_arc_state")
-
     persist_lock = getattr(host, "_state_lock", None) or threading.RLock()
 
     def engagement_container() -> dict[str, Any] | None:
@@ -228,12 +224,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                     )
                 else:
                     health.record_success(health_name)
-
-    def persist_conversation_arc(payload: Mapping[str, Any]) -> None:
-        persist_aux_state("conversation_arc_state", "conversation_arc.persistence", payload)
-
-    def persist_social_continuation(payload: Mapping[str, Any]) -> None:
-        persist_aux_state("social_continuation_state", "social_continuation.persistence", payload)
 
     def persist_social_agenda(payload: Mapping[str, Any]) -> None:
         persist_aux_state("social_agenda_state", "social_agenda.persistence", payload)
@@ -429,11 +419,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             "model": str(getattr(getattr(llm_service, "executive_client", None), "model_name", "") or ""),
         },
     )
-    surface_intent = SurfaceIntentEngine(router, reducer, logger=getattr(host, "logger", None))
-    health.record_success(
-        "ai_orchestrated.surface_intent",
-        details={"enabled": bool(surface_intent.enabled)},
-    )
     social_agenda = SocialAgendaStore(
         initial_state=load_aux_state("social_agenda_state"),
         persist=persist_social_agenda,
@@ -470,9 +455,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
-    host.ai_surface_intent_engine = surface_intent
-    host.ai_conversation_arc_runtime = None
-    host.ai_social_continuation_runtime = None
     host.ai_social_agenda_store = social_agenda
     host.ai_random_chat_seed_store = random_chat_seed_store
     host.ai_random_chat_seed_generator = random_chat_seed_generator

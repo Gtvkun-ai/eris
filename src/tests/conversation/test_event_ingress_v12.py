@@ -150,10 +150,6 @@ def test_production_autonomous_iteration_enters_kernel_instead_of_self_turn_pipe
     runtime = AIAutonomousOrchestrator.__new__(AIAutonomousOrchestrator)
     runtime.host = host
     runtime.trace_store = None
-    runtime.self_turn_pipeline = SimpleNamespace(
-        trace_store=None,
-        run=lambda: (_ for _ in ()).throw(AssertionError("legacy self-turn pipeline ran")),
-    )
     seen = []
     monkeypatch.setattr(runtime, "_run_v12_signal", lambda kind, **kwargs: seen.append(kind) or True)
 

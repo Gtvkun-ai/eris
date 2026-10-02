@@ -153,14 +153,12 @@ def test_vision_bootstrap_no_longer_installs_monkey_patch():
 
 
 def test_surface_is_realization_only_not_a_second_action_voter():
-    """Surface không còn API/schema cho quyền quyết định speak/silence."""
-    from runtime.ai_orchestrated.surface_intent import SurfaceIntentEngine
+    """The retired autonomous surface has no callable public writer entry."""
     from runtime.ai_orchestrated import model_router
 
-    assert not hasattr(SurfaceIntentEngine, "deliberate")
+    assert not hasattr(model_router.AIRuntimeModelRouter, "realize_surface_speech")
     assert not hasattr(model_router, "SURFACE_INTENT_SCHEMA")
     assert not hasattr(model_router.AIRuntimeModelRouter, "plan_surface_intent")
-    assert "decision" not in model_router.SURFACE_REALIZATION_SCHEMA.get("properties", {})
 
 
 def test_user_acknowledgement_does_not_punish_expressed_intention():

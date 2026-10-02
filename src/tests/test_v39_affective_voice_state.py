@@ -8,10 +8,6 @@ from runtime.affective_voice_state import (
     AffectiveVoiceTracker,
     project_affective_voice_state,
 )
-from runtime.ai_orchestrated.contracts import IntentionPlan
-from runtime.ai_orchestrated.initiative import SpeechIntent
-from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
-from runtime.ai_orchestrated.surface_intent import SurfaceIntentEngine
 from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
 from runtime.eris_voice_contract import CHAT_VOICE_CORE_V39, surface_voice_rules
 from runtime.public_reply_context import compile_public_reply_context
@@ -183,110 +179,6 @@ def test_v39_technical_prompt_budget_keeps_live_affect_before_static_personality
     )
     assert compiled.personality.startswith("AFFECTIVE_VOICE_STATE")
     assert "valence=+0.82" in compiled.personality
-
-
-class _Reducer:
-    def snapshot(self):
-        return SimpleNamespace(version=1)
-
-    def submit(self, _event):
-        return True
-
-
-class _SurfaceRouter:
-    def __init__(self):
-        self.surface_client = object()
-        self.requests = []
-
-    def realize_surface_speech(self, request):
-        self.requests.append(request)
-        return {
-            "text": "Cái này làm tôi vui hơn tôi tưởng.",
-            "confidence": 0.90,
-            "performance_hint": "warm_soft",
-            "evidence_refs": [],
-            # V42 public boundary bắt buộc typed claim manifest, kể cả rỗng.
-            "claim_manifest": [],
-            "reason": "wording_complete",
-        }
-
-    def build_surface_public_payload(self, *, text, plan, mode):
-        return {"text": text, "should_speak": True, "performance_hint": plan.performance_hint, "mode": mode}
-
-
-def _blackboard():
-    return TypedCognitiveBlackboard.from_snapshot(
-        {
-            "telemetry": {},
-            "screen_context": {"fresh": False, "privacy_blocked": False, "evidence_refs": [], "visible_text": [], "changed_text": []},
-            "vision_facts": [],
-            "conversation_baton": {"reply_expected": False, "assistant_may_continue": False, "thread_fresh": False, "thread_key": "none"},
-            "self_context": {"has_public_seed": True, "public_seed": "Một ý vui vừa nối được."},
-            "engagement_context": {"active": False},
-            "commentary_expectation": {"due": True},
-            "seconds_since_assistant": 120.0,
-            "open_loops": [],
-            "recent_public_history": [],
-        },
-        now=3000.0,
-    )
-
-
-def test_v39_surface_receives_same_typed_affective_state_as_voice_authority() -> None:
-    router = _SurfaceRouter()
-    engine = SurfaceIntentEngine(router, _Reducer())
-    plan = IntentionPlan.from_mapping(
-        {
-            "plan_id": "v39-affect-surface",
-            "owner": "social_initiative",
-            "speak": True,
-            "motive": "inner_thought",
-            "strategy": "share_public_safe_thought",
-            "topic": "Một ý vui vừa nối được.",
-            "confidence": 0.9,
-            "performance_hint": "warm_soft",
-            "semantics": {
-                "turn_kind": "internal",
-                "speech_act": "share_public_safe_thought",
-                "subject_key": "self:v39",
-                "evidence_scope": "self_context",
-                "continuation_key": "none",
-            },
-        },
-        channel="autonomous",
-    )
-    intent = SpeechIntent(
-        plan=plan,
-        mode="inner_thought",
-        anchor_type="self",
-        anchor_id="self:v39",
-        max_sentences=2,
-        owner="social_initiative",
-    )
-    snapshot = {
-        "recent_public_history": [],
-        "affective_voice_state": {
-            "version": AFFECTIVE_VOICE_VERSION,
-            "valence": 0.82,
-            "arousal": 0.76,
-            "curiosity": 0.68,
-            "social_energy": 0.74,
-            "delight": 0.86,
-            "playfulness": 0.55,
-            "irritation": 0.02,
-            "sadness": 0.03,
-            "expressive_drive": 0.71,
-            "trajectory_strength": 0.20,
-        },
-        "affective_voice_context": "AFFECTIVE_VOICE_STATE test joy-high",
-    }
-    turn = engine.realize(intent, _blackboard(), snapshot=snapshot)
-    assert turn is not None
-    request = router.requests[0]
-    assert request["affective_voice_state"]["version"] == AFFECTIVE_VOICE_VERSION
-    assert request["affective_voice_state"]["delight"] == 0.86
-    assert "delivery/emotional intensity" in request["surface_contract"]["affect_authority"]
-    assert "AFFECTIVE_VOICE_STATE" in "\n".join(surface_voice_rules(2))
 
 
 def test_v39_voice_core_has_no_static_emotional_temperature() -> None:

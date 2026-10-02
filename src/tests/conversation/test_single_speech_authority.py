@@ -11,13 +11,8 @@ LEGACY_WRITER_METHODS = {
     "generate_autonomous_reply",
     "realize_surface_speech",
 }
-TEMPORARY_WRITER_MIGRATION_ALLOWLIST = {
-    "ai_orchestrated/orchestrator.py",
-    "ai_orchestrated/self_turn_pipeline.py",
-}
-TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST = {
-    "ai_orchestrated/orchestrator.py",
-}
+TEMPORARY_WRITER_MIGRATION_ALLOWLIST: set[str] = set()
+TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST: set[str] = set()
 
 
 def _writer_port_calls(source: str) -> list[int]:
@@ -41,20 +36,32 @@ def _writer_port_calls(source: str) -> list[int]:
 
 def _legacy_writer_calls(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
-    return [
+    calls = [
         (node.lineno, node.func.attr)
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in LEGACY_WRITER_METHODS
     ]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != "getattr":
+            continue
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value in LEGACY_WRITER_METHODS:
+            calls.append((node.lineno, str(node.args[1].value)))
+    return sorted(calls)
 
 
 def _delivery_authority_calls(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
+    nonlinguistic_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_emit_body_only":
+            nonlinguistic_lines.update(range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1))
     calls: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
+            continue
+        if node.lineno in nonlinguistic_lines:
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr in {
             "_send_decision_to_body",
@@ -79,6 +86,12 @@ def test_architecture_scanner_rejects_legacy_writer_entry():
     source = "def bypass(router):\n    return router.generate_public_reply(user_text='x')\n"
 
     assert _legacy_writer_calls(source) == [(2, "generate_public_reply")]
+
+
+def test_architecture_scanner_rejects_aliased_legacy_writer_entry():
+    source = "def bypass(router):\n    return getattr(router, 'realize_surface_speech', None)\n"
+
+    assert _legacy_writer_calls(source) == [(2, "realize_surface_speech")]
 
 
 def test_architecture_scanner_rejects_external_delivery_commit():

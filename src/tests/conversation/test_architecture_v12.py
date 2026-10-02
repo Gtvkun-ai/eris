@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,3 +32,26 @@ def test_production_bootstrap_uses_conversation_kernel():
     public_run = orchestrator.split("    def run(", 1)[1].split("    def _run_v12(", 1)[0]
     assert "self._run_v12(" in public_run
     assert "self._run_unscoped(" not in public_run
+
+
+def test_v7_v11_speech_architecture_is_absent():
+    retired = (
+        "SpeechPlanLedger", "SpeechPlanSnapshot", "TurnProjection", "TurnFloor",
+        "DialogueBeat", "ConversationSpeechPlan", "SpeechContinuationMode",
+        "TurnAgentRuntime", "V12AgentTurnRuntime",
+    )
+    production = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "runtime").rglob("*.py")
+    )
+    for symbol in retired:
+        assert symbol not in production
+
+    assert not any((ROOT / "runtime" / "agent_loop").glob("*.py"))
+    for module in (
+        "runtime.turn_projection_runtime",
+        "runtime.conversation.legacy_adapter",
+        "runtime.ai_orchestrated.social_continuation",
+        "runtime.ai_orchestrated.conversation_arc",
+    ):
+        assert importlib.util.find_spec(module) is None

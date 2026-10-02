@@ -142,8 +142,8 @@ def test_legacy_subconscious_without_explicit_profile_keeps_old_local_semantics(
     assert decision.allowed is False
 
 
-def test_turn_agent_reasoner_prefers_dedicated_executive_worker():
-    from runtime.agent_loop.reasoner import RuntimeModelTurnReasoner
+def test_root_agent_prefers_dedicated_executive_worker():
+    from runtime.conversation import ConversationEvent, RuntimeModelRootAgent
 
     executive = object()
     critic = object()
@@ -162,40 +162,27 @@ def test_turn_agent_reasoner_prefers_dedicated_executive_worker():
         def invoke_structured_worker(self, client, **kwargs):
             self.seen_client = client
             self.seen_kwargs = dict(kwargs)
-            # Empty mapping de reasoner roi ve heuristic fallback; test nay chi
-            # kiem tra ownership/routing, khong kiem tra chat quality.
-            return {}
+            return {"kind": "no_reply", "reason": "test"}
 
     router = _Router()
-    reasoner = RuntimeModelTurnReasoner(router)
+    reasoner = RuntimeModelRootAgent(router)
     reasoner.decide(
-        user_text="phan tich kien truc nay",
+        event=ConversationEvent.user_turn(session_id="s", text="phan tich kien truc nay"),
         recent_history=(),
-        state={},
+        note="",
         runtime_context={},
     )
 
     assert router.seen_client is executive
-    assert router.seen_kwargs["cognitive_lane"] == "turn_executive"
-    # Legacy tier van giu de rollout khong pha scheduler/caller cu.
+    assert router.seen_kwargs["cognitive_lane"] == "root_conversation"
     assert router.seen_kwargs["inference_tier"] == "subconscious_4b"
 
 
-def test_turn_agent_worker_timeout_defaults_to_foreground_deadline(monkeypatch):
-    from runtime.agent_loop.reasoner import _worker_timeout_seconds
+def test_root_agent_has_no_legacy_worker_timeout_setting():
+    import inspect
+    from runtime.conversation import RuntimeModelRootAgent
 
-    monkeypatch.delenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", raising=False)
-    monkeypatch.setenv("ERIS_FOREGROUND_HARD_DEADLINE_SEC", "90")
-
-    assert _worker_timeout_seconds() == 90.0
-
-
-def test_turn_agent_worker_timeout_has_no_upper_cap(monkeypatch):
-    from runtime.agent_loop.reasoner import _worker_timeout_seconds
-
-    monkeypatch.setenv("ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC", "180")
-
-    assert _worker_timeout_seconds() == 180.0
+    assert "ERIS_AGENT_TURN_WORKER_TIMEOUT_SEC" not in inspect.getsource(RuntimeModelRootAgent)
 
 
 def test_turn_executive_cognitive_lane_is_required_foreground_broker_lane(monkeypatch):
