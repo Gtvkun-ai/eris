@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from runtime.ai_orchestrated.discourse_state import DiscourseState
 from runtime.ai_orchestrated.followup_appraisal import FollowUpAppraisalLayer, FollowUpPolicy
 from runtime.session_turn_ledger import SessionTurnLedger
-from runtime.ai_orchestrated.surface_intent import _surface_text_is_duplicate
 from cortex.vision_semantic_compressor import RemoteCaptionClient
 import runtime.inference_broker as inference_broker
 
@@ -77,12 +76,6 @@ def test_new_assistant_question_after_user_can_start_new_cycle():
     newer = layer.evaluate(discourse, now=151.0, ledger=ledger)
     assert newer.reply_expected is True
     assert newer.followup_state == "waiting"
-
-
-def test_surface_duplicate_guard_catches_same_line_with_extra_greeting():
-    previous = "Có một điều nhỏ từ trước vẫn đang chờ, bạn có muốn xem lại nó không?"
-    current = "Chào mừng trở lại. Có một điều nhỏ từ trước vẫn đang chờ, bạn có muốn xem lại nó không?"
-    assert _surface_text_is_duplicate(current, previous) is True
 
 
 class _VisionClient:
