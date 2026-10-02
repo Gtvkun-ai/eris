@@ -21,9 +21,13 @@ def test_root_agent_schema_is_small():
 
 
 def test_production_bootstrap_uses_conversation_kernel():
-    text = (ROOT / "runtime/agent_loop/runtime.py").read_text(encoding="utf-8")
-    ensure = text.split("def ensure_agent_turn_runtime", 1)[1]
-    assert "ConversationKernel" in ensure
-    assert "V12AgentTurnRuntime" in ensure
-    # V11 runtime class vẫn là compatibility/test surface, không được bootstrap.
-    assert "runtime = TurnAgentRuntime(" not in ensure
+    bootstrap = (ROOT / "runtime/conversation/bootstrap.py").read_text(encoding="utf-8")
+    assert "def ensure_conversation_kernel" in bootstrap
+    assert "ConversationKernel(" in bootstrap
+    assert "RuntimeConversationWriter(host)" in bootstrap
+    assert "RuntimeConversationDeliveryAdapter(host)" in bootstrap
+
+    orchestrator = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    public_run = orchestrator.split("    def run(", 1)[1].split("    def _run_v12(", 1)[0]
+    assert "self._run_v12(" in public_run
+    assert "self._run_unscoped(" not in public_run

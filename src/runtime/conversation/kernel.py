@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import threading
 import time
 import uuid
 from typing import Any, Mapping, Sequence
@@ -67,6 +68,8 @@ class ConversationKernel:
         self.writer = writer
         self.delivery = delivery
         self.logger = logger
+        self._delivery_lock = threading.RLock()
+        self._delivery_turns: dict[str, KernelTurn] = {}
 
     def handle_event(
         self,
@@ -79,6 +82,7 @@ class ConversationKernel:
         run_id = f"run:{uuid.uuid4().hex}"
         if event.kind == "user_turn":
             self.continuation.cancel_session(sid)
+            self._discard_session_deliveries(sid)
             state = self.store.mutate(
                 sid,
                 lambda prior, now: replace(
@@ -189,11 +193,17 @@ class ConversationKernel:
                 rendered=rendered,
                 status="delivery_unavailable",
             )
+        with self._delivery_lock:
+            self._delivery_turns[delivery_id] = turn
         try:
             self.delivery.deliver(turn=turn, rendered=rendered, delivery_id=delivery_id)
         except Exception as exc:
             self._log("debug", "[conversation-v12] delivery failed: %s", exc)
-            self.settle_delivery(turn, delivery_id=delivery_id, successful=False)
+            self.settle_delivery_id(
+                session_id=turn.session_id,
+                delivery_id=delivery_id,
+                successful=False,
+            )
             return ConversationRunResult(
                 event=normalized_event,
                 decision=decision,
@@ -210,6 +220,37 @@ class ConversationKernel:
             delivery_id=delivery_id,
             status="delivering",
         )
+
+    def settle_delivery_id(
+        self,
+        *,
+        session_id: str = "",
+        delivery_id: str,
+        successful: bool,
+    ) -> bool:
+        did = str(delivery_id or "")[:180]
+        with self._delivery_lock:
+            turn = self._delivery_turns.get(did)
+        if turn is None:
+            return False
+        sid = str(session_id or turn.session_id)[:180]
+        if sid != turn.session_id:
+            return False
+        settled = self.settle_delivery(turn, delivery_id=did, successful=successful)
+        if settled:
+            with self._delivery_lock:
+                self._delivery_turns.pop(did, None)
+        return settled
+
+    def _discard_session_deliveries(self, session_id: str) -> None:
+        with self._delivery_lock:
+            stale = [
+                delivery_id
+                for delivery_id, turn in self._delivery_turns.items()
+                if turn.session_id == session_id
+            ]
+            for delivery_id in stale:
+                self._delivery_turns.pop(delivery_id, None)
 
     def _fail_run(self, turn: KernelTurn) -> None:
         state = self.store.load(turn.session_id)

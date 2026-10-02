@@ -749,9 +749,11 @@ class PublicOutputRuntimeMixin:
                 now=time.time(),
             )
             try:
-                from runtime.agent_loop import ensure_agent_turn_runtime
-                ensure_agent_turn_runtime(self).note_audio_finished(
-                    delivery_id=str(stage_frame.turn_id or "")
+                from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+                ensure_conversation_kernel(self).settle_delivery_id(
+                    delivery_id=str(stage_frame.turn_id or ""),
+                    successful=True,
                 )
             except Exception as exc:
                 self.logger.debug("[conversation-v12] no-tts delivery settle degraded: %s", exc)
@@ -761,12 +763,6 @@ class PublicOutputRuntimeMixin:
         elif sync_text and not text_payload_sent:
             schedule_text_payload_release()
 
-        if (
-            channel != "chat"
-            and bool(payload.get("should_speak"))
-            and str(payload.get("memory_text", payload.get("text", "")) or "").strip()
-        ):
-            self._append_chat_history("assistant", str(payload.get("memory_text", payload.get("text", ""))).strip())
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
             # Ghi mốc assistant sau khi output public đã được dựng và gửi. Đây là
             # mốc cognition, không phải audio_done; đủ để hiểu nhịp hội thoại mà
@@ -971,10 +967,6 @@ class PublicOutputRuntimeMixin:
                 record["turn_id"],
                 record["segment_id"],
             )
-            # V8: audio chỉ chuyển *lifecycle* của SpeechPlan mà ROOT AGENT đã
-            # lập. Runtime không nhìn planned_threads để chọn nội dung và cũng
-            # không phát một câu tiếp theo từ cache. AUTO_CONTINUE chỉ tạo timer
-            # đánh thức cognition; chính TurnAgentLoop phải quyết lại ở wake đó.
             try:
                 final_segment = int(record.get("segment_id", 0) or 0) >= max(
                     0, int(record.get("segment_count", 1) or 1) - 1
@@ -983,16 +975,22 @@ class PublicOutputRuntimeMixin:
                 final_segment = True
             if final_segment:
                 try:
-                    from runtime.agent_loop import ensure_agent_turn_runtime
+                    from runtime.conversation import RunPhase
+                    from runtime.conversation.bootstrap import ensure_conversation_kernel
                     from runtime.runtime_status import emit_runtime_status
 
-                    agent_runtime = ensure_agent_turn_runtime(self)
-                    snapshot = agent_runtime.note_audio_finished(delivery_id=str(record.get("turn_id", "") or ""))
-                    mode = snapshot.plan.continuation_mode.value
-                    # V12 status UI phản ánh phase cơ học thật, không còn floor
-                    # semantic. Có lease => cognition sẽ được wake lại; không có
-                    # lease => lượt hiện tại đã trả quyền về user.
-                    if mode == "auto_continue":
+                    kernel = ensure_conversation_kernel(self)
+                    kernel.settle_delivery_id(
+                        delivery_id=str(record.get("turn_id", "") or ""),
+                        successful=True,
+                    )
+                    session_id = str(
+                        getattr(self, "conversation_id", "")
+                        or getattr(self, "thread_id", "")
+                        or "foreground:primary"
+                    )
+                    snapshot = kernel.snapshot(session_id)
+                    if snapshot.phase == RunPhase.CONTINUATION_PENDING:
                         emit_runtime_status(
                             self, activity="agent_turn", phase="continuation_pending",
                             label="Eris • đang nghĩ tiếp…", active=True, tone="active",
@@ -1004,34 +1002,8 @@ class PublicOutputRuntimeMixin:
                             label="", active=False, tone="muted",
                             priority=50, notice_ms=0,
                         )
-
-                    if mode == "auto_continue":
-                        delay = max(0.0, float(snapshot.due_at or 0.0) - time.time())
-
-                        # Cancel timer cơ học cũ nếu có. Semantic cancellation nằm
-                        # trong SpeechPlanLedger khi user turn mới tới.
-                        prior_timer = getattr(self, "_agent_speech_wake_timer", None)
-                        if prior_timer is not None:
-                            try:
-                                prior_timer.cancel()
-                            except Exception:
-                                pass
-
-                        def _wake_agent_speech_plan() -> None:
-                            wake = getattr(self, "_wake_autonomous_loop", None)
-                            if not callable(wake):
-                                return
-                            try:
-                                wake("agent_speech_plan_due")
-                            except TypeError:
-                                wake(reason="agent_speech_plan_due")
-
-                        timer = threading.Timer(delay, _wake_agent_speech_plan)
-                        timer.daemon = True
-                        self._agent_speech_wake_timer = timer
-                        timer.start()
                 except Exception as exc:
-                    self.logger.debug("[agent-speech-plan] post-audio lifecycle degraded: %s", exc)
+                    self.logger.debug("[conversation-v12] post-audio lifecycle degraded: %s", exc)
         elif event_type == "audio_failed":
             self.logger.warning(
                 "[TTS:event] audio_failed turn=%s segment=%s error=%s reason=%s",
@@ -1040,6 +1012,15 @@ class PublicOutputRuntimeMixin:
                 record["error"] or "<none>",
                 record["reason"] or "<none>",
             )
+            try:
+                from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+                ensure_conversation_kernel(self).settle_delivery_id(
+                    delivery_id=str(record.get("turn_id", "") or ""),
+                    successful=False,
+                )
+            except Exception as exc:
+                self.logger.debug("[conversation-v12] failed delivery settle degraded: %s", exc)
         try:
             events = getattr(self, "tts_event_log", None)
             if not isinstance(events, list):

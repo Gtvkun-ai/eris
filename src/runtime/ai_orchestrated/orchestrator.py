@@ -753,7 +753,7 @@ class AIChatOrchestrator:
                             logger.debug("background preempt failed: %s", exc)
                         except Exception:
                             pass
-            result = self._run_unscoped(
+            result = self._run_v12(
                 user_text,
                 cycle_start=cycle_start,
                 previous_public_context=previous_public_context,
@@ -781,6 +781,84 @@ class AIChatOrchestrator:
             )
             GLOBAL_INFERENCE_BROKER.set_user_turn_category(scope, category)
             return result
+
+    def _run_v12(
+        self,
+        user_text: str,
+        *,
+        cycle_start: float,
+        previous_public_context: str = "",
+        previous_public_turn: Any | None = None,
+        speech_interrupt_context: str = "",
+        speech_interrupt_event: Any | None = None,
+        speech_interrupt_reaction: Any | None = None,
+    ) -> Any:
+        del previous_public_turn, speech_interrupt_event, speech_interrupt_reaction
+        host = self.host
+        from runtime.conversation import ConversationEvent
+        from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+        sid = str(
+            getattr(host, "conversation_id", "")
+            or getattr(host, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        user_turn = None
+        ledger_factory = getattr(host, "_ensure_session_turn_ledger", None)
+        if callable(ledger_factory):
+            user_turn = ledger_factory().record_user(
+                str(user_text or ""),
+                timestamp=cycle_start,
+                meta={"channel": "chat", "architecture": "conversation_kernel_v12"},
+            )
+        append_history = getattr(host, "_append_chat_history", None)
+        if callable(append_history):
+            append_history("user", str(user_text or ""))
+        history = tuple(
+            item
+            for item in tuple(getattr(host, "chat_history", ()) or ())[-12:]
+            if isinstance(item, Mapping)
+        )
+        turn_index = int(getattr(user_turn, "index", 0) or 0)
+        event = ConversationEvent(
+            event_id=f"user:{turn_index or time.time_ns()}",
+            session_id=sid,
+            kind="user_turn",
+            text=str(user_text or "")[:16000],
+        )
+        runtime_context = {
+            "previous_public_excerpt": str(previous_public_context or "")[-1200:],
+            "interrupt_context": str(speech_interrupt_context or "")[:2400],
+            "personality_context": str(getattr(host, "last_personality_context", "") or "")[:6000],
+            "relationship_context": str(getattr(host, "last_relationship_context", "") or "")[:6000],
+            "memory_context": str(getattr(host, "last_memory_context", "") or "")[:8000],
+            "grounding_context": str(getattr(host, "last_grounding_context", "") or "")[:10000],
+            "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
+            "language_hint": _runtime_language(),
+            "speech_language_hint": _runtime_speech_language(),
+        }
+        host.current_stage_user_text = str(user_text or "")
+        kernel = ensure_conversation_kernel(host)
+        result = kernel.handle_event(
+            event,
+            recent_history=history,
+            runtime_context=runtime_context,
+        )
+        decision_dict = (
+            result.decision.to_dict()
+            if result.decision is not None and callable(getattr(result.decision, "to_dict", None))
+            else {}
+        )
+        host.last_agent_turn = decision_dict
+        host.last_conversation_run = {
+            "schema": "eris.conversation_run.v12",
+            "event_id": result.event.event_id,
+            "generation": result.event.generation,
+            "status": result.status,
+            "delivery_id": result.delivery_id,
+            "decision": decision_dict,
+        }
+        return result
 
     def _run_unscoped(
         self,

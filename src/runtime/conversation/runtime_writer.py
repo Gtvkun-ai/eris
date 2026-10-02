@@ -76,6 +76,7 @@ class RuntimeConversationWriter:
             metadata={
                 "writer": "runtime_model_router",
                 "event_kind": event.kind,
+                "user_text": event.text,
                 "provider_payload": dict(payload),
             },
         )

@@ -7,6 +7,7 @@ from .contracts import (
     ContinuationLease, DeliveryReceipt, InterruptKind, NextConversationMove, NoReply, RunPhase,
 )
 from .delivery import ConversationDelivery, SurfaceEnvelope
+from .delivery_adapter import RuntimeConversationDeliveryAdapter
 from .interrupts import InterruptDecision, classify_interrupt
 from .kernel import ConversationKernel, ConversationRunResult, KernelTurn
 from .presentation import PresentationHint, emit_delivery_hint, map_delivery
@@ -21,7 +22,7 @@ __all__ = [
     "ContinuationLease", "ContinuationLeaseScheduler", "DeliveryReceipt", "DeliveryReceiptLedger",
     "DeterministicRootAgent", "InterruptDecision", "InterruptKind", "KernelTurn",
     "NextConversationMove", "NoReply", "PresentationHint", "RootAgent", "RunPhase", "RuntimeConversationWriter",
-    "RuntimeModelRootAgent",
+    "RuntimeConversationDeliveryAdapter", "RuntimeModelRootAgent",
     "RenderedConversationMove", "SurfaceEnvelope", "ConversationSessionStore", "classify_interrupt",
     "emit_delivery_hint", "map_delivery",
 ]

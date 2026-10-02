@@ -15,6 +15,11 @@ TEMPORARY_WRITER_MIGRATION_ALLOWLIST = {
     "ai_orchestrated/orchestrator.py",
     "ai_orchestrated/self_turn_pipeline.py",
 }
+TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST = {
+    "ai_orchestrated/orchestrator.py",
+    "greeting_preset_runtime.py",
+    "tutor_research_runtime.py",
+}
 
 
 def _writer_port_calls(source: str) -> list[int]:
@@ -47,6 +52,25 @@ def _legacy_writer_calls(source: str) -> list[tuple[int, str]]:
     ]
 
 
+def _delivery_authority_calls(source: str) -> list[tuple[int, str]]:
+    tree = ast.parse(source)
+    calls: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {
+            "_send_decision_to_body",
+            "record_assistant",
+        }:
+            calls.append((node.lineno, node.func.attr))
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "_append_chat_history":
+            continue
+        if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "assistant":
+            calls.append((node.lineno, "_append_chat_history:assistant"))
+    return calls
+
+
 def test_architecture_scanner_rejects_external_writer_call():
     source = "def bypass(writer):\n    return writer.realize(turn=None)\n"
 
@@ -57,6 +81,15 @@ def test_architecture_scanner_rejects_legacy_writer_entry():
     source = "def bypass(router):\n    return router.generate_public_reply(user_text='x')\n"
 
     assert _legacy_writer_calls(source) == [(2, "generate_public_reply")]
+
+
+def test_architecture_scanner_rejects_external_delivery_commit():
+    source = "def bypass(host, ledger):\n    ledger.record_assistant('x')\n    host._send_decision_to_body('x')\n"
+
+    assert _delivery_authority_calls(source) == [
+        (2, "record_assistant"),
+        (3, "_send_decision_to_body"),
+    ]
 
 
 def test_only_conversation_kernel_calls_writer_port():
@@ -86,3 +119,22 @@ def test_legacy_writer_calls_are_confined_to_adapter_or_named_migration_sites():
 
     assert offenders == []
     assert observed_migration_sites == TEMPORARY_WRITER_MIGRATION_ALLOWLIST
+
+
+def test_delivery_authority_is_confined_to_adapter_or_named_migration_sites():
+    offenders: list[str] = []
+    observed_migration_sites: set[str] = set()
+    for path in RUNTIME_ROOT.rglob("*.py"):
+        calls = _delivery_authority_calls(path.read_text(encoding="utf-8"))
+        if not calls:
+            continue
+        relative = path.relative_to(RUNTIME_ROOT).as_posix()
+        if relative == "conversation/delivery_adapter.py":
+            continue
+        if relative in TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST:
+            observed_migration_sites.add(relative)
+            continue
+        offenders.extend(f"{relative}:{line}:{method}" for line, method in calls)
+
+    assert offenders == []
+    assert observed_migration_sites == TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST
