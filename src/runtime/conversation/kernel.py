@@ -116,6 +116,13 @@ class ConversationKernel:
             note=state.note,
             runtime_context=dict(runtime_context or {}),
         )
+        current = self.store.load(sid)
+        if current.generation != state.generation or current.active_run_id != run_id:
+            return ConversationRunResult(
+                event=normalized_event,
+                decision=decision,
+                status="stale",
+            )
         if isinstance(decision, NoReply):
             self.store.mutate(
                 sid,
@@ -220,6 +227,49 @@ class ConversationKernel:
             delivery_id=delivery_id,
             status="delivering",
         )
+
+    def handle_due_continuation(
+        self,
+        *,
+        session_id: str,
+        recent_history: Sequence[Mapping[str, Any]] = (),
+        runtime_context: Mapping[str, Any] | None = None,
+        now: float | None = None,
+    ) -> ConversationRunResult | None:
+        sid = str(session_id or "default")[:180]
+        state = self.store.load(sid)
+        lease = self.continuation.claim_due(
+            session_id=sid,
+            generation=state.generation,
+            now=now,
+        )
+        if lease is None:
+            return None
+        event = ConversationEvent.continuation_due(
+            session_id=sid,
+            generation=lease.generation,
+            lease_id=lease.lease_id,
+        )
+        context = {
+            **dict(runtime_context or {}),
+            "continuation_lease": lease.to_dict(),
+        }
+        try:
+            result = self.handle_event(
+                event,
+                recent_history=recent_history,
+                runtime_context=context,
+            )
+        except Exception:
+            if self.store.load(sid).generation == lease.generation:
+                self.continuation.release(lease)
+            raise
+        if result.status in {"writer_failed", "writer_unavailable"}:
+            if self.store.load(sid).generation == lease.generation:
+                self.continuation.release(lease)
+        else:
+            self.continuation.consume(lease)
+        return result
 
     def settle_delivery_id(
         self,

@@ -17,7 +17,6 @@ from runtime.runtime_status import emit_runtime_status
 
 from .atomic_state import atomic_store_from_env
 from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
-from .conversation_arc import ConversationArcRuntime
 from .discovery import DiscoveryRuntime
 from .executive_cortex import ExecutiveCortex
 from .expression import IdentityExpressionBridge
@@ -31,7 +30,6 @@ from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
 from .surface_intent import SurfaceIntentEngine
-from .social_continuation import SocialContinuationRuntime
 from .social_agenda import SocialAgendaStore
 from .social_execution import status as social_execution_status
 from .social_initiative import SocialInitiativeEngine
@@ -436,19 +434,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         "ai_orchestrated.surface_intent",
         details={"enabled": bool(surface_intent.enabled)},
     )
-    conversation_arc = ConversationArcRuntime(
-        initial_state=load_conversation_arc_state(),
-        persist=persist_conversation_arc,
-        wake_callback=getattr(host, "_wake_autonomous_loop", None),
-        logger=getattr(host, "logger", None),
-        clock=runtime_clock,
-        atomic_store=social_atomic_store,
-        atomic_key="eris.conversation_arc",
-    )
-    health.record_success(
-        "ai_orchestrated.conversation_arc",
-        details={"pending": conversation_arc.has_pending(now=runtime_clock())},
-    )
     social_agenda = SocialAgendaStore(
         initial_state=load_aux_state("social_agenda_state"),
         persist=persist_social_agenda,
@@ -470,20 +455,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             ).get("active_goal_count", 0)
         },
     )
-    social_continuation = SocialContinuationRuntime(
-        initial_state=load_aux_state("social_continuation_state"),
-        persist=persist_social_continuation,
-        wake_callback=getattr(host, "_wake_autonomous_loop", None),
-        outcome_callback=social_agenda.observe_exposure_outcome,
-        logger=getattr(host, "logger", None),
-        clock=runtime_clock,
-        atomic_store=social_atomic_store,
-        atomic_key="eris.social_continuation",
-    )
-    health.record_success(
-        "ai_orchestrated.social_continuation",
-        details={"pending": social_continuation.has_pending(now=runtime_clock())},
-    )
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
     initiative = InitiativeController(logger=getattr(host, "logger", None))
     grounding_validator = AutonomousGroundingValidator(logger=getattr(host, "logger", None))
@@ -500,8 +471,8 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
     host.ai_surface_intent_engine = surface_intent
-    host.ai_conversation_arc_runtime = conversation_arc
-    host.ai_social_continuation_runtime = social_continuation
+    host.ai_conversation_arc_runtime = None
+    host.ai_social_continuation_runtime = None
     host.ai_social_agenda_store = social_agenda
     host.ai_random_chat_seed_store = random_chat_seed_store
     host.ai_random_chat_seed_generator = random_chat_seed_generator
@@ -732,14 +703,11 @@ def shutdown_ai_orchestrated_runtime(host: Any) -> None:
         "ai_post_turn_observer",
         "ai_random_chat_seed_reservoir",
         "ai_discovery_runtime",
-        "ai_social_continuation_runtime",
-        "ai_conversation_arc_runtime",
         "ai_state_reducer",
     ):
         obj = getattr(host, name, None)
         method_name = "shutdown" if name in {
-            "ai_post_turn_observer", "ai_random_chat_seed_reservoir", "ai_discovery_runtime",
-            "ai_social_continuation_runtime", "ai_conversation_arc_runtime"
+            "ai_post_turn_observer", "ai_random_chat_seed_reservoir", "ai_discovery_runtime"
         } else "close"
         method = getattr(obj, method_name, None)
         if callable(method):

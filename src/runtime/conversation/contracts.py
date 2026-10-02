@@ -146,6 +146,22 @@ class ConversationEvent:
             generation=max(0, int(generation)),
         )
 
+    @classmethod
+    def continuation_due(
+        cls,
+        *,
+        session_id: str,
+        generation: int,
+        lease_id: str,
+    ) -> "ConversationEvent":
+        return cls(
+            event_id=f"continuation:{_text(lease_id, 180) or uuid.uuid4().hex}",
+            session_id=_text(session_id, 180) or "default",
+            kind="continuation_due",
+            generation=max(0, int(generation)),
+            metadata={"lease_id": _text(lease_id, 180)},
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ConversationSessionState:

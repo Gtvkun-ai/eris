@@ -659,21 +659,8 @@ class SelfTurnPipeline:
                 planner_snapshot["private_intention_pressure"] = 0.0
                 host.logger.debug("[private-intention-v101] cheap wake projection failed: %s", exc)
 
-        # A durable teaching dwell is already a controller-approved continuation.
-        # Give it the first claim opportunity, but only on the feature-on path;
-        # ordinary autonomous timing remains byte-for-byte unchanged otherwise.
-        if _pedagogy_enabled(host):
-            pedagogical_blackboard = TypedCognitiveBlackboard.from_snapshot(
-                planner_snapshot, now=now,
-            )
-            pedagogical_result = self._run_due_pedagogical_candidate(
-                now=now,
-                context=context,
-                blackboard=pedagogical_blackboard,
-                interaction_busy=interaction_busy,
-            )
-            if pedagogical_result is not None:
-                return pedagogical_result
+        # Pedagogical state is capability evidence only. It cannot claim a timed
+        # public turn; any user-visible follow-up must re-enter ConversationKernel.
 
         seed_reservoir = getattr(host, "ai_random_chat_seed_reservoir", None)
         if seed_reservoir is not None:
@@ -3044,6 +3031,63 @@ class SelfTurnPipeline:
         )
 
     def _run_due_agent_speech_continuation(
+        self,
+        *,
+        context: SelfTurnBundle,
+        interaction_busy: bool,
+    ) -> bool:
+        """Poll the single mechanical V12 lease and re-enter ConversationKernel."""
+        host = self.host
+        if interaction_busy or bool(getattr(host, "_chat_processing", False)):
+            return False
+        try:
+            from runtime.conversation.bootstrap import ensure_conversation_kernel
+            from runtime.runtime_status import emit_runtime_status
+
+            kernel = ensure_conversation_kernel(host)
+            sid = str(
+                getattr(host, "conversation_id", "")
+                or getattr(host, "thread_id", "")
+                or "foreground:primary"
+            ).strip()[:180]
+            lease = kernel.continuation.peek(sid)
+            if lease is None or lease.due_at > time.time():
+                return False
+            if host._process_pending_user_input():
+                kernel.preempt_for_user(sid)
+                return True
+            emit_runtime_status(
+                host,
+                activity="agent_turn",
+                phase="thinking",
+                label="Eris • đang suy nghĩ…",
+                active=True,
+                tone="active",
+                priority=96,
+            )
+            result = kernel.handle_due_continuation(
+                session_id=sid,
+                recent_history=context.recent_history,
+                runtime_context={
+                    "memory_context": context.memory_context,
+                    "grounding_context": "\n".join(
+                        part for part in (
+                            context.perception.screen.prompt_context(),
+                            "\n".join(str(item) for item in context.perception.vision_facts[-6:]),
+                        ) if part
+                    ),
+                    "personality_context": context.state.personality_prompt_context(),
+                    "engagement_context": context.engagement_prompt_context,
+                    "language_hint": self._runtime_language(),
+                    "speech_language_hint": self._runtime_speech_language(),
+                },
+            )
+            return result is not None
+        except Exception as exc:
+            host.logger.warning("[conversation-v12] continuation wake degraded: %s", exc)
+            return False
+
+    def _legacy_run_due_agent_speech_continuation(
         self,
         *,
         context: SelfTurnBundle,
