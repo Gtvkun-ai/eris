@@ -7,7 +7,11 @@ surface envelope để migration không lẫn display text với speech text.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .kernel import KernelTurn
+    from .writer import RenderedConversationMove
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,4 +23,15 @@ class SurfaceEnvelope:
     metadata: Mapping[str, Any] | None = None
 
 
-__all__ = ["SurfaceEnvelope"]
+class ConversationDelivery(Protocol):
+    def deliver(
+        self,
+        *,
+        turn: "KernelTurn",
+        rendered: "RenderedConversationMove",
+        delivery_id: str,
+    ) -> None:
+        ...
+
+
+__all__ = ["ConversationDelivery", "SurfaceEnvelope"]

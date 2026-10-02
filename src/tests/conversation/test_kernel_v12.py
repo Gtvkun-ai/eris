@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from runtime.conversation import (
     ConversationAfter,
+    ConversationEvent,
     ConversationKernel,
     DeterministicRootAgent,
     NextConversationMove,
+    NoReply,
     RunPhase,
+    SurfaceEnvelope,
 )
+from runtime.conversation.writer import RenderedConversationMove
 
 
 class _Agent:
@@ -18,6 +22,31 @@ class _Agent:
     def decide(self, **kwargs):
         self.calls.append(dict(kwargs))
         return self.moves.pop(0)
+
+
+class _Writer:
+    def __init__(self, *, error: Exception | None = None):
+        self.error = error
+        self.turns = []
+
+    def realize(self, **kwargs):
+        self.turns.append(dict(kwargs))
+        if self.error is not None:
+            raise self.error
+        turn = kwargs["turn"]
+        return RenderedConversationMove(
+            surface=SurfaceEnvelope(display_text=turn.move.say),
+            decision_payload=turn.move.to_dict(),
+            metadata={"source": "test"},
+        )
+
+
+class _Delivery:
+    def __init__(self):
+        self.deliveries = []
+
+    def deliver(self, **kwargs):
+        self.deliveries.append(dict(kwargs))
 
 
 def test_user_turn_has_one_root_move_and_no_semantic_runtime_state():
@@ -100,3 +129,81 @@ def test_crash_state_never_contains_public_text_for_replay():
     assert "public_text" not in state
     assert "last_public_text" not in state
     assert "speech_text" not in state
+
+
+def test_no_reply_never_calls_writer_or_delivery():
+    agent = _Agent([NoReply(reason="nothing_worth_saying")])
+    writer = _Writer()
+    delivery = _Delivery()
+    kernel = ConversationKernel(agent, writer=writer, delivery=delivery)
+
+    result = kernel.handle_event(
+        ConversationEvent(event_id="idle:1", session_id="s", kind="autonomous_signal")
+    )
+
+    assert isinstance(result.decision, NoReply)
+    assert result.status == "no_reply"
+    assert writer.turns == []
+    assert delivery.deliveries == []
+    assert kernel.snapshot("s").phase == RunPhase.WAITING_USER
+
+
+def test_positive_move_calls_writer_and_delivery_once():
+    move = NextConversationMove(intent="answer", say="the answer")
+    agent = _Agent([move])
+    writer = _Writer()
+    delivery = _Delivery()
+    kernel = ConversationKernel(agent, writer=writer, delivery=delivery)
+
+    result = kernel.handle_event(ConversationEvent.user_turn(session_id="s", text="question"))
+
+    assert result.status == "delivering"
+    assert result.turn is not None
+    assert result.rendered is not None
+    assert len(writer.turns) == 1
+    assert len(delivery.deliveries) == 1
+    assert delivery.deliveries[0]["delivery_id"] == result.delivery_id
+    assert kernel.snapshot("s").phase == RunPhase.DELIVERING
+
+
+def test_writer_failure_creates_no_delivery_or_continuation():
+    agent = _Agent([NextConversationMove(intent="answer", say="answer")])
+    writer = _Writer(error=RuntimeError("writer unavailable"))
+    delivery = _Delivery()
+    kernel = ConversationKernel(agent, writer=writer, delivery=delivery)
+
+    result = kernel.handle_event(ConversationEvent.user_turn(session_id="s", text="question"))
+
+    assert result.status == "writer_failed"
+    assert delivery.deliveries == []
+    assert kernel.continuation.peek("s") is None
+    assert kernel.snapshot("s").phase == RunPhase.FAILED
+
+
+def test_stale_event_cannot_reach_writer():
+    agent = _Agent([
+        NextConversationMove(intent="first", say="first"),
+        NextConversationMove(intent="newest", say="newest"),
+    ])
+    writer = _Writer()
+    delivery = _Delivery()
+    kernel = ConversationKernel(agent, writer=writer, delivery=delivery)
+    kernel.begin_user_turn(session_id="s", user_text="first")
+    kernel.begin_user_turn(session_id="s", user_text="newest")
+    current = kernel.snapshot("s").generation
+    calls_before = len(agent.calls)
+
+    result = kernel.handle_event(
+        ConversationEvent(
+            event_id="old:1",
+            session_id="s",
+            kind="autonomous_signal",
+            generation=current - 1,
+        )
+    )
+
+    assert result.status == "stale"
+    assert result.decision is None
+    assert len(agent.calls) == calls_before
+    assert writer.turns == []
+    assert delivery.deliveries == []

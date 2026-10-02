@@ -6,17 +6,20 @@ from .contracts import (
     ConversationAfter, ConversationDecision, ConversationEvent, ConversationSessionState,
     ContinuationLease, DeliveryReceipt, InterruptKind, NextConversationMove, NoReply, RunPhase,
 )
-from .delivery import SurfaceEnvelope
+from .delivery import ConversationDelivery, SurfaceEnvelope
 from .interrupts import InterruptDecision, classify_interrupt
-from .kernel import ConversationKernel, KernelTurn
+from .kernel import ConversationKernel, ConversationRunResult, KernelTurn
 from .presentation import PresentationHint, emit_delivery_hint, map_delivery
 from .receipts import DeliveryReceiptLedger
 from .session_store import ConversationSessionStore
+from .writer import ConversationWriter, RenderedConversationMove
 
 __all__ = [
-    "ConversationAfter", "ConversationDecision", "ConversationEvent", "ConversationKernel", "ConversationSessionState",
+    "ConversationAfter", "ConversationDecision", "ConversationDelivery", "ConversationEvent", "ConversationKernel",
+    "ConversationRunResult", "ConversationSessionState", "ConversationWriter",
     "ContinuationLease", "ContinuationLeaseScheduler", "DeliveryReceipt", "DeliveryReceiptLedger",
     "DeterministicRootAgent", "InterruptDecision", "InterruptKind", "KernelTurn",
     "NextConversationMove", "NoReply", "PresentationHint", "RootAgent", "RunPhase", "RuntimeModelRootAgent",
-    "SurfaceEnvelope", "ConversationSessionStore", "classify_interrupt", "emit_delivery_hint", "map_delivery",
+    "RenderedConversationMove", "SurfaceEnvelope", "ConversationSessionStore", "classify_interrupt",
+    "emit_delivery_hint", "map_delivery",
 ]
