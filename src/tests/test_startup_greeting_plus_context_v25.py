@@ -34,49 +34,18 @@ def test_natural_arrival_acknowledgement_is_not_duplicated() -> None:
     assert startup_text_has_greeting(text, language="vi") is True
 
 
-def test_payload_preserves_social_plan_and_greets_both_surfaces() -> None:
-    social_plan = {
-        "afterbeat": {"decision": "none"},
-        "exposure": {"decision": "none"},
-        "agenda_update": {"decision": "none"},
-        "conversation_arc": {
-            "decision": "schedule",
-            "goal": "Return once to the Facebook question if the user stays silent.",
-            "beats": [],
-            "confidence": 0.8,
-        },
-    }
-    payload = {
-        "text": "Hôm nay anh xem Facebook khá tập trung nhỉ? Có gì đáng chú ý không?",
-        "display_language": "vi",
-        "speech_text": "今日はフェイスブックをかなり集中して見てるね。何か気になることでもある？",
-        "speech_language": "ja",
-        "utterance": {
-            "display": {
-                "language": "vi",
-                "text": "Hôm nay anh xem Facebook khá tập trung nhỉ? Có gì đáng chú ý không?",
-            },
-            "speech": {
-                "language": "ja",
-                "text": "今日はフェイスブックをかなり集中して見てるね。何か気になることでもある？",
-            },
-        },
-        "social_plan": social_plan,
-    }
+def test_startup_greeting_helper_is_not_a_production_speech_path() -> None:
+    from pathlib import Path
 
-    result = ensure_startup_greeting_payload(
-        payload,
-        frame=SimpleNamespace(situation="plain_return"),
-        display_language="vi",
-        speech_language="ja",
-        user_vocative="anh",
-    )
+    orchestrator = (
+        Path(__file__).resolve().parents[1]
+        / "runtime"
+        / "ai_orchestrated"
+        / "orchestrator.py"
+    ).read_text(encoding="utf-8")
 
-    assert result["text"].startswith("Chào anh. ")
-    assert result["speech_text"].startswith("こんにちは。")
-    assert result["social_plan"] is social_plan
-    assert result["startup_greeting_nonbinding"] is True
-    assert result["startup_context_may_expect_reply"] is True
+    assert "ensure_startup_greeting_payload" not in orchestrator
+    assert "collect_startup_grounding" not in orchestrator
 
 
 def test_existing_bilingual_greetings_are_not_duplicated() -> None:

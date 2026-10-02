@@ -1019,29 +1019,11 @@ def test_startup_without_any_evidence_forces_persona_plan_when_enabled() -> None
     assert "own attitude" in forced.topic
 
 
-def test_startup_primes_continuity_without_fake_public_turn(monkeypatch) -> None:
+def test_startup_primes_continuity_and_offers_opening_to_root() -> None:
     import json
     from types import SimpleNamespace
 
-    from runtime.ai_orchestrated import orchestrator as orchestrator_module
     from runtime.ai_orchestrated.orchestrator import AIAutonomousOrchestrator
-    from runtime.ai_orchestrated.startup_grounding import StartupGroundingBundle
-
-    monkeypatch.setattr(
-        orchestrator_module,
-        "collect_startup_grounding",
-        lambda _host: StartupGroundingBundle(),
-    )
-    monkeypatch.setattr(
-        orchestrator_module,
-        "select_startup_persona_preset",
-        lambda _frame, *, avoid_text="": {
-            "text": "Toi day. Khoi bat hoi dong dai.",
-            "should_speak": True,
-            "performance_hint": "soft",
-            "preset_id": "test_fast_startup",
-        },
-    )
 
     class _Planner:
         calls = 0
@@ -1093,16 +1075,15 @@ def test_startup_primes_continuity_without_fake_public_turn(monkeypatch) -> None
         _send_decision_to_body=lambda decision, channel: sent.append((decision, channel)),
     )
     runtime = AIAutonomousOrchestrator(host)
-    runtime._commit_public = lambda decision, *, channel, turn_seq: (decision.text, {"channel": channel})
-
-    # V71: startup không còn sở hữu public speech. Nó chỉ prime continuity;
-    # mọi lời thật phải đi qua chat/self-turn public pipeline để có bubble + TTS.
+    # Startup primes continuity, then root may explicitly choose NoReply.
     assert runtime.run_startup() is False
     assert planner.calls == 0
     assert submitted == []
     assert sent == []
     assert not hasattr(host, "last_autonomous_spoken_at")
     assert hasattr(host, "conversation_handoff_runtime")
+    assert host.last_conversation_run["status"] == "no_reply"
+    assert host.last_conversation_run["decision"]["kind"] == "no_reply"
 
 
 def test_startup_runtime_signal_beats_persona_when_screen_is_empty() -> None:

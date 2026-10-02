@@ -93,7 +93,6 @@ RESTART_REQUIRED_PATHS: frozenset[str] = frozenset({
 
 SECTION_META: dict[str, dict[str, str]] = {
     "architecture": {"label": "Kiến trúc khởi động", "group": "cognition", "surface": "advanced", "owner": "brain_runtime"},
-    "opening_director": {"label": "Opening Director", "group": "presence", "surface": "advanced", "owner": "brain_runtime"},
     "chat": {"label": "Hội thoại & định tuyến model", "group": "cognition", "surface": "advanced", "owner": "brain_runtime"},
     "pedagogy": {"label": "Pedagogical controller", "group": "cognition", "surface": "advanced", "owner": "brain_runtime"},
     "personality": {"label": "Tính cách & ranh giới", "group": "cognition", "surface": "advanced", "owner": "brain_runtime"},
@@ -141,7 +140,6 @@ ENUMS: dict[str, tuple[str, ...]] = {
     'chat.semantic_authority_mode': ('primary_model',),
     'hardening.profile': ('canary', 'development', 'stable'),
     'memory.maintenance_budget': ('large', 'medium', 'small'),
-    'opening_director.age_band': ('unknown', 'adult', 'confirmed_adult', 'possible_minor', 'minor', 'confirmed_minor'),
     'personality.provocation_policy': ('boundary_only', 'character_safe', 'restrained'),
     'personality.retort_mode': ('balanced', 'off', 'restrained', 'sharp'),
     'personality.style_repair_mode': ('direct', 'self_aware_dry', 'soft'),

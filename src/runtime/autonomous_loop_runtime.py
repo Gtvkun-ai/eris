@@ -273,10 +273,8 @@ class AutonomousLoopRuntimeMixin:
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
-        # Startup là public presence quan trọng, không phải fire-and-forget. Nếu
-        # lần đầu vấp do worker/client vừa bootstrap, thử lại đúng một lần sau khi
-        # sensory worker đã lên. Không loop vô hạn, con người đã có đủ startup
-        # ritual tự sinh rồi.
+        # Startup now submits an opening opportunity to ConversationKernel. Retry
+        # bootstrap failures once, but NoReply is a valid successful decision.
         if startup_failed and self.running:
             try:
                 time.sleep(self.runtime_policy_settings.run_loop.startup_retry_delay_seconds)

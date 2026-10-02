@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Hồi quy cho stance trực tiếp và catalog greeting đời thường."""
+"""Hồi quy cho stance trực tiếp và catalog greeting data-only."""
 
 from types import SimpleNamespace
 
 from cortex.greeting_presets import GREETING_PRESETS, greeting_preset_speech_text
-from runtime.greeting_preset_runtime import decision_from_session_ritual
-from runtime.stage_contracts import StageFrameBuilder
 from runtime.social_stance_policy import (
     build_direct_stance_text,
     guard_subjective_stance_payload,
@@ -68,7 +66,7 @@ def test_stance_guard_detects_both_capitulation_and_policy_speak() -> None:
     assert needs_direct_stance_rewrite("Bạn không thấy thế, nhưng tôi vẫn nghĩ vậy.") is True
 
 
-def test_greeting_catalog_has_32_natural_lines_and_forces_live_tts() -> None:
+def test_greeting_catalog_is_data_only() -> None:
     assert len(GREETING_PRESETS) == 32
     banned = ("Eris online", "runtime", "dữ kiện", "ghi nhận", "sai nhịp", "lệch nhịp")
 
@@ -76,37 +74,4 @@ def test_greeting_catalog_has_32_natural_lines_and_forces_live_tts() -> None:
         assert preset.text.strip()
         assert greeting_preset_speech_text(preset.id, language="ja").strip()
         assert not any(marker.casefold() in preset.text.casefold() for marker in banned)
-        # Chữ đã đổi nên WAV cũ không được phép đọc lệch subtitle.
         assert preset.audio_asset == ""
-
-
-def test_startup_greeting_preset_commits_japanese_speech_surface(monkeypatch) -> None:
-    monkeypatch.setenv("ERIS_TTS_LANGUAGE", "ja")
-    preset = next(item for item in GREETING_PRESETS if item.id == "greet_quiet_02")
-    report = SimpleNamespace(
-        greeting_preset_id=preset.id,
-        greeting_preset_text=preset.text,
-        greeting_preset_prosody=preset.prosody_style,
-        greeting_preset_motion=preset.motion,
-        greeting_preset_emotion=preset.emotion,
-        greeting_audio_asset="",
-        tone="quiet_background",
-        greeting_frame=None,
-    )
-
-    decision = decision_from_session_ritual(report)
-    assert decision is not None
-    assert decision.display_language == "vi"
-    assert decision.speech_language == "ja"
-    assert decision.speech_text == "来たね。聞いているよ。"
-
-    frame = StageFrameBuilder(language_hint="ja").build(
-        decision,
-        payload=decision.to_payload(),
-        channel="session_ritual",
-    )
-
-    assert frame.display_text == decision.text
-    assert frame.tts_text == decision.speech_text
-    assert frame.speech_contract["language"] == "ja"
-    assert frame.speech_contract["prelocalized"] is True

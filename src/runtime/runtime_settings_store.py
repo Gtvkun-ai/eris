@@ -48,37 +48,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "background_tutor_enabled": False,
         "event_trace_enabled": True,
     },
-    "opening_director": {
-        # Hybrid mặc định: rule giữ grounding/safety, model chỉ chọn cấu trúc và
-        # hiện thực hóa wording trong schema đã khóa. Con người lại phát minh ra
-        # một model biết viết, rồi vẫn cần rule để nó đừng tự viết thêm sự thật.
-        "enabled": True,
-        "mode": "hybrid",
-        "max_beats": 3,
-        "max_questions": 1,
-        "planner_timeout_ms": 6000,
-        "allow_screen_hook": True,
-        "allow_continuity_hook": True,
-        # Cho phép startup lấy đúng một callback công khai từ episode gần nhất.
-        # Đây là scope hẹp hơn personalization toàn cục: nó chỉ cấp một anchor
-        # cho câu mở đầu và vẫn đi qua grounding/surface validator.
-        "startup_memory_callback": True,
-        # Khi đã có callback hợp lệ, đừng để planner chọn nhánh chào trống chỉ vì
-        # nó ít rủi ro hơn trên giấy. Một companion không nên thắng benchmark
-        # safety bằng cách quên sạch người đang dùng nó.
-        "prefer_continuity_hook": True,
-        "allow_anime_moves": True,
-        "allow_romantic_flirt": True,
-        "allow_sexual_content": True,
-        "require_adult_flirt_opt_in": True,
-        "romantic_flirt_opt_in": True,
-        "age_band": "confirmed_adult",
-        "cross_session_personalization": False,
-        "followup_max_count": 1,
-        "semantic_duplicate_threshold": 0.86,
-        "exact_surface_cooldown_sessions": 30,
-        "move_family_cooldown_sessions": 4,
-    },
     "chat": {
         # Ngôn ngữ câu public là contract cognition riêng, không mượn cấu hình TTS.
         "language": "vi",
@@ -380,9 +349,6 @@ _ENV_BINDINGS: dict[tuple[str, ...], tuple[str, str]] = {
     ("architecture", "startup_greeting"): ("ERIS_AI_STARTUP_GREETING_ENABLED", "bool"),
     ("architecture", "startup_screen_opening"): ("ERIS_AI_STARTUP_SCREEN_OPENING", "bool"),
     ("architecture", "startup_force_speak"): ("ERIS_AI_STARTUP_FORCE_SPEAK", "bool"),
-    ("opening_director", "startup_memory_callback"): ("ERIS_OPENING_STARTUP_MEMORY_CALLBACK", "bool"),
-    ("opening_director", "prefer_continuity_hook"): ("ERIS_OPENING_PREFER_CONTINUITY", "bool"),
-    ("opening_director", "allow_sexual_content"): ("ERIS_OPENING_ALLOW_SEXUAL_CONTENT", "bool"),
     ("chat", "language"): ("ERIS_CHAT_LANGUAGE", "str"),
     ("chat", "semantic_authority_mode"): ("ERIS_SEMANTIC_AUTHORITY", "str"),
     ("chat", "reasoning_effort"): ("ERIS_REASONING_EFFORT", "str"),
@@ -791,7 +757,9 @@ class RuntimeSettingsStore:
             version = 0
         target_version = int(_DEFAULT_SETTINGS["version"])
         if version >= target_version:
-            return out, False
+            retired_opening = "opening_director" in out
+            out.pop("opening_director", None)
+            return out, retired_opening
 
         migrated = False
         if version < 2:
@@ -972,19 +940,8 @@ class RuntimeSettingsStore:
             migrated = True
 
 
-        if version < 15:
-            opening = dict(out.get("opening_director") or {}) if isinstance(out.get("opening_director"), Mapping) else {}
-            defaults = _DEFAULT_SETTINGS["opening_director"]
-            for key, value in defaults.items():
-                opening.setdefault(key, copy.deepcopy(value))
-            out["opening_director"] = opening
-            migrated = True
-
-        if version < 16:
-            opening = dict(out.get("opening_director") or {}) if isinstance(out.get("opening_director"), Mapping) else {}
-            opening.setdefault("startup_memory_callback", True)
-            opening.setdefault("prefer_continuity_hook", True)
-            out["opening_director"] = opening
+        if "opening_director" in out:
+            out.pop("opening_director", None)
             migrated = True
 
         if version < 17:

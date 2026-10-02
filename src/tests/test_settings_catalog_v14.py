@@ -22,26 +22,27 @@ def test_catalog_covers_every_runtime_setting_without_secrets() -> None:
 
     assert catalog["schema_version"] == 18
     assert set(fields) == _default_paths()
-    assert len(catalog["sections"]) == 26
+    assert len(catalog["sections"]) == 25
     assert all(item["owner"] == "brain_runtime" for item in fields.values())
     assert fields["tts.provider"]["surface"] == "voice"
     assert fields["chat.reasoning_effort"]["surface"] == "advanced"
     assert fields["tts.provider"]["options"] == ["elevenlabs", "gemini"]
     assert fields["engagement.max_events"]["min"] == 24
     assert fields["engagement.max_events"]["max"] == 4096
-    assert "opening_director.allow_sexual_content" in fields
-    assert fields["opening_director.allow_sexual_content"]["label"] == "Cho phep noi dung 18+"
+    assert all(not path.startswith("opening_director.") for path in fields)
     rendered_fields = repr(catalog["fields"]).lower()
     assert "api_key" not in rendered_fields
     assert "secret" not in rendered_fields
 
 
-def test_opening_director_defaults_are_permissive() -> None:
-    defaults = RuntimeSettingsStore.defaults()["opening_director"]
-    assert defaults["allow_romantic_flirt"] is True
-    assert defaults["allow_sexual_content"] is True
-    assert defaults["romantic_flirt_opt_in"] is True
-    assert defaults["age_band"] == "confirmed_adult"
+def test_opening_director_settings_are_retired() -> None:
+    assert "opening_director" not in RuntimeSettingsStore.defaults()
+    migrated, changed = RuntimeSettingsStore._migrate_payload({
+        "version": 18,
+        "opening_director": {"enabled": True},
+    })
+    assert changed is True
+    assert "opening_director" not in migrated
 
 
 def test_scope_ownership_rejects_cross_surface_writes() -> None:

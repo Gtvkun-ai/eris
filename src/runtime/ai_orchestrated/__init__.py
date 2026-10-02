@@ -79,11 +79,6 @@ from .social_execution import FULL_SOCIAL_LANES, accept_full_social_plan
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
 from .state_reducer import StateReducer
-from .opening_contracts import OpeningInput, OpeningPlan, OpeningSurface
-from .opening_director import OpeningCandidate, OpeningDirector, deterministic_render_opening
-from .opening_history import OpeningHistoryRecord, OpeningHistoryStore
-from .opening_input_assembler import build_opening_input
-from .opening_move_catalog import OpeningMoveDefinition, get_opening_move, opening_move_catalog
 
 __all__ = [
     "AI_RUNTIME_VERSION",
@@ -163,16 +158,4 @@ __all__ = [
     "should_consolidate",
     "StateEvent",
     "StateReducer",
-    "OpeningInput",
-    "OpeningPlan",
-    "OpeningSurface",
-    "OpeningCandidate",
-    "OpeningDirector",
-    "deterministic_render_opening",
-    "OpeningHistoryRecord",
-    "OpeningHistoryStore",
-    "build_opening_input",
-    "OpeningMoveDefinition",
-    "get_opening_move",
-    "opening_move_catalog",
 ]

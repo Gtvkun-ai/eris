@@ -61,23 +61,18 @@ from semantic_authority import SemanticAuthorityPolicy
 from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
 from .self_turn_pipeline import SelfTurnPipeline
-from .startup_grounding import (
-    build_startup_fallback_text,
-    build_startup_greeting_frame,
-    choose_startup_text,
-    collect_startup_grounding,
-    ensure_grounded_startup_plan,
-    ensure_startup_greeting_payload,
-    select_startup_persona_preset,
-)
-from .opening_director import OpeningDirector
-from .opening_input_assembler import build_opening_input
-from .opening_history import OpeningHistoryStore
-from .opening_safety import validate_opening_surface
 from .self_context import build_autonomous_self_context
 
 
 _LOG = logging.getLogger(__name__)
+
+
+def _is_nonlinguistic_body_decision(decision: Any) -> bool:
+    """Return true only when body transport carries no linguistic surface."""
+
+    return not str(getattr(decision, "text", "") or "").strip() and not str(
+        getattr(decision, "speech_text", "") or ""
+    ).strip()
 
 
 def _foreground_hard_deadline_seconds() -> float:
@@ -3722,6 +3717,8 @@ class AIAutonomousOrchestrator:
                 performance_hint="quiet_presence", stage_motion=motion, motion_intent=motion,
                 nonverbal_cue="small_presence", debug_trace=f"body_only:{reason}",
             )
+            if not _is_nonlinguistic_body_decision(decision):
+                raise ValueError("body_only_requires_empty_text")
             host._send_decision_to_body(decision, channel="autonomous")
             self._last_body_only_at = now
             self._last_body_only_signature = signature
@@ -3799,7 +3796,7 @@ class AIAutonomousOrchestrator:
             except Exception as exc:
                 _orchestrator_boundary_note(host, "startup.persistent_individual_prime", exc)
             host.logger.info(
-                "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s public_greeting=disabled",
+                "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s opening_signal=kernel",
                 handoff.revision,
                 handoff.next_move_owner,
                 handoff.continuity_pressure,
@@ -3808,15 +3805,170 @@ class AIAutonomousOrchestrator:
         except Exception as exc:
             _orchestrator_boundary_note(host, "startup.conversation_handoff_prime", exc)
             host.logger.info(
-                "[architecture C startup] public_greeting=disabled continuity_prime=unavailable"
+                "[architecture C startup] opening_signal=kernel continuity_prime=unavailable"
             )
 
-        # Luôn False: startup không còn sở hữu một public turn. Không observer submit,
-        # không relational public-act receipt, không TTS/bubble giả và không đặt mốc
-        # _startup_greeting_spoken_at.
-        return False
+        # Startup owns only an opportunity signal. Root may choose NoReply; any
+        # positive move still uses the same writer and delivery path as chat.
+        result = self._run_v12_signal(
+            "opening_signal",
+            metadata={
+                "reason": "runtime_started",
+                "open_loop_count": len(open_loops),
+                "has_recent_history": bool(recent_history),
+            },
+            sleep_after=False,
+        )
+        return bool(getattr(result, "status", "") == "delivering")
+
+    def _run_v12_signal(
+        self,
+        kind: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        sleep_after: bool = True,
+    ) -> Any:
+        """Submit a non-user opportunity to the single conversation authority."""
+
+        signal_kind = str(kind or "").strip().lower()
+        if signal_kind not in {"autonomous_signal", "social_signal", "opening_signal"}:
+            raise ValueError(f"unsupported_conversation_signal:{signal_kind}")
+        host = self.host
+        if signal_kind != "opening_signal":
+            body_running = getattr(host, "body_running_fn", None)
+            if callable(body_running) and not body_running():
+                stop = getattr(host, "stop", None)
+                if callable(stop):
+                    stop()
+                return None
+            process_pending = getattr(host, "_process_pending_user_input", None)
+            if callable(process_pending) and process_pending():
+                return None
+
+        from runtime.conversation import ConversationEvent
+        from runtime.conversation.bootstrap import ensure_conversation_kernel
+
+        sid = str(
+            getattr(host, "conversation_id", "")
+            or getattr(host, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        kernel = ensure_conversation_kernel(host)
+        if signal_kind == "autonomous_signal":
+            phase = getattr(kernel.snapshot(sid).phase, "value", "")
+            if phase in {"thinking", "writing", "delivering"}:
+                sleep = getattr(host, "_sleep_interruptible", None)
+                if sleep_after and callable(sleep):
+                    sleep(0.5)
+                return None
+        history_reader = getattr(host, "_chat_history_for_llm", None)
+        if callable(history_reader):
+            try:
+                recent_history = tuple(history_reader(limit=8))
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "conversation_signal.history", exc)
+                recent_history = ()
+        else:
+            recent_history = tuple(getattr(host, "chat_history", ()) or ())[-8:]
+
+        clock = getattr(host, "interaction_clock", None)
+        signal_metadata = {
+            "reason": str(getattr(host, "_autonomous_wakeup_reason", "timer") or "timer")[:180],
+            "chat_mode": bool(getattr(host, "chat_mode", False)),
+            **dict(metadata or {}),
+        }
+        if clock is not None:
+            for source in ("seconds_since_user", "seconds_since_assistant"):
+                value = getattr(clock, source, None)
+                try:
+                    signal_metadata[source] = float(value() if callable(value) else value or 0.0)
+                except (TypeError, ValueError):
+                    pass
+
+        state = None
+        state_runtime = getattr(host, "ai_state_reducer", None)
+        snapshot = getattr(state_runtime, "snapshot", None)
+        if callable(snapshot):
+            try:
+                state = snapshot()
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "conversation_signal.state", exc)
+        runtime_context = {
+            "conversation_status": {
+                "signal_kind": signal_kind,
+                "chat_mode": bool(getattr(host, "chat_mode", False)),
+            },
+            "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
+            "previous_public_excerpt": str(getattr(host, "last_text", "") or "")[-1200:],
+        }
+        if state is not None:
+            personality_summary = getattr(state, "personality_prompt_context", None)
+            relationship = getattr(state, "relationship", None)
+            relationship_summary = getattr(relationship, "prompt_summary", None)
+            latest_observation = getattr(state, "latest_observation", None)
+            open_loops = getattr(state, "open_loops", ())
+            if callable(personality_summary):
+                runtime_context["personality_summary"] = str(personality_summary())[:6000]
+            if callable(relationship_summary):
+                runtime_context["relationship_summary"] = str(relationship_summary())[:6000]
+            if isinstance(latest_observation, Mapping):
+                signal_metadata["latest_observation"] = dict(latest_observation)
+            signal_metadata["open_loops"] = [str(item)[:500] for item in tuple(open_loops or ())[:5]]
+
+        if signal_kind == "autonomous_signal":
+            result = kernel.handle_due_continuation(
+                session_id=sid,
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+            )
+        else:
+            result = None
+        if result is None:
+            result = kernel.handle_event(
+                ConversationEvent(
+                    event_id=f"{signal_kind}:{time.time_ns()}",
+                    session_id=sid,
+                    kind=signal_kind,
+                    generation=kernel.snapshot(sid).generation,
+                    metadata=signal_metadata,
+                ),
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+            )
+
+        decision = getattr(result, "decision", None)
+        decision_dict = decision.to_dict() if callable(getattr(decision, "to_dict", None)) else {}
+        host.last_agent_turn = decision_dict
+        host.last_conversation_run = {
+            "schema": "eris.conversation_run.v12",
+            "event_id": result.event.event_id,
+            "generation": result.event.generation,
+            "status": result.status,
+            "delivery_id": result.delivery_id,
+            "decision": decision_dict,
+        }
+        if sleep_after:
+            sleep = getattr(host, "_sleep_interruptible", None)
+            if callable(sleep):
+                lease = kernel.continuation.peek(sid)
+                if lease is not None:
+                    delay = max(0.05, min(5.0, float(lease.due_at) - time.time()))
+                else:
+                    delay = 2.5 if result.status == "delivering" else 15.0
+                sleep(delay)
+        return result
+
+    def run_social_signal(self, metadata: Mapping[str, Any] | None = None) -> Any:
+        return self._run_v12_signal("social_signal", metadata=metadata, sleep_after=False)
 
     def run_force_speak(self) -> None:
+        self._run_v12_signal(
+            "autonomous_signal",
+            metadata={"reason": "explicit_presence_request", "explicit_user_pull": True},
+            sleep_after=False,
+        )
+
+    def _legacy_run_force_speak(self) -> None:
         host = self.host
         try:
             from llm.key_pool import reset_provider_circuits
@@ -4002,11 +4154,10 @@ class AIAutonomousOrchestrator:
         host.logger.info("[architecture C force_speak] text=%s", text)
 
     def run_iteration(self) -> bool:
-        """Facade mỏng; pipeline typed nằm trong ``self_turn_pipeline.py``."""
-        # Adapter/test có thể thay trace_store trực tiếp trên facade. Đồng bộ lại
-        # trước mỗi tick để không giữ hai sink debug khác nhau.
-        self.self_turn_pipeline.trace_store = self.trace_store
-        return self.self_turn_pipeline.run()
+        """Run one mechanical opportunity through the V12 conversation authority."""
+
+        self._run_v12_signal("autonomous_signal")
+        return bool(getattr(self.host, "running", True))
 
 
 __all__ = [

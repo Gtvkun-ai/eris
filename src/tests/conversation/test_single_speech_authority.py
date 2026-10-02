@@ -17,7 +17,6 @@ TEMPORARY_WRITER_MIGRATION_ALLOWLIST = {
 }
 TEMPORARY_DELIVERY_MIGRATION_ALLOWLIST = {
     "ai_orchestrated/orchestrator.py",
-    "greeting_preset_runtime.py",
     "tutor_research_runtime.py",
 }
 

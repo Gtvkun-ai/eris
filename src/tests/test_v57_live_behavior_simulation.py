@@ -257,27 +257,7 @@ def test_v57_1_public_writer_retries_real_model_when_display_language_drifts() -
 
 
 
-def test_v61_autonomous_writer_language_repair_has_bound_codes_and_uses_repair_prompt() -> None:
-    """Tái hiện đúng crash startup V60: autonomous writer phải có language vars thật."""
-    from runtime.ai_orchestrated.contracts import IntentionPlan
+def test_autonomous_writer_entry_is_retired() -> None:
+    router = AIRuntimeModelRouter(SimpleNamespace(client=None, fallback_client=None), logger=None)
 
-    client = _LanguageRepairClient()
-    router = AIRuntimeModelRouter(SimpleNamespace(client=client, fallback_client=None), logger=None)
-    router._run_inference = lambda _tier, func, **_kwargs: func()
-    plan = IntentionPlan.from_mapping(
-        {
-            "speak": True,
-            "motive": "continue_thread",
-            "strategy": "typed_self_turn",
-            "topic": "tiếp tục một ý đang dang dở",
-        },
-        channel="autonomous",
-    )
-    payload = router.generate_autonomous_reply(
-        plan=plan,
-        language_hint="vi",
-        speech_language_hint="ja",
-    )
-    assert len(client.calls) == 2
-    assert payload["text"].startswith("Checkpoint 5: đảm bảo")
-    assert "LANGUAGE REPAIR ONLY" in client.calls[1]["messages"][-1]["content"]
+    assert not hasattr(router, "generate_autonomous_reply")

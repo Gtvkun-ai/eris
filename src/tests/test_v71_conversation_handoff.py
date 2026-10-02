@@ -273,5 +273,6 @@ def test_startup_only_primes_continuity_and_never_commits_fake_public_turn() -> 
     handoff = host.conversation_handoff_runtime.snapshot()
     assert handoff.pending_shared_goal
     assert handoff.next_move_owner == "eris"
-    assert any("public_greeting=disabled" in line for line in logs)
+    assert any("opening_signal=kernel" in line for line in logs)
+    assert host.last_conversation_run["status"] == "no_reply"
     assert all(" spoke " not in f" {line} " for line in logs)
