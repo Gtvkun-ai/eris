@@ -194,6 +194,13 @@ def test_intention_planner_compatibility_module_is_retired():
     assert "ai_intention_planner =" not in bootstrap
     assert not (ROOT / "runtime/ai_orchestrated/planner.py").exists()
 
+    orchestrator = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    # Dead compatibility helpers cũng bị cấm: để chúng nằm lại rất dễ bị caller
+    # mới vô tình hồi sinh một planner/public authority song song.
+    assert "_StaticIntentionPlanner" not in orchestrator
+    assert "_typed_startup_persona_plan" not in orchestrator
+    assert "_submit_local_startup_plan" not in orchestrator
+
 
 def test_active_root_docs_no_longer_keep_v6_v7_v11_architecture_files():
     for name in (
@@ -201,5 +208,8 @@ def test_active_root_docs_no_longer_keep_v6_v7_v11_architecture_files():
         "ERIS_AGENT_DISCLOSURE_AUTHORITY_V7_VI.md",
         "README_V7_AGENT_OWNS_DISCLOSURE_VI.md",
         "ERIS_AGENT_TURN_PROJECTION_V11_VI.md",
+        "ERIS_AGENT_SPEECH_PLAN_V8_VI.md",
+        "README_V8_AGENT_SPEECH_PLAN_VI.md",
+        "README_V6_NO_SPEECH_CAP_VI.md",
     ):
         assert not (ROOT / name).exists()

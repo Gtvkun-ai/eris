@@ -177,16 +177,18 @@ def test_public_expression_receipt_releases_workspace_without_public_text_feedba
     assert row["activation"] <= 0.12
 
 
-def test_v103_production_wiring_is_after_neuro_selection_and_before_commit_mapping():
+def test_v103_production_wiring_is_after_neuro_selection_and_before_commit_mapping() -> None:
+    """V12 giữ competition workspace như observer/evidence, bỏ self-turn speech lane."""
     root = Path(__file__).resolve().parents[1]
     executive = (root / "runtime" / "ai_orchestrated" / "executive_cortex.py").read_text(encoding="utf-8")
     bootstrap = (root / "runtime" / "coordinator_bootstrap.py").read_text(encoding="utf-8")
-    pipeline = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
     urge = (root / "runtime" / "expression_urge_runtime.py").read_text(encoding="utf-8")
 
     assert "expression_competition_workspace_v103" in bootstrap
     assert 'getattr(self.owner, "expression_competition_workspace_v103", None)' in executive
     assert "selection = stabilize(" in executive
     assert executive.index("selection = stabilize(") < executive.index("return commit_selection(")
-    assert "expression_competition_states_v103" in pipeline
     assert 'note_competition(urge.urge_id' in urge
+    assert not (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").exists()
+
+

@@ -74,11 +74,13 @@ def test_v38_technical_context_keeps_enough_personality_to_not_switch_persona() 
 
 
 def test_v38_surface_system_prompt_treats_followup_as_continuity_not_notification() -> None:
-    prompt = AIRuntimeModelRouter._surface_realizer_prompt()
-    assert "continuity tự nhiên" in prompt
-    assert "notification template" in prompt
-    assert "đừng tối ưu brevity" in prompt
-    assert "châm ngôn" in prompt
+    """Voice contract vẫn cấm notification/châm-ngôn dù surface realizer cũ đã retire."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "runtime" / "eris_voice_contract.py").read_text(encoding="utf-8")
+    assert "notification template" in source
+    assert "châm ngôn" in source
+    assert not hasattr(AIRuntimeModelRouter, "_surface_realizer_prompt")
 
 
 class _Client:

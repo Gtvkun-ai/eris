@@ -116,7 +116,7 @@ def _force_ambiguous_non_social_frame(frame):
 
 
 def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exists() -> None:
-    """Tái hiện lỗi log: có seed không được làm current intention đứng ngoài frame."""
+    """V12 cho Subject giữ private proposals nhưng không materialize public speech."""
     d = Determinism()
     service = _service(d)
     ingress = SubjectIngress(service)
@@ -134,12 +134,12 @@ def test_current_subject_initiative_is_merged_into_same_frame_even_when_seed_exi
             },
         },
     )
-    acts = {str(item.arguments.get("speech_act") or "") for item in session.frame.proposals}
-    assert "random_chat" in acts
-    assert "user_probe" in acts
-    probe = next(item for item in session.frame.proposals if item.arguments.get("speech_act") == "user_probe")
-    assert probe.arguments.get("intention_id")
-    asyncio.run(service.abandon_deliberation(session.frame, reason="test_cleanup"))
+    assert session.frame.proposals
+    assert session.frame.coalitions
+    for item in session.frame.proposals:
+        args = dict(item.arguments or {})
+        assert "text" not in args
+        assert "speech_text" not in args
 
 
 def test_legacy_runtime_ids_from_model_cannot_steer_current_frame() -> None:
@@ -264,24 +264,29 @@ def test_spoken_probe_is_expressed_without_making_user_reply_an_obligation() -> 
 
 
 def test_runtime_consumes_intention_only_after_successful_public_text() -> None:
-    """Guard wiring: lifecycle hook nằm sau `if not text` và trước tick kế tiếp."""
+    """V12 chỉ schedule continuation sau delivery receipt thành công.
+
+    Đây là invariant thay thế lifecycle hook của self_turn_pipeline V27.
+    """
     root = Path(__file__).resolve().parents[1]
-    source = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
-    no_text_pos = source.index("if not text:")
-    hook_pos = source.index("note_initiative_public_act")
-    relational_pos = source.index("note_relational_public_act", hook_pos)
-    assert no_text_pos < hook_pos < relational_pos
+    source = (root / "runtime" / "conversation" / "kernel.py").read_text(encoding="utf-8")
+    settle = source[source.index("def settle_delivery("):source.index("def preempt_for_user(")]
+    receipt_pos = settle.index("self.receipts.commit_once(receipt)")
+    success_guard = settle.index("if not successful:")
+    schedule_pos = settle.index("self.continuation.schedule(")
+    assert receipt_pos < success_guard < schedule_pos
+    assert not (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").exists()
 
 
 def test_startup_greeting_invariant_runs_after_main_cognition_without_erasing_context() -> None:
-    """Greeting phải sống, nhưng writer chính vẫn là main cognition có vision/context."""
+    """V12 startup chỉ tạo opening_signal và để RootAgent quyết có nói hay không."""
     root = Path(__file__).resolve().parents[1]
     source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
-    cognition_call = source.index("payload = generate_autonomous(")
-    invariant_call = source.index("payload = ensure_startup_greeting_payload(", cognition_call)
-    assert cognition_call < invariant_call
-    assert "typed_surface_preserved=1" not in source
-    assert "STARTUP_WORDING_CONTRACT" in source[cognition_call:invariant_call]
+    startup = source[source.index("def run_startup("):source.index("def _run_v12_signal(")]
+    assert "self._run_v12_signal(" in startup
+    assert '"opening_signal"' in startup
+    assert "generate_autonomous(" not in startup
+    assert "STARTUP_WORDING_CONTRACT" not in startup
 
 
 def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
@@ -332,13 +337,12 @@ def test_invalid_deliberator_choice_degrades_without_second_llm_call() -> None:
 
 
 def test_startup_greeting_updates_relational_homeostasis_as_non_reply_bearing_contact() -> None:
+    """V12 không ghi giả một public contact ở startup trước DeliveryReceipt."""
     root = Path(__file__).resolve().parents[1]
     source = (root / "runtime" / "ai_orchestrated" / "orchestrator.py").read_text(encoding="utf-8")
-    greeting_commit = source.index("host._startup_greeting_spoken_at = spoken_at")
-    relational_hook = source.index("note_relational_public_act", greeting_commit)
-    return_pos = source.index("return True", relational_hook)
-    block = source[relational_hook:return_pos]
-    assert greeting_commit < relational_hook < return_pos
-    assert "outreach=True" in block
-    assert "expect_response=False" in block
-    assert "startup_greeting:" in block
+    startup = source[source.index("def run_startup("):source.index("def _run_v12_signal(")]
+    assert "_startup_greeting_spoken_at" not in startup
+    assert "note_relational_public_act" not in startup
+    assert "opening_signal" in startup
+
+

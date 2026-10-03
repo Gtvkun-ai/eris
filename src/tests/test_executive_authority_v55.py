@@ -9,24 +9,26 @@ def _source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_autonomous_pipeline_collects_before_claim_and_has_no_legacy_fallback():
-    source = _source("runtime/ai_orchestrated/self_turn_pipeline.py")
-    selection = source[source.index("# Collect-before-claim"):source.index("candidate_ms =", source.index("# Collect-before-claim"))]
-    assert ".peek_due(" in selection
-    assert ".claim_due(" not in selection
-    assert "legacy candidate retained" not in source
-    assert "selected_affordance_stale" in source
+def test_autonomous_pipeline_collects_before_claim_and_has_no_legacy_fallback() -> None:
+    """V12: self-turn pipeline cũ phải biến mất hoàn toàn, không được giữ shim.
+
+    Continuation/autonomous wake chỉ được quay lại ConversationKernel; test cũ
+    từng soi implementation của self_turn_pipeline nên sau hard cutover phải đổi
+    thành architecture guard chống hồi sinh module này.
+    """
+    assert not (ROOT / "runtime/ai_orchestrated/self_turn_pipeline.py").exists()
+    continuation = _source("runtime/conversation/continuation.py")
+    assert "class ContinuationLeaseScheduler" in continuation
+    assert "speech_content" not in continuation
 
 
-def test_runtime_scheduler_uses_temporal_mind_as_single_wake_authority():
-    source = _source("runtime/ai_orchestrated/self_turn_pipeline.py")
-    gate = source[source.index("def _should_deliberate"):source.index("# V18 không còn planner")]
-    assert "should_reconsider" not in gate
-    assert "ExecutiveEvent" not in gate
-    assert "return True, gate.reason" in gate
-    assert "ERIS_SOCIAL_INITIATIVE_SOFT_SILENCE_SEC" not in gate
-    assert "ERIS_SOCIAL_INITIATIVE_PROBE_INTERVAL_SEC" not in gate
-    assert "presence_probe" not in gate
+def test_runtime_scheduler_uses_temporal_mind_as_single_wake_authority() -> None:
+    """V12: chỉ ContinuationLeaseScheduler được tạo continuation wake public."""
+    assert not (ROOT / "runtime/ai_orchestrated/self_turn_pipeline.py").exists()
+    source = _source("runtime/conversation/continuation.py")
+    assert "class ContinuationLeaseScheduler" in source
+    assert "claim_due" in source
+    assert "schedule(" in source
 
 
 def test_semantic_marker_router_is_deleted_not_shadowed():
@@ -72,6 +74,7 @@ def test_executive_uses_model_owned_shortlisting_not_registry_order_top_n():
 
 
 def test_capability_arguments_are_typed_and_validated_before_legacy_adapter():
+    """V12 giữ capability arguments ở capability layer, không đẩy vào orchestrator public."""
     cortex = _source("runtime/ai_orchestrated/executive_cortex.py")
     registry = _source("actions/capability_registry.py")
     orchestrator = _source("runtime/ai_orchestrated/orchestrator.py")
@@ -83,15 +86,14 @@ def test_capability_arguments_are_typed_and_validated_before_legacy_adapter():
     assert "encode_capability_arguments" not in cortex
     assert "_CAPABILITY_INPUT_CONTRACTS" in registry
     assert "capability_input" not in cortex
-    assert "capability_arguments" in orchestrator
+    # Root/orchestrator không còn parse typed capability arguments như public plan.
+    assert "capability_arguments" not in orchestrator
 
 
-def test_generic_liveness_fallback_cannot_be_resurrected_by_old_flag():
-    source = _source("runtime/ai_orchestrated/social_initiative.py")
-    assert "legacy_social_fallback_enabled" not in source
+def test_generic_liveness_fallback_cannot_be_resurrected_by_old_flag() -> None:
+    """V12 retire social_initiative semantic lane thay vì shadow bằng feature flag."""
+    assert not (ROOT / "runtime/ai_orchestrated/social_initiative.py").exists()
     assert "legacy_social_fallback_enabled" not in _source("runtime/architecture_flags.py")
-    assert "initiative_local_liveness" not in source
-    assert "Generic liveness fallback was removed, not shadowed" in source
 
 
 def test_llm_parser_accepts_only_exact_capability_ids() -> None:

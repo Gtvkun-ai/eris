@@ -173,11 +173,16 @@ def test_speech_intent_serializes_positive_evidence_bundle():
     assert payload["evidence_bundle"]["open_user_gap"]["key"] == "decision_style"
 
 
-def test_surface_and_public_reply_schemas_accept_positive_evidence_domains():
-    from runtime.ai_orchestrated.model_router import CLAIM_MANIFEST_SCHEMA, SURFACE_REALIZATION_SCHEMA
+def test_surface_and_public_reply_schemas_accept_positive_evidence_domains() -> None:
+    """V12 chỉ giữ claim-domain schema dùng cho public grounding hiện hành.
+
+    SURFACE_REALIZATION_SCHEMA thuộc writer hai tầng cũ và đã bị retire; không
+    được kéo schema đó quay lại chỉ để giữ test V73.
+    """
+    from runtime.ai_orchestrated.model_router import CLAIM_MANIFEST_SCHEMA
 
     public_domains = set(CLAIM_MANIFEST_SCHEMA["items"]["properties"]["domain"]["enum"])
-    surface_domains = set(SURFACE_REALIZATION_SCHEMA["properties"]["claim_manifest"]["items"]["properties"]["domain"]["enum"])
     for domain in ("user_profile", "shared_episode", "self_model"):
         assert domain in public_domains
-        assert domain in surface_domains
+
+

@@ -57,13 +57,13 @@ def test_v30_bootstrap_does_not_restore_or_persist_executive_trajectory():
     assert "wall_clock=" not in constructor
 
 
-def test_v30_temporal_mind_is_the_single_wake_gate():
-    source = _source("runtime/ai_orchestrated/self_turn_pipeline.py")
-    gate = source[source.index("def _should_deliberate"):source.index("# V18 không còn planner")]
-    assert "TemporalMind" in source
-    assert "should_reconsider" not in gate
-    assert "ExecutiveEvent" not in gate
-    assert "return True, gate.reason" in gate
+def test_v30_temporal_mind_is_the_single_wake_gate() -> None:
+    """V12 thay wake gate cũ bằng continuation lease cơ học duy nhất."""
+    assert not (ROOT / "runtime/ai_orchestrated/self_turn_pipeline.py").exists()
+    source = _source("runtime/conversation/continuation.py")
+    assert "class ContinuationLeaseScheduler" in source
+    assert "consecutive_self_wakes" in source
+    assert "chain_started_at" in source
 
 
 def test_v30_capability_planner_requests_use_explicit_sessionless_lane_names():
@@ -80,7 +80,9 @@ def test_capability_contract_coverage_is_complete_and_context_sensors_are_not_ca
     definitions = tuple(iter_public_capabilities())
     assert valid is True
     assert missing == ()
-    assert len(definitions) == 46
+    # Không khóa cứng tổng số capability: registry được phép tăng mà không làm
+    # test kiến trúc cũ báo lỗi giả. Boundary context_only mới là invariant.
+    assert len(definitions) >= 46
     context_only = [item for item in definitions if item.exposure == "context_only"]
     assert len(context_only) == 8
     assert all(item.callable is False for item in context_only)

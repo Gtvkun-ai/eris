@@ -58,7 +58,7 @@ from runtime.semantic_frame import (
 )
 from semantic_authority import SemanticAuthorityPolicy
 
-from .contracts import AI_RUNTIME_VERSION, IntentionPlan, StateEvent
+from .contracts import AI_RUNTIME_VERSION
 from .identity import PendingStrategyUse, PRIMARY_RELATIONSHIP_ID
 from .self_context import build_autonomous_self_context
 
@@ -378,59 +378,11 @@ def _chat_commit_idempotency_key(host: Any, turn_id: str) -> str:
     return ":".join(parts)
 
 
-def _typed_startup_persona_plan(*, reason: str = "typed_persona_startup") -> IntentionPlan:
-    return IntentionPlan.from_mapping(
-        {
-            "speak": True,
-            "motive": "startup_opening",
-            "strategy": "persona_opening",
-            "value_focus": "warm_relational_presence",
-            "topic": "Offer one ordinary, warm-guarded opening with a small dry edge; no manifesto.",
-            "importance": 0.72,
-            "intrusion_risk": 0.05,
-            "confidence": 0.74,
-            "performance_hint": "soft",
-            "evidence_refs": [],
-            "semantics": {
-                "turn_kind": "startup",
-                "speech_act": "warm_session_opening",
-                "subject_key": "session_arrival",
-                "evidence_scope": "persona",
-                "continuation_key": "none",
-            },
-            "notes": reason,
-        },
-        channel="startup",
-    )
-
-
-def _submit_local_startup_plan(host: Any, plan: IntentionPlan, *, turn_seq: int) -> None:
-    reducer = getattr(host, "ai_state_reducer", None)
-    if reducer is None or not callable(getattr(reducer, "submit", None)):
-        return
-    try:
-        snapshot = reducer.snapshot() if callable(getattr(reducer, "snapshot", None)) else None
-        base_version = int(getattr(snapshot, "version", 0) or 0)
-        reducer.submit(
-            StateEvent.from_intention(
-                plan,
-                turn_seq=turn_seq,
-                base_version=base_version,
-            )
-        )
-    except Exception as exc:
-        _orchestrator_boundary_note(host, "startup_plan.submit", exc)
-
-
-class _StaticIntentionPlanner:
-    def __init__(self, plan: IntentionPlan) -> None:
-        self.plan = plan
-
-    def plan_autonomous(self, _snapshot: Mapping[str, Any], *, turn_seq: int = 0) -> IntentionPlan:
-        return self.plan
-
-
-
+# V12 hard cutover:
+# Không giữ startup IntentionPlan/static planner ở orchestrator nữa. Opening và
+# autonomous initiative chỉ được phát thành ConversationEvent rồi quay về
+# ConversationKernel/RootAgent; nếu giữ helper dead-code ở đây rất dễ bị caller
+# mới vô tình hồi sinh một semantic authority song song.
 def _serializable_public_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Chuẩn hóa payload public trước JSON và bỏ cache object typed nội bộ."""
 

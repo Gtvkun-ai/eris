@@ -147,6 +147,7 @@ def test_pending_intention_survives_origin_change_from_internal_to_user() -> Non
 
 
 def test_subject_initiative_does_not_materialize_generic_probe_without_content() -> None:
+    """V12: probe có thể tồn tại như signal, nhưng chưa phải public surface."""
     d = Determinism()
     service = _service(d)
     frame = asyncio.run(service.prepare_deliberation(_internal_observation(d)))
@@ -160,9 +161,9 @@ def test_subject_initiative_does_not_materialize_generic_probe_without_content()
         },
         now=d.now + 1.0,
     )
-    assert not any(item.candidate.speech_act in {"user_probe", "contact_bid"} for item in affordances)
-
-
+    assert affordances
+    assert all(not hasattr(item.candidate, "text") for item in affordances)
+    assert all(not hasattr(item.candidate, "speech_text") for item in affordances)
 
 
 def test_contact_and_user_probe_are_coalesced_before_competition() -> None:
@@ -211,24 +212,18 @@ def test_v66_startup_greeting_does_not_create_expression_cooldown() -> None:
     assert "startup_social_cooldown_active" not in runtime_context
     assert runtime_context["expression_authority"] == "self_owned"
 
+    # V12 không cấm private curiosity signal; nó chỉ cấm signal tự trở thành
+    # public speech. Boundary public được kiểm ở tests/conversation.
     d = Determinism()
     service = _service(d)
     frame = asyncio.run(service.prepare_deliberation(_internal_observation(d)))
     asyncio.run(service.abandon_deliberation(frame, reason="test_cleanup"))
-
     affordances = build_subject_initiative_affordances(
         service,
-        runtime_context={
-            **runtime_context,
-            "user_model_uncertainty": 0.92,
-            "user_model_evidence_refs": ("user-model:thin",),
-        },
+        runtime_context={**runtime_context, "user_model_uncertainty": 0.92},
         now=d.now + 1.0,
     )
-    assert not any(
-        item.candidate.speech_act in {"contact_bid", "user_probe", "curiosity_bid"}
-        for item in affordances
-    )
+    assert all(not hasattr(item.candidate, "speech_text") for item in affordances)
 
 
 def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:
@@ -287,6 +282,7 @@ def test_chat_and_self_turn_commit_through_same_mindloop_port() -> None:
 
 
 def test_generic_subject_probe_is_not_available_for_commit_without_content() -> None:
+    """Subject coalition chỉ là private proposal; RootAgent vẫn là public authority."""
     d = Determinism()
     service = _service(d)
     ingress = SubjectIngress(service)
@@ -306,38 +302,36 @@ def test_generic_subject_probe_is_not_available_for_commit_without_content() -> 
             "initiative_runtime_context": {"user_model_uncertainty": 0.92},
         },
     )
-    assert not any(
-        item.arguments.get("speech_act") in {"user_probe", "contact_bid"}
-        for item in session.frame.coalitions
-    )
-    ingress.mind_loop.abandon_sync(session, reason="v44_no_generic_probe")
-
+    for item in session.frame.coalitions:
+        args = dict(item.arguments or {})
+        assert "text" not in args
+        assert "speech_text" not in args
+    ingress.mind_loop.abandon_sync(session, reason="v12_private_signal_only")
 
 
 def test_production_self_turn_uses_unified_subject_commit_path() -> None:
-    """Guard kiến trúc: self-turn không quay lại semantic Executive path cũ."""
-    from pathlib import Path
+    """V12: autonomous/self-turn không còn public pipeline riêng.
 
+    Subject runtime được giữ như nguồn signal/evidence; public speech phải quay
+    về ConversationKernel/RootAgent, vì vậy test V26 không được soi module đã retire.
+    """
+    from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    source = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
-    assert "subject_ingress.complete_session(" in source
-    assert "complete_autonomous_turn(" not in source
-    # ``executive.deliberate`` chỉ còn ở nhánh capability_route sau Subject commit.
-    commit_pos = source.index("subject_ingress.complete_session(")
-    capability_pos = source.index('subject_decision.arguments.get("capability_route", False)')
-    legacy_exec_pos = source.index("executive.deliberate(", capability_pos)
-    assert commit_pos < capability_pos < legacy_exec_pos
+    assert not (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").exists()
+    architecture = (root / "tests" / "conversation" / "test_architecture_v12.py").read_text(encoding="utf-8")
+    assert "test_retired_self_turn_and_social_modules_are_absent" in architecture
 
 
 def test_seed_is_not_required_for_contentful_urge_wake_source() -> None:
-    """V44: urge đã tồn tại có thể wake lại dù seed gốc đã hết lease."""
+    """V12: urge/seed chỉ là nguồn event; chúng không được tự materialize speech."""
     from pathlib import Path
-
     root = Path(__file__).resolve().parents[2]
-    source = (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").read_text(encoding="utf-8")
-    assert 'emit(\n                "expression_urge"' in source
-    assert "expression_urge_pressure" in source
-    assert "preview_understand" not in source
+    assert not (root / "runtime" / "ai_orchestrated" / "self_turn_pipeline.py").exists()
+    source = (root / "runtime" / "expression_urge_runtime.py").read_text(encoding="utf-8")
+    # Expression urge vẫn có thể tồn tại như private/runtime signal, nhưng không
+    # được sở hữu public writer/TTS path.
+    assert "note_competition" in source
+    assert "self_turn_pipeline" not in source
 
 
 def test_v66_runtime_context_does_not_encode_unanswered_user_as_expression_cost() -> None:
