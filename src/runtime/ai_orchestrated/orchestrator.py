@@ -791,7 +791,12 @@ class AIChatOrchestrator:
             text=str(user_text or "")[:16000],
         )
         from runtime.capabilities import ResearchCapability, TutorCapability, WorkCapability
+        from runtime.conversation.context import RootCapabilityRegistry
 
+        # V12 hard cutover: foreground bootstrap chỉ *đăng ký* capability. Không
+        # gọi tutor/work/research trước RootAgent vì làm vậy sẽ biến router thành
+        # semantic authority thứ hai và khiến small-talk cũng phải chạy domain
+        # planner không cần thiết. DeepSeek tự quyết định capability nào đáng gọi.
         tutor_capability = getattr(host, "tutor_capability", None)
         if not isinstance(tutor_capability, TutorCapability):
             tutor_capability = TutorCapability(
@@ -799,13 +804,6 @@ class AIChatOrchestrator:
                 logger=getattr(host, "logger", None),
             )
             host.tutor_capability = tutor_capability
-        tutor_advice = tutor_capability.advise(
-            user_text=str(user_text or ""),
-            turn_id=event.event_id,
-            recent_history=history,
-            response_to_previous=bool(getattr(host, "_tutor_waiting_for_response", False)),
-        )
-        host._tutor_waiting_for_response = tutor_advice.expects_learner_response
 
         work_capability = getattr(host, "work_capability", None)
         if not isinstance(work_capability, WorkCapability):
@@ -814,12 +812,17 @@ class AIChatOrchestrator:
                 logger=getattr(host, "logger", None),
             )
             host.work_capability = work_capability
+
         research_capability = getattr(host, "research_capability", None)
-        research_snapshot = (
-            research_capability.snapshot()
-            if isinstance(research_capability, ResearchCapability)
-            else None
-        )
+        if not isinstance(research_capability, ResearchCapability):
+            research_capability = ResearchCapability()
+            host.research_capability = research_capability
+
+        capability_registry = RootCapabilityRegistry({
+            "tutor": tutor_capability,
+            "work": work_capability,
+            "research": research_capability,
+        })
         runtime_context = {
             "previous_public_excerpt": str(previous_public_context or "")[-1200:],
             "interrupt_context": str(speech_interrupt_context or "")[:2400],
@@ -828,9 +831,9 @@ class AIChatOrchestrator:
             "memory_context": str(getattr(host, "last_memory_context", "") or "")[:8000],
             "grounding_context": str(getattr(host, "last_grounding_context", "") or "")[:10000],
             "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
-            "tutor_capability": tutor_advice.to_dict(),
-            "work_capability": work_capability.snapshot().to_dict(),
-            "research_capability": research_snapshot.to_dict() if research_snapshot is not None else {},
+            # Dependency nội bộ cho root loop; RuntimeModelRootAgent không
+            # serialize key ``__*`` vào prompt và writer không dùng registry này.
+            "__root_capabilities": capability_registry,
             "language_hint": _runtime_language(),
             "speech_language_hint": _runtime_speech_language(),
         }
@@ -978,12 +981,11 @@ class AIAutonomousOrchestrator:
                 )
             except Exception as exc:
                 _orchestrator_boundary_note(host, "startup.persistent_individual_prime", exc)
+            # V12: handoff chỉ prime provenance/observation. Không log owner,
+            # pressure hay pending-goal vì các semantic control state đó đã bị xóa.
             host.logger.info(
-                "[architecture C startup] continuity primed rev=%s owner=%s pressure=%.2f pending=%s opening_signal=kernel",
+                "[architecture C startup] handoff_observation_primed rev=%s opening_signal=kernel",
                 handoff.revision,
-                handoff.next_move_owner,
-                handoff.continuity_pressure,
-                _compact(handoff.pending_shared_goal, 140) or "none",
             )
         except Exception as exc:
             _orchestrator_boundary_note(host, "startup.conversation_handoff_prime", exc)

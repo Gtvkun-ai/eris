@@ -19,6 +19,7 @@ from .contracts import (
     RunPhase,
 )
 from .continuation import ContinuationLeaseScheduler
+from .context import ConversationNoteTools
 from .delivery import ConversationDelivery
 from .receipts import DeliveryReceiptLedger
 from .session_store import ConversationSessionStore
@@ -153,11 +154,12 @@ class ConversationKernel:
             )
 
         normalized_event = replace(event, session_id=sid, generation=state.generation)
+        agent_context = self._agent_runtime_context(sid, runtime_context)
         decision = self.agent.decide(
             event=normalized_event,
             recent_history=recent_history,
             note=state.note,
-            runtime_context=dict(runtime_context or {}),
+            runtime_context=agent_context,
         )
         current = self.store.load(sid)
         if current.generation != state.generation or current.active_run_id != run_id:
@@ -188,7 +190,7 @@ class ConversationKernel:
             generation=state.generation,
             run_id=run_id,
             move=decision,
-            note=state.note,
+            note=current.note,
             continuation=event.kind == "continuation_due",
         )
         self.store.mutate(
@@ -392,7 +394,7 @@ class ConversationKernel:
             event=event,
             recent_history=recent_history,
             note=state.note,
-            runtime_context=dict(runtime_context or {}),
+            runtime_context=self._agent_runtime_context(sid, runtime_context),
         )
         if isinstance(decision, NoReply):
             self.store.mutate(sid, lambda prior, now: replace(prior, phase=RunPhase.WAITING_USER))
@@ -426,7 +428,10 @@ class ConversationKernel:
                 event=event,
                 recent_history=recent_history,
                 note=state.note,
-                runtime_context={**dict(runtime_context or {}), "continuation_lease": lease.to_dict()},
+                runtime_context=self._agent_runtime_context(
+                    sid,
+                    {**dict(runtime_context or {}), "continuation_lease": lease.to_dict()},
+                ),
             )
             self.continuation.consume(lease)
             if isinstance(decision, NoReply):
@@ -449,6 +454,26 @@ class ConversationKernel:
         except Exception:
             self.continuation.release(lease)
             raise
+
+    def _agent_runtime_context(
+        self,
+        session_id: str,
+        runtime_context: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Gắn note tools cơ học cho RootAgent mà không đưa chúng xuống writer.
+
+        Capability registry (nếu caller cung cấp) được giữ nguyên trong mapping
+        nội bộ. ``RuntimeModelRootAgent`` tự chặn các key ``__*`` khỏi model
+        payload; writer cũng chỉ nhận public runtime context gốc.
+        """
+
+        sid = str(session_id or "default")[:180]
+        context = dict(runtime_context or {})
+        context["__conversation_note_tools"] = ConversationNoteTools(
+            set_note=lambda text: self.store.set_note(sid, text),
+            clear_note=lambda: self.store.clear_note(sid),
+        )
+        return context
 
     def set_note(self, session_id: str, note: str) -> None:
         self.store.set_note(session_id, note)

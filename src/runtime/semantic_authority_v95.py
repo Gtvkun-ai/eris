@@ -69,7 +69,6 @@ def _resume_goal_rejection(
 
     runtime = _runtime_context(frame)
     initiative = _mapping(runtime.get("initiative_runtime_context"))
-    handoff = _mapping(runtime.get("conversation_handoff"))
 
     has_typed_goal_state = any(
         key in initiative
@@ -97,19 +96,9 @@ def _resume_goal_rejection(
             )
         return None
 
-    # Adapter/migration cũ có thể chỉ mang handoff. Nếu handoff đã khai owner rõ
-    # thì vẫn tôn trọng ownership V93; nếu không có dữ liệu typed thì fail-open để
-    # tránh V95 phá các adapter legacy không tham gia autonomous production path.
-    pending = _compact(handoff.get("pending_shared_goal", ""), 520)
-    owner = str(handoff.get("pending_shared_goal_owner", "unknown") or "unknown").strip().lower()
-    if pending and owner not in {"user", "shared", "unknown"}:
-        return MotiveRejection(
-            coalition_id=str(getattr(coalition, "coalition_id", "") or ""),
-            proposal_ref=str(getattr(coalition, "primary_proposal_ref", "") or ""),
-            speech_act=speech_act,
-            code="resume_goal_owner_not_shared",
-            detail=f"handoff_owner={owner}",
-        )
+    # V12: không fallback sang ConversationHandoff để suy một shared-goal debt.
+    # Handoff đã trở thành observer thuần. Nếu initiative runtime không có typed
+    # lifecycle state thì validator fail-open và RootAgent sẽ tự đánh giá event.
     return None
 
 

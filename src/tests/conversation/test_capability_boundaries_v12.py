@@ -63,13 +63,16 @@ def test_tutor_returns_advice_without_public_surface_methods():
     assert not hasattr(advice, "public_text")
 
 
-def test_foreground_root_receives_data_only_capability_context():
+def test_foreground_registers_capabilities_without_eager_domain_calls():
     source = inspect.getsource(AIChatOrchestrator._run_v12)
 
-    assert "tutor_capability.advise" in source
-    assert "work_capability.snapshot" in source
-    assert "research_capability.snapshot" in source
-    assert '"tutor_capability": tutor_advice.to_dict()' in source
+    # Router chỉ wire dependency. RootAgent mới được quyền quyết có gọi domain
+    # capability hay không; small talk không được chạy TutorExecutive ngầm.
+    assert "RootCapabilityRegistry" in source
+    assert '"__root_capabilities": capability_registry' in source
+    assert "tutor_capability.advise" not in source
+    assert "work_capability.snapshot" not in source
+    assert "research_capability.snapshot" not in source
 
 
 def test_tutor_observes_delivery_receipt_without_receiving_public_text():

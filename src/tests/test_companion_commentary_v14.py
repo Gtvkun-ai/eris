@@ -109,47 +109,6 @@ def test_relational_bid_anchor_comes_from_typed_frame() -> None:
     assert anchor_from_semantic_frame(frame) == "closeness_bid"
 
 
-def test_self_turn_does_not_release_baton_while_chat_generation_is_active(monkeypatch) -> None:
-    from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
-
-    monkeypatch.setattr("runtime.ai_orchestrated.self_turn_pipeline.time.sleep", lambda _seconds: None)
-    host = SimpleNamespace(
-        chat_mode=True,
-        _chat_processing=True,
-        interaction_clock=SimpleNamespace(busy=False),
-        logger=SimpleNamespace(info=lambda *_args, **_kwargs: None),
-    )
-    pipeline = object.__new__(SelfTurnPipeline)
-    pipeline.host = host
-    assert pipeline._acquire_baton() is False
-    assert host.chat_mode is True
-
-
-def test_self_turn_releases_baton_via_chat_cycle_owner(monkeypatch) -> None:
-    from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
-
-    monkeypatch.setattr("runtime.ai_orchestrated.self_turn_pipeline.time.sleep", lambda _seconds: None)
-    calls: list[str] = []
-    host = SimpleNamespace(
-        chat_mode=True,
-        _chat_processing=False,
-        interaction_clock=SimpleNamespace(busy=False),
-        logger=SimpleNamespace(info=lambda *_args, **_kwargs: None),
-        _conversation_went_stale=lambda: True,
-    )
-
-    def _end_chat_cycle() -> None:
-        calls.append("ended")
-        host.chat_mode = False
-
-    host._end_chat_cycle = _end_chat_cycle
-    pipeline = object.__new__(SelfTurnPipeline)
-    pipeline.host = host
-    assert pipeline._acquire_baton() is True
-    assert calls == ["ended"]
-    assert host.chat_mode is False
-
-
 def test_runtime_settings_v3_migrates_companion_commentary_defaults() -> None:
     from runtime.runtime_settings_store import RuntimeSettingsStore
 

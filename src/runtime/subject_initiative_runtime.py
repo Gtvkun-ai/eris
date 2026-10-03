@@ -14,7 +14,7 @@ import time
 from typing import Any, Mapping, Sequence
 
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
-from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 from cortex.subject.initiative_control import InitiativeArbiter, InitiativeControlAction
 from cortex.subject.existential_desire import ExistentialDesireDeriver
 from cortex.subject.environment_meaning import EnvironmentMeaningDeriver, EnvironmentMeaningKind
@@ -362,7 +362,6 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
     handoff_runtime = getattr(host, "conversation_handoff_runtime", None)
     handoff_state = getattr(handoff_runtime, "snapshot", lambda: None)() if handoff_runtime is not None else None
     conversation_topic_closed = bool(getattr(handoff_state, "topic_closed", False))
-    conversation_move_hint = str(getattr(handoff_state, "conversation_move_hint", "") or "")
 
     # V77: motive generator được nhìn self-process TRƯỚC khi materialize social
     # candidate. Nếu không, kiến trúc vẫn là "candidate trước, self sửa điểm sau".
@@ -384,7 +383,6 @@ def build_initiative_runtime_context(host: Any) -> dict[str, Any]:
         "user_model_uncertainty": uncertainty,
         "user_model_evidence_refs": refs,
         "conversation_topic_closed": conversation_topic_closed,
-        "conversation_move_hint": conversation_move_hint,
         # V59: projection hiện sinh + desire chỉ chứa state có provenance, không
         # chứa chain-of-thought hay phán đoán riêng tư chưa kiểm chứng về user.
         "existential_anchor": dict(existential_anchor),

@@ -27,7 +27,7 @@ from cortex.subject.contracts import SubjectDeliberationFrame, SubjectExecutiveC
 from cortex.subject.neuro_control import NeuroDeliberationAdvice, SelectionResult
 from cortex.subject.expression_commitment import commitment_payload
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
-from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 
 
 def _compact(value: Any, limit: int = 1000) -> str:

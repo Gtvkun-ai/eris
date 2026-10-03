@@ -216,23 +216,6 @@ def test_v45_same_cause_can_hold_different_material_kinds_with_same_tags():
     assert allowed, reason
 
 
-def test_v45_material_seed_cannot_jump_directly_into_social_affordance():
-    from runtime.ai_orchestrated.social_initiative import SocialInitiativeEngine
-
-    seed = RandomChatSeed.from_material_mapping(
-        _material_payload("reaction"), causal_motive=_motive(), requested_mode="eris_led"
-    )
-
-    class _Reservoir:
-        enabled = True
-
-        def peek(self, *, now=None):
-            return SimpleNamespace(seed=seed, generated_at=900.0, expires_at=1200.0, context_revision=4)
-
-    engine = SocialInitiativeEngine(router=SimpleNamespace(), seed_reservoir=_Reservoir())
-    assert engine._random_chat_seed_affordance(SimpleNamespace(now=1000.0)) is None
-
-
 def test_v45_public_expression_receipt_satisfies_source_material():
     """Public commit phải quay về material gốc, không chỉ làm urge nguội.
 

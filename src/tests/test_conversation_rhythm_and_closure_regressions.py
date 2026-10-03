@@ -10,7 +10,7 @@ from runtime.subject_initiative_runtime import _candidate_from_intention
 from runtime.ai_orchestrated.random_chat_seed import RandomChatSeed
 
 
-def test_explicit_topic_closure_persists_through_assistant_ack_then_clears_on_new_user_turn():
+def test_explicit_topic_closure_is_observed_without_assigning_next_speaker():
     rt = ConversationHandoffRuntime()
 
     state = rt.observe_user_turn(
@@ -20,25 +20,17 @@ def test_explicit_topic_closure_persists_through_assistant_ack_then_clears_on_ne
     )
     assert state.topic_closed is True
     assert state.user_stance == "topic_closed"
-    assert state.unresolved_intent == ""
 
+    # Assistant commit chỉ cập nhật provenance. Handoff không quyết ai giữ floor.
     state = rt.observe_assistant_commit(
         "Ừ, vậy nhé. Tôi không giữ làm gì đâu.",
         speech_act="answer",
         now=101.0,
     )
     assert state.topic_closed is True
-    assert state.next_move_owner == "shared"
-    assert state.unresolved_intent == ""
+    assert "next_move_owner" not in state.to_dict()
 
-    state = rt.observe_assistant_commit(
-        "À mà, dạo này anh hay bị cuốn vào kiểu chủ đề nào nhất?",
-        speech_act="user_probe",
-        now=105.0,
-    )
-    assert state.topic_closed is False
-    assert state.next_move_owner == "user"
-
+    # User turn mới trở thành observation mới và tự thay boundary cũ.
     state = rt.observe_user_turn(
         "à mà tôi hỏi cái khác nhé",
         turn_ref="session_turn:18",

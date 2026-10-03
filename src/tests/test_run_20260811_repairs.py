@@ -17,13 +17,6 @@ def test_plain_nhac_lai_is_not_routed_as_music_or_screen() -> None:
     assert decision.references_screen is False
 
 
-def test_explicit_silence_phrases_are_social_boundaries() -> None:
-    from runtime.ai_orchestrated.social_agenda import _BOUNDARY_RE
-
-    assert _BOUNDARY_RE.search("Sau tin này hãy im một lúc nếu không có gì đáng nói.")
-    assert _BOUNDARY_RE.search("Đừng mở chủ đề mới ngay sau câu này.")
-
-
 def test_followup_projection_does_not_resurrect_closed_topic() -> None:
     from runtime.ai_orchestrated.discourse_state import DiscourseState
     from runtime.ai_orchestrated.followup_appraisal import FollowUpAppraisalLayer
@@ -43,21 +36,10 @@ def test_followup_projection_does_not_resurrect_closed_topic() -> None:
     assert result.may_start_new_topic is False
 
 
-def test_blackboard_carries_explicit_social_boundary() -> None:
-    from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
-
-    blackboard = TypedCognitiveBlackboard.from_snapshot({
-        "social_agenda": {
-            "scene_partner": {"boundary_flags": ["explicit_social_boundary"]},
-        },
-    }, now=10.0)
-    assert blackboard.explicit_social_boundary is True
-
-
 def test_governor_blocks_unsolicited_social_candidate_behind_boundary(tmp_path) -> None:
     from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
     from runtime.ai_orchestrated.initiative import InitiativeAction, InitiativeController
-    from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+    from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 
     controller = InitiativeController(state_path=tmp_path / "initiative.json")
     candidate = SocialSpeechCandidate(

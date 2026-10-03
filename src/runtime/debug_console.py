@@ -552,13 +552,9 @@ class DebugConsole:
         handle_force = getattr(self.coord, "_handle_force_speak_request", None)
         if callable(handle_force):
             handle_force()
-            return "Đã đưa cờ force_speak và đánh thức lượt autonomous!"
+            return "Đã gửi force_speak vào ConversationKernel qua event ingress."
 
-        setattr(self.coord, "_autonomous_force_speak_pending", True)
-        wake = getattr(self.coord, "_wake_autonomous_loop", None)
-        if callable(wake):
-            wake(reason="debug_force_speak")
-        return "Đã đưa cờ force_speak và đánh thức lượt autonomous trực tiếp!"
+        return "force_speak unavailable: ConversationKernel event ingress chưa sẵn sàng."
 
     _cmd_speak = _cmd_force_speak
     _cmd_noi = _cmd_force_speak

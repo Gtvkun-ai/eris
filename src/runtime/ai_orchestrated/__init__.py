@@ -56,15 +56,7 @@ from .random_chat_seed_service import (
     RandomChatSeedReservoir,
     SeedReservoirLease,
 )
-from .social_agenda import (
-    ScenePartnerState,
-    SocialAgendaState,
-    SocialAgendaStore,
-    SocialGoal,
-)
-from .social_plan import empty_social_plan, normalize_social_plan
 from .atomic_state import AtomicStateConflict, SQLiteAtomicStateStore, atomic_store_from_env
-from .social_execution import FULL_SOCIAL_LANES, accept_full_social_plan
 from .panel_adapter import build_ai_panel_payload
 from .views import build_cognitive_views
 from .state_reducer import StateReducer
@@ -100,17 +92,9 @@ __all__ = [
     "RandomChatSeedGenerator",
     "RandomChatSeedReservoir",
     "SeedReservoirLease",
-    "ScenePartnerState",
-    "SocialAgendaState",
-    "SocialAgendaStore",
-    "SocialGoal",
     "AtomicStateConflict",
     "SQLiteAtomicStateStore",
     "atomic_store_from_env",
-    "FULL_SOCIAL_LANES",
-    "accept_full_social_plan",
-    "empty_social_plan",
-    "normalize_social_plan",
     "AppraisalState",
     "CognitiveObservation",
     "ConsequenceAssessment",

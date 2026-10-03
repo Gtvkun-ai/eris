@@ -61,10 +61,6 @@ NERVOUS_TRACE_SCHEMA = "eris.public_turn.trace.v98_nervous"
 
 _VALID_MODES = {"off", "shadow", "active"}
 _STRUCTURED_OWNERS = {
-    "conversation_arc",
-    "afterbeat",
-    "social_exposure_recovery",
-    "social_agenda",
     "neuro_continuation",
     "task_continuation",
     "capability_planner",
@@ -737,7 +733,7 @@ class NervousAutonomousAuthorityV103:
                 expression_rows.append(affordance)
                 filtered.append(affordance)
                 continue
-            if owner in _STRUCTURED_OWNERS or kind in {"conversation_arc", "afterbeat", "social_agenda", "social_exposure_recovery", "force_speak"}:
+            if owner in _STRUCTURED_OWNERS or kind == "force_speak":
                 structured_present = True
             filtered.append(affordance)
 

@@ -22,7 +22,7 @@ from cortex.mental_material import (
 from cortex.rumination_dynamics import semantic_development_score
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
 from runtime.ai_orchestrated.random_chat_seed import assess_seed_quality
-from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 
 
 MENTAL_MATERIAL_RUNTIME_VERSION = MENTAL_MATERIAL_VERSION

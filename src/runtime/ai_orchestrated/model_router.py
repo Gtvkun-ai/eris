@@ -27,7 +27,6 @@ from .contracts import CognitiveObservation, IntentionPlan
 from .discovery import DiscoveryPlan
 from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
 from .personality import DEFAULT_CORE, DEFAULT_MOOD, DEFAULT_TEMPERAMENT
-from .social_plan import normalize_social_plan
 
 
 def _deepseek_web_authority_mode() -> bool:
@@ -122,47 +121,6 @@ DISCOVERY_PLAN_SCHEMA: dict[str, Any] = {
         "reason": {"type": "string"},
     },
 }
-
-SOCIAL_INITIATIVE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "kind", "topic", "speech_act", "anchor_type", "anchor_id",
-        "evidence_refs", "requires_grounding", "confidence", "relevance",
-        "urgency", "tone", "reason",
-    ],
-    "properties": {
-        "decision": {"type": "string", "enum": ["candidate", "none"]},
-        "kind": {
-            "type": "string",
-            "enum": [
-                "continuation", "followup_reminder", "task_followup",
-                "discovery_share", "screen_comment", "semantic_scene",
-                "memory_callback", "inner_thought", "social_check_in",
-                "casual_curiosity", "playful_prompt", "random_chat",
-            ],
-        },
-        "topic": {"type": "string"},
-        "speech_act": {"type": "string"},
-        "anchor_type": {
-            "type": "string",
-            "enum": ["none", "idle", "conversation", "self", "memory", "task", "screen", "semantic_scene", "discovery"],
-        },
-        "anchor_id": {"type": "string"},
-        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-        "requires_grounding": {"type": "boolean"},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "relevance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "urgency": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "tone": {"type": "string"},
-        "reason": {"type": "string"},
-    },
-}
-
-
-
-# Filled after UTTERANCE_SCHEMA is declared; kept here for module layout compatibility.
-SURFACE_REALIZATION_SCHEMA: dict[str, Any] = {}
 
 COGNITIVE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -600,180 +558,6 @@ UTTERANCE_SCHEMA: dict[str, Any] = {
 }
 
 
-AFTERBEAT_PROPOSAL_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["decision", "role", "objective", "pause_class", "tone", "confidence"],
-    "properties": {
-        "decision": {"type": "string", "enum": ["none", "reserve"]},
-        "role": {"type": "string", "enum": ["punchline", "reveal", "soften", "reconsider", "afterthought"]},
-        "objective": {"type": "string", "maxLength": 320},
-        "pause_class": {"type": "string", "enum": ["micro", "short", "held"]},
-        "tone": PERFORMANCE_PRESET_SCHEMA,
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-    },
-}
-
-SOCIAL_EXPOSURE_PROPOSAL_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "kind", "level", "expects_reaction", "reaction_window_class",
-        "expected_responses", "silence_hypotheses", "recovery_style", "confidence",
-    ],
-    "properties": {
-        "decision": {"type": "string", "enum": ["none", "open"]},
-        "kind": {"type": "string", "enum": [
-            "none", "playful_vulnerability", "flirt_risk", "tease_risk",
-            "self_disclosure", "social_invitation", "face_risk",
-        ]},
-        "level": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "expects_reaction": {"type": "boolean"},
-        "reaction_window_class": {"type": "string", "enum": ["micro", "short", "held"]},
-        "expected_responses": {"type": "array", "items": {"type": "string", "maxLength": 96}, "maxItems": 6},
-        "silence_hypotheses": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 4},
-        "recovery_style": {"type": "string", "maxLength": 64},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-    },
-}
-
-SOCIAL_AGENDA_UPDATE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "goal_type", "objective", "desired_user_state", "strategy", "horizon",
-        "success_signals", "stop_signals", "salience", "evidence_refs",
-    ],
-    "properties": {
-        "decision": {"type": "string", "enum": ["none", "open", "update", "advance", "pause", "close"]},
-        "goal_type": {"type": "string", "enum": [
-            "none", "build_shared_bit", "deepen_topic", "invite_story", "story_continuation",
-            "warm_presence", "callback", "repair", "change_mood", "comfortable_silence", "learn_preference",
-        ]},
-        "objective": {"type": "string", "maxLength": 420},
-        "desired_user_state": {"type": "string", "maxLength": 160},
-        "strategy": {"type": "string", "maxLength": 220},
-        "horizon": {"type": "string", "enum": ["turn", "session", "cross_session"]},
-        "success_signals": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
-        "stop_signals": {"type": "array", "items": {"type": "string", "maxLength": 120}, "maxItems": 8},
-        "salience": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "evidence_refs": {"type": "array", "items": {"type": "string", "maxLength": 140}, "maxItems": 6},
-    },
-}
-
-SOCIAL_CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["decision", "goal", "beats", "confidence"],
-    "properties": {
-        "decision": {"type": "string", "enum": ["none", "schedule"]},
-        "goal": {"type": "string", "maxLength": 420},
-        "beats": {
-            "type": "array", "maxItems": 3,
-            "items": {
-                "type": "object", "additionalProperties": False,
-                "required": ["role", "objective", "condition", "tone"],
-                "properties": {
-                    "role": {"type": "string", "enum": [
-                        "callback", "reveal", "punchline", "escalate", "soften",
-                        "reconsider", "return_to_goal", "afterthought",
-                    ]},
-                    "objective": {"type": "string", "maxLength": 360},
-                    "condition": {"type": "string", "maxLength": 220},
-                    "tone": PERFORMANCE_PRESET_SCHEMA,
-                },
-            },
-        },
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-    },
-}
-
-SOCIAL_PLAN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["afterbeat", "exposure", "agenda_update", "conversation_arc"],
-    "properties": {
-        "afterbeat": AFTERBEAT_PROPOSAL_SCHEMA,
-        "exposure": SOCIAL_EXPOSURE_PROPOSAL_SCHEMA,
-        "agenda_update": SOCIAL_AGENDA_UPDATE_SCHEMA,
-        "conversation_arc": SOCIAL_CONVERSATION_ARC_SCHEMA,
-    },
-}
-
-
-CONVERSATION_ARC_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "arc_id", "thread_key", "goal",
-        "user_reply_policy", "expires_after_seconds", "beats",
-    ],
-    "properties": {
-        "decision": {"type": "string", "enum": ["none", "schedule"]},
-        "arc_id": {"type": "string"},
-        "thread_key": {"type": "string"},
-        "goal": {"type": "string"},
-        "user_reply_policy": {"type": "string", "enum": ["cancel", "replan"]},
-        "expires_after_seconds": {"type": "number", "minimum": 15.0, "maximum": 600.0},
-        "beats": {
-            "type": "array",
-            "maxItems": 3,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["role", "objective", "delay_seconds", "tone", "max_sentences"],
-                "properties": {
-                    "role": {
-                        "type": "string",
-                        "enum": [
-                            "callback", "reveal", "punchline", "escalate",
-                            "soften", "reconsider", "return_to_goal", "afterthought"
-                        ],
-                    },
-                    "objective": {"type": "string"},
-                    "delay_seconds": {"type": "number", "minimum": 0.25, "maximum": 8.0},
-                    "tone": PERFORMANCE_PRESET_SCHEMA,
-                    "max_sentences": {"type": "integer", "minimum": 1, "maximum": 2},
-                },
-            },
-        },
-    },
-}
-
-SURFACE_REALIZATION_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["utterance", "confidence", "evidence_refs", "claim_manifest", "reason"],
-    "properties": {
-        "utterance": UTTERANCE_SCHEMA,
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
-        "claim_manifest": {
-            "type": "array",
-            "maxItems": 10,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["domain", "claim", "evidence_refs"],
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "enum": [
-                            "internal_state", "conversation_history", "user_statement",
-                            "user_profile", "shared_episode", "memory", "verified_runtime_clock", "grounded_environment",
-                            "engagement_state", "discovery_artifact", "self_capability",
-                            "self_preference", "self_model", "self_history", "opinion", "hypothetical"
-                        ],
-                    },
-                    "claim": {"type": "string"},
-                    "evidence_refs": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
-                },
-            },
-        },
-        "reason": {"type": "string"},
-    },
-}
-
 SELF_CAPABILITY_CLAIM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -809,7 +593,7 @@ CLAIM_MANIFEST_SCHEMA: dict[str, Any] = {
 }
 
 # Contract public writer V42. Ba surface field vẫn là availability payload;
-# claim_manifest là integrity metadata bắt buộc để runtime kiểm domain sự thật. Metadata semantic/social vẫn
+# claim_manifest là integrity metadata bắt buộc để runtime kiểm domain sự thật. Metadata semantic vẫn
 # được phép đi kèm nhưng là soft metadata: runtime sanitize riêng và lỗi của nó
 # tuyệt đối không được xóa câu public hợp lệ.
 PUBLIC_REPLY_CORE_SCHEMA: dict[str, Any] = {
@@ -835,7 +619,6 @@ PUBLIC_REPLY_CORE_SCHEMA: dict[str, Any] = {
         # _compat_public_envelope() mới là nơi validate/sanitize chúng.
         "semantic_frame": {},
         "assistant_act": {},
-        "social_plan": {},
         "self_capability_claims": {},
         # Cho provider cũ vẫn thích trả nested utterance; text/speech_text ở trên
         # mới là availability contract bắt buộc.
@@ -849,13 +632,12 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     # Meaning, both language surfaces and performance are committed by one
     # semantic authority in the same DeepSeek Web turn.
-    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance", "social_plan", "self_capability_claims"],
+    "required": ["semantic_frame", "assistant_act", "should_speak", "utterance", "self_capability_claims"],
     "properties": {
         "semantic_frame": SEMANTIC_FRAME_SCHEMA,
         "assistant_act": ASSISTANT_ACT_SCHEMA,
         "should_speak": {"type": "boolean"},
         "utterance": UTTERANCE_SCHEMA,
-        "social_plan": SOCIAL_PLAN_SCHEMA,
         "self_capability_claims": {
             "type": "array",
             "items": SELF_CAPABILITY_CLAIM_SCHEMA,
@@ -1751,21 +1533,18 @@ class AIRuntimeModelRouter:
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
             "HARD DISPLAY LANGUAGE LOCK: text chỉ được dùng đúng display language đã chỉ định; tuyệt đối không đổi cả câu sang Nhật/Trung/Anh nếu display là tiếng Việt. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
-            "Trả lời yêu cầu cụ thể trước; giữ continuity từ history và context; nếu user yêu cầu sửa giọng thì sửa ngay delivery của lượt này. "
-            "Nếu Discourse state có AGENT_TURN_LOOP_V10/V11, discourse_plan.public_beats là contract ở mức Ý: chỉ nói đúng các public beat root agent đã chọn cho lượt này. conversation_speech_plan.planned_threads/next_intent là context dài hạn, tuyệt đối không tự xổ vào câu hiện tại. desired_shape mô tả hình dạng agent muốn tạo ra nhưng không phải word/time cap. turn_projection.verbal_bridge_hint chỉ là gợi ý nhịp kết câu do agent chọn: hiện thực tự nhiên nếu hợp public_beats, không quote hint và không thêm fact mới. floor=hold có thể để nhịp kết hơi mở; floor=yield nên khép ý rõ hơn. Không đọc tên beat, không biến mỗi beat thành heading. Nếu tutor directive yêu cầu user response, hiện thực đúng một teaching move rồi dừng, không tự trả lời hộ câu tutor vừa hỏi. "
-            "Nếu user đang hỏi lại, yêu cầu phân tích/giải thích một phát ngôn trước đó, hoặc request đã đủ rõ để trả lời, hãy trả lời thẳng nội dung trước. "
-            "Không hỏi ngược về động cơ, mục đích hay bắt user chọn giữa các cách diễn giải chỉ để trì hoãn câu trả lời; chỉ hỏi clarification khi thiếu dữ kiện thật sự khiến câu trả lời không thể xác định. "
-            "Nếu câu trước của ERIS gây mơ hồ hoặc user yêu cầu repair, tự giải quyết phần mơ hồ và viết lại câu tốt hơn, không đẩy việc làm rõ ngược cho user. "
-            "Nếu user vừa đóng một chủ đề hoặc nói muốn cho chuyện đó qua, tôn trọng closure: acknowledge ngắn rồi không lôi topic cũ trở lại từ memory/concern. "
-            "Khi thực sự chuyển sang chủ đề khác, tạo một cầu nối hội thoại tự nhiên trước khi rẽ (ví dụ tương đương 'à mà', 'nói chuyện khác chút', hoặc một câu mời ý kiến như 'anh nghĩ sao'); đừng nhảy topic như thay kênh. "
-            "Không biến mọi lượt thành bàn luận của ERIS. Khi không còn việc cụ thể phải giải quyết và context cho phép, ưu tiên một câu hỏi nhẹ, cụ thể để hiểu user hơn thay vì thêm một self-monologue. Tránh phỏng vấn liên hoàn và tránh câu hỏi generic. "
-            "Không phát minh grounding, memory hay capability. Grounding chỉ đến từ context; capability directive của runtime là authority. "
+            "RootAgent đã quyết định toàn bộ ý nghĩa cần nói ở upstream. Writer CHỈ hiện thực ROOT_CONVERSATION_MOVE_V12 thành câu chữ tự nhiên và hai bề mặt hiển thị/phát âm. "
+            "History, user text, memory, grounding và relationship context chỉ dùng để chọn đại từ, reference, wording và kiểm tra fact của nội dung đã được RootAgent giao; chúng KHÔNG cấp quyền tạo thêm intent. "
+            "Không tự thêm câu hỏi, clarification, CTA, lời mời, repair, bridge đổi chủ đề, teaching step, social check-in, kết luận, topic mới hay continuation nếu `say` không yêu cầu rõ điều đó. "
+            "Không được tự quyết nên giữ continuity, kéo lại topic cũ, đổi topic, hỏi user thêm hay im lặng; đó là semantic authority của RootAgent. "
+            "Nếu `say` yêu cầu một câu hỏi hoặc một teaching move thì hiện thực đúng nó; nếu không, đừng thêm một câu hỏi chỉ để làm hội thoại tự nhiên hơn. "
+            "Không phát minh grounding, memory hay capability. Grounding chỉ được dùng làm evidence để wording đúng với move hiện tại. "
             "Nếu Current grounding chứa EVIDENCE_ENRICHMENT_V73, đó là positive semantic input đã được runtime tuyển từ user profile, shared episodes, recent turns và self-model có provenance. Dùng nó để làm câu trả lời liên tục và cụ thể hơn; không bắt buộc nhắc fact không liên quan, không nâng unknown thành fact, và không tự bịa cầu nối ký ức. "
             "V42 claim-domain contract: mọi factual/sensory/memory/runtime claim được thêm vào câu phải khai báo trong claim_manifest. "
             "Chỉ dùng domain/evidence ref mà Current grounding cho phép; user_profile/shared_episode/self_model phải dùng ref thật; opinion/hypothetical/internal_state có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
             "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Dùng personality context như quyền biểu đạt: nó phải đổi cadence, độ gần, mức tự bộc lộ và cạnh hài khi phù hợp, chứ không được nằm chết như metadata. "
             "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
-            "semantic_frame, assistant_act, social_plan và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
+            "semantic_frame, assistant_act và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "
             "Lỗi hoặc thiếu soft metadata KHÔNG được làm bạn bỏ text/speech_text. Public text luôn ưu tiên số một. "
             "Nếu có self_capability_claims thì dùng exact capability_id từ directive/context, không tự đặt tên capability. "
             + STANCE_PUBLIC_RULES_VI + " "
@@ -2139,9 +1918,6 @@ class AIRuntimeModelRouter:
             # dùng chúng để không parse lại cùng contract lần thứ hai.
             "_typed_semantic_frame": validation.frame,
             "_typed_assistant_act": assistant_validation.act,
-            "social_plan": normalize_social_plan(
-                data.get("social_plan") if isinstance(data.get("social_plan"), Mapping) else None,
-            ),
             "self_capability_claims": normalize_self_capability_claims(
                 data.get("self_capability_claims", ())
             ),
@@ -2847,144 +2623,6 @@ class AIRuntimeModelRouter:
         data["notes"] = (plan.notes + "; capability authority reserved for runtime Capability Planner").strip("; ")
         return IntentionPlan.from_mapping(data, channel="autonomous")
 
-    @staticmethod
-    def _social_initiative_prompt() -> str:
-        return (
-            "Bạn là SOCIAL AGENDA SELECTOR của ERIS. Bạn chỉ đề xuất một impulse/chủ đề typed, không viết câu public. "
-            "Bạn chỉ phát hiện opportunity; quyền biểu đạt thuộc ExpressionCommitment của ERIS và Surface Worker chỉ hiện thực hóa wording. Đọc blackboard, recent_public_history và social_context. "
-            "Trả decision=none khi ERIS thực sự không có impulse tự thân đủ cụ thể, hoặc impulse chỉ lặp lại/thiếu neo. "
-            "Khi có một lý do xã hội thật, chọn đúng một kind và mô tả topic như mục tiêu giao tiếp cụ thể. "
-            "followup_reminder chỉ nhắc đúng một lần không trách móc; screen_comment phải copy evidence_refs tươi; semantic_scene dùng shared semantic context; "
-            "memory_callback chỉ dùng memory anchor có sẵn; inner_thought chỉ dùng public-safe self seed; social_check_in/casual_curiosity/playful_prompt/random_chat "
-            "không được bịa quan sát, cảm xúc, kế hoạch hoặc ký ức của user. decision=none chỉ có nghĩa là chưa có social opportunity thật. Return JSON only theo schema."
-        )
-
-    def propose_social_initiative(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        """Select one autonomous social impulse without owning public wording."""
-
-        client = self.surface_client or getattr(self.llm_service, "client", None) or self.deep_client
-        if client is None:
-            return {}
-        try:
-            timeout = max(8.0, min(120.0, float(
-                os.getenv("ERIS_SOCIAL_SELECTOR_TIMEOUT_SEC", "60") or 60.0
-            )))
-        except (TypeError, ValueError):
-            timeout = 60.0
-        return self._call(
-            client,
-            system=self._social_initiative_prompt(),
-            payload=request,
-            schema=SOCIAL_INITIATIVE_SCHEMA,
-            name="eris_social_agenda_selector",
-            max_tokens=300,
-            reasoning_effort=None,
-            inference_tier="main_cognition",
-            priority=84,
-            timeout_seconds=timeout,
-        )
-
-
-    @staticmethod
-    def _surface_realizer_prompt() -> str:
-        return (
-            "If surface_contract.speech_language is ja, write utterance.speech in natural Japanese kana/kanji, never romaji. "
-            f"Bạn là giọng Surface của ERIS. {AUTONOMOUS_VOICE_CORE_V39} "
-            "ExpressionCommitment/Neuro đã cam kết action family SPEECH và khóa mode, "
-            "anchor, topic, evidence scope. Trong MỘT JSON, render cùng semantic intent thành utterance.display theo "
-            "surface_contract.display_language và utterance.speech theo surface_contract.speech_language. "
-            "Hai bề mặt phải cùng nghĩa, cùng mức thân mật và cùng cá tính; speech là lời thực sự đưa vào ElevenLabs. "
-            "Chọn performance preset/intensity/nonverbal ngay trong utterance; không viết stage direction vào text. "
-            "Không được trả silence, đổi mode, đổi topic owner, tự thêm memory/screen fact, hay giải thích contract. "
-            "speech_intent.plan.topic là mục tiêu giao tiếp, không phải câu cần chép. blackboard chỉ là public-safe context. "
-            "Nếu anchor là screen, chỉ dùng literal app/window/evidence được đưa; không đoán user đang thắng, thua, buồn hay định làm gì. "
-            "Nếu anchor là semantic_scene, dùng shared_semantic_context làm baseline: fact được nói thẳng, inference phải dè dặt, "
-            "unknown tuyệt đối không tự lấp; không đọc lại raw OCR và không nhắc contract nội bộ. "
-            "Nếu speech_intent.plan.semantics.turn_kind=arc_continuation, đây là beat kế tiếp của một conversation arc: "
-            "giữ đúng long-horizon goal và beat objective trong topic, tạo một câu mới sau khoảng lặng, không lặp câu trước, không giải thích setup hay nhắc hệ thống. "
-            "Nếu anchor là self, chỉ surface seed đã được duyệt, không lộ raw thought. Nếu speech_act=followup_reminder, "
-            "giữ đúng unresolved point nhưng nói như continuity tự nhiên, không như notification template; không nhắc chuyện bị lờ và không tự thêm pressure/câu hỏi mới. "
-            "Nếu surface_contract.rewrite_required=true, output trước vừa bị runtime bác vì lặp: bắt buộc bám speech_intent HIỆN TẠI, "
-            "không tái sử dụng rejected_display_text/avoid_repeating và không quay về chủ đề autonomous cũ chỉ vì nó còn trong recent history. "
-            "Nếu speech_intent.random_chat_seed có dữ liệu, premise là hạt ý bắt buộc: giữ motive, mode, personal_stake và daring của seed. "
-            "Giữ nguyên epistemic_mode: speculation phải nói như suy đoán, imagination phải nói như hình dung, opinion là quan điểm, question/research_intent không được nâng thành fact; bounded_inference phải giữ độ dè dặt. "
-            "Khi motive là want_to_share/want_to_express, ưu tiên một phát biểu tự đủ nghĩa; không mặc định biến thành câu hỏi, không xin phép chia sẻ, "
-            "không kết thúc bằng 'còn bạn thì sao', không gây áp lực phải trả lời. Daring cho phép ý kiến riêng, tự bộc lộ hoặc trêu nhẹ trong risk đã duyệt; "
-            "nó không cho phép bịa fact, chạm memory nhạy cảm hay ép thân mật. Nếu speech_act=user_probe, hỏi đúng MỘT câu nhẹ, cụ thể về user để lấp một khoảng chưa biết thật; "
-            "Nếu speech_intent.evidence_bundle có dữ liệu, coi đó là kho semantic đã được runtime tuyển chọn: user_facts/recent_user_turns/shared_episodes/self_facts là dữ kiện có provenance; open_user_gap là khoảng chưa biết nên ưu tiên khi speech_act=user_probe. Không bắt buộc nhắc fact nếu không liên quan, nhưng tuyệt đối không nâng unknown thành fact. "
-            "Với user_probe, nếu open_user_gap tồn tại thì câu hỏi phải nhắm đúng gap đó hoặc một biến thể semantic rất gần; đừng tự bốc một chủ đề đời thường khác chỉ để có chuyện hỏi. "
-            "user_probe TUYỆT ĐỐI không được mở bằng ký ức giả kiểu 'lúc trước bạn có kể/anh từng nói' nếu speech_intent không cấp conversation_history/shared_episode/memory cùng evidence ref thật. Hỏi từ cái chưa biết, đừng bịa tiền đề để câu hỏi có vẻ tự nhiên. "
-            "nếu đây là nhịp mới sau topic closure, mở bằng một bridge tự nhiên ngắn (tương đương 'à mà', 'nói chuyện khác chút', v.v.), không dùng cùng một template mỗi lần. "
-            "Nếu speech_act=independent_topic_shift, bỏ hẳn chủ đề cũ nhưng phải có một cầu nối hội thoại ngắn trước ý mới; có thể mời user phản ứng kiểu 'anh nghĩ sao' khi thật sự phù hợp. "
-            "Không dỗi, không trừng phạt, không tuyên bố user không quan tâm, và không chuyển chủ đề bằng một độc thoại trừu tượng dài. "
-            "Giọng ERIS phải theo affective_voice_state hiện tại; personality chỉ định hình cách biểu hiện, không ép nhiệt độ cảm xúc. Giữ hình dạng nhận thức của seed thay vì đánh bóng thành châm ngôn. "
-            "V42 claim-domain contract: với MỌI factual/sensory/memory/runtime claim bạn thêm vào wording, khai báo một item trong claim_manifest. "
-            "domain phải nằm trong surface_contract.allowed_claim_domains; evidence_refs của claim chỉ được copy từ surface_contract.allowed_evidence_refs. "
-            "Opinion/hypothetical/internal_state/self_preference vẫn khai báo domain nhưng có thể không cần evidence ref. "
-            "conversation_history/user_profile/shared_episode/memory/self_model/self_history bắt buộc dùng evidence ref thật. user_profile là fact bền về user; shared_episode là continuity có episode thật; self_model là facet dẫn xuất có provenance. self_preference chỉ là sở thích/quan điểm; self_history là tuyên bố ERIS từng/thường thực hiện một hành động và không được bịa trải nghiệm thân thể. Không có claim thì claim_manifest=[]. "
-            "Tối đa số câu trong surface_contract.max_sentences nhưng đừng tối ưu brevity; evidence_refs chỉ copy id được phép. Return JSON only."
-        )
-
-    def build_surface_public_payload(
-        self,
-        *,
-        plan: IntentionPlan,
-        mode: str,
-        utterance: Mapping[str, Any] | None = None,
-        text: str = "",
-        display_language: str = "vi",
-        speech_language: str = "vi",
-    ) -> dict[str, Any]:
-        """Wrap one autonomous UtteranceSpec without a second companion call."""
-        from runtime.utterance_spec import UtteranceSpec
-
-        social_modes = {"small_talk", "dry_tease", "soft_tease", "random_chat"}
-        assistant_kind = "social" if mode in social_modes else "opinion" if mode == "inner_thought" else "assertion"
-        proposition_mode = "none" if assistant_kind == "social" else "continue" if mode in {"continuation", "memory_callback"} else "new"
-        spec = UtteranceSpec.from_mapping(
-            {"utterance": dict(utterance or {})} if utterance else {"text": text},
-            fallback_text=text,
-            default_display_language=display_language,
-            default_speech_language=speech_language,
-            fallback_preset=plan.performance_hint or "neutral",
-            turn_id=plan.plan_id,
-        )
-        data = {
-            "should_speak": True,
-            "utterance": spec.to_dict(),
-            "semantic_frame": {
-                "turn_kind": plan.semantics.turn_kind,
-                "discourse_relation": "continuation_autonomous" if mode in {"continuation", "memory_callback"} else "autonomous_surface",
-                "user_act": "none",
-                "target": "shared_context",
-                "literal_question": False,
-                "ambiguity_owner": "none",
-                "boundary_action": "none",
-                "continuation_key": plan.semantics.continuation_key if plan.semantics.continuation_key != "none" else "",
-                "evidence_scope": plan.semantics.evidence_scope,
-                "tool_intent": "none",
-                "missing_evidence": [],
-                "reference": {
-                    "kind": "none", "speaker": "none", "operation": "none",
-                    "turn_index": 0, "turn_offset": 0, "confidence": 0.0,
-                },
-                "reply_obligation": {
-                    "must_answer": False,
-                    "must_not_broad_clarify": False,
-                    "must_not_call_tool": True,
-                },
-                "memory_query": {
-                    "intent": "none", "subject": "", "predicate_hint": "", "object_hint": "",
-                    "temporal_scope": "current", "answer_mode": "exact", "confidence": 0.0,
-                },
-            },
-            "assistant_act": {
-                "kind": assistant_kind,
-                "proposition_mode": proposition_mode,
-                "confidence": plan.confidence,
-            },
-        }
-        return self._compat_public_envelope(data)
 
 
 
@@ -2995,14 +2633,8 @@ __all__ = [
     "OBJECTIVE_OBSERVATION_SCHEMA",
     "PERSONALITY_REFLECTION_SCHEMA",
     "INTENTION_PLAN_SCHEMA",
-    "AFTERBEAT_PROPOSAL_SCHEMA",
-    "SOCIAL_EXPOSURE_PROPOSAL_SCHEMA",
-    "SOCIAL_AGENDA_UPDATE_SCHEMA",
-    "SOCIAL_PLAN_SCHEMA",
-    "CONVERSATION_ARC_SCHEMA",
     "PUBLIC_REPLY_SCHEMA",
     "PUBLIC_REPLY_CORE_SCHEMA",
-    "SURFACE_REALIZATION_SCHEMA",
     "SEMANTIC_FRAME_SCHEMA",
     "ASSISTANT_ACT_SCHEMA",
 ]

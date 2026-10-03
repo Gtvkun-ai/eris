@@ -15,7 +15,6 @@ from runtime.policy_settings import AIRuntimeSettings, ChessBridgeSettings, Enga
 from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 from runtime.runtime_status import emit_runtime_status
 
-from .atomic_state import atomic_store_from_env
 from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
 from .discovery import DiscoveryRuntime
 from .executive_cortex import ExecutiveCortex
@@ -29,9 +28,6 @@ from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architec
 from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
-from .social_agenda import SocialAgendaStore
-from .social_execution import status as social_execution_status
-from .social_initiative import SocialInitiativeEngine
 from .random_chat_seed import RandomChatSeedAffinityStore
 from .random_chat_seed_service import RandomChatSeedGenerator, RandomChatSeedReservoir
 
@@ -92,19 +88,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     runtime_clock = getattr(host, "_runtime_clock", None)
     if not callable(runtime_clock):
         runtime_clock = time.time
-    social_atomic_store = atomic_store_from_env(
-        logger=getattr(host, "logger", None),
-        clock=runtime_clock,
-    )
-    host.ai_social_atomic_store = social_atomic_store
-    health.record_success(
-        "ai_orchestrated.social_atomic_state",
-        details=(social_atomic_store.snapshot() if social_atomic_store is not None else {"backend": "memory"}),
-    )
-    # V22 hard cutover: no shadow/control/canary branch. All typed social-plan
-    # lanes are live; floor ownership and safety remain enforced downstream.
-    host.ai_social_execution = social_execution_status()
-    health.record_success("ai_orchestrated.social_execution", details=host.ai_social_execution)
     state_persistence_gate = PersistenceGate(
         ai_settings.state_persistence_interval_seconds,
         clock=runtime_clock,
@@ -224,9 +207,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                     )
                 else:
                     health.record_success(health_name)
-
-    def persist_social_agenda(payload: Mapping[str, Any]) -> None:
-        persist_aux_state("social_agenda_state", "social_agenda.persistence", payload)
 
     def persist_random_chat_seed(payload: Mapping[str, Any]) -> None:
         persist_aux_state(
@@ -392,17 +372,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             logger=getattr(host, "logger", None),
         ),
     )
-    # Selector handles structured opportunities; idle random chat comes only from
-    # the reservoir. Governor owns permission and Surface owns public wording.
-    social_agenda_selector = SocialInitiativeEngine(
-        router,
-        seed_reservoir=random_chat_seed_reservoir,
-        logger=getattr(host, "logger", None),
-    )
-    health.record_success(
-        "ai_orchestrated.social_agenda_selector",
-        details={"enabled": bool(social_agenda_selector.enabled)},
-    )
     # V30: object này không còn persistence riêng cho trajectory/review policy.
     # TemporalMind giữ wake policy; Subject+Neuro giữ action policy; planner chỉ chọn tool.
     executive_cortex = ExecutiveCortex(
@@ -417,27 +386,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         details={
             "enabled": bool(executive_cortex.enabled),
             "model": str(getattr(getattr(llm_service, "executive_client", None), "model_name", "") or ""),
-        },
-    )
-    social_agenda = SocialAgendaStore(
-        initial_state=load_aux_state("social_agenda_state"),
-        persist=persist_social_agenda,
-        logger=getattr(host, "logger", None),
-        clock=runtime_clock,
-        allow_cross_session_memory=str(
-            os.getenv("ERIS_SOCIAL_AGENDA_CROSS_SESSION", "0") or "0"
-        ).strip().lower() in {"1", "true", "yes", "on"},
-        atomic_store=social_atomic_store,
-        atomic_key="eris.social_agenda",
-    )
-    health.record_success(
-        "ai_orchestrated.social_agenda",
-        details={
-            "active_goals": _safe_health_snapshot(
-                social_agenda,
-                now=runtime_clock(),
-                logger=getattr(host, "logger", None),
-            ).get("active_goal_count", 0)
         },
     )
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
@@ -455,11 +403,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
     host.ai_intention_planner = planner
-    host.ai_social_agenda_store = social_agenda
     host.ai_random_chat_seed_store = random_chat_seed_store
     host.ai_random_chat_seed_generator = random_chat_seed_generator
     host.ai_random_chat_seed_reservoir = random_chat_seed_reservoir
-    host.ai_social_agenda_selector = social_agenda_selector
     host.ai_executive_cortex = executive_cortex
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative

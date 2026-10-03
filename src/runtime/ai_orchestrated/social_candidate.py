@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Typed speech candidate used by the full social-agenda runtime.
+"""Candidate biểu đạt nội bộ có kiểu dữ liệu rõ ràng.
 
-This module deliberately contains no topic generator. Candidates are created only
-by committed social plans: reserved afterbeats, exposure recovery, conversation
-arcs, or active social-agenda goals. The retired V18 generic initiative worker is
-not part of the production path.
+Đây chỉ là dữ liệu trung gian cho các subsystem nhận thức/động lực còn sống.
+Nó không có quyền phát public speech, không schedule continuation và không chứa
+social agenda runtime. Mọi public expression cuối cùng vẫn phải đi qua
+ConversationKernel -> RootAgent -> NextConversationMove.
 """
 from __future__ import annotations
 
@@ -15,11 +15,14 @@ from typing import Any, Mapping, Sequence
 CANDIDATE_SCHEMA = "eris.social_speech_candidate.v2"
 
 _ALLOWED_KINDS = {
-    "conversation_arc",
-    "afterbeat",
-    "social_exposure_recovery",
-    "social_agenda",
+    "continuation", "followup_reminder", "task_followup", "discovery_share",
+    "screen_comment", "semantic_scene", "memory_callback", "inner_thought",
+    "social_check_in", "relational_initiative", "casual_curiosity",
+    "playful_prompt", "random_chat", "capability_statement",
+    "grounded_tool_finding",
 }
+
+_SOCIAL_KINDS = {"social_check_in", "casual_curiosity", "playful_prompt", "random_chat"}
 
 
 def _compact(value: Any, limit: int = 240) -> str:
@@ -46,10 +49,10 @@ class SocialSpeechCandidate:
     """One semantic continuation candidate without public wording rights."""
 
     decision: str = "none"
-    kind: str = "social_agenda"
+    kind: str = "random_chat"
     topic: str = ""
-    speech_act: str = "advance_social_goal"
-    anchor_type: str = "conversation"
+    speech_act: str = "social_check_in"
+    anchor_type: str = "idle"
     anchor_id: str = ""
     evidence_refs: tuple[str, ...] = ()
     requires_grounding: bool = False
@@ -58,7 +61,7 @@ class SocialSpeechCandidate:
     urgency: float = 0.0
     tone: str = "soft_warm"
     reason: str = ""
-    source: str = "social_plan_runtime"
+    source: str = "internal_expression"
     continuation_lane: str = ""
     claim_token: str = ""
     idempotency_key: str = ""
@@ -76,7 +79,26 @@ class SocialSpeechCandidate:
     seed_intrusion_risk: float = 0.0
     face_risk: float = 0.0
     recovery_available: bool = False
-    # V67: public semantic identity. Structured social owners emit this natively.
+    seed_lease_token: str = ""
+    seed_generated_at: float = 0.0
+    seed_expires_at: float = 0.0
+    seed_ttl_seconds: float = 600.0
+    seed_quality_score: float = 0.0
+    seed_specificity: float = 0.0
+    seed_motive_strength: float = 0.0
+    seed_semantic_completeness: float = 0.0
+    seed_temporal_context: Mapping[str, Any] = field(default_factory=dict)
+    semantic_development_mode: str = ""
+    semantic_development_score: float = 0.0
+    semantic_development_required: bool = False
+    rumination_return: bool = False
+    semantic_parent_concern_id: str = ""
+    expression_urge_id: str = ""
+    expression_pressure: float = 0.0
+    expression_freshness: float = 0.0
+    expression_satisfaction: float = 0.0
+    expression_motive: str = ""
+    # Chỉ là semantic payload nội bộ; public writer không đọc candidate trực tiếp.
     expression_commitment: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -85,7 +107,7 @@ class SocialSpeechCandidate:
 
     @property
     def social(self) -> bool:
-        return True
+        return self.kind in _SOCIAL_KINDS
 
     @property
     def random_chat_seed(self) -> dict[str, Any]:
@@ -135,16 +157,16 @@ class SocialSpeechCandidate:
         cls,
         payload: Mapping[str, Any] | None,
         *,
-        source: str = "social_plan_runtime",
+        source: str = "internal_expression",
     ) -> "SocialSpeechCandidate":
         data = payload or {}
         decision = _compact(data.get("decision", "none"), 24).lower() or "none"
         if decision not in {"candidate", "none"}:
             decision = "none"
-        kind = _compact(data.get("kind", "social_agenda"), 48).lower() or "social_agenda"
+        kind = _compact(data.get("kind", "random_chat"), 48).lower() or "random_chat"
         if kind not in _ALLOWED_KINDS:
             decision = "none"
-            kind = "social_agenda"
+            kind = "random_chat"
         refs = tuple(
             item for item in (_compact(value, 140) for value in _sequence(data.get("evidence_refs"))[:6]) if item
         )
@@ -162,7 +184,7 @@ class SocialSpeechCandidate:
             kind=kind,
             topic=_compact(data.get("topic", ""), 1200),
             speech_act=_compact(data.get("speech_act", kind), 64).lower() or kind,
-            anchor_type=_compact(data.get("anchor_type", "conversation"), 40).lower() or "conversation",
+            anchor_type=_compact(data.get("anchor_type", "idle"), 40).lower() or "idle",
             anchor_id=_compact(data.get("anchor_id", ""), 120),
             evidence_refs=refs,
             requires_grounding=bool(data.get("requires_grounding", False)),
@@ -189,6 +211,25 @@ class SocialSpeechCandidate:
             seed_intrusion_risk=_clamp01(risk.get("intrusion_risk", data.get("seed_intrusion_risk", 0.0))),
             face_risk=_clamp01(risk.get("face_risk", data.get("face_risk", 0.0))),
             recovery_available=bool(risk.get("recovery_available", data.get("recovery_available", False))),
+            seed_lease_token=_compact(data.get("seed_lease_token", ""), 120),
+            seed_generated_at=float(data.get("seed_generated_at", 0.0) or 0.0),
+            seed_expires_at=float(data.get("seed_expires_at", 0.0) or 0.0),
+            seed_ttl_seconds=max(60.0, min(1800.0, float(data.get("seed_ttl_seconds", 600.0) or 600.0))),
+            seed_quality_score=_clamp01(data.get("seed_quality_score", 0.0)),
+            seed_specificity=_clamp01(data.get("seed_specificity", 0.0)),
+            seed_motive_strength=_clamp01(data.get("seed_motive_strength", 0.0)),
+            seed_semantic_completeness=_clamp01(data.get("seed_semantic_completeness", 0.0)),
+            seed_temporal_context=dict(data.get("seed_temporal_context", {})) if isinstance(data.get("seed_temporal_context"), Mapping) else {},
+            semantic_development_mode=_compact(data.get("semantic_development_mode", ""), 24).lower(),
+            semantic_development_score=_clamp01(data.get("semantic_development_score", 0.0)),
+            semantic_development_required=bool(data.get("semantic_development_required", False)),
+            rumination_return=bool(data.get("rumination_return", False)),
+            semantic_parent_concern_id=_compact(data.get("semantic_parent_concern_id", ""), 120),
+            expression_urge_id=_compact(data.get("expression_urge_id", ""), 96),
+            expression_pressure=_clamp01(data.get("expression_pressure", 0.0)),
+            expression_freshness=_clamp01(data.get("expression_freshness", 0.0)),
+            expression_satisfaction=_clamp01(data.get("expression_satisfaction", 0.0)),
+            expression_motive=_compact(data.get("expression_motive", ""), 32).lower(),
             expression_commitment=(
                 dict(data.get("expression_commitment", {}))
                 if isinstance(data.get("expression_commitment"), Mapping) else {}

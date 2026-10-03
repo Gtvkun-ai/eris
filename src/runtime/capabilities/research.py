@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Data-only research capability boundary for ConversationKernel V12."""
+"""Data-only research capability boundary cho ConversationKernel V12.
+
+Research executor có thể chạy ở subsystem riêng, nhưng kết quả/public follow-up
+luôn quay về RootAgent. Capability này chỉ lưu/đọc structured evidence gần nhất;
+không có API nói trực tiếp với user.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -54,6 +59,13 @@ class ResearchCapability:
 
     def snapshot(self) -> ResearchResult | None:
         return self._last_result
+
+    def invoke_for_root(self, *, arguments: Mapping[str, Any], event: Any, recent_history: Any) -> Mapping[str, Any]:
+        """Trả evidence research đã có; không tự tạo public prose hoặc speech."""
+
+        del arguments, event, recent_history
+        item = self.snapshot()
+        return item.to_dict() if item is not None else {"status": "unavailable", "reason": "no_research_result"}
 
 
 __all__ = ["ResearchCapability", "ResearchResult"]

@@ -216,14 +216,17 @@ class UserControlRuntimeMixin:
         return self.repeated_user_count
 
     def _handle_force_speak_request(self) -> None:
-        """Route force-speak qua autonomous orchestrator bằng cờ force, kích hoạt lượt bình thường ngay lập tức."""
+        """Biến force-speak thành ConversationEvent, không dựng speech pipeline riêng."""
+
         if not bool(getattr(self, "ai_runtime_enabled", False)):
-            self.logger.error("[architecture C] force_speak unavailable: runtime bootstrap failed")
+            self.logger.error("[conversation-v12] force_speak unavailable: runtime bootstrap failed")
             return
-        setattr(self, "_autonomous_force_speak_pending", True)
-        wake = getattr(self, "_wake_autonomous_loop", None)
-        if callable(wake):
-            wake(reason="force_speak_command")
+        orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
+        run_force = getattr(orchestrator, "run_force_speak", None)
+        if not callable(run_force):
+            self.logger.error("[conversation-v12] force_speak unavailable: autonomous event ingress missing")
+            return
+        run_force()
 
     def _handle_stage_inbound_event(self, msg: dict) -> None:
         """Nhận event ngược từ frontend/sân khấu.
@@ -285,25 +288,6 @@ class UserControlRuntimeMixin:
                             intermediate = False
                     if not intermediate:
                         clock.mark_audio_finished(timestamp, turn_id=str(getattr(event, "turn_id", "") or ""))
-                    social_continuation_runtime = getattr(self, "ai_social_continuation_runtime", None)
-                    if social_continuation_runtime is not None:
-                        try:
-                            social_continuation_runtime.notify_audio_finished(
-                                timestamp,
-                                source_turn_id=str(getattr(event, "turn_id", "") or ""),
-                            )
-                        except Exception as exc:
-                            logger = getattr(self, "logger", None)
-                            if logger is not None:
-                                logger.debug("[social continuation] audio anchor failed: %s", exc)
-                    conversation_arc_runtime = getattr(self, "ai_conversation_arc_runtime", None)
-                    if conversation_arc_runtime is not None:
-                        try:
-                            conversation_arc_runtime.notify_audio_finished(timestamp)
-                        except Exception as exc:
-                            logger = getattr(self, "logger", None)
-                            if logger is not None:
-                                logger.debug("[conversation arc] audio anchor failed: %s", exc)
             self._emit_stage_protocol_state(f"{event.type}_ack", data=event.to_meta())
             return
 
@@ -311,12 +295,11 @@ class UserControlRuntimeMixin:
             self._emit_stage_protocol_state("stage_ack_received", data=event.to_meta())
 
     def _handle_voice_observation_event(self, event) -> None:
-        """Route VAD/ASR/laughter/backchannel into continuation invalidation.
+        """Route VAD/ASR/laughter/backchannel vào voice mechanics V12.
 
-        These signals arrive before a normal chat turn exists. They therefore do
-        not synthesize user messages; they only settle floor ownership and the
-        reaction window. Final ASR continues through the ordinary inbound chat
-        path, while this early edge prevents a stale afterbeat from escaping.
+        Stage protocol chỉ chịu trách nhiệm playback/floor cơ học. Semantic
+        continuation đã thuộc ``ContinuationLeaseScheduler`` và generation của
+        ``ConversationKernel``; không còn callback social/arc riêng ở đây.
         """
 
         signal = str(getattr(event, "type", "") or "").strip().lower()
@@ -334,21 +317,6 @@ class UserControlRuntimeMixin:
                 self._ensure_voice_manager().interrupt_signal(reason=signal)
             except Exception as exc:
                 self.logger.debug("[voice-event] playback interrupt failed: %s", exc)
-
-        continuation = getattr(self, "ai_social_continuation_runtime", None)
-        if continuation is not None:
-            try:
-                continuation.observe_user_signal(signal=signal, text=text, now=observed_at)
-            except Exception as exc:
-                self.logger.debug("[social continuation] voice signal failed: %s", exc)
-
-        if speech_signal:
-            arc = getattr(self, "ai_conversation_arc_runtime", None)
-            if arc is not None:
-                try:
-                    arc.cancel_active(reason=f"user_{signal}", now=observed_at)
-                except Exception as exc:
-                    self.logger.debug("[conversation arc] voice signal cancel failed: %s", exc)
 
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
@@ -370,18 +338,6 @@ class UserControlRuntimeMixin:
                 clock.mark_interrupt(aborted_at)
             except Exception:
                 pass
-        continuation = getattr(self, "ai_social_continuation_runtime", None)
-        if continuation is not None:
-            try:
-                continuation.cancel_all(reason=reason, now=aborted_at)
-            except Exception as exc:
-                self.logger.debug("[social continuation] playback abort cancel failed: %s", exc)
-        arc = getattr(self, "ai_conversation_arc_runtime", None)
-        if arc is not None:
-            try:
-                arc.cancel_active(reason=reason, now=aborted_at)
-            except Exception as exc:
-                self.logger.debug("[conversation arc] playback abort cancel failed: %s", exc)
         self._emit_stage_protocol_state("audio_playback_aborted_ack", reason=reason, data=event.to_meta())
 
     def _handle_stage_interrupt_event(self, event) -> None:
@@ -390,31 +346,12 @@ class UserControlRuntimeMixin:
             clock.mark_interrupt(float(getattr(event, "timestamp", time.time()) or time.time()))
         text = str(getattr(event, "message", "") or "").strip()
         interrupt_at = float(getattr(event, "timestamp", time.time()) or time.time())
-        social_continuation_runtime = getattr(self, "ai_social_continuation_runtime", None)
-        if social_continuation_runtime is not None:
-            try:
-                social_continuation_runtime.observe_user_signal(
-                    signal="interrupt" if text else "vad_start",
-                    text=text,
-                    now=interrupt_at,
-                )
-            except Exception as exc:
-                self.logger.debug("[social continuation] interrupt cancel failed: %s", exc)
         if text:
             self._capture_speech_interrupt_for_user(text, timestamp=float(getattr(event, "timestamp", time.time()) or time.time()))
         else:
-            # Voice-start interrupt: chưa có STT text, nhưng sân khấu phải dừng
-            # ngay để Eris không đọc đè lên người dùng. Setup chưa phát trọn thì
-            # callback sau đó cũng mất nghĩa, nên hủy arc thay vì để punchline mồ côi.
-            conversation_arc_runtime = getattr(self, "ai_conversation_arc_runtime", None)
-            if conversation_arc_runtime is not None:
-                try:
-                    conversation_arc_runtime.cancel_active(
-                        reason="setup_audio_interrupted",
-                        now=float(getattr(event, "timestamp", time.time()) or time.time()),
-                    )
-                except Exception as exc:
-                    self.logger.debug("[conversation arc] interrupt cancel failed: %s", exc)
+            # Voice-start interrupt chưa có transcript: stage layer chỉ dừng/duck
+            # playback để nhường user. Khi final text đi vào inbound chat,
+            # ConversationKernel mới tăng generation và hủy continuation lease.
             try:
                 self._ensure_voice_manager().interrupt_signal(
                     reason=str(getattr(event, "reason", "") or "frontend_interrupt")

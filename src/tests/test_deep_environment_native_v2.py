@@ -324,21 +324,6 @@ def test_uiaccess_protocol_rejects_broad_operation() -> None:
         BrokerRequest(operation="run_command", hwnd=10).validate()
 
 
-def test_social_gate_suppresses_focused_work_and_releases_after_completion() -> None:
-    from runtime.ai_orchestrated.self_turn_pipeline import environment_social_gate
-
-    focused = UserSituation(
-        timestamp=time.time(), phase="testing", busy_score=0.84,
-        interruption_cost=0.87, max_attention_level=1,
-    )
-    released = UserSituation(
-        timestamp=time.time(), phase="verification_success", busy_score=0.30,
-        interruption_cost=0.28, max_attention_level=1,
-    )
-    assert environment_social_gate(focused)["suppressed"] is True
-    assert environment_social_gate(released)["suppressed"] is False
-
-
 def test_visual_error_candidate_must_stabilize_before_wake() -> None:
     runtime = DesktopSemanticRuntime()
     now = time.time()

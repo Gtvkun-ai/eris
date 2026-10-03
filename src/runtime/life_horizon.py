@@ -360,29 +360,10 @@ class LifeHorizonManager:
         touched: set[str] = set()
         changed = False
 
-        # H1: conversation handoff là authority cho open-loop giữa hai người.
-        handoff_runtime = getattr(owner, "conversation_handoff_runtime", None)
-        handoff = getattr(handoff_runtime, "snapshot", lambda: None)()
-        pending = _compact(getattr(handoff, "pending_shared_goal", ""), 520)
-        unresolved = _compact(getattr(handoff, "unresolved_intent", ""), 520)
-        h1_text = pending or unresolved
-        if h1_text:
-            refs = tuple(getattr(handoff, "source_refs", ()) or ())
-            self.upsert_goal(
-                "h1.conversation.current",
-                level="H1",
-                title="Mục tiêu hội thoại đang dang dở",
-                description=h1_text,
-                status="active",
-                strength=max(0.58, _clamp01(getattr(handoff, "continuity_pressure", 0.0))),
-                progress=0.0,
-                source_refs=refs,
-                tags=("conversation", "handoff"),
-                now=current,
-                persist=False,
-            )
-            touched.add("h1.conversation.current")
-            changed = True
+        # V12 hard cut: ConversationHandoff chỉ là causal/provenance observer.
+        # Không project handoff thành H1 goal vì như vậy LifeHorizon sẽ tái tạo
+        # một semantic continuation authority bên ngoài RootAgent. H1 hội thoại
+        # hiện nằm trong history + plain-text conversation note của Kernel.
 
         # H2/H4: PrivateLife đã có provenance và lifecycle. Chúng ta chỉ project,
         # không copy raw private diary hay biến một mood thoáng qua thành sứ mệnh.

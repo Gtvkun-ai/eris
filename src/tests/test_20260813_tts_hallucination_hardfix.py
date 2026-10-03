@@ -97,7 +97,7 @@ def test_user_probe_cannot_use_history_or_user_statement_as_bridge(tmp_path):
     from cortex.subject.expression_commitment import commitment_payload
     from runtime.ai_orchestrated.cognitive_blackboard import TypedCognitiveBlackboard
     from runtime.ai_orchestrated.initiative import InitiativeController, InitiativeAction
-    from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+    from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 
     candidate = SocialSpeechCandidate(
         decision="candidate",

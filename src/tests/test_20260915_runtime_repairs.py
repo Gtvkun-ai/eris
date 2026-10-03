@@ -12,39 +12,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 
-def test_self_turn_bundle_exposes_perception_timestamp() -> None:
-    from runtime.ai_orchestrated.self_turn_pipeline import PerceptionBundle, SelfTurnBundle
-
-    perception = PerceptionBundle(
-        now=123.5,
-        snapshot=None,
-        telemetry={},
-        screen=SimpleNamespace(meaningful_delta=False, window_changed=False),
-        vision_facts=(),
-    )
-    bundle = SelfTurnBundle(
-        perception=perception,
-        state=None,
-        turn_seq=7,
-        recent_history=(),
-        seconds_since_user=1.0,
-        seconds_since_assistant=2.0,
-        discourse=None,
-        activity=None,
-        self_context=None,
-        memory_context="",
-        shared_semantic_context={},
-        semantic_prompt_context="",
-        engagement_context={},
-        engagement_prompt_context="",
-        engagement_interaction=None,
-        commentary=None,
-        public_revision=1,
-    )
-
-    assert bundle.now == 123.5
-
-
 def test_current_environment_entity_status_binding_is_generic() -> None:
     from runtime.intent_model import matches_current_environment_entity_status
 

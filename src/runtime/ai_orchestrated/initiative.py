@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """Runtime Initiative Governor cho self-initiated public turn.
 
-V18 giao controller đúng một trách nhiệm: kiểm quyền phát cho một typed candidate
-do Social Initiative Worker đề xuất. Controller không nghĩ topic, không đọc OCR
-thô, không gọi model và không viết lời public. V67 materialize duy nhất typed ExpressionCommitment đã được Subject/Neuro chọn;
-reply_expected/user_busy chỉ còn là discourse/scene metadata ở nơi khác.
+Controller này chỉ còn là policy/provenance cho internal initiative candidate.
+Nó không sở hữu continuation, không có social agenda lane và không được materialize
+public speech ngoài ConversationKernel. RootAgent mới là semantic authority cuối.
 """
 from __future__ import annotations
 
@@ -72,10 +71,6 @@ _PROFILES: dict[str, InitiativeProfile] = {
     "continuation": InitiativeProfile("continuation", 20.0, 20, 180.0),
     # A planned beat is part of one already-approved public arc, not a fresh
     # attempt to seize the microphone. Ordinary autonomous gates do not apply.
-    "arc_continuation": InitiativeProfile("arc_continuation", 0.0, 120, 0.0),
-    "afterbeat": InitiativeProfile("afterbeat", 0.0, 120, 0.0),
-    "social_exposure": InitiativeProfile("social_exposure", 0.0, 80, 0.0),
-    "social_agenda": InitiativeProfile("social_agenda", 45.0, 12, 180.0),
     "environment": InitiativeProfile("environment", 32.0, 24, 180.0),
     "activity_event": InitiativeProfile("activity_event", 12.0, 24, 120.0),
     "discovery": InitiativeProfile("discovery", 1800.0, 2, 7200.0),
@@ -430,10 +425,6 @@ class InitiativeController:
         kind = candidate.kind
         refs = tuple(candidate.evidence_refs[:5])
         route_map = {
-            "conversation_arc": ("continuation", "playful", "arc_continuation", "conversation", "conversation_arc", "continue_conversation_arc"),
-            "afterbeat": ("continuation", "playful", "afterbeat", "conversation", "social_continuation", "deliver_reserved_afterbeat"),
-            "social_exposure_recovery": ("continuation", "soft", "social_exposure", "conversation", "social_continuation", "recover_social_exposure"),
-            "social_agenda": ("random_chat", "soft", "social_agenda", "conversation", "social_agenda", "advance_social_goal"),
             "continuation": ("continuation", "soft", "continuation", "conversation", "conversation", "continue_open_thread"),
             "followup_reminder": ("continuation", "soft", "presence", "conversation", "conversation", "remind_once_without_pressure"),
             "task_followup": ("continuation", "focused", "activity_event", "task", "engagement", "continue_structured_engagement"),
@@ -522,7 +513,7 @@ class InitiativeController:
                 "speech_act": candidate.speech_act or kind,
                 "subject_key": subject_key,
                 "evidence_scope": evidence_scope,
-                "continuation_key": candidate.anchor_id if kind == "conversation_arc" else "none",
+                "continuation_key": "none",
             },
             "notes": (
                 f"social_candidate source={candidate.source} reason={candidate.reason}"
@@ -532,9 +523,12 @@ class InitiativeController:
                     if seed_context else ""
                 )
             ),
-            "continuation_lane": candidate.continuation_lane,
-            "continuation_ticket_id": candidate.anchor_id if candidate.continuation_lane in {"afterbeat", "social_exposure", "conversation_arc", "social_agenda"} else "",
-            "continuation_claim_token": candidate.claim_token,
+            # Public continuation lifecycle không còn đi qua initiative. Nếu
+            # RootAgent muốn nối lời, nó dùng NextConversationMove.after và
+            # ContinuationLeaseScheduler. Candidate chỉ giữ idempotency/provenance.
+            "continuation_lane": "",
+            "continuation_ticket_id": "",
+            "continuation_claim_token": "",
             "continuation_idempotency_key": candidate.idempotency_key,
         }
         return (
@@ -560,12 +554,6 @@ class InitiativeController:
             return self._remember(False, "initiative_disabled", plan, now, profile=profile)
 
         importance = max(0.0, min(1.0, _as_float(getattr(plan, "importance", 0.0), 0.0)))
-        # Reserved short-horizon continuations are part of an already-approved
-        # social performance. They still lose to active user speech and safety,
-        # but they bypass ordinary silence, cooldown, duplicate and hourly gates.
-        if profile.kind in {"arc_continuation", "afterbeat", "social_exposure"}:
-            reason = {"arc_continuation": "reserved_arc_continuation", "afterbeat": "reserved_afterbeat", "social_exposure": "exposure_recovery"}[profile.kind]
-            return self._remember(True, reason, plan, now, profile=profile)
         with self._lock:
             events = tuple(item for item in self._state.events if now - item.timestamp <= 3600.0)
         # Companion-commentary là chế độ nghe ERIS sống cùng màn hình, không phải

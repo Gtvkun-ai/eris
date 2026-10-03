@@ -84,10 +84,7 @@ def infer_candidate_semantic_owner(candidate: Any) -> str:
         return "eris"
     if kind in {"screen_comment", "semantic_scene", "discovery_share"} or source_kind == "current_environment":
         return "environment"
-    if kind in {
-        "conversation_arc", "afterbeat", "social_exposure_recovery", "social_agenda",
-        "continuation", "followup_reminder", "task_followup",
-    }:
+    if kind in {"continuation", "followup_reminder", "task_followup"}:
         return "shared"
     if kind == "force_speak":
         return "shared"

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 from runtime.conversation import (
@@ -14,7 +13,6 @@ from runtime.conversation import (
     RenderedConversationMove,
     SurfaceEnvelope,
 )
-from runtime.ai_orchestrated.self_turn_pipeline import SelfTurnPipeline
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,9 +136,12 @@ def test_lease_schema_contains_no_semantic_content():
 
 def test_only_continuation_lease_scheduler_is_bootstrapped_for_public_continuation():
     bootstrap = (ROOT / "runtime/ai_orchestrated/bootstrap.py").read_text(encoding="utf-8")
-    due_handler = inspect.getsource(SelfTurnPipeline._run_due_agent_speech_continuation)
+    orchestrator = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    signal_handler = orchestrator.split("    def _run_v12_signal(", 1)[1].split(
+        "    def run_social_signal(", 1
+    )[0]
 
     assert "SocialContinuationRuntime(" not in bootstrap
     assert "ConversationArcRuntime(" not in bootstrap
-    assert "runtime.agent_loop" not in due_handler
-    assert "handle_due_continuation" in due_handler
+    assert "runtime.agent_loop" not in signal_handler
+    assert "handle_due_continuation" in signal_handler

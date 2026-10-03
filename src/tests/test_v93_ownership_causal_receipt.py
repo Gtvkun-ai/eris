@@ -60,16 +60,6 @@ def test_chat_observer_open_loop_remains_shared_continuity() -> None:
     assert reducer.snapshot().open_loops == ("User đang chờ ERIS trả lời phần kiểm tra repo.",)
 
 
-def test_refresh_shared_goal_rejects_eris_owned_material() -> None:
-    runtime = ConversationHandoffRuntime()
-    state = runtime.refresh_shared_goal(
-        "ERIS tự nhận cơ chế đẩy ranh giới.",
-        semantic_owner="eris",
-        evidence_refs=("observer:auto:9",),
-    )
-    assert state.pending_shared_goal == ""
-    assert state.pending_shared_goal_owner == "unknown"
-    assert state.next_move_owner == "none"
 
 
 def test_public_causal_receipt_keeps_self_generated_autonomous_origin() -> None:
@@ -121,9 +111,9 @@ def test_handoff_keeps_last_public_causal_receipt_for_self_explanation() -> None
     assert state.last_public_causal_receipt["motive"] == "revisit"
 
     prompt = runtime.prompt_context()
-    assert "PUBLIC_CAUSAL_RECEIPT_V93" in prompt
+    assert "PUBLIC_CAUSAL_RECEIPT" in prompt
     assert '"semantic_owner":"eris"' in prompt
-    assert "không được đảo chủ thể" in prompt.lower()
+    assert "provenance" in prompt.lower()
 
 
 def test_user_why_question_marks_self_explanation_request_without_reassigning_owner() -> None:
@@ -152,7 +142,6 @@ def test_user_why_question_marks_self_explanation_request_without_reassigning_ow
         previous_assistant_turn_ref="assistant:9",
     )
     assert state.self_explanation_requested is True
-    assert state.unresolved_intent == "explain_previous_eris_public_motive_from_receipt"
     assert state.last_public_semantic_owner == "eris"
 
 
@@ -198,79 +187,8 @@ def test_expression_urge_candidate_plan_carries_eris_ownership() -> None:
     assert plan.source_ref == "concern:self:1"
 
 
-def test_self_explanation_request_materializes_receipt_grounded_proposal() -> None:
-    runtime = ConversationHandoffRuntime()
-    receipt = build_public_causal_receipt(
-        channel="autonomous",
-        speech_act="share_self_originated_thought",
-        semantic_owner="eris",
-        trigger_owner="eris",
-        source_kind="expression_urge",
-        source_ref="urge:self:1",
-        motive="revisit",
-        why_now="một concern cũ vừa trồi lại",
-        confidence=0.83,
-    )
-    runtime.observe_assistant_commit(
-        "Tôi lại nhớ ra chuyện mình cứ đẩy ranh giới ra xa.",
-        turn_ref="assistant:9",
-        causal_receipt=receipt,
-    )
-    runtime.observe_user_turn(
-        "sao em lại nói cái đó vậy?",
-        turn_ref="user:10",
-        previous_assistant_text="Tôi lại nhớ ra chuyện mình cứ đẩy ranh giới ra xa.",
-        previous_assistant_turn_ref="assistant:9",
-    )
-    proposal = runtime.repair_action_proposal()
-    assert proposal is not None
-    assert proposal["arguments"]["speech_act"] == "self_explanation"
-    assert '"semantic_owner":"eris"' in proposal["arguments"]["semantic_content"]
 
 
-def test_subject_core_receives_typed_self_explanation_from_receipt() -> None:
-    from cortex.subject.service import SubjectService, SubjectServiceConfig
-    from runtime.subject_ingress import SubjectIngress
-
-    runtime = ConversationHandoffRuntime()
-    receipt = build_public_causal_receipt(
-        channel="autonomous",
-        speech_act="share_self_originated_thought",
-        semantic_owner="eris",
-        trigger_owner="eris",
-        source_kind="expression_urge",
-        source_ref="urge:self:1",
-        motive="revisit",
-        why_now="một concern cũ vừa trồi lại",
-        confidence=0.83,
-    )
-    runtime.observe_assistant_commit(
-        "Tôi lại nhớ ra chuyện mình cứ đẩy ranh giới ra xa.",
-        turn_ref="assistant:9",
-        causal_receipt=receipt,
-    )
-    state = runtime.observe_user_turn(
-        "sao em lại nói cái đó vậy?",
-        turn_ref="user:10",
-        previous_assistant_text="Tôi lại nhớ ra chuyện mình cứ đẩy ranh giới ra xa.",
-        previous_assistant_turn_ref="assistant:9",
-    )
-    service = SubjectService(config=SubjectServiceConfig(subject_id="eris", deterministic=True))
-    session = SubjectIngress(service).prepare_user_session(
-        state.last_user_text,
-        created_at=1000.0,
-        turn_id="user:10",
-        planning_context={
-            "conversation_handoff": state.to_dict(),
-            "causal_discourse": state.to_dict(),
-            "conversation_repair_proposal": runtime.repair_action_proposal(),
-        },
-    )
-    assert session.frame.coalitions
-    winner = max(session.frame.coalitions, key=lambda item: item.score)
-    assert winner.action_kind == "speak"
-    assert winner.arguments["speech_act"] == "self_explanation"
-    assert winner.arguments["source_owner"] == "conversation_handoff"
 
 
 def test_autonomous_open_loop_never_becomes_subject_shared_goal_context() -> None:

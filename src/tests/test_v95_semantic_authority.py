@@ -78,11 +78,6 @@ def _autonomous_frame(*, goal_state: str, goal_owner: str, goal_text: str):
             "active_goal_state": goal_state,
             "active_goal_id": "goal-1" if goal_text else "",
         },
-        "conversation_handoff": {
-            "pending_shared_goal": goal_text,
-            "pending_shared_goal_owner": goal_owner,
-            "next_move_owner": "eris" if goal_text else "none",
-        },
     }
     observation = replace(
         frame.observation,

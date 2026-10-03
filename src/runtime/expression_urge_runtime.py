@@ -30,7 +30,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from cortex.active_concern import clamp01, compact, semantic_overlap
 from cortex.subject.expression_commitment import commitment_payload
 from runtime.ai_orchestrated.affordance import ExecutiveAffordance
-from runtime.ai_orchestrated.social_initiative import SocialSpeechCandidate
+from runtime.ai_orchestrated.social_candidate import SocialSpeechCandidate
 
 
 EXPRESSION_URGE_VERSION = "eris.initiative.v44_1.contentful_urge_lifecycle"
@@ -50,10 +50,7 @@ _GENERIC_TOPIC_MARKERS = (
     "thăm dò một điều còn chưa biết về user",
 )
 _STRUCTURED_OWNERS = {
-    "social_continuation",
-    "conversation_arc",
     "neuro_continuation",
-    "social_agenda",
 }
 
 
