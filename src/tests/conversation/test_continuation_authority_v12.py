@@ -145,3 +145,89 @@ def test_only_continuation_lease_scheduler_is_bootstrapped_for_public_continuati
     assert "ConversationArcRuntime(" not in bootstrap
     assert "runtime.agent_loop" not in signal_handler
     assert "handle_due_continuation" in signal_handler
+
+
+def test_durable_lease_survives_restart_and_expired_lease_is_dropped(tmp_path):
+    """Lease được khôi phục như quyền re-evaluate, không phải replay lời cũ."""
+    from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
+
+    db = tmp_path / "conversation.sqlite3"
+    store_a = SQLiteAtomicStateStore(db)
+    scheduler_a = ContinuationLeaseScheduler(
+        atomic_store=store_a,
+        lease_ttl_seconds=5.0,
+    )
+    lease = scheduler_a.schedule(
+        session_id="s",
+        generation=3,
+        move_id="move:source",
+        after=ConversationAfter.CONTINUE_SELF,
+        now=10.0,
+        continue_self_delay=0.0,
+    )
+    assert lease is not None
+
+    # Mô phỏng process restart: instance mới đọc đúng lease cơ học từ SQLite.
+    store_b = SQLiteAtomicStateStore(db)
+    scheduler_b = ContinuationLeaseScheduler(atomic_store=store_b)
+    restored = scheduler_b.peek("s")
+    assert restored is not None
+    assert restored.lease_id == lease.lease_id
+    assert "say" not in restored.to_dict()
+
+    claimed = scheduler_b.claim_due(session_id="s", generation=3, now=11.0)
+    assert claimed is not None
+    scheduler_b.consume(claimed)
+    assert scheduler_b.peek("s") is None
+
+    # Lease quá hạn sau suspend/restart phải biến mất, không thức dậy muộn.
+    scheduler_a.schedule(
+        session_id="expired",
+        generation=4,
+        move_id="move:expired",
+        after=ConversationAfter.MAY_CONTINUE,
+        now=20.0,
+        may_continue_delay=0.0,
+    )
+    assert scheduler_b.claim_due(session_id="expired", generation=4, now=30.0) is None
+    assert scheduler_b.peek("expired") is None
+
+
+def test_continuation_runaway_breaker_is_mechanical_not_speech_policy():
+    scheduler = ContinuationLeaseScheduler(
+        max_consecutive_self_wakes=2,
+        max_chain_seconds=60.0,
+    )
+    first = scheduler.schedule(
+        session_id="s",
+        generation=1,
+        move_id="m1",
+        after=ConversationAfter.CONTINUE_SELF,
+        now=10.0,
+        continue_self_delay=0.0,
+    )
+    assert first is not None and first.consecutive_self_wakes == 1
+    second = scheduler.schedule(
+        session_id="s",
+        generation=1,
+        move_id="m2",
+        after=ConversationAfter.CONTINUE_SELF,
+        now=11.0,
+        continue_self_delay=0.0,
+        parent_chain_started_at=first.chain_started_at,
+        parent_self_wakes=first.consecutive_self_wakes,
+    )
+    assert second is not None and second.consecutive_self_wakes == 2
+
+    blocked = scheduler.schedule(
+        session_id="s",
+        generation=1,
+        move_id="m3",
+        after=ConversationAfter.CONTINUE_SELF,
+        now=12.0,
+        continue_self_delay=0.0,
+        parent_chain_started_at=second.chain_started_at,
+        parent_self_wakes=second.consecutive_self_wakes,
+    )
+    assert blocked is None
+    assert scheduler.peek("s") is None

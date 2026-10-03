@@ -25,7 +25,6 @@ from .initiative import InitiativeController
 from .model_router import AIRuntimeModelRouter
 from .observer import PostTurnObserver
 from .orchestrator import AIChatOrchestrator, AIAutonomousOrchestrator, architecture_c_enabled
-from .planner import IntentionPlanner
 from .stage_planner import StagePlanner
 from .state_reducer import StateReducer
 from .random_chat_seed import RandomChatSeedAffinityStore
@@ -316,8 +315,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
         workers=ai_settings.observer_workers,
     )
     health.record_success("ai_orchestrated.observer")
-    planner = IntentionPlanner(router, reducer, logger=getattr(host, "logger", None))
-    health.record_success("ai_orchestrated.planner")
     # Random-chat seeds give autonomous speech a concrete premise, ERIS-owned
     # motive and bounded exploration budget before Surface writes public wording.
     random_chat_seed_store = RandomChatSeedAffinityStore(
@@ -372,8 +369,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
             logger=getattr(host, "logger", None),
         ),
     )
-    # V30: object này không còn persistence riêng cho trajectory/review policy.
-    # TemporalMind giữ wake policy; Subject+Neuro giữ action policy; planner chỉ chọn tool.
+    # V12: capability planner bên ExecutiveCortex chỉ chọn tool cho một semantic
+    # goal đã commit. IntentionPlanner compatibility cũ không còn được bootstrap;
+    # mọi quyết định public phải quay về ConversationKernel/RootAgent.
     executive_cortex = ExecutiveCortex(
         host,
         getattr(llm_service, "executive_client", None),
@@ -402,7 +400,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host._persist_ai_runtime_state = persist
     host.ai_model_router = router
     host.ai_post_turn_observer = observer
-    host.ai_intention_planner = planner
     host.ai_random_chat_seed_store = random_chat_seed_store
     host.ai_random_chat_seed_generator = random_chat_seed_generator
     host.ai_random_chat_seed_reservoir = random_chat_seed_reservoir

@@ -297,33 +297,77 @@ class UserControlRuntimeMixin:
     def _handle_voice_observation_event(self, event) -> None:
         """Route VAD/ASR/laughter/backchannel vào voice mechanics V12.
 
-        Stage protocol chỉ chịu trách nhiệm playback/floor cơ học. Semantic
-        continuation đã thuộc ``ContinuationLeaseScheduler`` và generation của
-        ``ConversationKernel``; không còn callback social/arc riêng ở đây.
+        VAD chỉ mở một *tentative interrupt*. Ta không được gọi
+        ``interrupt_signal()`` cho mọi ``vad_start/partial/final`` vì method đó
+        hard-cancel toàn bộ TTS và khiến backchannel như "ừm" làm mất audio.
+
+        Quy tắc mới:
+        - ``vad_start``: ghi nhận user bắt đầu nói, chưa hard-cancel;
+        - ``partial_asr``: chỉ commit khi đã có correction marker hoặc đủ nội dung;
+        - ``final_asr``: backchannel giữ audio, steering/stop mới hard-cancel;
+        - ``backchannel``/``laugh``: không đụng generation hay continuation.
+
+        ConversationKernel vẫn là nơi duy nhất tăng generation khi user turn thật
+        đi vào chat ingress. Tầng voice này chỉ xử lý playback/floor cơ học.
         """
 
         signal = str(getattr(event, "type", "") or "").strip().lower()
         text = str(getattr(event, "message", "") or "").strip()
         observed_at = float(getattr(event, "timestamp", time.time()) or time.time())
-        speech_signal = signal in {"vad_start", "partial_asr", "final_asr"}
-        if speech_signal:
+        data = getattr(event, "data", {})
+        if not isinstance(data, Mapping):
+            data = {}
+        try:
+            confidence = float(data.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        decision = None
+        manager = self._ensure_voice_manager()
+        try:
+            if signal == "vad_start":
+                decision = manager.on_vad_start(timestamp=observed_at)
+            elif signal == "partial_asr":
+                decision = manager.on_asr_partial(
+                    text,
+                    confidence=confidence,
+                    timestamp=observed_at,
+                )
+            elif signal == "final_asr":
+                decision = manager.on_asr_final(
+                    text,
+                    confidence=confidence or 1.0,
+                    timestamp=observed_at,
+                )
+            elif signal in {"backchannel", "laugh"}:
+                # Frontend đã phân loại đây là tín hiệu nghe/biểu cảm. Không biến
+                # nó thành barge-in; chỉ đóng tentative VAD nếu còn mở.
+                manager.on_vad_end()
+        except Exception as exc:
+            self.logger.debug("[voice-event] tentative interrupt handling failed: %s", exc)
+
+        if decision is not None and bool(getattr(decision, "committed", False)):
             clock = getattr(self, "interaction_clock", None)
             if clock is not None:
                 try:
                     clock.mark_interrupt(observed_at)
                 except Exception:
                     pass
-            try:
-                self._ensure_voice_manager().interrupt_signal(reason=signal)
-            except Exception as exc:
-                self.logger.debug("[voice-event] playback interrupt failed: %s", exc)
 
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
             GLOBAL_OBSERVABILITY.increment(
                 "eris_voice_floor_signals_total",
-                tags={"signal": signal},
-                fields={"has_text": bool(text), "turn_id": str(getattr(event, "turn_id", "") or "")},
+                tags={
+                    "signal": signal,
+                    "strategy": str(getattr(decision, "strategy", "") or "none"),
+                },
+                fields={
+                    "has_text": bool(text),
+                    "committed": bool(getattr(decision, "committed", False)),
+                    "cancelled_audio": bool(getattr(decision, "cancelled_audio", False)),
+                    "turn_id": str(getattr(event, "turn_id", "") or ""),
+                },
             )
         except Exception:
             pass

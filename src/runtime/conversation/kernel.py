@@ -34,6 +34,10 @@ class KernelTurn:
     move: NextConversationMove
     note: str
     continuation: bool = False
+    # Metadata cơ học của continuation chain. Writer không nhìn thấy hai field
+    # này; kernel chỉ truyền lại scheduler để chống self-wake vô hạn.
+    continuation_chain_started_at: float = 0.0
+    consecutive_self_wakes: int = 0
 
     def writer_context(self) -> dict[str, Any]:
         return {
@@ -185,6 +189,9 @@ class ConversationKernel:
                 status="no_reply",
             )
 
+        continuation_meta = (runtime_context or {}).get("continuation_lease", {})
+        if not isinstance(continuation_meta, Mapping):
+            continuation_meta = {}
         turn = KernelTurn(
             session_id=sid,
             generation=state.generation,
@@ -192,6 +199,8 @@ class ConversationKernel:
             move=decision,
             note=current.note,
             continuation=event.kind == "continuation_due",
+            continuation_chain_started_at=float(continuation_meta.get("chain_started_at", 0.0) or 0.0),
+            consecutive_self_wakes=max(0, int(continuation_meta.get("consecutive_self_wakes", 0) or 0)),
         )
         self.store.mutate(
             sid,
@@ -450,7 +459,16 @@ class ConversationKernel:
                 sid,
                 lambda prior, now: replace(prior, active_move_id=move.move_id, phase=RunPhase.WRITING),
             )
-            return KernelTurn(sid, state.generation, run_id, move, state.note, True)
+            return KernelTurn(
+                sid,
+                state.generation,
+                run_id,
+                move,
+                state.note,
+                True,
+                lease.chain_started_at,
+                lease.consecutive_self_wakes,
+            )
         except Exception:
             self.continuation.release(lease)
             raise
@@ -509,6 +527,8 @@ class ConversationKernel:
             generation=turn.generation,
             move_id=turn.move.move_id,
             after=turn.move.after,
+            parent_chain_started_at=turn.continuation_chain_started_at if turn.continuation else 0.0,
+            parent_self_wakes=turn.consecutive_self_wakes if turn.continuation else 0,
         )
         phase = RunPhase.CONTINUATION_PENDING if lease is not None else RunPhase.WAITING_USER
         self.store.mutate(

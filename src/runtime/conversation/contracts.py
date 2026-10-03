@@ -226,12 +226,22 @@ class ConversationSessionState:
 
 @dataclass(frozen=True, slots=True)
 class ContinuationLease:
+    """Lease cơ học cho một cơ hội continuation.
+
+    Các field ``expires_at`` / ``chain_started_at`` / ``consecutive_self_wakes``
+    chỉ phục vụ chống wake ma và runaway loop. Chúng không mang topic, câu cần
+    nói hay bất kỳ semantic objective nào.
+    """
+
     lease_id: str
     session_id: str
     generation: int
     source_move_id: str
     due_at: float
     mode: ConversationAfter
+    expires_at: float = 0.0
+    chain_started_at: float = 0.0
+    consecutive_self_wakes: int = 0
     status: str = "pending"
     claim_token: str = ""
     updated_at: float = field(default_factory=time.time)
@@ -244,11 +254,40 @@ class ContinuationLease:
             "generation": self.generation,
             "source_move_id": self.source_move_id,
             "due_at": self.due_at,
+            "expires_at": self.expires_at,
+            "chain_started_at": self.chain_started_at,
+            "consecutive_self_wakes": self.consecutive_self_wakes,
             "mode": self.mode.value,
             "status": self.status,
             "claim_token": self.claim_token,
             "updated_at": self.updated_at,
         }
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> "ContinuationLease | None":
+        data = raw if isinstance(raw, Mapping) else {}
+        lease_id = _text(data.get("lease_id"), 180)
+        session_id = _text(data.get("session_id"), 180)
+        if not lease_id or not session_id:
+            return None
+        try:
+            mode = ConversationAfter(str(data.get("mode", "wait_user") or "wait_user"))
+        except ValueError:
+            return None
+        return cls(
+            lease_id=lease_id,
+            session_id=session_id,
+            generation=max(0, int(data.get("generation", 0) or 0)),
+            source_move_id=_text(data.get("source_move_id"), 180),
+            due_at=max(0.0, float(data.get("due_at", 0.0) or 0.0)),
+            expires_at=max(0.0, float(data.get("expires_at", 0.0) or 0.0)),
+            chain_started_at=max(0.0, float(data.get("chain_started_at", 0.0) or 0.0)),
+            consecutive_self_wakes=max(0, int(data.get("consecutive_self_wakes", 0) or 0)),
+            mode=mode,
+            status=_text(data.get("status"), 40) or "pending",
+            claim_token=_text(data.get("claim_token"), 180),
+            updated_at=max(0.0, float(data.get("updated_at", 0.0) or 0.0)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +298,17 @@ class DeliveryReceipt:
     move_id: str
     successful: bool
     finished_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "eris.delivery_receipt.v12",
+            "delivery_id": self.delivery_id,
+            "session_id": self.session_id,
+            "generation": self.generation,
+            "move_id": self.move_id,
+            "successful": self.successful,
+            "finished_at": self.finished_at,
+        }
 
 
 __all__ = [

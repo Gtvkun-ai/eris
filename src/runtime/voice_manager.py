@@ -29,7 +29,7 @@ _CORRECTION_RE = re.compile(
     r"^(?:không|khoan|chờ|dừng|ý tôi là|không phải|no|wait|stop|hold on)\b",
     re.I,
 )
-_BACKCHANNEL_RE = re.compile(r"^(?:ừ|uh|ừm|hmm|hm|ok|oke|được|rồi|yeah|yep)[.!… ]*$", re.I)
+_BACKCHANNEL_RE = re.compile(r"^(?:ừ|uh|uhm|ừm|à|ờ|hmm|mhm|hm|ok|oke|được|rồi|đúng|đúng rồi|yeah|yep)[.!… ]*$", re.I)
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 
@@ -76,17 +76,32 @@ class VoiceManager:
         timestamp: float | None = None,
         reason: str = "user_interrupt",
     ) -> BargeInDecision:
-        """Commit interrupt từ chat hoặc ASR final/partial đủ nghĩa."""
+        """Commit interrupt từ chat hoặc ASR final/partial đủ nghĩa.
+
+        Backchannel là ngoại lệ quan trọng: caller cũ có thể gọi method này
+        trước khi classifier ở tầng chat chạy. Vì vậy chính VoiceManager phải
+        chặn ``ừm/đúng rồi/...`` khỏi ``supersede_all()`` để không có đường
+        hard-cancel audio ngoài ý muốn.
+        """
 
         text = " ".join(str(user_text or "").split()).strip()
         if not text:
             return self.interrupt_signal(reason=reason)
+        strategy = self._strategy_for_text(text)
+        if strategy == "continue_short":
+            return BargeInDecision(
+                committed=False,
+                strategy=strategy,
+                text=text,
+                confidence=1.0,
+                interrupt_event=None,
+                cancelled_audio=False,
+            )
         event = self.ledger.record_user_interrupt(
             user_text=text,
             timestamp=time.time() if timestamp is None else float(timestamp),
         )
         cancelled = self._cancel_audio(reason=reason)
-        strategy = self._strategy_for_text(text)
         return BargeInDecision(
             committed=bool(event is not None or cancelled),
             strategy=strategy,
@@ -130,6 +145,10 @@ class VoiceManager:
             self._partial_text = clean
         meaningful_tokens = _WORD_RE.findall(clean)
         correction = bool(_CORRECTION_RE.search(clean))
+        # Hai-token backchannel như "đúng rồi" không được rơi vào rule
+        # ``>= 2 token`` rồi hard-cancel audio. Nó chỉ xác nhận user đang nghe.
+        if clean and self._strategy_for_text(clean) == "continue_short":
+            return BargeInDecision(False, "continue_short", clean, confidence)
         if not correction and len(meaningful_tokens) < 2:
             return BargeInDecision(False, "pending", clean, confidence)
         result = self.interrupt_with_text(
@@ -145,6 +164,41 @@ class VoiceManager:
             interrupt_event=result.interrupt_event,
             cancelled_audio=result.cancelled_audio,
         )
+
+    def on_asr_final(
+        self,
+        text: str,
+        *,
+        confidence: float = 1.0,
+        timestamp: float | None = None,
+    ) -> BargeInDecision:
+        """Resolve tentative VAD khi transcript final đã có.
+
+        Final backchannel đóng tentative window nhưng vẫn giữ audio/continuation.
+        Final steering/stop mới commit barge-in và hủy audio cũ.
+        """
+
+        clean = " ".join(str(text or "").split()).strip()
+        try:
+            if not clean:
+                return BargeInDecision(False, "pending", "", confidence)
+            if self._strategy_for_text(clean) == "continue_short":
+                return BargeInDecision(False, "continue_short", clean, confidence)
+            result = self.interrupt_with_text(
+                clean,
+                timestamp=timestamp,
+                reason="barge_in_final",
+            )
+            return BargeInDecision(
+                committed=result.committed,
+                strategy=result.strategy,
+                text=clean,
+                confidence=max(0.0, min(1.0, float(confidence or 0.0))),
+                interrupt_event=result.interrupt_event,
+                cancelled_audio=result.cancelled_audio,
+            )
+        finally:
+            self.on_vad_end()
 
     def on_vad_end(self) -> None:
         with self._lock:

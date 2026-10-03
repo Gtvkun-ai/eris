@@ -177,3 +177,29 @@ def test_handoff_is_observer_only_not_a_semantic_authority():
     handoff = (ROOT / "runtime/conversation_handoff.py").read_text(encoding="utf-8")
     assert "evidence only; NOT a planner or obligation" in handoff
     assert "RootAgent alone decides whether/how to respond" in handoff
+
+
+def test_conversation_bootstrap_wires_durable_mechanical_state():
+    source = (ROOT / "runtime/conversation/bootstrap.py").read_text(encoding="utf-8")
+    assert "atomic_store_from_env" in source
+    assert "ConversationSessionStore(atomic_store=atomic_store" in source
+    assert "ContinuationLeaseScheduler(atomic_store=atomic_store" in source
+    assert "DeliveryReceiptLedger(atomic_store=atomic_store" in source
+
+
+def test_intention_planner_compatibility_module_is_retired():
+    bootstrap = (ROOT / "runtime/ai_orchestrated/bootstrap.py").read_text(encoding="utf-8")
+    assert "from .planner import IntentionPlanner" not in bootstrap
+    assert "planner = IntentionPlanner(" not in bootstrap
+    assert "ai_intention_planner =" not in bootstrap
+    assert not (ROOT / "runtime/ai_orchestrated/planner.py").exists()
+
+
+def test_active_root_docs_no_longer_keep_v6_v7_v11_architecture_files():
+    for name in (
+        "ERIS_WRITER_SURFACE_IMMUTABLE_V6_VI.md",
+        "ERIS_AGENT_DISCLOSURE_AUTHORITY_V7_VI.md",
+        "README_V7_AGENT_OWNS_DISCLOSURE_VI.md",
+        "ERIS_AGENT_TURN_PROJECTION_V11_VI.md",
+    ):
+        assert not (ROOT / name).exists()

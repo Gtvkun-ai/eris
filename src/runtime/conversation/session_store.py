@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from .contracts import ConversationSessionState
+from .contracts import ConversationSessionState, RunPhase
 
 
 class ConversationSessionStore:
@@ -16,6 +16,9 @@ class ConversationSessionStore:
         self.logger = logger
         self._lock = threading.RLock()
         self._memory: dict[str, ConversationSessionState] = {}
+        # Phân biệt "load đầu tiên sau process restart" với load bình thường
+        # trong cùng process. Chỉ first-load mới được phép abandoned transient run.
+        self._known_sessions: set[str] = set()
 
     @staticmethod
     def _sid(session_id: str) -> str:
@@ -34,7 +37,32 @@ class ConversationSessionStore:
             record = self.atomic_store.ensure(self._key(sid), ConversationSessionState(session_id=sid).to_dict())
             state = ConversationSessionState.from_mapping(record.payload, session_id=sid)
             with self._lock:
+                first_load_in_process = sid not in self._known_sessions
+                self._known_sessions.add(sid)
+
+            # Sau crash, active root/writer/audio run cũ không được "sống lại".
+            # Ta chỉ recover state cơ học; tuyệt đối không replay text hay tự gọi
+            # RootAgent. CONTINUATION_PENDING không nằm trong danh sách transient
+            # vì lease riêng sẽ tự kiểm generation + expiry trước khi wake.
+            if first_load_in_process and state.phase in {
+                RunPhase.THINKING,
+                RunPhase.WORKING,
+                RunPhase.WRITING,
+                RunPhase.DELIVERING,
+            }:
+                state = self.mutate(
+                    sid,
+                    lambda prior, now: replace(
+                        prior,
+                        active_run_id="",
+                        active_move_id="",
+                        active_delivery_id="",
+                        phase=RunPhase.WAITING_USER,
+                    ),
+                )
+            with self._lock:
                 self._memory[sid] = state
+                self._known_sessions.add(sid)
             return state
         except Exception as exc:  # noqa: BLE001
             self._log("warning", "[conversation-v12] durable load degraded: %s", exc)
@@ -50,6 +78,7 @@ class ConversationSessionStore:
                 state = fn(prior, now)
                 state = replace(state, version=prior.version + 1, updated_at=now)
                 self._memory[sid] = state
+                self._known_sessions.add(sid)
                 return state
         try:
             with self.atomic_store.transaction(self._key(sid), ConversationSessionState(session_id=sid).to_dict()) as tx:
@@ -59,6 +88,7 @@ class ConversationSessionStore:
                 tx.stage(state.to_dict())
             with self._lock:
                 self._memory[sid] = state
+                self._known_sessions.add(sid)
             return state
         except Exception as exc:  # noqa: BLE001
             self._log("warning", "[conversation-v12] durable mutation degraded: %s", exc)
@@ -67,6 +97,7 @@ class ConversationSessionStore:
                 state = fn(prior, now)
                 state = replace(state, version=prior.version + 1, updated_at=now)
                 self._memory[sid] = state
+                self._known_sessions.add(sid)
                 return state
 
     def set_note(self, session_id: str, note: str) -> ConversationSessionState:

@@ -207,3 +207,66 @@ def test_stale_event_cannot_reach_writer():
     assert len(agent.calls) == calls_before
     assert writer.turns == []
     assert delivery.deliveries == []
+
+
+def test_durable_session_note_and_delivery_receipt_survive_restart(tmp_path):
+    from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
+    from runtime.conversation import ConversationSessionStore, DeliveryReceipt, DeliveryReceiptLedger
+
+    db = tmp_path / "conversation.sqlite3"
+    atomic_a = SQLiteAtomicStateStore(db)
+    sessions_a = ConversationSessionStore(atomic_store=atomic_a)
+    sessions_a.set_note("s", "ghi chú plain text qua restart")
+    receipt_a = DeliveryReceiptLedger(atomic_store=atomic_a, owner_id="worker-a")
+    receipt = DeliveryReceipt(
+        delivery_id="delivery:durable",
+        session_id="s",
+        generation=1,
+        move_id="move:1",
+        successful=True,
+    )
+    assert receipt_a.commit_once(receipt)
+
+    atomic_b = SQLiteAtomicStateStore(db)
+    sessions_b = ConversationSessionStore(atomic_store=atomic_b)
+    receipt_b = DeliveryReceiptLedger(atomic_store=atomic_b, owner_id="worker-b")
+    assert sessions_b.load("s").note == "ghi chú plain text qua restart"
+    assert not receipt_b.commit_once(receipt)
+
+
+def test_restart_abandons_transient_run_without_replaying_public_text(tmp_path):
+    from dataclasses import replace
+
+    from runtime.ai_orchestrated.atomic_state import SQLiteAtomicStateStore
+    from runtime.conversation import ConversationSessionStore, RunPhase
+
+    db = tmp_path / "conversation.sqlite3"
+    atomic_a = SQLiteAtomicStateStore(db)
+    store_a = ConversationSessionStore(atomic_store=atomic_a)
+    store_a.mutate(
+        "s",
+        lambda prior, _now: replace(
+            prior,
+            generation=7,
+            active_run_id="run:old",
+            active_move_id="move:old",
+            active_delivery_id="delivery:old",
+            phase=RunPhase.DELIVERING,
+        ),
+    )
+
+    # Process mới: first load phải coi run cũ là abandoned. Không có public text
+    # nào trong state để phát lại, và generation vẫn giữ nguyên để stale callback
+    # cũ tiếp tục bị loại.
+    atomic_b = SQLiteAtomicStateStore(db)
+    store_b = ConversationSessionStore(atomic_store=atomic_b)
+    recovered = store_b.load("s")
+
+    assert recovered.generation == 7
+    assert recovered.phase == RunPhase.WAITING_USER
+    assert recovered.active_run_id == ""
+    assert recovered.active_move_id == ""
+    assert recovered.active_delivery_id == ""
+    payload = recovered.to_dict()
+    assert "public_text" not in payload
+    assert "speech_text" not in payload

@@ -1114,12 +1114,18 @@ class PublicOutputRuntimeMixin:
             return None
         event = None
         try:
+            # Caller legacy có thể gọi method này trước classifier ở chat ingress.
+            # VoiceManager V12 tự bảo vệ backchannel khỏi hard-cancel, nên ở đây
+            # không được tự suy "có text = chắc chắn user giành lượt" nữa.
             result = self._ensure_voice_manager().interrupt_with_text(
                 text,
                 timestamp=time.time() if timestamp is None else float(timestamp),
                 reason="user_interrupt",
             )
             event = result.interrupt_event
+            if str(getattr(result, "strategy", "") or "") == "continue_short":
+                self.logger.debug("[interrupt] backchannel giữ nguyên playback=%r", text[:80])
+                return None
         except Exception as exc:
             self.logger.debug("[interrupt] voice manager failed: %s", exc)
 
