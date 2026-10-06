@@ -169,23 +169,8 @@ class ChatCycleMixin:
             try:
                 from runtime.observability import GLOBAL_OBSERVABILITY
 
-                frame = dict(getattr(self, "last_semantic_frame", {}) or {})
-                act = str(frame.get("user_act", "") or "").strip().lower()
-                category = (
-                    "small_talk"
-                    if act in {
-                        "greeting",
-                        "acknowledgement",
-                        "relational_check_in",
-                        "closeness_bid",
-                        "repair_request",
-                    }
-                    else "tool_or_action"
-                    if str(frame.get("tool_intent", "none") or "none").strip().lower() not in {"", "none"}
-                    else "general_chat"
-                    if frame
-                    else "unknown"
-                )
+                from runtime.conversation.projection import infer_turn_category
+                category = infer_turn_category(self)
                 GLOBAL_OBSERVABILITY.observe(
                     "user_turn_latency_ms",
                     max(0.0, (time.time() - cycle_start) * 1000.0),

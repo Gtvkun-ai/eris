@@ -133,7 +133,7 @@ class PublicOutputRuntimeMixin:
             self.logger.debug("[TTS] supersede failed: %s", exc)
             return False
 
-    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> bool:
         channel_name = str(channel or "").strip().lower()
         # Public audio là một floor có owner. Autonomous vẫn được cognition ở
         # background, nhưng tuyệt đối không được materialize một câu mới khi
@@ -151,13 +151,13 @@ class PublicOutputRuntimeMixin:
                 str(getattr(clock, "audio_floor_turn_id", "") or "<pending>"),
                 str(getattr(decision, "text", "") or "")[:120],
             )
-            return
+            return False
         if channel_name and self._stage_channel_blocked(channel_name):
             self.logger.info(
                 "[stage ownership] suppressed channel=%s text=%r",
                 channel_name, str(getattr(decision, "text", "") or "")[:120],
             )
-            return
+            return False
         payload = decision.to_payload()
         # event_trace_id là identity xuyên suốt public event, khác debug trace tự do.
         # Với chat, IntentPlanner là owner; autonomous đã đóng owner từ SocialInitiative.
@@ -806,6 +806,7 @@ class PublicOutputRuntimeMixin:
                 )
             except Exception as exc:
                 self.logger.warning("Subconscious post-output tick error: %s", exc)
+        return True
 
     def _private_mind_digest_for_payload(self) -> dict[str, object]:
         digest = getattr(self, "private_mind_digest", None)
@@ -883,11 +884,12 @@ class PublicOutputRuntimeMixin:
 
     def _private_mind_speech_silence_reason(self) -> dict[str, object]:
         """Tóm tắt quyền phát ngôn theo Architecture C, không đọc speech_core cũ."""
-        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+        from runtime.conversation.projection import legacy_semantic_projection
+        semantic_frame = legacy_semantic_projection(self)
         plan = getattr(self, "last_ai_intention_plan", None)
         plan_payload = plan.to_dict() if plan is not None and callable(getattr(plan, "to_dict", None)) else {}
         return {
-            "architecture": "semantic_frame_v1",
+            "architecture": "conversation_kernel_v12",
             "chat_active": bool(getattr(self, "chat_mode", False) or getattr(self, "_chat_processing", False)),
             "autonomous_turn_collision_until": round(float(getattr(self, "autonomous_turn_collision_until", 0.0) or 0.0), 3),
             "semantic_frame": {
@@ -1168,7 +1170,8 @@ class PublicOutputRuntimeMixin:
         self_state = None
         meaning = None
         impulse = None
-        semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+        from runtime.conversation.projection import legacy_semantic_projection
+        semantic_frame = legacy_semantic_projection(self)
         relationship = getattr(state, "relationship_dynamics", None)
         desire = getattr(state, "desire", None)
         style = getattr(self, "fe_style_memory", None)

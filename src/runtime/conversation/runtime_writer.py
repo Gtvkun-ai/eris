@@ -54,29 +54,63 @@ class RuntimeConversationWriter:
         if isinstance(engagement, Mapping):
             engagement = json.dumps(dict(engagement), ensure_ascii=False, separators=(",", ":"))
 
-        payload = generate(
-            chat_history=tuple(recent_history),
-            user_text=str(event.text or ""),
-            memory_context=str(runtime_context.get("memory_context", "") or ""),
-            grounding_context=str(runtime_context.get("grounding_context", "") or ""),
-            relationship_context=relationship_context,
-            personality_context=personality_context,
-            affective_voice_state=runtime_context.get("affective_voice_state", {}),
-            interrupt_context=str(runtime_context.get("interrupt_context", "") or ""),
-            engagement_context=str(engagement or ""),
-            routing_context=str(runtime_context.get("routing_context", "") or ""),
-            discourse_context=discourse_context,
-            use_escalation=bool(runtime_context.get("use_escalation", False)),
+        generate_kwargs = {
+            "chat_history": tuple(recent_history),
+            "user_text": str(event.text or ""),
+            "memory_context": str(runtime_context.get("memory_context", "") or ""),
+            "grounding_context": str(runtime_context.get("grounding_context", "") or ""),
+            "relationship_context": relationship_context,
+            "personality_context": personality_context,
+            "affective_voice_state": runtime_context.get("affective_voice_state", {}),
+            "interrupt_context": str(runtime_context.get("interrupt_context", "") or ""),
+            "engagement_context": str(engagement or ""),
+            "routing_context": str(runtime_context.get("routing_context", "") or ""),
+            "discourse_context": discourse_context,
+            "use_escalation": bool(runtime_context.get("use_escalation", False)),
             # Surface worker chỉ wording một semantic move đã khóa. Mặc định
             # không cho nó mở một reasoning pass dài thứ hai sau RootAgent.
-            reasoning_effort=runtime_context.get("reasoning_effort", "low"),
-            thinking_mode=runtime_context.get("thinking_mode", "disabled"),
-            allow_fallback=bool(runtime_context.get("allow_fallback", False)),
-            language_hint=str(runtime_context.get("language_hint", "vi") or "vi"),
-            speech_language_hint=str(runtime_context.get("speech_language_hint", "ja") or "ja"),
-        )
+            "reasoning_effort": runtime_context.get("reasoning_effort", "low"),
+            "thinking_mode": runtime_context.get("thinking_mode", "disabled"),
+            "allow_fallback": bool(runtime_context.get("allow_fallback", False)),
+            "language_hint": str(runtime_context.get("language_hint", "vi") or "vi"),
+            "speech_language_hint": str(runtime_context.get("speech_language_hint", "ja") or "ja"),
+        }
+        payload = generate(**generate_kwargs)
         if not isinstance(payload, Mapping):
             raise RuntimeError("public_writer_invalid_payload")
+
+        # Post-generation grounding gate từng bị mất call-site khi V12 cutover.
+        # Gate chỉ chặn claim vượt evidence; nếu fail, SurfaceWorker được đúng một
+        # lần rewrite với cùng semantic move, không giao quyền semantic cho gate.
+        engine = runtime_context.get("__source_grounding_engine")
+        report = runtime_context.get("__source_grounding_report")
+        first_text = str(payload.get("text", "") or "").strip()
+        if engine is not None and report is not None and first_text:
+            try:
+                from runtime.grounding_surface_gate import evaluate_grounded_surface
+                verdict = evaluate_grounded_surface(
+                    engine, first_text, report=report,
+                    channel="chat" if event.kind == "user_turn" else "autonomous",
+                )
+                if not bool(getattr(verdict, "allowed", True)):
+                    retry_instruction = str(getattr(verdict, "retry_instruction", lambda: "")() or "")
+                    retry_kwargs = dict(generate_kwargs)
+                    retry_kwargs["discourse_context"] = "\n\n".join(
+                        part for part in (
+                            discourse_context,
+                            "GROUNDING_REWRITE_V12: " + retry_instruction,
+                            "Keep the exact RootConversationMove meaning. Remove only unsupported perception/action claims; do not add a new topic or question.",
+                        ) if part.strip()
+                    )
+                    payload = generate(**retry_kwargs)
+                    if not isinstance(payload, Mapping):
+                        raise RuntimeError("public_writer_grounding_retry_invalid_payload")
+            except RuntimeError:
+                raise
+            except Exception:
+                # Defense-in-depth ở DeliveryAdapter vẫn chạy. Gate lỗi nội bộ
+                # không được tự bịa một violation mới.
+                pass
         display_text = str(payload.get("text", "") or "").strip()
         if not display_text:
             raise RuntimeError("public_writer_empty")
@@ -98,6 +132,8 @@ class RuntimeConversationWriter:
                 "event_kind": event.kind,
                 "user_text": event.text,
                 "provider_payload": dict(payload),
+                "source_grounding_report": runtime_context.get("__source_grounding_report"),
+                "source_grounding_engine": runtime_context.get("__source_grounding_engine"),
             },
         )
 

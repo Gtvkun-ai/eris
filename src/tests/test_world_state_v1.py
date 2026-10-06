@@ -228,3 +228,25 @@ def test_observer_projection_is_attached_from_same_world_state() -> None:
     assert packet["world_state"]["lane"] == "observer"
     assert packet["world_state"]["environment_awareness"]["focused_app"] == "Godot Engine"
     assert "FACT != INTERPRETATION" in packet["world_state_context"]
+
+
+def test_world_state_reads_mental_material_from_snapshot_api() -> None:
+    """Regression: MentalMaterialRuntime không có panel_view(); V12 phải dùng snapshot()."""
+    material = {
+        "material_id": "m1",
+        "material_kind": "association",
+        "summary": "Một liên hệ riêng đang còn sống",
+        "activation": 0.81,
+    }
+    host = _Host(
+        logger=_Logger(),
+        mental_material_runtime=SimpleNamespace(snapshot=lambda **_kwargs: (material,)),
+        active_concern_runtime=SimpleNamespace(snapshot=lambda **_kwargs: ()),
+    )
+    service = WorldStateService(host, clock=lambda: 1000.0)
+    snap = service.refresh_from_host(now=1000.0)
+
+    assert snap.cognition.mental_material == (material,)
+    prompt = snap.prompt_context("self_turn", now=1000.0)
+    assert "mental_material=" in prompt
+    assert "hidden reasoning" in prompt

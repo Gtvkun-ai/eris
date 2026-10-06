@@ -97,29 +97,6 @@ class RuntimeConversationDeliveryAdapter:
         except Exception as exc:
             self._log("debug", "[conversation-v12] causal receipt degraded: %s", exc)
 
-        try:
-            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
-
-            append_public_turn_trace("conversation_move", {
-                "trace_id": did,
-                "turn_id": did,
-                "channel": channel,
-                "semantic_owner": semantic_owner,
-                "trigger_owner": trigger_owner,
-                "source_kind": "conversation_kernel_v12",
-                "source_ref": turn.move.move_id,
-                "goal_state": turn.move.intent,
-                "proposal_source": "root_agent",
-                "proposal_kind": "next_conversation_move",
-                "authority_action": "commit",
-                "authority_reason": "root_agent_finalized_move",
-                "authority_owner": "conversation_root_agent_v12",
-                "motive": turn.move.intent,
-                "public_committed": True,
-            }, logger=getattr(self.host, "logger", None))
-        except Exception as exc:
-            self._log("debug", "[conversation-v12] public trace provenance degraded: %s", exc)
-
         stage = getattr(self.host, "ai_stage_planner", None)
         apply_stage = getattr(stage, "apply", None)
         if callable(apply_stage):
@@ -145,25 +122,45 @@ class RuntimeConversationDeliveryAdapter:
         except Exception as exc:
             self._log("debug", "[conversation-v12] surface commit degraded: %s", exc)
 
+        # Defense-in-depth: writer đã có một grounding rewrite pass. Nếu câu sau
+        # rewrite vẫn claim sensor/action không có evidence thì không được commit
+        # false public history.
+        engine = rendered.metadata.get("source_grounding_engine")
+        report = rendered.metadata.get("source_grounding_report")
+        if engine is not None and report is not None:
+            try:
+                from runtime.grounding_surface_gate import evaluate_grounded_surface
+                verdict = evaluate_grounded_surface(engine, display_text, report=report, channel=channel)
+                if not bool(getattr(verdict, "allowed", True)):
+                    raise RuntimeError("public_grounding_gate_blocked")
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                self._log("debug", "[conversation-v12] grounding defense degraded: %s", exc)
+
+        apply_position = getattr(self.host, "_apply_position_update", None)
+        if callable(apply_position):
+            apply_position(decision)
+        send = getattr(self.host, "_send_decision_to_body", None)
+        if not callable(send):
+            self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
+            raise RuntimeError("public_transport_unavailable")
+        accepted = send(decision, channel=channel)
+        # Runtime production trả bool; test/adapter cũ trả None và được coi là
+        # accepted để giữ compatibility. False nghĩa stage ownership đã suppress.
+        if accepted is False:
+            raise RuntimeError("public_transport_suppressed")
+
+        # Chỉ từ đây trở xuống mới là PUBLIC COMMIT thật. Trước điểm này tuyệt
+        # đối không append history/ledger hay update self-state.
+        assistant_turn = None
         if memory_text:
             append_history = getattr(self.host, "_append_chat_history", None)
             if callable(append_history):
                 append_history("assistant", memory_text, invalid=False)
-            # Handoff V12 chỉ lưu observation/provenance. Nó không được phép biến
-            # receipt này thành agenda hay nghĩa vụ phải nói ở lượt sau.
-            try:
-                from runtime.conversation_handoff import ensure_conversation_handoff_runtime
-
-                ensure_conversation_handoff_runtime(self.host).observe_assistant_commit(
-                    memory_text,
-                    turn_ref=did,
-                    causal_receipt=causal_receipt,
-                )
-            except Exception as exc:
-                self._log("debug", "[conversation-v12] handoff receipt degraded: %s", exc)
         ledger_factory = getattr(self.host, "_ensure_session_turn_ledger", None)
         if callable(ledger_factory):
-            ledger_factory().record_assistant(
+            assistant_turn = ledger_factory().record_assistant(
                 display_text,
                 meta={
                     "schema": "eris.conversation_delivery.v12",
@@ -177,14 +174,44 @@ class RuntimeConversationDeliveryAdapter:
 
         self.host.last_text = display_text
         self.host.last_chat_answer = display_text
-        apply_position = getattr(self.host, "_apply_position_update", None)
-        if callable(apply_position):
-            apply_position(decision)
-        send = getattr(self.host, "_send_decision_to_body", None)
-        if not callable(send):
-            self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
-            raise RuntimeError("public_transport_unavailable")
-        send(decision, channel=channel)
+
+        try:
+            from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
+            append_public_turn_trace("conversation_move", {
+                "trace_id": did,
+                "turn_id": did,
+                "channel": channel,
+                "semantic_owner": semantic_owner,
+                "trigger_owner": trigger_owner,
+                "source_kind": "conversation_kernel_v12",
+                "source_ref": turn.move.move_id,
+                "goal_state": turn.move.intent,
+                "proposal_source": "root_agent",
+                "proposal_kind": "next_conversation_move",
+                "authority_action": "commit",
+                "authority_reason": "root_agent_finalized_move",
+                "authority_owner": "conversation_root_agent_v12",
+                "motive": turn.move.intent,
+                "public_committed": True,
+            }, logger=getattr(self.host, "logger", None))
+        except Exception as exc:
+            self._log("debug", "[conversation-v12] public trace provenance degraded: %s", exc)
+
+        try:
+            from runtime.conversation.observation_bridge import ensure_conversation_observation_bridge
+            history = tuple(getattr(self.host, "chat_history", ()) or ())[-12:]
+            ensure_conversation_observation_bridge(self.host).observe_assistant_commit(
+                memory_text or display_text,
+                turn_ref=did,
+                turn_index=int(getattr(assistant_turn, "index", 0) or 0),
+                speech_act=str(getattr(decision, "speech_act", "") or turn.move.intent or "public_commit"),
+                event_kind=event_kind or channel,
+                causal_receipt=causal_receipt,
+                recent_history=tuple(item for item in history if isinstance(item, dict)),
+                user_text=str(rendered.metadata.get("user_text", "") or ""),
+            )
+        except Exception as exc:
+            self._log("debug", "[conversation-v12] observation write-back degraded: %s", exc)
 
     @staticmethod
     def _channel_for(rendered: RenderedConversationMove) -> str:

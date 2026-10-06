@@ -639,7 +639,8 @@ class UserControlRuntimeMixin:
         try:
             from runtime.depth_v2_state import build_depth_v2_state
 
-            semantic_frame = dict(getattr(self, "last_semantic_frame", {}) or {})
+            from runtime.conversation.projection import legacy_semantic_projection
+            semantic_frame = legacy_semantic_projection(self)
             if semantic_frame:
                 cognitive_read = (
                     f"act={semantic_frame.get('user_act', 'unknown')}; "

@@ -892,6 +892,8 @@ class CoordinatorBootstrapMixin:
         self.recent_inner_thought_intents: tuple[str, ...] = ()
         self.recent_inner_thought_seeds: tuple[str, ...] = ()
         self.recent_meaning_families: tuple[str, ...] = ()
+        # V12 compatibility only: không còn consumer production nào đọc field này.
+        # Semantic authority hiện thuộc ConversationKernel -> NextConversationMove.
         self.last_semantic_frame: dict[str, object] = {}
         self.mental_process_interval_sec = self._load_mental_process_interval()
         self.mental_process_enabled = self._load_mental_process_enabled()

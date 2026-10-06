@@ -678,24 +678,8 @@ class AIChatOrchestrator:
                 speech_interrupt_event=speech_interrupt_event,
                 speech_interrupt_reaction=speech_interrupt_reaction,
             )
-            frame = dict(getattr(self.host, "last_semantic_frame", {}) or {})
-            act = str(frame.get("user_act", "") or "").strip().lower()
-            category = (
-                "small_talk"
-                if act in {
-                    "greeting",
-                    "acknowledgement",
-                    "relational_check_in",
-                    "closeness_bid",
-                    "repair_request",
-                }
-                else "tool_or_action"
-                if str(frame.get("tool_intent", "none") or "none").strip().lower() not in {"", "none"}
-                else "general_chat"
-                if frame
-                else "unknown"
-            )
-            GLOBAL_INFERENCE_BROKER.set_user_turn_category(scope, category)
+            from runtime.conversation.projection import infer_turn_category
+            GLOBAL_INFERENCE_BROKER.set_user_turn_category(scope, infer_turn_category(self.host))
             return result
 
     def _run_v12(
@@ -709,7 +693,7 @@ class AIChatOrchestrator:
         speech_interrupt_event: Any | None = None,
         speech_interrupt_reaction: Any | None = None,
     ) -> Any:
-        del previous_public_turn, speech_interrupt_event, speech_interrupt_reaction
+        del speech_interrupt_event, speech_interrupt_reaction
         host = self.host
         from runtime.conversation import ConversationEvent
         from runtime.conversation.bootstrap import ensure_conversation_kernel
@@ -727,6 +711,26 @@ class AIChatOrchestrator:
                 timestamp=cycle_start,
                 meta={"channel": "chat", "architecture": "conversation_kernel_v12"},
             )
+        # V12 write-back: user turn phải nuôi trajectory/handoff/memory/identity
+        # trước khi RootAgent đọc context. Bridge chỉ observe evidence, không route
+        # intent và không có quyền quyết định câu trả lời.
+        try:
+            from runtime.conversation.observation_bridge import ensure_conversation_observation_bridge
+            ledger = ledger_factory() if callable(ledger_factory) else None
+            assistant_turns = ledger.assistant_turns() if ledger is not None else []
+            previous_assistant = assistant_turns[-1] if assistant_turns else None
+            ensure_conversation_observation_bridge(host).observe_user_turn(
+                str(user_text or ""),
+                turn_ref=(f"session_turn:{int(getattr(user_turn, 'index', 0) or 0)}" if user_turn is not None else ""),
+                turn_index=int(getattr(user_turn, "index", 0) or 0),
+                previous_assistant_text=str(getattr(previous_assistant, "text", "") or getattr(host, "last_text", "") or ""),
+                previous_assistant_turn_ref=(f"session_turn:{int(getattr(previous_assistant, 'index', 0) or 0)}" if previous_assistant is not None else ""),
+                previous_assistant_turn_index=int(getattr(previous_assistant, "index", 0) or 0),
+                now=cycle_start,
+            )
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "conversation_v12.observe_user_turn", exc)
+
         # V12: RootAgent/SurfaceWriter nhận current turn qua ``event.text`` /
         # ``user_text``. Vì vậy history ở đây PHẢI chỉ chứa các lượt trước; nếu
         # append current user trước khi chụp history, cùng một câu sẽ xuất hiện
@@ -785,6 +789,11 @@ class AIChatOrchestrator:
         # đứt khi hard-cutover V12, thay vì hồi sinh planner cũ.
         from runtime.conversation.context_assembler import ensure_conversation_context_assembler
 
+        from runtime.conversation.evidence_assembler import ensure_conversation_evidence_assembler
+        evidence_context = ensure_conversation_evidence_assembler(host).assemble_chat(
+            str(user_text or ""),
+            previous_public_turn=previous_public_turn,
+        )
         runtime_context = ensure_conversation_context_assembler(host).assemble(
             user_text=str(user_text or ""),
             channel="chat",
@@ -792,7 +801,14 @@ class AIChatOrchestrator:
             interrupt_context=str(speech_interrupt_context or ""),
             recent_history=history,
         )
+        source_context = str(evidence_context.get("source_grounding_context", "") or "").strip()
+        if source_context:
+            runtime_context["grounding_context"] = "\n\n".join(
+                part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
+            )[:18000]
         runtime_context.update({
+            "__source_grounding_report": evidence_context.get("__source_grounding_report"),
+            "__source_grounding_engine": evidence_context.get("__source_grounding_engine"),
             # Dependency nội bộ cho root loop; RuntimeModelRootAgent không
             # serialize key ``__*`` vào prompt và writer không dùng registry này.
             "__root_capabilities": capability_registry,
@@ -1052,6 +1068,15 @@ class AIAutonomousOrchestrator:
             previous_public_context=str(getattr(host, "last_text", "") or ""),
             recent_history=recent_history,
         )
+        from runtime.conversation.evidence_assembler import ensure_conversation_evidence_assembler
+        evidence_context = ensure_conversation_evidence_assembler(host).assemble_autonomous()
+        source_context = str(evidence_context.get("source_grounding_context", "") or "").strip()
+        if source_context:
+            runtime_context["grounding_context"] = "\n\n".join(
+                part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
+            )[:18000]
+        runtime_context["__source_grounding_report"] = evidence_context.get("__source_grounding_report")
+        runtime_context["__source_grounding_engine"] = evidence_context.get("__source_grounding_engine")
         status = dict(runtime_context.get("conversation_status", {}) or {})
         status.update({
             "signal_kind": signal_kind,

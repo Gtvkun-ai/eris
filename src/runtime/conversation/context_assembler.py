@@ -73,11 +73,12 @@ class ConversationContextAssembler:
         memory = self._memory_context(user_text)
         world = self._world_context(channel)
         clock = self._clock_context()
+        addressing = self._user_addressing_context()
 
         # ``last_grounding_context`` là mirror OUTPUT của chính assembler. Không
         # đọc ngược nó ở lượt sau, nếu không context sẽ tự lồng chính nó và phình
         # dần theo số turn. Grounding V12 lấy trực tiếp từ source-of-truth hiện tại.
-        grounding = "\n\n".join(part for part in (world, clock) if part)[:12000]
+        grounding = "\n\n".join(part for part in (world, clock, addressing) if part)[:14000]
 
         affect_payload: dict[str, Any] = {}
         affect_prompt = ""
@@ -117,6 +118,8 @@ class ConversationContextAssembler:
             "affective_voice_state": affect_payload,
             "affective_voice_context": affect_prompt[:3600],
             "conversation_status": conversation_status,
+            "private_cognition_context": self._private_cognition_context(),
+            "user_addressing_context": addressing,
             "previous_public_excerpt": str(previous_public_context or "")[-1200:],
             "context_assembler": {
                 "schema": "eris.conversation_context.v12",
@@ -187,6 +190,34 @@ class ConversationContextAssembler:
         except Exception as exc:
             self._debug("context.world", exc)
             return ""
+
+
+    @staticmethod
+    def _user_addressing_context() -> str:
+        try:
+            from runtime.user_addressing_state import user_addressing_prompt_context
+            return str(user_addressing_prompt_context() or "")[:2200]
+        except Exception:
+            return ""
+
+    def _private_cognition_context(self) -> dict[str, Any]:
+        """Structured private semantic artifacts; never raw model reasoning."""
+        try:
+            service = ensure_world_state_service(self.host)
+            projection = service.projection("self_turn", refresh=False)
+            cognition = projection.get("cognition", {}) if isinstance(projection, Mapping) else {}
+            if not isinstance(cognition, Mapping):
+                return {}
+            return {
+                "active_concerns": [dict(x) for x in tuple(cognition.get("active_concerns", ()) or ())[:6] if isinstance(x, Mapping)],
+                "mental_material": [dict(x) for x in tuple(cognition.get("mental_material", ()) or ())[:6] if isinstance(x, Mapping)],
+                "current_goal": str(cognition.get("current_goal", "") or "")[:500],
+                "attention": str(cognition.get("attention", "") or "")[:160],
+                "contract": "Private semantic artifacts only; do not reveal hidden reasoning or treat them as external facts.",
+            }
+        except Exception as exc:
+            self._debug("context.private_cognition", exc)
+            return {}
 
     @staticmethod
     def _clock_context() -> str:

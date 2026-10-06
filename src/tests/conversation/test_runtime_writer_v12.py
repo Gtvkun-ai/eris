@@ -118,3 +118,40 @@ def test_stale_generation_discards_rendered_surface():
 
     assert result.status == "stale"
     assert deliveries == []
+
+
+def test_runtime_writer_rewrites_once_when_grounding_gate_rejects_first_draft():
+    from runtime.source_grounding import SourceGroundingEngine
+
+    class _SequenceRouter:
+        def __init__(self):
+            self.calls = []
+        def generate_public_reply(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if len(self.calls) == 1:
+                return {"text": "Tôi thấy trên màn hình của bạn có lỗi đỏ."}
+            return {"text": "Nếu bạn đang nói tới lỗi đỏ đó, gửi phần log hoặc cho tôi xem màn hình để tôi xác nhận."}
+
+    router = _SequenceRouter()
+    writer = RuntimeConversationWriter(_Host(router))
+    engine = SourceGroundingEngine()
+    report = engine.analyze(
+        "nhìn màn hình giúp tôi",
+        screen_facts=(),
+        allow_web=False,
+        attach_to_frame=False,
+    )
+    rendered = writer.realize(
+        turn=_turn(),
+        event=ConversationEvent(event_id="user:ground", session_id="s", kind="user_turn", text="nhìn màn hình giúp tôi"),
+        recent_history=(),
+        runtime_context={
+            "grounding_context": report.prompt_context,
+            "__source_grounding_engine": engine,
+            "__source_grounding_report": report,
+        },
+    )
+
+    assert len(router.calls) == 2
+    assert "GROUNDING_REWRITE_V12" in router.calls[1]["discourse_context"]
+    assert rendered.surface.display_text.startswith("Nếu bạn")

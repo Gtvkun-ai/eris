@@ -663,11 +663,12 @@ class StateCommitServiceMixin:
             except Exception:
                 return {}
         return {}
-    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> None:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> bool:
         payload = decision.to_payload()
         payload.update(self._build_body_bias_payload())
         self._record_public_turn(decision, payload=payload, channel=channel)
         self.transport.send_json(payload)
+        return True
     def _record_public_turn(self, decision: Decision, *, payload: dict | None = None, channel: str | None = None):
         ledger = getattr(self, "public_turn_ledger", None)
         if ledger is None:

@@ -221,3 +221,22 @@ def test_public_chat_entry_uses_v12_kernel_path():
     orchestrator.run("hello", cycle_start=123.0)
 
     assert calls == [("hello", 123.0)]
+
+
+def test_suppressed_transport_does_not_create_false_public_commit():
+    """Regression V12: stage suppression không được ghi như Eris đã nói."""
+    host = _Host()
+    host._send_decision_to_body = lambda _decision, channel=None: False
+    adapter = RuntimeConversationDeliveryAdapter(host)
+
+    try:
+        adapter.deliver(turn=_turn(), rendered=_rendered("Không được phát"), delivery_id="delivery:suppressed")
+    except RuntimeError as exc:
+        assert str(exc) == "public_transport_suppressed"
+    else:
+        raise AssertionError("suppressed transport must fail delivery")
+
+    assert host.chat_history == []
+    assert host.ledger.assistant_turns() == []
+    assert host.last_text == ""
+    assert host.last_chat_answer == ""

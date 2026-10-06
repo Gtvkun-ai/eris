@@ -19,7 +19,6 @@ from .contracts import AI_RUNTIME_VERSION, RuntimeMindState
 from .discovery import DiscoveryRuntime
 from .executive_cortex import ExecutiveCortex
 from .expression import IdentityExpressionBridge
-from .grounding_validator import AutonomousGroundingValidator
 from .identity_consolidator import IdentityConsolidator
 from .initiative import InitiativeController
 from .model_router import AIRuntimeModelRouter
@@ -388,8 +387,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     )
     discovery = DiscoveryRuntime(host, router, logger=getattr(host, "logger", None))
     initiative = InitiativeController(logger=getattr(host, "logger", None))
-    grounding_validator = AutonomousGroundingValidator(logger=getattr(host, "logger", None))
-    health.record_success("ai_orchestrated.grounding_validator")
     consolidator = IdentityConsolidator(logger=getattr(host, "logger", None))
     expression_bridge = IdentityExpressionBridge()
 
@@ -406,7 +403,6 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     host.ai_executive_cortex = executive_cortex
     host.ai_discovery_runtime = discovery
     host.ai_initiative_controller = initiative
-    host.ai_autonomous_grounding_validator = grounding_validator
     host.ai_identity_consolidator = consolidator
     host.ai_stage_planner = StagePlanner(expression_bridge=expression_bridge)
     if engagement_settings.enabled:
@@ -560,7 +556,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
     reducer.subscribe(consolidator.observe)
     try:
         host.logger.info(
-            "[architecture C] enabled version=%s state_version=%s personality_version=%s identity_version=%s observer=post_turn autonomous_initiative=deterministic surface=wording_only semantic_authority=semantic_frame.v1 single_writer=1",
+            "[architecture C] enabled version=%s state_version=%s personality_version=%s identity_version=%s observer=post_turn autonomous_initiative=deterministic surface=wording_only semantic_authority=conversation_kernel_v12.next_conversation_move single_writer=1",
             AI_RUNTIME_VERSION,
             reducer.snapshot().version,
             reducer.snapshot().personality.version,

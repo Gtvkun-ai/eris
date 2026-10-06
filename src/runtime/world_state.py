@@ -356,6 +356,17 @@ class WorldStateSnapshot:
             f"- environment interpretation: activity={env.get('activity') or 'unknown'}; task={env.get('task_hint') or 'unknown'}; phase={env.get('phase') or 'unknown'}; confidence={float(env.get('confidence', 0.0) or 0.0):.2f}",
             f"- conversation: topic={conv.get('topic') or '<none>'}; intent={json.dumps(conv.get('user_intent', {}), ensure_ascii=False, separators=(',', ':'))}",
         ]
+        cognition = projection.get("cognition", {}) if isinstance(projection, Mapping) else {}
+        concerns = cognition.get("active_concerns", ()) if isinstance(cognition, Mapping) else ()
+        materials = cognition.get("mental_material", ()) if isinstance(cognition, Mapping) else ()
+        if concerns:
+            lines.append("- active_concerns=" + json.dumps(list(concerns)[:4], ensure_ascii=False, separators=(",", ":"), default=str)[:2200])
+        if materials:
+            # Mental material là semantic artifact đã được worker tạo, không phải raw
+            # chain-of-thought. Root có thể dùng làm private evidence, nhưng không
+            # được copy nguyên văn thành lời public hay coi nó là fact bên ngoài.
+            lines.append("- mental_material=" + json.dumps(list(materials)[:4], ensure_ascii=False, separators=(",", ":"), default=str)[:2600])
+            lines.append("- mental_material_rule=private semantic material only; never expose as hidden reasoning and never promote to external fact.")
         sensors = system.get("sensor_health", {}) if isinstance(system, Mapping) else {}
         if sensors:
             lines.append("- sensor_health=" + ", ".join(f"{key}:{value}" for key, value in sorted(sensors.items())))
@@ -581,13 +592,13 @@ class WorldStateService:
                 concerns = ()
         materials: tuple[dict[str, Any], ...] = ()
         material_runtime = getattr(self.host, "mental_material_runtime", None)
-        panel_fn = getattr(material_runtime, "panel_view", None)
-        if callable(panel_fn):
+        # MentalMaterialRuntime exposes snapshot(), không có panel_view().
+        # V12 hard-cutover từng gọi nhầm API nên toàn bộ material bị rơi thành ().
+        snapshot_material = getattr(material_runtime, "snapshot", None)
+        if callable(snapshot_material):
             try:
-                raw = panel_fn(now=now)
-                if isinstance(raw, Mapping):
-                    candidates = raw.get("items", raw.get("materials", ()))
-                    materials = tuple(dict(item) for item in tuple(candidates or ())[:8] if isinstance(item, Mapping))
+                raw = snapshot_material(now=now, limit=8)
+                materials = tuple(dict(item) for item in tuple(raw or ())[:8] if isinstance(item, Mapping))
             except Exception:
                 materials = ()
         attention_state = _text(getattr(self.host, "cortex_attention_level", ""), 80) or _text(self._attention.get("reason", ""), 120) or "unknown"

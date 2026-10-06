@@ -339,6 +339,8 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "teaching_active",
         "explicit_tool_route",
         "conversation_status",
+        "private_cognition_context",
+        "user_addressing_context",
         "affective_voice_state",
         "engagement_context",
         "personality_summary",
