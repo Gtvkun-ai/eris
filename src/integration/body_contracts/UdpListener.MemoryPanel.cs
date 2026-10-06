@@ -63,7 +63,8 @@ public partial class UdpListener : Node2D
 	private VBoxContainer _memoryItemList;
 	private VBoxContainer _memoryPortraitRoot;
 	private VBoxContainer _memoryManagerRoot;
-	private VBoxContainer _memoryPortraitList;
+	private VBoxContainer _memoryPortraitLeftList;
+	private VBoxContainer _memoryPortraitRightList;
 	private Label _memorySummaryLabel;
 	private Label _memoryPortraitAsideLabel;
 	private Label _memoryCountLabel;
@@ -205,73 +206,133 @@ public partial class UdpListener : Node2D
 		root.AddThemeConstantOverride("separation", 14);
 		margin.AddChild(root);
 
-		// Header chỉ giữ navigation. Technical state không được chen vào mặt chính.
+		// Header mang giọng của ERIS trước, control kỹ thuật lùi xuống sau.
+		// Mục tiêu của màn này là: user mở ra và có cảm giác đang nhìn vào
+		// cách ERIS nhớ mình, không phải đang mở bảng quản trị dữ liệu.
 		var header = new HBoxContainer();
 		header.AddThemeConstantOverride("separation", 10);
 		root.AddChild(header);
-		var titleBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		titleBox.AddThemeConstantOverride("separation", 2);
-		header.AddChild(titleBox);
-		var title = CreateUiLabel("Những chuyện ERIS vẫn nhớ", 25, MemoryInk);
-		titleBox.AddChild(title);
-		_memoryStatusLabel = CreateUiLabel("Đang dùng những gì tôi nhớ gần nhất.", 10, MemoryInkSoft);
-		titleBox.AddChild(_memoryStatusLabel);
 
-		var refresh = CreateMemoryButton("Nghĩ lại", () => SendMemoryPanelRequest(
-			"snapshot", new Dictionary<string, object> { ["refresh_portrait"] = true }), primary: false);
-		refresh.CustomMinimumSize = new Vector2(88f, 34f);
-		header.AddChild(refresh);
+		var titleBox = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		titleBox.AddThemeConstantOverride("separation", 1);
+		header.AddChild(titleBox);
+		var eyebrow = CreateUiLabel("ERIS // MEMORY", 9, MemoryAside);
+		titleBox.AddChild(eyebrow);
+		var title = CreateUiLabel("Những chuyện tôi vẫn chưa quên", 25, MemoryInk);
+		titleBox.AddChild(title);
+		var subtitle = CreateUiLabel("…đừng có nhìn tôi kiểu đó. Tôi chỉ nhớ hơi nhiều thôi.", 10, MemoryInkSoft);
+		titleBox.AddChild(subtitle);
+
 		_memoryModeButton = CreateMemoryButton("Quản lý", () => SetMemoryManagerMode(!_memoryManagerVisible), primary: false);
-		_memoryModeButton.CustomMinimumSize = new Vector2(90f, 34f);
+		_memoryModeButton.CustomMinimumSize = new Vector2(86f, 34f);
 		header.AddChild(_memoryModeButton);
+		var refresh = CreateMemoryButton("Đọc lại", () => SendMemoryPanelRequest(
+			"snapshot", new Dictionary<string, object> { ["refresh_portrait"] = true }), primary: true);
+		refresh.CustomMinimumSize = new Vector2(82f, 34f);
+		header.AddChild(refresh);
 		var controls = CreateWindowControlCapsule(() => _memoryPanel.Visible = false, CloseMemoryPanel);
 		header.AddChild(controls);
 
 		// ------------------------------------------------------------------
-		// Mặt chính: character-facing portrait. Không confidence, source count,
-		// cleanup hay record path. User mở panel để xem ERIS hiểu/nhớ mình ra sao.
+		// Character-facing portrait. Hai cột cố ý không cân nhau hoàn toàn:
+		// bên trái là "ERIS nhìn bạn thế nào", bên phải là ký ức chung và
+		// những điều ERIS còn ngập ngừng. Cảm giác gần visual-novel/diary hơn
+		// một danh sách record nối đuôi nhau.
 		// ------------------------------------------------------------------
 		_memoryPortraitRoot = new VBoxContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 		};
-		_memoryPortraitRoot.AddThemeConstantOverride("separation", 12);
+		_memoryPortraitRoot.AddThemeConstantOverride("separation", 10);
 		root.AddChild(_memoryPortraitRoot);
 
-		var hero = CreateMemoryPortraitSurface(MemoryHero, new Color(0.77f, 0.30f, 0.52f, 0.72f));
-		hero.CustomMinimumSize = new Vector2(0f, 118f);
-		_memoryPortraitRoot.AddChild(hero);
+		var columns = new HBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		columns.AddThemeConstantOverride("separation", 14);
+		_memoryPortraitRoot.AddChild(columns);
+
+		var leftColumn = new VBoxContainer
+		{
+			CustomMinimumSize = new Vector2(408f, 0f),
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		leftColumn.AddThemeConstantOverride("separation", 10);
+		columns.AddChild(leftColumn);
+
+		var heroEyebrow = CreateUiLabel("●  HÔM NAY TÔI NGHĨ VỀ BẠN THẾ NÀY", 10, MemoryAside);
+		leftColumn.AddChild(heroEyebrow);
+		var hero = CreateMemoryPortraitSurface(new Color(1f, 0.992f, 0.996f, 0.92f), new Color(0.77f, 0.30f, 0.52f, 0.70f));
+		hero.CustomMinimumSize = new Vector2(0f, 170f);
+		leftColumn.AddChild(hero);
 		var heroMargin = new MarginContainer();
-		heroMargin.AddThemeConstantOverride("margin_left", 22);
-		heroMargin.AddThemeConstantOverride("margin_right", 22);
+		heroMargin.AddThemeConstantOverride("margin_left", 20);
+		heroMargin.AddThemeConstantOverride("margin_right", 20);
 		heroMargin.AddThemeConstantOverride("margin_top", 16);
-		heroMargin.AddThemeConstantOverride("margin_bottom", 14);
+		heroMargin.AddThemeConstantOverride("margin_bottom", 16);
 		hero.AddChild(heroMargin);
 		var heroBox = new VBoxContainer();
-		heroBox.AddThemeConstantOverride("separation", 7);
+		heroBox.AddThemeConstantOverride("separation", 8);
 		heroMargin.AddChild(heroBox);
-		var heroEyebrow = CreateUiLabel("Hôm nay tôi nghĩ về bạn thế này…", 11, MemoryAside);
-		heroBox.AddChild(heroEyebrow);
-		_memorySummaryLabel = CreateUiLabel(_memorySummaryText, 16, MemoryInk);
+		_memorySummaryLabel = CreateUiLabel(_memorySummaryText, 17, MemoryInk);
 		_memorySummaryLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		_memorySummaryLabel.MaxLinesVisible = 5;
+		_memorySummaryLabel.MaxLinesVisible = 7;
 		_memorySummaryLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 		heroBox.AddChild(_memorySummaryLabel);
-		_memoryPortraitAsideLabel = CreateUiLabel("", 11, MemoryAside);
-		_memoryPortraitAsideLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		heroBox.AddChild(_memoryPortraitAsideLabel);
 
-		var portraitScroll = new ScrollContainer
+		var leftScroll = new ScrollContainer
 		{
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
 			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
 		};
-		_memoryPortraitRoot.AddChild(portraitScroll);
-		_memoryPortraitList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		_memoryPortraitList.AddThemeConstantOverride("separation", 9);
-		portraitScroll.AddChild(_memoryPortraitList);
+		leftColumn.AddChild(leftScroll);
+		_memoryPortraitLeftList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		_memoryPortraitLeftList.AddThemeConstantOverride("separation", 8);
+		leftScroll.AddChild(_memoryPortraitLeftList);
+
+		var rightColumn = new VBoxContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+		};
+		rightColumn.AddThemeConstantOverride("separation", 10);
+		columns.AddChild(rightColumn);
+
+		var rightScroll = new ScrollContainer
+		{
+			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+		};
+		rightColumn.AddChild(rightScroll);
+		_memoryPortraitRightList = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+		_memoryPortraitRightList.AddThemeConstantOverride("separation", 8);
+		rightScroll.AddChild(_memoryPortraitRightList);
+
+		// Lời chen này dùng output Surface, chỉ là cách ERIS kể lại state hiện tại.
+		// Nó không bao giờ được ghi ngược thành canonical memory.
+		var asideSurface = CreateMemoryPortraitSurface(new Color(0.985f, 0.955f, 0.970f, 0.82f), new Color(0.84f, 0.53f, 0.66f, 0.40f));
+		asideSurface.CustomMinimumSize = new Vector2(0f, 64f);
+		rightColumn.AddChild(asideSurface);
+		var asideMargin = new MarginContainer();
+		asideMargin.AddThemeConstantOverride("margin_left", 16);
+		asideMargin.AddThemeConstantOverride("margin_right", 16);
+		asideMargin.AddThemeConstantOverride("margin_top", 10);
+		asideMargin.AddThemeConstantOverride("margin_bottom", 10);
+		asideSurface.AddChild(asideMargin);
+		var asideRow = new HBoxContainer();
+		asideRow.AddThemeConstantOverride("separation", 8);
+		asideMargin.AddChild(asideRow);
+		asideRow.AddChild(CreateUiLabel("✦", 14, MemoryPink));
+		_memoryPortraitAsideLabel = CreateUiLabel("", 11, MemoryAside);
+		_memoryPortraitAsideLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+		_memoryPortraitAsideLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+		asideRow.AddChild(_memoryPortraitAsideLabel);
 
 		// ------------------------------------------------------------------
 		// Inspector: user vẫn có quyền audit/sửa/quên canonical memory, nhưng đây
@@ -292,6 +353,9 @@ public partial class UdpListener : Node2D
 		var managerTitle = CreateUiLabel("Quản lý trí nhớ", 16, MemoryInk);
 		managerTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		managerHeader.AddChild(managerTitle);
+		_memoryStatusLabel = CreateUiLabel("Sẵn sàng.", 10, MemoryInkSoft);
+		_memoryStatusLabel.VerticalAlignment = VerticalAlignment.Center;
+		managerHeader.AddChild(_memoryStatusLabel);
 		_memoryCountLabel = CreateUiLabel("Chưa có thống kê", 10, MemoryInkSoft);
 		_memoryCountLabel.VerticalAlignment = VerticalAlignment.Center;
 		managerHeader.AddChild(_memoryCountLabel);
@@ -748,32 +812,50 @@ public partial class UdpListener : Node2D
 
 	private void RefreshMemoryPortrait()
 	{
-		if (_memoryPortraitList == null)
+		if (_memoryPortraitLeftList == null || _memoryPortraitRightList == null)
 			return;
-		foreach (Node child in _memoryPortraitList.GetChildren())
-		{
-			_memoryPortraitList.RemoveChild(child);
-			child.QueueFree();
-		}
+
+		ClearMemoryPortraitColumn(_memoryPortraitLeftList);
+		ClearMemoryPortraitColumn(_memoryPortraitRightList);
 
 		if (_memoryPortraitSections.Count == 0)
 		{
-			_memoryPortraitList.AddChild(CreateMemoryPortraitEmptyState());
+			_memoryPortraitLeftList.AddChild(CreateMemoryPortraitEmptyState());
 			return;
 		}
 
 		foreach (MemoryPortraitSection section in _memoryPortraitSections)
 		{
-			string sectionTitle = string.IsNullOrWhiteSpace(section.Title)
-				? PortraitSectionTitle(section.Kind)
-				: section.Title;
-			var title = CreateUiLabel(sectionTitle, 14, MemoryInk);
-			title.CustomMinimumSize = new Vector2(0f, 30f);
-			title.VerticalAlignment = VerticalAlignment.Center;
-			_memoryPortraitList.AddChild(title);
-			foreach (MemoryPortraitItem item in section.Items)
-				_memoryPortraitList.AddChild(CreateMemoryPortraitCard(section.Kind, item));
+			// Ký ức chung + phần ERIS chưa chắc nằm bên phải để tạo nhịp như
+			// diary/VN. Những gì ERIS hiểu về user và sở thích nằm bên trái.
+			VBoxContainer target = section.Kind is "our_memories" or "not_sure"
+				? _memoryPortraitRightList
+				: _memoryPortraitLeftList;
+			AddMemoryPortraitSection(target, section);
 		}
+	}
+
+	private static void ClearMemoryPortraitColumn(VBoxContainer column)
+	{
+		foreach (Node child in column.GetChildren())
+		{
+			column.RemoveChild(child);
+			child.QueueFree();
+		}
+	}
+
+	private void AddMemoryPortraitSection(VBoxContainer target, MemoryPortraitSection section)
+	{
+		string sectionTitle = string.IsNullOrWhiteSpace(section.Title)
+			? PortraitSectionTitle(section.Kind)
+			: section.Title;
+		var title = CreateUiLabel($"●  {sectionTitle.ToUpperInvariant()}", 10, MemoryAside);
+		title.CustomMinimumSize = new Vector2(0f, 26f);
+		title.VerticalAlignment = VerticalAlignment.Center;
+		target.AddChild(title);
+
+		foreach (MemoryPortraitItem item in section.Items)
+			target.AddChild(CreateMemoryPortraitCard(section.Kind, item));
 	}
 
 	private Control CreateMemoryPortraitEmptyState()
@@ -808,7 +890,12 @@ public partial class UdpListener : Node2D
 			"not_sure" => new Color(0.73f, 0.54f, 0.35f, 0.74f),
 			_ => new Color(0.77f, 0.30f, 0.52f, 0.72f),
 		};
-		var surface = CreateMemoryPortraitSurface(new Color(1f, 0.997f, 0.999f, 0.84f), accent);
+		Color background = kind == "not_sure"
+			? new Color(1f, 0.982f, 0.965f, 0.90f)
+			: new Color(1f, 0.997f, 0.999f, 0.90f);
+		var surface = CreateMemoryPortraitSurface(background, accent);
+		if (kind == "our_memories")
+			surface.CustomMinimumSize = new Vector2(0f, 126f);
 		var margin = new MarginContainer();
 		margin.AddThemeConstantOverride("margin_left", 18);
 		margin.AddThemeConstantOverride("margin_right", 18);
@@ -819,15 +906,15 @@ public partial class UdpListener : Node2D
 		box.AddThemeConstantOverride("separation", 5);
 		margin.AddChild(box);
 
-		var title = CreateUiLabel(item.Title, 13, MemoryInk);
+		var title = CreateUiLabel(item.Title, kind == "our_memories" ? 15 : 13, MemoryInk);
 		title.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		box.AddChild(title);
-		var body = CreateUiLabel(item.Body, 12, new Color(0.36f, 0.15f, 0.26f));
+		var body = CreateUiLabel(item.Body, kind == "our_memories" ? 13 : 12, new Color(0.31f, 0.18f, 0.24f));
 		body.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		box.AddChild(body);
 		if (!string.IsNullOrWhiteSpace(item.Aside))
 		{
-			var aside = CreateUiLabel(item.Aside, 10, MemoryAside);
+			var aside = CreateUiLabel(item.Aside, 11, MemoryAside);
 			aside.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 			box.AddChild(aside);
 		}

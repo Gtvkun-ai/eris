@@ -124,7 +124,7 @@ DEFAULT_RELATIONSHIP: dict[str, float] = {
     "closeness": 0.20,
     "respect": 0.52,
     "attachment_intensity": 0.31,
-    "playful_safety": 0.32,
+    "playful_safety": 0.52,
     "jealousy": 0.05,
     "possessiveness": 0.04,
     "dependency": 0.06,

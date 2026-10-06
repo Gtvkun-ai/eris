@@ -170,10 +170,14 @@ def test_memory_panel_keeps_character_portrait_separate_from_memory_manager():
     if not body_source.exists():
         body_source = Path(__file__).parents[1] / "integration" / "body_contracts" / "UdpListener.MemoryPanel.cs"
     source = body_source.read_text(encoding="utf-8")
-    assert "Những chuyện ERIS vẫn nhớ" in source
-    assert "Hôm nay tôi nghĩ về bạn thế này" in source
+    assert "Những chuyện tôi vẫn chưa quên" in source
+    assert "ERIS // MEMORY" in source
+    assert "HÔM NAY TÔI NGHĨ VỀ BẠN THẾ NÀY" in source
     assert "Quản lý trí nhớ" in source
     assert "Dọn trí nhớ" in source
+    assert "_memoryPortraitLeftList" in source
+    assert "_memoryPortraitRightList" in source
+    assert 'section.Kind is "our_memories" or "not_sure"' in source
     assert "DeepSeek quản lý ký ức" not in source
     assert "FormatMemoryFeedTrace" not in source
     assert 'SendMemoryPanelRequest("cleanup_now")' in source

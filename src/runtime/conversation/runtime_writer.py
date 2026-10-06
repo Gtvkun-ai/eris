@@ -32,8 +32,9 @@ class RuntimeConversationWriter:
         root_context = (
             "ROOT_CONVERSATION_MOVE_V12: "
             + json.dumps(move_payload, ensure_ascii=False, separators=(",", ":"))
-            + ". Realize only this move. Do not add a topic, question, teaching step, "
-              "future thread, or continuation. The `after` field is lifecycle metadata."
+            + ". Realize this move with natural cadence. Small reactions, fragments or "
+              "expressive pauses are fine; do not add a new topic, steering question, "
+              "teaching step or continuation. The `after` field is lifecycle metadata."
         )
         prior_discourse = str(runtime_context.get("discourse_context", "") or "").strip()
         discourse_context = "\n\n".join(part for part in (prior_discourse, root_context) if part)

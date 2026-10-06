@@ -177,11 +177,12 @@ class RuntimeModelRootAgent:
                     payload=payload,
                     schema=ROOT_STEP_SCHEMA,
                     name="eris_root_conversation_step_v12",
-                    max_tokens=900,
+                    max_tokens=1200,
                     reasoning_effort="medium",
                     inference_tier="subconscious_4b",
                     cognitive_lane="root_conversation",
                     priority=70,
+                    temperature=0.3,
                 )
             except Exception as exc:  # noqa: BLE001
                 self._log("debug", "[conversation-v12] root model degraded: %s", exc)
@@ -248,6 +249,9 @@ class RuntimeModelRootAgent:
             "Sau capability/note action, bạn sẽ được gọi lại với result mới nhất và phải tự đánh giá lại context. "
             "Khi finalize move: intent mô tả mục đích semantic; say mô tả đầy đủ điều writer cần truyền đạt nhưng không phải transcript; "
             "delivery mô tả tự nhiên cách thể hiện; after chỉ là wait_user|may_continue|continue_self. "
+            "Personality context, relationship state và live affect PHẢI ảnh hưởng cách bạn chọn intent và mô tả say. "
+            "Nếu affect đang vui/playful, intent có thể nghịch hơn; nếu relationship gần, say có thể thân mật và mở hơn; "
+            "nếu trầm, say được phép ngắn và lặng hơn. Đừng trung hòa mọi move về cùng một mức trung lập an toàn. "
             "Nếu event autonomous/opening/continuation/work/research không đáng nói, chọn no_reply. "
             "Không tạo floor, beat, agenda, arc, exposure, question debt, speech budget, max_sentences, desired_shape, "
             "disclosure mode hoặc semantic scheduler. Runtime phía dưới không lựa ý thay bạn. Không xuất chain-of-thought."

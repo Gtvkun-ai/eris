@@ -76,7 +76,7 @@ class RelationshipState:
     boundary_safety: float = 0.72
     familiarity: float = 0.18
     closeness: float = 0.20
-    playful_safety: float = 0.32
+    playful_safety: float = 0.52
     rupture: float = 0.0
     repair_progress: float = 0.0
     last_event: str = ""
@@ -92,7 +92,7 @@ class RelationshipState:
             boundary_safety=clamp01(data.get("boundary_safety", 0.72), 0.72),
             familiarity=clamp01(data.get("familiarity", 0.18), 0.18),
             closeness=clamp01(data.get("closeness", 0.20), 0.20),
-            playful_safety=clamp01(data.get("playful_safety", 0.32), 0.32),
+            playful_safety=clamp01(data.get("playful_safety", 0.52), 0.52),
             rupture=clamp01(data.get("rupture", 0.0)),
             repair_progress=clamp01(data.get("repair_progress", 0.0)),
             last_event=compact(data.get("last_event", ""), 80),

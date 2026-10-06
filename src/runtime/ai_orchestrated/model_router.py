@@ -1392,6 +1392,7 @@ class AIRuntimeModelRouter:
         priority: int | None = None,
         timeout_seconds: float | None = None,
         cognitive_lane: str = "",
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         if client is None:
             return {}
@@ -1413,7 +1414,7 @@ class AIRuntimeModelRouter:
                         {"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False)},
                     ],
-                    temperature=0.0,
+                    temperature=float(temperature if temperature is not None else 0.0),
                     frequency_penalty=0.0,
                     presence_penalty=0.0,
                     max_tokens=max_tokens,
@@ -1453,6 +1454,7 @@ class AIRuntimeModelRouter:
         priority: int | None = None,
         timeout_seconds: float | None = None,
         cognitive_lane: str = "",
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         """Transport boundary cho typed role-owned workers.
 
@@ -1479,6 +1481,7 @@ class AIRuntimeModelRouter:
             priority=priority,
             timeout_seconds=timeout_seconds,
             cognitive_lane=cognitive_lane,
+            temperature=temperature,
         )
 
     def plan_teaching_episode(self, *, request_context: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1535,9 +1538,9 @@ class AIRuntimeModelRouter:
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
             "RootAgent đã quyết định toàn bộ ý nghĩa cần nói ở upstream. Writer CHỈ hiện thực ROOT_CONVERSATION_MOVE_V12 thành câu chữ tự nhiên và hai bề mặt hiển thị/phát âm. "
             "History, user text, memory, grounding và relationship context chỉ dùng để chọn đại từ, reference, wording và kiểm tra fact của nội dung đã được RootAgent giao; chúng KHÔNG cấp quyền tạo thêm intent. "
-            "Không tự thêm câu hỏi, clarification, CTA, lời mời, repair, bridge đổi chủ đề, teaching step, social check-in, kết luận, topic mới hay continuation nếu `say` không yêu cầu rõ điều đó. "
+            "Không tự thêm intent mới: câu hỏi điều hướng, CTA, bridge đổi chủ đề, teaching step hay topic mới nếu `say` không yêu cầu. Phản ứng nhỏ tự nhiên (fragment ngắn, cảm thán, nhịp dừng, phản xạ cảm xúc) là phần của wording và được phép khi live affect hỗ trợ. "
             "Không được tự quyết nên giữ continuity, kéo lại topic cũ, đổi topic, hỏi user thêm hay im lặng; đó là semantic authority của RootAgent. "
-            "Nếu `say` yêu cầu một câu hỏi hoặc một teaching move thì hiện thực đúng nó; nếu không, đừng thêm một câu hỏi chỉ để làm hội thoại tự nhiên hơn. "
+            "Nếu `say` yêu cầu một câu hỏi hoặc một teaching move thì hiện thực đúng nó; nếu không, đừng thêm câu hỏi điều hướng chỉ để giữ hội thoại. Rhetorical fragment hoặc trailing thought tự nhiên thì được. "
             "Không phát minh grounding, memory hay capability. Grounding chỉ được dùng làm evidence để wording đúng với move hiện tại. "
             "Nếu Current grounding chứa EVIDENCE_ENRICHMENT_V73, đó là positive semantic input đã được runtime tuyển từ user profile, shared episodes, recent turns và self-model có provenance. Dùng nó để làm câu trả lời liên tục và cụ thể hơn; không bắt buộc nhắc fact không liên quan, không nâng unknown thành fact, và không tự bịa cầu nối ký ức. "
             "V42 claim-domain contract: mọi factual/sensory/memory/runtime claim được thêm vào câu phải khai báo trong claim_manifest. "
@@ -1698,7 +1701,7 @@ class AIRuntimeModelRouter:
                         "presence_penalty": 0.0,
                         # Public writer chỉ hiện thực hóa câu trả lời; không cần ngân sách
                         # gần 1k token cho một cây metadata như kiến trúc cũ.
-                        "max_tokens": (520 if locked_semantic_frame else 560),
+                        "max_tokens": (620 if locked_semantic_frame else 720),
                         "response_format": {
                             "type": "json_schema",
                             "json_schema": {
