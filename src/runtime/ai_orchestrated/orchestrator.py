@@ -727,14 +727,18 @@ class AIChatOrchestrator:
                 timestamp=cycle_start,
                 meta={"channel": "chat", "architecture": "conversation_kernel_v12"},
             )
-        append_history = getattr(host, "_append_chat_history", None)
-        if callable(append_history):
-            append_history("user", str(user_text or ""))
+        # V12: RootAgent/SurfaceWriter nhận current turn qua ``event.text`` /
+        # ``user_text``. Vì vậy history ở đây PHẢI chỉ chứa các lượt trước; nếu
+        # append current user trước khi chụp history, cùng một câu sẽ xuất hiện
+        # hai lần trong cả root payload lẫn writer messages.
         history = tuple(
             item
             for item in tuple(getattr(host, "chat_history", ()) or ())[-12:]
             if isinstance(item, Mapping)
         )
+        append_history = getattr(host, "_append_chat_history", None)
+        if callable(append_history):
+            append_history("user", str(user_text or ""))
         turn_index = int(getattr(user_turn, "index", 0) or 0)
         event = ConversationEvent(
             event_id=f"user:{turn_index or time.time_ns()}",
@@ -775,20 +779,26 @@ class AIChatOrchestrator:
             "work": work_capability,
             "research": research_capability,
         })
-        runtime_context = {
-            "previous_public_excerpt": str(previous_public_context or "")[-1200:],
-            "interrupt_context": str(speech_interrupt_context or "")[:2400],
-            "personality_context": str(getattr(host, "last_personality_context", "") or "")[:6000],
-            "relationship_context": str(getattr(host, "last_relationship_context", "") or "")[:6000],
-            "memory_context": str(getattr(host, "last_memory_context", "") or "")[:8000],
-            "grounding_context": str(getattr(host, "last_grounding_context", "") or "")[:10000],
-            "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
+        # ContextAssembler chỉ projection state/evidence; nó không route intent và
+        # không chọn nội dung nói. RootAgent vẫn là semantic/social authority duy
+        # nhất. Đây là chỗ nối lại identity/relationship/memory/world/affect đã bị
+        # đứt khi hard-cutover V12, thay vì hồi sinh planner cũ.
+        from runtime.conversation.context_assembler import ensure_conversation_context_assembler
+
+        runtime_context = ensure_conversation_context_assembler(host).assemble(
+            user_text=str(user_text or ""),
+            channel="chat",
+            previous_public_context=str(previous_public_context or ""),
+            interrupt_context=str(speech_interrupt_context or ""),
+            recent_history=history,
+        )
+        runtime_context.update({
             # Dependency nội bộ cho root loop; RuntimeModelRootAgent không
             # serialize key ``__*`` vào prompt và writer không dùng registry này.
             "__root_capabilities": capability_registry,
             "language_hint": _runtime_language(),
             "speech_language_hint": _runtime_speech_language(),
-        }
+        })
         host.current_stage_user_text = str(user_text or "")
         kernel = ensure_conversation_kernel(host)
         result = kernel.handle_event(
@@ -1034,28 +1044,27 @@ class AIAutonomousOrchestrator:
                 state = snapshot()
             except Exception as exc:
                 _orchestrator_boundary_note(host, "conversation_signal.state", exc)
-        runtime_context = {
-            "conversation_status": {
-                "signal_kind": signal_kind,
-                "chat_mode": bool(getattr(host, "chat_mode", False)),
-            },
-            "engagement_context": dict(getattr(host, "last_engagement_context", {}) or {}),
-            "previous_public_excerpt": str(getattr(host, "last_text", "") or "")[-1200:],
-        }
+        from runtime.conversation.context_assembler import ensure_conversation_context_assembler
+
+        runtime_context = ensure_conversation_context_assembler(host).assemble(
+            user_text="",
+            channel="autonomous",
+            previous_public_context=str(getattr(host, "last_text", "") or ""),
+            recent_history=recent_history,
+        )
+        status = dict(runtime_context.get("conversation_status", {}) or {})
+        status.update({
+            "signal_kind": signal_kind,
+            "chat_mode": bool(getattr(host, "chat_mode", False)),
+        })
+        runtime_context["conversation_status"] = status
         for capability_key in ("tutor_capability", "work_capability", "research_capability"):
             capability_value = signal_metadata.get(capability_key)
             if isinstance(capability_value, Mapping):
                 runtime_context[capability_key] = dict(capability_value)
         if state is not None:
-            personality_summary = getattr(state, "personality_prompt_context", None)
-            relationship = getattr(state, "relationship", None)
-            relationship_summary = getattr(relationship, "prompt_summary", None)
             latest_observation = getattr(state, "latest_observation", None)
             open_loops = getattr(state, "open_loops", ())
-            if callable(personality_summary):
-                runtime_context["personality_summary"] = str(personality_summary())[:6000]
-            if callable(relationship_summary):
-                runtime_context["relationship_summary"] = str(relationship_summary())[:6000]
             if isinstance(latest_observation, Mapping):
                 signal_metadata["latest_observation"] = dict(latest_observation)
             signal_metadata["open_loops"] = [str(item)[:500] for item in tuple(open_loops or ())[:5]]

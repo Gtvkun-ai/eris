@@ -275,6 +275,18 @@ class MemoryKernel:
                     })
                 except Exception as exc:  # pragma: no cover
                     warnings.append(f"living_user_observe_failed:{type(exc).__name__}:{exc}")
+            else:
+                # Ownership phải hiện rõ trong debug contract. Fast path chỉ
+                # ingest deterministic rồi giao profile observation cho curator
+                # nền; semantic digest cũng có thể được caller đánh dấu là do
+                # dedicated curator lane sở hữu để tránh gọi model hai lần.
+                user_profile_debug["deferred"] = True
+                if bool(dict(plan.context or {}).get("skip_living_user_observe", False)):
+                    user_profile_debug["reason"] = "dedicated_curator_lane"
+                elif str(plan.mode) == "fast":
+                    user_profile_debug["reason"] = "fast_path_background_curator"
+                else:
+                    user_profile_debug["reason"] = "living_user_observe_disabled"
             if sync_living_user_semantic:
                 try:
                     sync_result = living_user.sync_semantic_memory()
@@ -336,9 +348,11 @@ class MemoryKernel:
                 warnings=list(plan.warnings),
                 debug=dict(plan.debug),
             )
+        context_map = dict(context or {})
+        skip_living_user_observe = bool(context_map.get("skip_living_user_observe", False))
         return self.commit_plan(
             plan,
-            observe_living_user=(mode != "fast"),
+            observe_living_user=(mode != "fast" and not skip_living_user_observe),
             sync_living_user_semantic=(mode != "fast"),
         )
 

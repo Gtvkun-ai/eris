@@ -2,6 +2,7 @@
 """Public API ConversationKernel V12."""
 from .agent import DeterministicRootAgent, RootAgent, RuntimeModelRootAgent
 from .continuation import ContinuationLeaseScheduler
+from .context_assembler import ConversationContextAssembler, ensure_conversation_context_assembler
 from .contracts import (
     ConversationAfter, ConversationDecision, ConversationEvent, ConversationSessionState,
     ContinuationLease, DeliveryReceipt, InterruptKind, NextConversationMove, NoReply, RunPhase,
@@ -19,6 +20,7 @@ from .writer import ConversationWriter, RenderedConversationMove
 __all__ = [
     "ConversationAfter", "ConversationDecision", "ConversationDelivery", "ConversationEvent", "ConversationKernel",
     "ConversationRunResult", "ConversationSessionState", "ConversationWriter",
+    "ConversationContextAssembler", "ensure_conversation_context_assembler",
     "ContinuationLease", "ContinuationLeaseScheduler", "DeliveryReceipt", "DeliveryReceiptLedger",
     "DeterministicRootAgent", "InterruptDecision", "InterruptKind", "KernelTurn",
     "NextConversationMove", "NoReply", "PresentationHint", "RootAgent", "RunPhase", "RuntimeConversationWriter",

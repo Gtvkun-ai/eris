@@ -1564,6 +1564,7 @@ class AIRuntimeModelRouter:
         grounding_context: str = "",
         relationship_context: str = "",
         personality_context: str = "",
+        affective_voice_state: Mapping[str, Any] | str = "",
         interrupt_context: str = "",
         engagement_context: str = "",
         routing_context: str = "",
@@ -1594,12 +1595,24 @@ class AIRuntimeModelRouter:
                     client = resolver()
                 except Exception:
                     client = None
-        client = client or getattr(self.llm_service, "client", None)
+        # V12: public wording có worker riêng. Main/companion client chỉ là
+        # compatibility fallback khi surface lane thật sự không tồn tại; nếu
+        # không, ta vô tình trả tiền/thời gian cho một vòng cognition thứ hai.
+        client = client or self.surface_client or getattr(self.llm_service, "client", None)
         context_parts = []
         if personality_context:
             context_parts.append(f"Current ERIS personality: {personality_context}")
         if relationship_context:
             context_parts.append(f"Relationship continuity: {relationship_context}")
+        if affective_voice_state:
+            if isinstance(affective_voice_state, Mapping):
+                affect_text = json.dumps(dict(affective_voice_state), ensure_ascii=False, separators=(",", ":"), default=str)
+            else:
+                affect_text = str(affective_voice_state)
+            context_parts.append(
+                "Live ERIS affective voice state (expression authority, not evidence about user/world): "
+                + affect_text[:3600]
+            )
         if grounding_context:
             context_parts.append(f"Current grounding: {grounding_context}")
         if memory_context:

@@ -213,3 +213,24 @@ def test_active_root_docs_no_longer_keep_v6_v7_v11_architecture_files():
         "README_V6_NO_SPEECH_CAP_VI.md",
     ):
         assert not (ROOT / name).exists()
+
+
+def test_foreground_history_excludes_current_user_turn_before_root_and_writer():
+    source = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    block = source.split("    def _run_v12(", 1)[1].split("class AIAutonomousOrchestrator", 1)[0]
+    history_pos = block.index("history = tuple(")
+    append_pos = block.index('append_history("user", str(user_text or ""))')
+    assert history_pos < append_pos
+
+
+def test_v12_uses_projection_context_assembler_not_dead_last_context_as_authority():
+    source = (ROOT / "runtime/ai_orchestrated/orchestrator.py").read_text(encoding="utf-8")
+    block = source.split("    def _run_v12(", 1)[1].split("class AIAutonomousOrchestrator", 1)[0]
+    assert "ensure_conversation_context_assembler(host).assemble" in block
+    for dead_read in (
+        'getattr(host, "last_personality_context"',
+        'getattr(host, "last_relationship_context"',
+        'getattr(host, "last_memory_context"',
+        'getattr(host, "last_grounding_context"',
+    ):
+        assert dead_read not in block
