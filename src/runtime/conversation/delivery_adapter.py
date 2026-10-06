@@ -8,6 +8,7 @@ from typing import Any
 
 from .kernel import KernelTurn
 from .writer import RenderedConversationMove
+from runtime.json_boundary import public_payload
 
 
 class RuntimeConversationDeliveryAdapter:
@@ -28,16 +29,21 @@ class RuntimeConversationDeliveryAdapter:
             raise ValueError("delivery_id_required")
         with self._lock:
             if did in self._started:
+                self._log("warning", "[delivery-adapter] deliver() called twice for same did=%s — idempotency guard fired, skipping body send", did)
                 return
             self._started.add(did)
 
-        payload = dict(rendered.metadata.get("provider_payload", {}) or {})
+        # Writer giữ typed objects (_typed_semantic_frame, SemanticFrame, ...) để
+        # cognition nội bộ dùng lại. Parser/body là JSON boundary nên phải hạ domain
+        # object về primitive và bỏ cache _typed_* trước json.dumps.
+        payload = public_payload(rendered.metadata.get("provider_payload", {}) or {})
         payload["text"] = rendered.surface.display_text
         if rendered.surface.speech_text:
             payload["speech_text"] = rendered.surface.speech_text
         parser = getattr(self.host, "parser", None)
         parse = getattr(parser, "parse", None)
         if not callable(parse):
+            self._log("warning", "[delivery-adapter] parser unavailable, cannot deliver did=%s", did)
             raise RuntimeError("public_decision_parser_unavailable")
         raw = json.dumps(payload, ensure_ascii=False)
         try:
@@ -110,6 +116,7 @@ class RuntimeConversationDeliveryAdapter:
             apply_position(decision)
         send = getattr(self.host, "_send_decision_to_body", None)
         if not callable(send):
+            self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
             raise RuntimeError("public_transport_unavailable")
         send(decision, channel=self._channel_for(rendered))
 

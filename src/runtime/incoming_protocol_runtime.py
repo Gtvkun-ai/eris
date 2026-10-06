@@ -345,15 +345,29 @@ class IncomingProtocolRuntimeMixin:
         Handler luôn gửi snapshot mới sau thao tác để UI không phải tự đoán state.
         Payload nhạy cảm bị loại tại runtime, không chỉ ẩn bằng CSS phía client.
         """
-        from runtime.living_user_panel import handle_memory_panel_request
+        from runtime.living_user_panel import build_memory_expression_lens, handle_memory_panel_request
 
         request_id = str(msg.get("request_id", "") or "")
         kernel = getattr(self, "memory_kernel", None)
         living_user = getattr(kernel, "living_user", None)
+        try:
+            internal_state = self._get_internal_state() if callable(getattr(self, "_get_internal_state", None)) else None
+        except Exception:
+            internal_state = None
+        personality_profile = None
+        try:
+            reducer = getattr(self, "ai_state_reducer", None)
+            snapshot = getattr(reducer, "snapshot", None)
+            mind_state = snapshot() if callable(snapshot) else None
+            personality_profile = getattr(mind_state, "personality", None)
+        except Exception:
+            personality_profile = None
         result = handle_memory_panel_request(
             living_user,
             msg,
             cleanup_service=getattr(self, "memory_gc_service", None),
+            portrait_presenter=getattr(self, "memory_portrait_presenter", None),
+            expression_lens=build_memory_expression_lens(internal_state, personality_profile),
         )
         self._send_runtime_json({
             "type": "memory_panel_ack",

@@ -18,6 +18,7 @@ from runtime.conversation import (
 from runtime.conversation.bootstrap import ensure_conversation_kernel
 from runtime.conversation.delivery_adapter import RuntimeConversationDeliveryAdapter
 from runtime.session_turn_ledger import SessionTurnLedger
+from runtime.semantic_frame import AssistantAct, SemanticFrame
 from runtime.ai_orchestrated.orchestrator import AIChatOrchestrator
 
 
@@ -97,6 +98,38 @@ def test_delivery_adapter_commits_assistant_and_transport_once():
     assert len(host.sent) == 1
     decision, channel = host.sent[0]
     assert decision.utterance_turn_id == "delivery:1"
+    assert channel == "chat"
+
+
+def test_delivery_adapter_converts_typed_provider_payload_before_json_boundary():
+    """Regression: typed semantic metadata không được làm chết delivery V12."""
+
+    host = _Host()
+    adapter = RuntimeConversationDeliveryAdapter(host)
+    frame = SemanticFrame(user_act="confirm")
+    act = AssistantAct()
+    rendered = RenderedConversationMove(
+        surface=SurfaceEnvelope(display_text="Có.", speech_text="はい。", language="vi"),
+        decision_payload=_turn().move.to_dict(),
+        metadata={
+            "event_kind": "user_turn",
+            "user_text": "thật hả",
+            "provider_payload": {
+                "text": "Có.",
+                "speech_text": "はい。",
+                "semantic_frame": frame,
+                "assistant_act": act,
+                "_typed_semantic_frame": frame,
+                "_typed_assistant_act": act,
+            },
+        },
+    )
+
+    adapter.deliver(turn=_turn(), rendered=rendered, delivery_id="delivery:typed")
+
+    assert len(host.sent) == 1
+    decision, channel = host.sent[0]
+    assert decision.text == "Có."
     assert channel == "chat"
 
 

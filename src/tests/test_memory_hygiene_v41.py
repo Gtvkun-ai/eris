@@ -165,14 +165,16 @@ def test_memory_panel_can_toggle_and_force_deepseek_cleanup(tmp_path):
     assert cleaned.payload["cleanup_report"]["behavior_removed"] == 5
 
 
-def test_memory_panel_ui_exposes_curator_without_raw_feed_trace():
-    body_source = Path(__file__).parents[2] / "body" / "UdpListener.MemoryPanel.cs"
+def test_memory_panel_keeps_character_portrait_separate_from_memory_manager():
+    body_source = Path(__file__).parents[1] / "body" / "UdpListener.MemoryPanel.cs"
     if not body_source.exists():
-        body_source = Path(__file__).parents[1] / "integration" / "body_contracts" / "UdpListener.MemoryPanel.cs.fixture.txt"
+        body_source = Path(__file__).parents[1] / "integration" / "body_contracts" / "UdpListener.MemoryPanel.cs"
     source = body_source.read_text(encoding="utf-8")
-    assert "DeepSeek quản lý ký ức" in source
-    assert "Tự động dọn" in source
-    assert "DeepSeek dọn ngay" in source
+    assert "Những chuyện ERIS vẫn nhớ" in source
+    assert "Hôm nay tôi nghĩ về bạn thế này" in source
+    assert "Quản lý trí nhớ" in source
+    assert "Dọn trí nhớ" in source
+    assert "DeepSeek quản lý ký ức" not in source
     assert "FormatMemoryFeedTrace" not in source
     assert 'SendMemoryPanelRequest("cleanup_now")' in source
     assert "StartMemoryCleanup" in source

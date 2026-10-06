@@ -731,10 +731,17 @@ class PublicOutputRuntimeMixin:
                     on_event=handle_tts_event,
                 ))
             except Exception as _tts_exc:
-                self.logger.debug("[TTS] speak error: %s", _tts_exc)
+                self.logger.warning("[TTS] speak error turn_id=%s: %s", stage_frame.turn_id, _tts_exc)
                 has_scheduled_tts = False
 
         if not has_scheduled_tts:
+            _tts_ok = _tts is not None and getattr(_tts, "_ok", False)
+            _should_speak = bool(payload.get("should_speak"))
+            _has_frames = bool(stage_frames)
+            self.logger.warning(
+                "[TTS] no TTS scheduled turn_id=%s: tts_ok=%s should_speak=%s has_frames=%s",
+                stage_frame.turn_id, _tts_ok, _should_speak, _has_frames,
+            )
             clock = getattr(self, "interaction_clock", None)
             if clock is not None:
                 try:

@@ -198,6 +198,11 @@ class ChatCycleMixin:
                 lifecycle = lifecycle_for(self)
                 state = lifecycle.snapshot()
                 if state.turn_id == lifecycle_turn_id and state.state == "COMPOSING":
+                    self.logger.warning(
+                        "[chat-cycle] lifecycle vẫn COMPOSING sau khi cycle kết thúc "
+                        "(no_public_commit). turn_id=%s — _send_decision_to_body bị miss.",
+                        lifecycle_turn_id,
+                    )
                     lifecycle.transition("DEGRADED", turn_id=lifecycle_turn_id, reason="no_public_commit")
             except Exception:
                 pass

@@ -297,6 +297,7 @@ class CoordinatorBootstrapMixin:
             except Exception as exc:
                 self.logger.warning("Không bọc được memory kernel từ memory core hiện có: %s", exc)
                 self.memory_kernel = None
+        self.memory_portrait_presenter = None
         if self.memory_kernel is not None:
             self.memory_kernel._llm_service = llm_service
             living_user = getattr(self.memory_kernel, "living_user", None)
@@ -316,6 +317,21 @@ class CoordinatorBootstrapMixin:
                     self.logger.info(
                         "Living user memory model owner: %s.",
                         "DeepSeek curator lane" if curator_client is not None else "deterministic only",
+                    )
+
+                    # V12 Memory Portrait: canonical truth vẫn do curator sở hữu,
+                    # nhưng câu chữ public của panel phải qua đúng Surface worker.
+                    # Presenter không ghi ngược prose vào memory; nó chỉ giữ cache RAM.
+                    from memory.living_user import MemoryPortraitPresenter
+                    surface_client = getattr(llm_service, "surface_client", None)
+                    self.memory_portrait_presenter = MemoryPortraitPresenter(
+                        llm_service,
+                        client=surface_client,
+                        fallback_to_service_surface=False,
+                    )
+                    self.logger.info(
+                        "Living user memory portrait writer: %s.",
+                        "DeepSeek surface lane" if surface_client is not None else "deterministic fallback",
                     )
                 except Exception as exc:
                     # Deterministic profile vẫn chạy; model adapter chỉ là enrichment.

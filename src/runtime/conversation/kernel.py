@@ -259,7 +259,7 @@ class ConversationKernel:
         try:
             self.delivery.deliver(turn=turn, rendered=rendered, delivery_id=delivery_id)
         except Exception as exc:
-            self._log("debug", "[conversation-v12] delivery failed: %s", exc)
+            self._log("warning", "[conversation-v12] delivery failed: %s", exc)
             self.settle_delivery_id(
                 session_id=turn.session_id,
                 delivery_id=delivery_id,

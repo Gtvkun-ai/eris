@@ -28,6 +28,8 @@ def handle_memory_panel_request(
     request: Mapping[str, Any],
     *,
     cleanup_service: Any = None,
+    portrait_presenter: Any = None,
+    expression_lens: Mapping[str, Any] | None = None,
 ) -> MemoryPanelResult:
     """Thực thi một action panel và luôn trả snapshot mới sau mutation."""
     if living_user is None:
@@ -121,6 +123,9 @@ def handle_memory_panel_request(
             include_inferred=bool(request.get("include_inferred", True)),
             project_id=project_id,
             cleanup_service=cleanup_service,
+            portrait_presenter=portrait_presenter,
+            expression_lens=expression_lens,
+            force_portrait_refresh=bool(request.get("refresh_portrait", False)),
         )
         payload.update(extra)
         return MemoryPanelResult("ok", message, payload)
@@ -130,6 +135,9 @@ def handle_memory_panel_request(
             include_inferred=bool(request.get("include_inferred", True)),
             project_id=project_id,
             cleanup_service=cleanup_service,
+            portrait_presenter=portrait_presenter,
+            expression_lens=expression_lens,
+            force_portrait_refresh=False,
         )
         return MemoryPanelResult(
             "error",
@@ -145,6 +153,9 @@ def build_memory_panel_snapshot(
     project_id: str = "",
     limit: int = 48,
     cleanup_service: Any = None,
+    portrait_presenter: Any = None,
+    expression_lens: Mapping[str, Any] | None = None,
+    force_portrait_refresh: bool = False,
 ) -> dict[str, Any]:
     """Tạo payload UI nhỏ, ổn định và không chứa memory nhạy cảm."""
     raw_records = list(living_user.list_memories(
@@ -160,6 +171,18 @@ def build_memory_panel_snapshot(
     goals = _compact_action_rows(actions.get("goals"), "goal", 18)
     commitments = _compact_action_rows(actions.get("commitments"), "commitment", 18)
     workflows = _compact_action_rows(actions.get("workflows"), "workflow", 18)
+
+    # Main panel không còn kể canonical record bằng giọng database. Episode +
+    # canonical records được đưa qua Surface worker để thành một portrait có giọng
+    # ERIS. Raw records vẫn còn ở nhánh Quản lý để user audit/sửa/xóa.
+    episodes = _recent_episode_rows(living_user, project_id=project_id, limit=6)
+    portrait = _render_memory_portrait(
+        portrait_presenter,
+        records=records,
+        episodes=episodes,
+        expression_lens=expression_lens or {},
+        force=force_portrait_refresh,
+    )
 
     cleanup_status = _cleanup_status(cleanup_service)
     # Feed trace là telemetry/debug, không phải thứ user cần đọc trong "ERIS nhớ gì".
@@ -178,7 +201,8 @@ def build_memory_panel_snapshot(
         "schema_version": 4,
         "authority_mode": "deepseek_canonical_projection",
         "memory_policy": "v68_curator_authoritative_working_store",
-        "summary_text": _render_panel_brief(records),
+        "summary_text": str(portrait.get("opening") or _render_panel_brief(records)),
+        "portrait": portrait,
         "counts": counts,
         "records": records,
         "goals": goals,
@@ -234,6 +258,228 @@ def _record_is_ui_garbage(record: Any) -> bool:
         return True
     return False
 
+
+
+def build_memory_expression_lens(internal_state: Any, personality_profile: Any = None) -> dict[str, Any]:
+    """Chiếu private state thành *quyền diễn xuất* semantic cho Surface writer.
+
+    Không đưa ``last_thought_seed``, diary, residue hay bất kỳ raw thought nào vào
+    panel prompt. Worker chỉ biết ERIS đang được phép gần/trêu/ngượng tới đâu.
+    """
+    personality_summary = ""
+    render_personality = getattr(personality_profile, "prompt_summary", None)
+    if callable(render_personality):
+        try:
+            personality_summary = " ".join(str(render_personality(limit=520) or "").split())[:520]
+        except Exception:
+            personality_summary = ""
+
+    if internal_state is None:
+        return {
+            "relationship": "chưa đủ state để suy nhịp quan hệ; giữ khoảng cách vừa phải",
+            "warmth": "ấm vừa, không fanservice",
+            "playfulness": "trêu rất nhẹ nếu evidence tự mở đường",
+            "self_exposure": "kín; nếu lỡ nói gần thì có thể chữa lời một nhịp",
+            "character": personality_summary or "ERIS kín, quan sát chéo, phân tích nhiều, hài khô; affection rò gián tiếp thay vì tuyên bố",
+            "anime_acting": "được ngập ngừng/aside nhẹ; không spam tiếng Nhật hay baby-talk",
+        }
+
+    relation = getattr(internal_state, "relationship_dynamics", None)
+    familiarity = _state_float(relation, "familiarity", 0.0)
+    trust = _state_float(relation, "trust", 0.25)
+    preferred_distance = _state_float(relation, "preferred_distance", 0.58)
+    attachment_visibility = _state_float(relation, "attachment_visibility", 0.12)
+    recoil = _state_float(relation, "exposure_recoil", 0.0)
+    dignity = _state_float(relation, "dignity_defense", 0.0)
+    tolerates_strangeness = _state_float(relation, "user_tolerates_strangeness", 0.0)
+
+    attachment = _state_float(internal_state, "attachment", 0.30)
+    tenderness = _state_float(internal_state, "tenderness", 0.16)
+    playfulness = _state_float(internal_state, "playful_pressure", 0.0)
+    restraint = _state_float(internal_state, "restraint_pressure", 0.08)
+    irritation = _state_float(internal_state, "irritation", 0.10)
+    affective = getattr(internal_state, "affective_state", {}) or {}
+    embarrassment = _mapping_float(affective, "embarrassment", 0.0)
+
+    closeness = max(0.0, min(1.0, familiarity * 0.40 + trust * 0.30 + (1.0 - preferred_distance) * 0.20 + attachment_visibility * 0.10))
+    warmth = max(0.0, min(1.0, attachment * 0.45 + tenderness * 0.45 + trust * 0.10))
+    tease = max(0.0, min(1.0, playfulness * 0.55 + tolerates_strangeness * 0.30 + familiarity * 0.15))
+    guarded = max(0.0, min(1.0, preferred_distance * 0.40 + restraint * 0.28 + recoil * 0.20 + dignity * 0.12))
+    shy = max(0.0, min(1.0, embarrassment * 0.45 + recoil * 0.25 + warmth * 0.18 + guarded * 0.12))
+
+    return {
+        "relationship": (
+            "đã khá quen; có thể nói như hai người có lịch sử chung" if closeness >= 0.62
+            else "đã quen nhịp; bớt khách sáo nhưng chưa được tự tiện thân mật" if closeness >= 0.40
+            else "còn giữ khoảng cách; tránh diễn như đã rất thân"
+        ),
+        "warmth": (
+            "ấm rõ nhưng giấu qua chi tiết, không tuyên bố tình cảm" if warmth >= 0.58
+            else "ấm vừa; quan tâm bằng việc nhớ chi tiết hơn là lời ngọt" if warmth >= 0.35
+            else "khá phẳng; đừng cố làm mềm giả tạo"
+        ),
+        "playfulness": (
+            "được trêu khô và tự chữa lời khá tự nhiên" if tease >= 0.55
+            else "được chọc nhẹ một nhịp" if tease >= 0.30
+            else "ưu tiên quan sát, ít pha trò"
+        ),
+        "self_exposure": (
+            "có thể để lộ một câu hơi gần rồi ngượng/rút lại" if shy >= 0.40 and guarded < 0.72
+            else "kín; nếu có aside thì ngắn, không phơi nội tâm"
+        ),
+        "irritation": (
+            "có cạnh khô; được cà khịa nhẹ nhưng không trách móc" if irritation >= 0.34
+            else "không cần cạnh khó chịu"
+        ),
+        "character": personality_summary or "ERIS kín, quan sát chéo, phân tích nhiều, hài khô; affection rò gián tiếp, có tự trọng và không làm fanservice rẻ",
+        "anime_acting": "được ngập ngừng, câu bị ngắt, tự chối lời khen, aside kiểu '...mong là bạn không đọc kỹ'; thỉnh thoảng 'e-eh?'/'mou...' nếu hợp nhịp, không spam",
+    }
+
+
+def _state_float(owner: Any, name: str, default: float) -> float:
+    try:
+        value = float(getattr(owner, name, default)) if owner is not None else float(default)
+    except (TypeError, ValueError):
+        value = float(default)
+    if value != value:
+        value = float(default)
+    return max(0.0, min(1.0, value))
+
+
+def _mapping_float(owner: Mapping[str, Any], name: str, default: float) -> float:
+    try:
+        value = float(owner.get(name, default))
+    except (TypeError, ValueError):
+        value = float(default)
+    if value != value:
+        value = float(default)
+    return max(0.0, min(1.0, value))
+
+
+def _recent_episode_rows(living_user: Any, *, project_id: str, limit: int) -> list[dict[str, Any]]:
+    store = getattr(living_user, "episode_store", None)
+    all_rows = getattr(store, "all", None)
+    if not callable(all_rows):
+        return []
+    try:
+        episodes = list(all_rows())
+    except Exception:
+        return []
+    visible: list[dict[str, Any]] = []
+    for episode in episodes:
+        scope = getattr(episode, "scope", None)
+        kind = str(getattr(scope, "kind", "global") or "global")
+        key = str(getattr(scope, "key", "") or "")
+        if kind not in {"global", "project"}:
+            continue
+        if kind == "project" and (not project_id or key != project_id):
+            continue
+        summary = " ".join(str(getattr(episode, "summary", "") or "").split()).strip()
+        if not summary:
+            continue
+        visible.append({
+            "id": str(getattr(episode, "id", "") or ""),
+            "title": " ".join(str(getattr(episode, "title", "") or "Một chuyện cũ").split())[:160],
+            "summary": summary[:760],
+            "outcome": " ".join(str(getattr(episode, "outcome", "") or "").split())[:260],
+            "importance": round(_state_float(episode, "importance", 0.5), 4),
+            "ended_at": float(getattr(episode, "ended_at", 0.0) or 0.0),
+        })
+        if len(visible) >= max(1, int(limit)):
+            break
+    return visible
+
+
+def _render_memory_portrait(
+    presenter: Any,
+    *,
+    records: list[dict[str, Any]],
+    episodes: list[dict[str, Any]],
+    expression_lens: Mapping[str, Any],
+    force: bool,
+) -> dict[str, Any]:
+    render = getattr(presenter, "render", None)
+    if callable(render):
+        try:
+            value = render(
+                records=records,
+                episodes=episodes,
+                expression_lens=expression_lens,
+                force=force,
+            )
+            if callable(getattr(value, "to_dict", None)):
+                payload = value.to_dict()
+            elif isinstance(value, Mapping):
+                payload = dict(value)
+            else:
+                payload = {}
+            if str(payload.get("opening") or "").strip():
+                return _json_safe(payload)
+        except Exception:
+            pass
+    return _fallback_memory_portrait(records, episodes)
+
+
+def _fallback_memory_portrait(records: list[dict[str, Any]], episodes: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records and not episodes:
+        return {
+            "opening": "Tôi chưa có gì đủ chắc để kể về bạn cả. Hừm… chắc phải nói chuyện thêm một chút đã.",
+            "aside": "Mà thế này cũng hơi giống bắt tôi làm bài kiểm tra trí nhớ nhỉ…",
+            "sections": [],
+            "renderer": "deterministic_fallback",
+        }
+    sections: list[dict[str, Any]] = []
+    by_kind: dict[str, list[dict[str, Any]]] = {
+        "how_i_see_you": [], "things_you_like": [], "not_sure": [],
+    }
+    for row in records[:12]:
+        value = str(row.get("display_value") or "").strip()
+        if not value:
+            continue
+        ref = f"mem:{row.get('path') or ''}:{row.get('scope_key') or 'global'}"
+        item = {
+            "title": str(row.get("label") or "Một điều về bạn"),
+            "body": (f"Tôi chưa chắc lắm, nhưng có vẻ {value}." if row.get("explicitness") == "inferred" else f"Cái này thì tôi nhớ: {value}."),
+            "aside": "…Nếu sai thì coi như chưa đọc thấy nhé." if row.get("explicitness") == "inferred" else "",
+            "source_refs": [ref],
+        }
+        if row.get("explicitness") == "inferred" or float(row.get("confidence") or 0.0) < 0.62:
+            by_kind["not_sure"].append(item)
+        elif row.get("category") == "preferences":
+            by_kind["things_you_like"].append(item)
+        else:
+            by_kind["how_i_see_you"].append(item)
+    titles = {
+        "how_i_see_you": "Trong mắt tôi",
+        "things_you_like": "Mấy thứ bạn thích",
+        "not_sure": "Có vài chuyện tôi chưa dám chắc",
+    }
+    for kind in ("how_i_see_you", "things_you_like"):
+        if by_kind[kind]:
+            sections.append({"kind": kind, "title": titles[kind], "items": by_kind[kind][:3]})
+    if episodes:
+        sections.append({
+            "kind": "our_memories",
+            "title": "Chuyện của hai đứa",
+            "items": [
+                {
+                    "title": str(row.get("title") or "Một chuyện tôi còn nhớ"),
+                    "body": str(row.get("summary") or "")[:520],
+                    "aside": "…Ừ, chuyện này tôi vẫn chưa quên.",
+                    "source_refs": [f"ep:{row.get('id') or ''}"],
+                }
+                for row in episodes[:3] if row.get("id") and row.get("summary")
+            ],
+        })
+    if by_kind["not_sure"]:
+        sections.append({"kind": "not_sure", "title": titles["not_sure"], "items": by_kind["not_sure"][:2]})
+    opening = _render_panel_brief(records)
+    return {
+        "opening": opening,
+        "aside": "…Đừng có soi tôi đang nhớ kỹ đến mức nào.",
+        "sections": sections[:4],
+        "renderer": "deterministic_fallback",
+    }
 
 def _render_panel_brief(records: list[dict[str, Any]]) -> str:
     if not records:
@@ -468,6 +714,7 @@ def _friendly_error(exc: Exception) -> str:
 
 __all__ = [
     "MemoryPanelResult",
+    "build_memory_expression_lens",
     "build_memory_panel_snapshot",
     "handle_memory_panel_request",
 ]

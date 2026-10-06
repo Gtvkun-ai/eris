@@ -429,6 +429,7 @@ class UdpTransport:
         self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._send_target = (send_host, send_port)
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._recv_sock.bind((recv_host, recv_port))
         self._recv_sock.setblocking(False)
         self._panel_seq = 0

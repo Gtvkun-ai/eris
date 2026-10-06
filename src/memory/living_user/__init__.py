@@ -23,6 +23,7 @@ from .models import (
     UserMemoryScope,
 )
 from .runtime_adapter import LlmServiceUserProfileAdapter
+from .presenter import MemoryPortrait, MemoryPortraitItem, MemoryPortraitPresenter, MemoryPortraitSection
 from .service import LivingUserMemoryConfig, LivingUserMemoryService, UserTurnObservation
 from .sources import MemoryExplanation, MemorySourceTracker
 from .store import ApplyResult, UserProfileStore, UserProfileStoreConfig
@@ -55,6 +56,10 @@ __all__ = [
     "LivingUserMemoryService",
     "LivingUserModelProjection",
     "LlmServiceUserProfileAdapter",
+    "MemoryPortrait",
+    "MemoryPortraitItem",
+    "MemoryPortraitPresenter",
+    "MemoryPortraitSection",
     "MemoryExplanation",
     "MemorySourceTracker",
     "ProfileContextCompiler",
