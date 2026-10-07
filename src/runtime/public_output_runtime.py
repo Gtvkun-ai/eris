@@ -114,6 +114,50 @@ def _settle_pedagogical_delivery_event(
         return False
 
 
+def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool) -> bool:
+    """Settle V12 delivery và fan-out receipt đúng capability của chính lượt đó."""
+
+    did = str(turn_id or "")[:180]
+    if not did:
+        return False
+    try:
+        from runtime.conversation.bootstrap import ensure_conversation_kernel
+        from runtime.conversation.contracts import DeliveryReceipt
+
+        kernel = ensure_conversation_kernel(host)
+        settled = bool(kernel.settle_delivery_id(delivery_id=did, successful=bool(successful)))
+        if not settled:
+            return False
+        pending = getattr(host, "_v12_delivery_capabilities", None)
+        meta = pending.pop(did, {}) if isinstance(pending, dict) else {}
+        receipt = DeliveryReceipt(
+            delivery_id=did,
+            session_id=str(meta.get("session_id") or getattr(host, "conversation_id", "") or getattr(host, "thread_id", "") or "foreground:primary")[:180],
+            generation=int(meta.get("generation", 0) or 0),
+            move_id=str(meta.get("move_id") or "")[:180],
+            successful=bool(successful),
+        )
+        for name in tuple(meta.get("capabilities", ()) or ()):
+            capability = getattr(host, f"{str(name)}_capability", None)
+            observe = getattr(capability, "observe_delivery_receipt", None)
+            if callable(observe):
+                try:
+                    observe(receipt)
+                except Exception as exc:
+                    logger = getattr(host, "logger", None)
+                    if logger is not None:
+                        logger.debug("[conversation-v12] capability receipt degraded name=%s: %s", name, exc)
+        return True
+    except Exception as exc:
+        logger = getattr(host, "logger", None)
+        if logger is not None:
+            try:
+                logger.debug("[conversation-v12] delivery settle degraded: %s", exc)
+            except Exception:
+                pass
+        return False
+
+
 class PublicOutputRuntimeMixin:
     def _stage_channel_blocked(self, channel: str, *, requester_id: str = "") -> bool:
         try:
@@ -756,11 +800,8 @@ class PublicOutputRuntimeMixin:
                 now=time.time(),
             )
             try:
-                from runtime.conversation.bootstrap import ensure_conversation_kernel
-
-                ensure_conversation_kernel(self).settle_delivery_id(
-                    delivery_id=str(stage_frame.turn_id or ""),
-                    successful=True,
+                _settle_conversation_delivery_event(
+                    self, turn_id=str(stage_frame.turn_id or ""), successful=True
                 )
             except Exception as exc:
                 self.logger.debug("[conversation-v12] no-tts delivery settle degraded: %s", exc)
@@ -989,9 +1030,8 @@ class PublicOutputRuntimeMixin:
                     from runtime.runtime_status import emit_runtime_status
 
                     kernel = ensure_conversation_kernel(self)
-                    kernel.settle_delivery_id(
-                        delivery_id=str(record.get("turn_id", "") or ""),
-                        successful=True,
+                    _settle_conversation_delivery_event(
+                        self, turn_id=str(record.get("turn_id", "") or ""), successful=True
                     )
                     session_id = str(
                         getattr(self, "conversation_id", "")
@@ -1022,11 +1062,8 @@ class PublicOutputRuntimeMixin:
                 record["reason"] or "<none>",
             )
             try:
-                from runtime.conversation.bootstrap import ensure_conversation_kernel
-
-                ensure_conversation_kernel(self).settle_delivery_id(
-                    delivery_id=str(record.get("turn_id", "") or ""),
-                    successful=False,
+                _settle_conversation_delivery_event(
+                    self, turn_id=str(record.get("turn_id", "") or ""), successful=False
                 )
             except Exception as exc:
                 self.logger.debug("[conversation-v12] failed delivery settle degraded: %s", exc)

@@ -33,7 +33,9 @@ class ResearchResult:
 
 
 class ResearchCapability:
-    def __init__(self) -> None:
+    def __init__(self, host: Any | None = None, *, logger: Any = None) -> None:
+        self.host = host
+        self.logger = logger
         self._last_result: ResearchResult | None = None
 
     def result(
@@ -61,9 +63,30 @@ class ResearchCapability:
         return self._last_result
 
     def invoke_for_root(self, *, arguments: Mapping[str, Any], event: Any, recent_history: Any) -> Mapping[str, Any]:
-        """Trả evidence research đã có; không tự tạo public prose hoặc speech."""
+        """Đọc result hoặc yêu cầu subsystem research chạy; không tự nói public.
 
-        del arguments, event, recent_history
+        RootAgent vẫn là nơi quyết định *có nghiên cứu hay không*. Adapter này chỉ
+        khôi phục entry path đã bị hard-cut khỏi foreground V12. Kết quả hoàn tất
+        vẫn quay lại ConversationKernel bằng ``research_result`` như trước.
+        """
+
+        operation = str(arguments.get("operation") or arguments.get("mode") or "snapshot").strip().lower()
+        topic = str(arguments.get("topic") or arguments.get("query") or getattr(event, "text", "") or "").strip()[:12000]
+        if operation in {"start", "research", "quick_search", "search", "request"}:
+            starter = getattr(self.host, "_fire_research_followup", None) if self.host is not None else None
+            if not callable(starter):
+                return {"status": "unavailable", "reason": "research_starter_missing"}
+            if not topic:
+                return {"status": "invalid", "reason": "research_topic_required"}
+            context = str(arguments.get("context") or "")[:24000]
+            mode = "quick_search" if operation in {"quick_search", "search"} else "research"
+            try:
+                starter(topic, context=context, mode=mode)
+            except TypeError:
+                starter(topic, context=context)
+            return {"status": "started", "topic": topic, "mode": mode}
+
+        del recent_history
         item = self.snapshot()
         return item.to_dict() if item is not None else {"status": "unavailable", "reason": "no_research_result"}
 

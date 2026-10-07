@@ -175,6 +175,25 @@ class RuntimeConversationDeliveryAdapter:
         self.host.last_text = display_text
         self.host.last_chat_answer = display_text
 
+        # Gắn capability invocation vào đúng delivery để terminal TTS receipt
+        # chỉ commit domain state của capability thực sự được gọi ở lượt này.
+        try:
+            pending = getattr(self.host, "_v12_delivery_capabilities", None)
+            if not isinstance(pending, dict):
+                pending = {}
+                self.host._v12_delivery_capabilities = pending
+            pending[did] = {
+                "capabilities": tuple(str(x) for x in tuple(rendered.metadata.get("root_capabilities_used", ()) or ()) if str(x)),
+                "session_id": turn.session_id,
+                "generation": turn.generation,
+                "move_id": turn.move.move_id,
+            }
+            if len(pending) > 128:
+                for stale in list(pending)[:-128]:
+                    pending.pop(stale, None)
+        except Exception as exc:
+            self._log("debug", "[conversation-v12] capability receipt registration degraded: %s", exc)
+
         try:
             from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
             append_public_turn_trace("conversation_move", {

@@ -360,12 +360,12 @@ class WorldStateSnapshot:
         concerns = cognition.get("active_concerns", ()) if isinstance(cognition, Mapping) else ()
         materials = cognition.get("mental_material", ()) if isinstance(cognition, Mapping) else ()
         if concerns:
-            lines.append("- active_concerns=" + json.dumps(list(concerns)[:4], ensure_ascii=False, separators=(",", ":"), default=str)[:2200])
+            lines.append("- active_concerns=" + json.dumps(list(concerns)[:12], ensure_ascii=False, separators=(",", ":"), default=str)[:10000])
         if materials:
             # Mental material là semantic artifact đã được worker tạo, không phải raw
             # chain-of-thought. Root có thể dùng làm private evidence, nhưng không
             # được copy nguyên văn thành lời public hay coi nó là fact bên ngoài.
-            lines.append("- mental_material=" + json.dumps(list(materials)[:4], ensure_ascii=False, separators=(",", ":"), default=str)[:2600])
+            lines.append("- mental_material=" + json.dumps(list(materials)[:12], ensure_ascii=False, separators=(",", ":"), default=str)[:12000])
             lines.append("- mental_material_rule=private semantic material only; never expose as hidden reasoning and never promote to external fact.")
         sensors = system.get("sensor_health", {}) if isinstance(system, Mapping) else {}
         if sensors:

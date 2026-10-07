@@ -737,7 +737,7 @@ class AIChatOrchestrator:
         # hai lần trong cả root payload lẫn writer messages.
         history = tuple(
             item
-            for item in tuple(getattr(host, "chat_history", ()) or ())[-12:]
+            for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
             if isinstance(item, Mapping)
         )
         append_history = getattr(host, "_append_chat_history", None)
@@ -750,7 +750,7 @@ class AIChatOrchestrator:
             kind="user_turn",
             text=str(user_text or "")[:16000],
         )
-        from runtime.capabilities import ResearchCapability, TutorCapability, WorkCapability
+        from runtime.capabilities import ActionCapability, ResearchCapability, TutorCapability, WorkCapability
         from runtime.conversation.context import RootCapabilityRegistry
 
         # V12 hard cutover: foreground bootstrap chỉ *đăng ký* capability. Không
@@ -775,13 +775,25 @@ class AIChatOrchestrator:
 
         research_capability = getattr(host, "research_capability", None)
         if not isinstance(research_capability, ResearchCapability):
-            research_capability = ResearchCapability()
+            research_capability = ResearchCapability(host, logger=getattr(host, "logger", None))
             host.research_capability = research_capability
+        else:
+            research_capability.host = host
+            research_capability.logger = getattr(host, "logger", None)
+
+        action_capability = getattr(host, "action_capability", None)
+        if not isinstance(action_capability, ActionCapability):
+            action_capability = ActionCapability(
+                getattr(host, "action_executor", None),
+                logger=getattr(host, "logger", None),
+            )
+            host.action_capability = action_capability
 
         capability_registry = RootCapabilityRegistry({
             "tutor": tutor_capability,
             "work": work_capability,
             "research": research_capability,
+            "action": action_capability,
         })
         # ContextAssembler chỉ projection state/evidence; nó không route intent và
         # không chọn nội dung nói. RootAgent vẫn là semantic/social authority duy
@@ -805,7 +817,7 @@ class AIChatOrchestrator:
         if source_context:
             runtime_context["grounding_context"] = "\n\n".join(
                 part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
-            )[:18000]
+            )[:48000]
         runtime_context.update({
             "__source_grounding_report": evidence_context.get("__source_grounding_report"),
             "__source_grounding_engine": evidence_context.get("__source_grounding_engine"),
@@ -1031,12 +1043,12 @@ class AIAutonomousOrchestrator:
         history_reader = getattr(host, "_chat_history_for_llm", None)
         if callable(history_reader):
             try:
-                recent_history = tuple(history_reader(limit=8))
+                recent_history = tuple(history_reader(limit=32))
             except Exception as exc:
                 _orchestrator_boundary_note(host, "conversation_signal.history", exc)
                 recent_history = ()
         else:
-            recent_history = tuple(getattr(host, "chat_history", ()) or ())[-8:]
+            recent_history = tuple(getattr(host, "chat_history", ()) or ())[-32:]
 
         clock = getattr(host, "interaction_clock", None)
         signal_metadata = {
@@ -1068,13 +1080,20 @@ class AIAutonomousOrchestrator:
             previous_public_context=str(getattr(host, "last_text", "") or ""),
             recent_history=recent_history,
         )
+        # Khôi phục self-context từng bị hard-cut: đây chỉ là public-safe
+        # projection của state nội tại hiện có, không phải planner và không được
+        # tự chọn câu nói. RootAgent vẫn quyết định có biến seed thành speech hay không.
+        try:
+            runtime_context["autonomous_self_context"] = build_autonomous_self_context(host).to_dict()
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "conversation_signal.self_context", exc)
         from runtime.conversation.evidence_assembler import ensure_conversation_evidence_assembler
         evidence_context = ensure_conversation_evidence_assembler(host).assemble_autonomous()
         source_context = str(evidence_context.get("source_grounding_context", "") or "").strip()
         if source_context:
             runtime_context["grounding_context"] = "\n\n".join(
                 part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
-            )[:18000]
+            )[:48000]
         runtime_context["__source_grounding_report"] = evidence_context.get("__source_grounding_report")
         runtime_context["__source_grounding_engine"] = evidence_context.get("__source_grounding_engine")
         status = dict(runtime_context.get("conversation_status", {}) or {})

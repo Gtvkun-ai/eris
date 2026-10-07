@@ -213,7 +213,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     top_items = getattr(agenda_stack, "top_items", None)
     if callable(top_items):
         try:
-            candidates = tuple(top_items(limit=5) or ())
+            candidates = tuple(top_items(limit=12) or ())
         except Exception:
             candidates = ()
         for item in candidates:
@@ -241,7 +241,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     if not isinstance(mind_source, (list, tuple)):
         mind_source = tuple(getattr(host, "private_mind_surface_queue", ()) or ())
     private_mind = tuple(
-        preview for preview in (_surface_preview(item) for item in tuple(mind_source or ())[:6])
+        preview for preview in (_surface_preview(item) for item in tuple(mind_source or ())[:12])
         if preview.get("topic_seed")
     )
 
@@ -250,12 +250,12 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     if not isinstance(life_source, (list, tuple)):
         life_source = tuple(getattr(host, "private_life_surface_queue", ()) or ())
     private_life = tuple(
-        preview for preview in (_surface_preview(item) for item in tuple(life_source or ())[:6])
+        preview for preview in (_surface_preview(item) for item in tuple(life_source or ())[:12])
         if preview.get("topic_seed")
     )
     life_current = _mapping(life_digest.get("current"))
     private_life_workspace = tuple(
-        dict(item) for item in tuple(life_current.get("mental_workspace", ()) or ())[:12]
+        dict(item) for item in tuple(life_current.get("mental_workspace", ()) or ())[:24]
         if isinstance(item, Mapping) and _compact(item.get("content", ""), 620)
     )
 
@@ -265,7 +265,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
         or ()
     )
     active_threads = tuple(
-        preview for preview in (_thread_preview(item) for item in raw_threads[:3])
+        preview for preview in (_thread_preview(item) for item in raw_threads[:8])
         if preview.get("thread_id") and preview.get("evidence_refs")
     )
 
@@ -274,7 +274,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     snapshot_fn = getattr(concern_runtime, "snapshot", None)
     if callable(snapshot_fn):
         try:
-            active_concerns = tuple(dict(item) for item in tuple(snapshot_fn(limit=8) or ()) if isinstance(item, Mapping))
+            active_concerns = tuple(dict(item) for item in tuple(snapshot_fn(limit=16) or ()) if isinstance(item, Mapping))
         except Exception:
             active_concerns = ()
 
@@ -306,7 +306,7 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     return AutonomousSelfContext(
         internal_state=internal_state,
         attention=attention,
-        agenda=tuple(agenda_items[:5]),
+        agenda=tuple(agenda_items[:12]),
         private_mind_surface=private_mind,
         private_life_surface=private_life,
         private_life_workspace=private_life_workspace,

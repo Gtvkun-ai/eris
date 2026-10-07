@@ -118,6 +118,15 @@ class RuntimeConversationWriter:
         display_language = str(
             payload.get("display_language", runtime_context.get("language_hint", "vi")) or "vi"
         ).strip()
+        registry = runtime_context.get("__root_capabilities")
+        used_capabilities = ()
+        invocations_for = getattr(registry, "invocations_for", None)
+        if callable(invocations_for):
+            try:
+                used_capabilities = tuple(invocations_for(str(event.event_id or "")))
+            except Exception:
+                used_capabilities = ()
+
         return RenderedConversationMove(
             surface=SurfaceEnvelope(
                 display_text=display_text,
@@ -134,6 +143,7 @@ class RuntimeConversationWriter:
                 "provider_payload": dict(payload),
                 "source_grounding_report": runtime_context.get("__source_grounding_report"),
                 "source_grounding_engine": runtime_context.get("__source_grounding_engine"),
+                "root_capabilities_used": list(used_capabilities),
             },
         )
 

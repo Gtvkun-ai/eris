@@ -97,6 +97,7 @@ def compile_public_reply_context(
     routing: str = "",
     discourse: str = "",
     total_limit: int = 9000,
+    budget_mode: str = "compact",
 ) -> CompiledPublicReplyContext:
     """Compile context according to the turn's already-selected model route.
 
@@ -111,17 +112,22 @@ def compile_public_reply_context(
     contextual = "contextual_ambiguity" in reasons
     technical = "technical_depth" in reasons
 
+    # V12 chạy trên DS2API/local context rộng nên foreground conversation không
+    # được tự bóp state đã retrieve xuống vài trăm ký tự. ``wide`` chỉ nới budget
+    # cơ học; nó KHÔNG thay đổi semantic routing hay tự inject store không liên quan.
+    # ``compact`` giữ nguyên contract cho các caller/test legacy còn cần prompt nhỏ.
+    wide = str(budget_mode or "compact").strip().lower() == "wide"
     budgets = {
-        "personality": 900,
-        "relationship": 700,
-        "grounding": 1700,
-        "memory": 1400,
-        "interrupt": 650,
-        "engagement": 900,
-        "routing": 600,
-        "discourse": 1300,
+        "personality": 12000 if wide else 900,
+        "relationship": 12000 if wide else 700,
+        "grounding": 32000 if wide else 1700,
+        "memory": 32000 if wide else 1400,
+        "interrupt": 6000 if wide else 650,
+        "engagement": 8000 if wide else 900,
+        "routing": 6000 if wide else 600,
+        "discourse": 16000 if wide else 1300,
     }
-    if simple_social:
+    if not wide and simple_social:
         budgets.update(
             personality=620,
             relationship=320,
@@ -132,7 +138,7 @@ def compile_public_reply_context(
             routing=300,
             discourse=520,
         )
-    elif simple_command:
+    elif not wide and simple_command:
         budgets.update(
             personality=360,
             relationship=0,
@@ -140,7 +146,7 @@ def compile_public_reply_context(
             grounding=2100,
             discourse=650,
         )
-    elif technical:
+    elif not wide and technical:
         budgets.update(
             personality=520,
             relationship=0,
@@ -148,7 +154,7 @@ def compile_public_reply_context(
             memory=900 if contextual else 0,
             discourse=1100,
         )
-    elif relational:
+    elif not wide and relational:
         budgets.update(
             personality=1450,
             relationship=1250,

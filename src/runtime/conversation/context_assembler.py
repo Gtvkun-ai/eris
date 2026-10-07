@@ -68,8 +68,8 @@ class ConversationContextAssembler:
         host = self.host
         state = self._mind_state()
 
-        personality = _call_text(state, "personality_prompt_context", limit=6000)
-        relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=6000)
+        personality = _call_text(state, "personality_prompt_context", limit=12000)
+        relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=12000)
         memory = self._memory_context(user_text)
         world = self._world_context(channel)
         clock = self._clock_context()
@@ -78,7 +78,7 @@ class ConversationContextAssembler:
         # ``last_grounding_context`` là mirror OUTPUT của chính assembler. Không
         # đọc ngược nó ở lượt sau, nếu không context sẽ tự lồng chính nó và phình
         # dần theo số turn. Grounding V12 lấy trực tiếp từ source-of-truth hiện tại.
-        grounding = "\n\n".join(part for part in (world, clock, addressing) if part)[:14000]
+        grounding = "\n\n".join(part for part in (world, clock, addressing) if part)[:32000]
 
         affect_payload: dict[str, Any] = {}
         affect_prompt = ""
@@ -96,16 +96,18 @@ class ConversationContextAssembler:
             self._debug("context.engagement", exc)
 
         conversation_status = self._conversation_status(state, channel=channel)
-        engagement_text = _json_text(engagement, limit=2200)
+        engagement_text = _json_text(engagement, limit=8000)
+        discourse = self._discourse_context()
         compiled = compile_public_reply_context(
             personality=personality,
             relationship=relationship,
             grounding=grounding,
             memory=memory,
-            interrupt=str(interrupt_context or "")[:2400],
+            interrupt=str(interrupt_context or "")[:6000],
             engagement=engagement_text,
-            discourse="",
-            total_limit=9000,
+            discourse=discourse,
+            total_limit=96000,
+            budget_mode="wide",
         )
 
         context: dict[str, Any] = {
@@ -115,12 +117,13 @@ class ConversationContextAssembler:
             "grounding_context": compiled.grounding,
             "interrupt_context": compiled.interrupt,
             "engagement_context": engagement,
+            "discourse_context": compiled.discourse,
             "affective_voice_state": affect_payload,
-            "affective_voice_context": affect_prompt[:3600],
+            "affective_voice_context": affect_prompt[:8000],
             "conversation_status": conversation_status,
             "private_cognition_context": self._private_cognition_context(),
             "user_addressing_context": addressing,
-            "previous_public_excerpt": str(previous_public_context or "")[-1200:],
+            "previous_public_excerpt": str(previous_public_context or "")[-6000:],
             "context_assembler": {
                 "schema": "eris.conversation_context.v12",
                 "compiled_chars": compiled.total_chars,
@@ -169,13 +172,14 @@ class ConversationContextAssembler:
                     or getattr(self.host, "thread_id", "")
                     or "foreground:primary"
                 )[:180],
-                "user_context_token_budget": 900,
+                "user_context_token_budget": 6000,
+                "max_lines": 64,
             }
         try:
-            return str(renderer(str(user_text or ""), **kwargs) or "").strip()[:12000]
+            return str(renderer(str(user_text or ""), **kwargs) or "").strip()[:32000]
         except TypeError:
             try:
-                return str(renderer(str(user_text or "")) or "").strip()[:12000]
+                return str(renderer(str(user_text or "")) or "").strip()[:32000]
             except Exception as exc:
                 self._debug("context.memory", exc)
                 return ""
@@ -186,7 +190,7 @@ class ConversationContextAssembler:
     def _world_context(self, channel: str) -> str:
         lane = "chat" if str(channel or "").strip().lower() == "chat" else "self_turn"
         try:
-            return str(ensure_world_state_service(self.host).prompt_context(lane, refresh=True) or "")[:7000]
+            return str(ensure_world_state_service(self.host).prompt_context(lane, refresh=True) or "")[:20000]
         except Exception as exc:
             self._debug("context.world", exc)
             return ""
@@ -196,8 +200,25 @@ class ConversationContextAssembler:
     def _user_addressing_context() -> str:
         try:
             from runtime.user_addressing_state import user_addressing_prompt_context
-            return str(user_addressing_prompt_context() or "")[:2200]
+            return str(user_addressing_prompt_context() or "")[:6000]
         except Exception:
+            return ""
+
+    def _discourse_context(self) -> str:
+        """Continuity/ledger projection cũ, không semantic-parse lại user text."""
+        builder = getattr(self.host, "_build_discourse_prompt_context", None)
+        if not callable(builder):
+            return ""
+        try:
+            ledger_factory = getattr(self.host, "_ensure_session_turn_ledger", None)
+            current_index = 0
+            if callable(ledger_factory):
+                turns = ledger_factory().user_turns()
+                if turns:
+                    current_index = int(getattr(turns[-1], "index", 0) or 0)
+            return str(builder(current_turn_index=current_index) or "")[:16000]
+        except Exception as exc:
+            self._debug("context.discourse", exc)
             return ""
 
     def _private_cognition_context(self) -> dict[str, Any]:
@@ -209,8 +230,8 @@ class ConversationContextAssembler:
             if not isinstance(cognition, Mapping):
                 return {}
             return {
-                "active_concerns": [dict(x) for x in tuple(cognition.get("active_concerns", ()) or ())[:6] if isinstance(x, Mapping)],
-                "mental_material": [dict(x) for x in tuple(cognition.get("mental_material", ()) or ())[:6] if isinstance(x, Mapping)],
+                "active_concerns": [dict(x) for x in tuple(cognition.get("active_concerns", ()) or ())[:12] if isinstance(x, Mapping)],
+                "mental_material": [dict(x) for x in tuple(cognition.get("mental_material", ()) or ())[:12] if isinstance(x, Mapping)],
                 "current_goal": str(cognition.get("current_goal", "") or "")[:500],
                 "attention": str(cognition.get("attention", "") or "")[:160],
                 "contract": "Private semantic artifacts only; do not reveal hidden reasoning or treat them as external facts.",

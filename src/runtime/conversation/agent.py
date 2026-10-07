@@ -244,6 +244,8 @@ class RuntimeModelRootAgent:
             "chỉ khi thật sự cần domain intelligence/work mới dùng kind=use_capability. Small talk, joke, phản hồi xã hội "
             "và câu đơn giản phải tự xử lý trực tiếp, không gọi tutor/work/research cho có. "
             f"Capability hiện có: {available}. "
+            "Capability research: dùng arguments {operation:start|quick_search|snapshot, topic, context?}; kết quả hoàn tất sẽ quay lại bằng research_result. "
+            "Capability action: dùng arguments {action_id, arguments:{...}}; chỉ được nói đã thực thi khi capability result xác nhận success/evidence. "
             "Nếu cần giữ working context cho lượt sau, dùng set_note; nếu note cũ không còn giá trị, dùng clear_note. "
             "Note là trí nhớ làm việc tùy chọn, không phải checklist bắt buộc và không được dùng để cưỡng ép user quay lại topic cũ. "
             "Sau capability/note action, bạn sẽ được gọi lại với result mới nhất và phải tự đánh giá lại context. "
@@ -272,13 +274,13 @@ class RuntimeModelRootAgent:
             "event": {
                 "event_id": event.event_id,
                 "kind": event.kind,
-                "text": str(event.text or "")[:12000],
+                "text": str(event.text or "")[:32000],
                 "generation": event.generation,
                 "metadata": _bounded_value(dict(event.metadata), depth=0),
             },
             "recent_public_history": [
-                {"role": str(x.get("role", ""))[:24], "content": str(x.get("content", ""))[:2600]}
-                for x in recent_history[-10:]
+                {"role": str(x.get("role", ""))[:24], "content": str(x.get("content", ""))[:12000]}
+                for x in recent_history[-32:]
                 if isinstance(x, Mapping)
             ],
             "conversation_note": str(note or "")[:8000],
@@ -302,6 +304,7 @@ class RuntimeModelRootAgent:
         if not callable(invoke):
             return {"status": "unavailable", "reason": f"capability_has_no_root_entry:{name}"}
         try:
+            registry.record_invocation(name, str(getattr(event, "event_id", "") or ""))
             raw = invoke(arguments=dict(arguments), event=event, recent_history=recent_history)
             return dict(raw) if isinstance(raw, Mapping) else {"status": "ok", "value": str(raw or "")[:12000]}
         except Exception as exc:  # noqa: BLE001
@@ -340,9 +343,11 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "explicit_tool_route",
         "conversation_status",
         "private_cognition_context",
+        "autonomous_self_context",
         "user_addressing_context",
         "affective_voice_state",
         "engagement_context",
+        "discourse_context",
         "personality_summary",
         "personality_context",
         "relationship_summary",
@@ -365,18 +370,18 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
 def _bounded_value(value: Any, *, depth: int) -> Any:
     """Bound arbitrary evidence trước khi đưa vào root-model payload."""
 
-    if depth >= 4:
-        return str(value or "")[:1200]
+    if depth >= 5:
+        return str(value or "")[:4000]
     if isinstance(value, Mapping):
         return {
             str(key)[:120]: _bounded_value(item, depth=depth + 1)
-            for key, item in list(value.items())[:48]
+            for key, item in list(value.items())[:96]
             if not str(key).startswith("__")
         }
     if isinstance(value, (list, tuple)):
-        return [_bounded_value(item, depth=depth + 1) for item in list(value)[:48]]
+        return [_bounded_value(item, depth=depth + 1) for item in list(value)[:96]]
     if isinstance(value, str):
-        return value[:12000]
+        return value[:32000]
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     return str(value)[:1200]

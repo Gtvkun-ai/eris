@@ -12,7 +12,7 @@ Mọi quyết định *có gọi capability hay không* vẫn thuộc RootAgent.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 
@@ -40,7 +40,7 @@ class ConversationNoteTools:
         self.clear_note()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RootCapabilityRegistry:
     """Registry data/runtime-only cho capability mà RootAgent có thể gọi.
 
@@ -49,12 +49,22 @@ class RootCapabilityRegistry:
     """
 
     capabilities: Mapping[str, Any]
+    invocation_log: list[tuple[str, str]] = field(default_factory=list)
 
     def get(self, name: str) -> Any | None:
         return self.capabilities.get(str(name or "").strip().lower())
 
     def available_names(self) -> tuple[str, ...]:
         return tuple(sorted(str(name) for name, value in self.capabilities.items() if value is not None))
+
+    def record_invocation(self, name: str, event_id: str) -> None:
+        self.invocation_log.append((str(event_id or "")[:240], str(name or "").strip().lower()[:120]))
+        if len(self.invocation_log) > 64:
+            del self.invocation_log[:-64]
+
+    def invocations_for(self, event_id: str) -> tuple[str, ...]:
+        eid = str(event_id or "")[:240]
+        return tuple(name for item_event, name in self.invocation_log if item_event == eid and name)
 
 
 __all__ = [
