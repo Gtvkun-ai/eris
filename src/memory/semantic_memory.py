@@ -759,8 +759,33 @@ class SemanticMemoryStore:
         status: SemanticStatus = "active" if confidence >= 0.72 else "tentative"
         items = self.load()
 
-        merge_target = self._find_merge_target(items, claim=claim, profile=profile, confidence=confidence)
+        from .claim_provenance import provenance_of, source_roots
+        provenance = provenance_of(request_metadata)
+        roots = source_roots(request_metadata)
+        correction_ref = str(provenance.get("corrects_claim_ref") or "")
+        # Correction được nối qua ID record thật; không đoán từ đoạn văn.
+        correction_target = next((i for i in items if i.id == correction_ref and i.status in {"active", "tentative"}), None) if correction_ref else None
+        if correction_ref:
+            # Không cho correction trỏ sai ID hoặc sang fact_key khác; nó có thể
+            # phá ký ức không liên quan dù chính lời user là hợp lệ.
+            if correction_target is None:
+                raise ValueError("correction_target_missing_or_inactive")
+            if profile.fact_key and correction_target.fact_key and profile.fact_key != correction_target.fact_key:
+                raise ValueError("correction_target_fact_key_mismatch")
+        merge_target = correction_target or self._find_merge_target(items, claim=claim, profile=profile, confidence=confidence)
         if merge_target is not None:
+            old_roots = set(merge_target.metadata.get("lineage_root_ids") or ())
+            # Replay, observer summary của CÙNG root và legacy request không đủ
+            # provenance không được tự nâng observations/confidence.
+            # Không có typed root thì dù request lặp bao nhiêu lần cũng không
+            # tạo ra nguồn xác nhận độc lập. Quan trọng cho legacy và observer
+            # chạy lại sau reload, kể cả khi evidence_ids thay đổi UUID.
+            if not roots or (old_roots and roots.issubset(old_roots)):
+                return merge_target
+            if roots and not old_roots and merge_target.metadata.get("claim_provenance"):
+                # Legacy/unresolved lineage trong record không có root: không
+                # tự suy diễn đây là một bằng chứng mới độc lập.
+                return merge_target
             self._merge_item(
                 merge_target,
                 claim=claim,
@@ -780,6 +805,11 @@ class SemanticMemoryStore:
             reason=reason,
             request_metadata=request_metadata,
         )
+        # Full ancestry nằm trong persisted metadata, KHÔNG trong evidence_ids
+        # vốn được cắt cho prompt/recall.
+        metadata["lineage_root_ids"] = sorted(roots)
+        if correction_ref:
+            metadata["corrects_claim_ref"] = correction_ref
         item = SemanticMemoryItem(
             id=f"sem_{uuid.uuid4().hex[:12]}",
             claim=claim,
@@ -872,7 +902,11 @@ class SemanticMemoryStore:
         key = profile.fact_key or item.fact_key
         old_value = item.semantic_value or self._extract_simple_value(item.claim, key)
         new_value = self._extract_metadata_value(request_metadata, key) or self._extract_simple_value(claim, key)
-        replacement = self._is_current_fact_replacement(
+        from .claim_provenance import provenance_of, source_roots
+        provenance = provenance_of(request_metadata)
+        correction_ref = str(provenance.get("corrects_claim_ref") or "")
+        # Explicit correction chỉ có giá trị sau khi qua durable user-source gate.
+        replacement = (correction_ref == item.id) or self._is_current_fact_replacement(
             key,
             old_value=old_value,
             new_value=new_value,
@@ -903,6 +937,13 @@ class SemanticMemoryStore:
             item.claim = compact_text(claim, limit=520)
 
         metadata = dict(item.metadata or {})
+        new_roots = source_roots(request_metadata)
+        metadata["lineage_root_ids"] = sorted(set(metadata.get("lineage_root_ids") or ()) | new_roots)
+        if request_metadata.get("claim_provenance"):
+            metadata["claim_provenance"] = provenance
+        if correction_ref == item.id:
+            metadata["corrects_claim_ref"] = correction_ref
+            metadata["last_update_policy"] = "explicit_user_correction"
         previous_claims = list(metadata.get("previous_claims") or [])
         if old_claim != item.claim:
             previous_claims.append(old_claim)
@@ -933,7 +974,7 @@ class SemanticMemoryStore:
             metadata["superseded_facts"] = superseded[-8:]
             metadata["value"] = new_value
             metadata["current_value"] = new_value
-            metadata["last_update_policy"] = "current_fact_replacement"
+            metadata["last_update_policy"] = "explicit_user_correction" if correction_ref == item.id else "current_fact_replacement"
             metadata["raw_user_text"] = str(request_metadata.get("raw_user_text") or metadata.get("raw_user_text") or "")
             for key_name in ("semantic_claim", "predicate", "subject", "object_type", "assertion", "modality", "temporal", "scope"):
                 if key_name in request_metadata:

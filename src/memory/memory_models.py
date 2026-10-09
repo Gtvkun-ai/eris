@@ -105,8 +105,14 @@ class MemoryCommitDecision:
         metadata.setdefault("permission", self.permission)
         metadata.setdefault("commit_kind", _commit_kind_for_target(self.target).value)
         if self.target == MemoryTarget.SEMANTIC:
-            metadata.setdefault("semantic_source", "explicit_user_statement")
-            metadata.setdefault("source_grounded", True)
+            from .claim_provenance import provenance_of
+            typed = provenance_of(metadata) if "claim_provenance" in metadata else None
+            semantic_source = (
+                "explicit_user_statement" if typed is None else
+                "explicit_user_statement" if typed["origin_kind"] == "user_statement" else typed["origin_kind"]
+            )
+            metadata.setdefault("semantic_source", semantic_source)
+            metadata.setdefault("source_grounded", bool(typed and typed["origin_kind"] == "user_statement"))
         if self.target == MemoryTarget.CANDIDATE:
             metadata.setdefault("extraction_status", "unresolved")
             metadata.setdefault("needs_consolidation", True)

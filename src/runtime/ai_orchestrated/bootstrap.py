@@ -538,6 +538,7 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                 enqueue = getattr(host, "_enqueue_background_memory_digest", None)
                 if callable(enqueue):
                     try:
+                        from memory.claim_provenance import classify_ingress
                         enqueue(
                             memory_candidate,
                             turn_id=turn_id,
@@ -547,6 +548,9 @@ def install_ai_orchestrated_runtime(host: Any, llm_service: Any) -> bool:
                                 "channel": "post_turn_observer",
                                 "observer_confidence": float(payload.get("confidence", 0.0) or 0.0),
                                 "evidence": list(payload.get("evidence", ()) or ()),
+                                # Observer proposal giữ nguồn observer, không
+                                # bao giờ ngầm trở thành lời user xác nhận.
+                                "claim_provenance": classify_ingress("ai_post_turn_observer", turn_id=turn_id),
                             },
                         )
                     except Exception as exc:

@@ -253,16 +253,27 @@ class TurnMemoryPipeline:
             self._remember_receipt(receipt, dropped=True)
             return receipt
 
+        from memory.claim_provenance import classify_ingress
+        # API này sở hữu USER turn; assistant/observer phải dùng lane riêng.
+        # Reject trước cả curator, vì curator cũng có quyền ghi user profile.
+        if classify_ingress(source, turn_id=actual_turn_id)["origin_kind"] != "user_statement":
+            receipt = TurnMemoryReceipt(False, reason="non_user_source_for_user_turn_pipeline")
+            self._remember_receipt(receipt, dropped=True)
+            return receipt
+
         # Preempt stale digest work before realtime even performs its cheap plan.
         self.notify_user_input()
         evidence_ids = (actual_turn_id,) if actual_turn_id else ()
+        # Mọi lane (semantic/curator/preview) dùng cùng nguồn của turn.
+        actual_context = dict(context or {})
+        actual_context["claim_provenance"] = classify_ingress(source, turn_id=actual_turn_id)
         envelope = TurnMemoryEnvelope(
             text=raw,
             turn_id=actual_turn_id,
             evidence_ids=evidence_ids,
             source=str(source or "chat_turn"),
             priority=str(priority or "normal"),
-            context=dict(context or {}),
+            context=actual_context,
         )
 
         # Deterministic, zero-write preview. It exists only to prioritize obvious

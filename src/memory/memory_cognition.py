@@ -293,6 +293,15 @@ class MemoryCognitionCore:
         content = compact_text(_request_get(request, "content", "") or "", limit=900)
         warnings: list[str] = []
 
+        # V0.4: quyết định cuối tại canonical owner, không tin prompt/observer.
+        from .claim_provenance import commit_provenance_check
+        provenance_ok, provenance_reason = commit_provenance_check(target, getattr(request, "metadata", {}))
+        if not provenance_ok:
+            return MemoryCommitDecision(
+                outcome="rejected", target=target, reason=provenance_reason,
+                confidence=confidence, evidence_ids=evidence_ids, warnings=warnings,
+            )
+
         allowed, reason = self._check_commit_permission(request, target=target, confidence=confidence, evidence_ids=evidence_ids)
         if not allowed:
             return MemoryCommitDecision(

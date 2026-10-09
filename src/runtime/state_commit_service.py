@@ -440,12 +440,17 @@ class StateCommitServiceMixin:
         enqueue_turn = getattr(pipeline, "enqueue_user_turn", None)
         if self._turn_memory_pipeline_enabled() and callable(enqueue_turn):
             try:
+                from memory.claim_provenance import classify_ingress
                 receipt = enqueue_turn(
                     str(user_text or ""),
                     turn_id=str(turn_id or "").strip(),
                     source="chat_turn",
                     priority="normal",
-                    context={"channel": "chat"},
+                    context={
+                        "channel": "chat",
+                        # Nguồn do user ingress cấp, không lấy từ nội dung model.
+                        "claim_provenance": classify_ingress("chat_turn", turn_id=str(turn_id or "")),
+                    },
                     storage_permission=self._frame_memory_storage_permission(frame),
                 )
                 return bool(receipt)

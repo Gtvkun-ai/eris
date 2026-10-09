@@ -417,6 +417,10 @@ class BackgroundMemoryDigestKernelService:
 
     def _process(self, job: MemoryDigestKernelJob) -> None:
         self.stats.last_job_id = job.job_id
+        # Digest không tự nâng nguồn: role và source do enqueue runtime cấp.
+        from memory.claim_provenance import classify_ingress
+        trusted_context = dict(job.context or {})
+        trusted_context["claim_provenance"] = classify_ingress(job.source, turn_id=job.turn_id, role=job.role)
         plan = self.memory_kernel.plan_ingest(
             job.text,
             evidence_ids=list(job.evidence_ids),
@@ -427,7 +431,7 @@ class BackgroundMemoryDigestKernelService:
             storage_permission=self.config.storage_permission,
             permission_required=False,
             context={
-                **dict(job.context or {}),
+                **trusted_context,
                 "background_job_id": job.job_id,
                 "background_role": job.role,
                 "background_priority": job.priority,

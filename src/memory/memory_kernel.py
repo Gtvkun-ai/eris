@@ -261,8 +261,16 @@ class MemoryKernel:
 
         user_profile_debug: dict[str, Any] = {}
         living_user = self.living_user
+        # Observer/assistant có thể sở hữu evidence_id thật, nhưng không có
+        # quyền đưa đoạn tóm tắt vào living-user extractor như một lời user.
+        from .claim_provenance import classify_ingress
+        plan_role = str(dict(plan.context or {}).get("background_role") or "")
+        is_user_input = classify_ingress(
+            plan.source, turn_id=plan.evidence_ids[0] if plan.evidence_ids else "",
+            role=plan_role,
+        )["origin_kind"] == "user_statement"
         if living_user is not None and plan.evidence_ids:
-            if observe_living_user:
+            if observe_living_user and is_user_input:
                 try:
                     observation = living_user.observe_turn(
                         plan.input_text,
@@ -284,6 +292,8 @@ class MemoryKernel:
                 user_profile_debug["deferred"] = True
                 if bool(dict(plan.context or {}).get("skip_living_user_observe", False)):
                     user_profile_debug["reason"] = "dedicated_curator_lane"
+                elif not is_user_input:
+                    user_profile_debug["reason"] = "non_user_provenance"
                 elif str(plan.mode) == "fast":
                     user_profile_debug["reason"] = "fast_path_background_curator"
                 else:
@@ -728,8 +738,26 @@ class MemoryKernel:
         Dùng dict để tránh phụ thuộc StateCommitRequest cụ thể.
         """
 
+        from .claim_provenance import classify_ingress
+        # Provenance từ context có thể bắt nguồn từ worker. Channel `source`
+        # và event_id do ingress cấp mới là authority. Không cho metadata
+        # tự xưng user_statement để vượt qua observer/assistant boundary.
+        runtime_role = str(dict(context or {}).get("background_role") or "")
+        provenance = classify_ingress(
+            source, turn_id=evidence_ids[0] if evidence_ids else "", role=runtime_role,
+        )
         if isinstance(request, dict):
             metadata = dict(request.get("metadata") or {})
+            # Override policy default bằng nguồn runtime: observer/assistant
+            # không bao giờ được đi qua dưới tên explicit_user_statement.
+            metadata["claim_provenance"] = provenance
+            if provenance["origin_kind"] != "user_statement":
+                metadata["semantic_source"] = provenance["origin_kind"]
+                metadata["source_grounded"] = False
+                if request.get("target") == "semantic_memory":
+                    content = request.get("content")
+                    if isinstance(content, dict):
+                        request["content"] = {**content, "source": provenance["origin_kind"]}
             metadata.setdefault("memory_kernel_mode", mode)
             metadata.setdefault("memory_kernel_source", source)
             metadata.setdefault("memory_kernel_context", dict(context or {}))
@@ -740,6 +768,10 @@ class MemoryKernel:
             return request
 
         metadata = dict(getattr(request, "metadata", {}) or {})
+        metadata["claim_provenance"] = provenance
+        if provenance["origin_kind"] != "user_statement":
+            metadata["semantic_source"] = provenance["origin_kind"]
+            metadata["source_grounded"] = False
         metadata.setdefault("memory_kernel_mode", mode)
         metadata.setdefault("memory_kernel_source", source)
         metadata.setdefault("memory_kernel_context", dict(context or {}))

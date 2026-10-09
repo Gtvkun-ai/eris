@@ -137,6 +137,7 @@ class ConversationObservationBridge:
         recent_history: Sequence[Mapping[str, Any]] = (),
         user_text: str = "",
         now: float | None = None,
+        claim_provenance: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Ghi hậu quả sau khi transport đã chấp nhận public commit."""
         current = float(now if now is not None else time.time())
@@ -218,6 +219,10 @@ class ConversationObservationBridge:
         if callable(submit):
             try:
                 state_summary = self._state_summary()
+                from memory.claim_provenance import classify_ingress, provenance_of
+                assistant_source = provenance_of({"claim_provenance": claim_provenance}) if claim_provenance else classify_ingress(
+                    "assistant_utterance", turn_id=turn_ref,
+                )
                 ticket = submit(
                     turn_id=turn_ref or f"public:{time.time_ns()}",
                     turn_seq=max(0, int(turn_index or 0)),
@@ -227,6 +232,7 @@ class ConversationObservationBridge:
                     recent_history=tuple(recent_history)[-12:],
                     mechanical_outcomes=(),
                     state_summary=state_summary,
+                    assistant_meta={"claim_provenance": assistant_source},
                 )
                 result["post_observer_ticket"] = str(getattr(ticket, "ticket_id", "") or "")
             except Exception as exc:

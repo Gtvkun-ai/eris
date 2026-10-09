@@ -329,12 +329,16 @@ class PostTurnObserver:
             ticket.user_meta["cognitive_observation_pending"] = False
         if ticket.assistant_meta is not None:
             ticket.assistant_meta["cognitive_observation_source"] = observation.source
-        self.reducer.submit(
-            StateEvent.from_observation(
-                observation,
-                base_version=self.reducer.snapshot().version,
-            )
+        from memory.claim_provenance import classify_ingress
+        event = StateEvent.from_observation(
+            observation, base_version=self.reducer.snapshot().version,
         )
+        # Không mượn origin=user của lời assistant hoặc bản tóm tắt observer.
+        # Source không xuất phát từ observation.to_dict() do worker viết.
+        event.payload["claim_provenance"] = classify_ingress(
+            "ai_post_turn_observer", turn_id=ticket.turn_id,
+        )
+        self.reducer.submit(event)
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
 
