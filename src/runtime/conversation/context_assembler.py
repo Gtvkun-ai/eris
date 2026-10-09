@@ -70,6 +70,7 @@ class ConversationContextAssembler:
         host = self.host
         state = self._mind_state()
 
+        # Fallback chỉ dành cho adapter legacy không có event/state typed.
         personality = _call_text(state, "personality_prompt_context", limit=12000)
         relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=12000)
         memory, memory_records, memory_degraded = self._typed_memory_context(user_text)
@@ -101,6 +102,40 @@ class ConversationContextAssembler:
         conversation_status = self._conversation_status(state, channel=channel)
         engagement_text = _json_text(engagement, limit=8000)
         discourse = self._discourse_context()
+
+        # Registry được dựng trước compiler; portrait KHÔNG dùng chuỗi persona
+        # bị cắt từ personality_prompt_context() làm input.
+        registry = None
+        portrait = None
+        portrait_render = None
+        memory_degraded = bool(memory_degraded)
+        if event is not None:
+            try:
+                from .claim_evidence import build_evidence_registry
+                from .character_portrait import build_character_portrait, render_character_portrait
+                ledger_factory = getattr(host, "_ensure_session_turn_ledger", None)
+                ledger = ledger_factory() if callable(ledger_factory) else None
+                turns = ledger.all_turns() if ledger is not None else ()
+                sampled_at = __import__("time").time()
+                registry = build_evidence_registry(
+                    event=event, state=state, affect=affect,
+                    report=source_report, ledger_turns=turns,
+                    memory_records=memory_records, sampled_at=sampled_at,
+                )
+                if state is not None:
+                    portrait = build_character_portrait(
+                        state, affect=affect, snapshot_id=registry.snapshot_id,
+                        sampled_at=sampled_at, source_registry=registry,
+                    )
+                    portrait_render = render_character_portrait(portrait, max_chars=6000)
+                    personality = portrait_render.text
+            except Exception as exc:
+                self._debug("context.character_portrait", exc)
+                # Không làm giả thành công: context đánh dấu projection thiếu.
+                registry = None
+                portrait = None
+                portrait_render = None
+
         compiled = compile_public_reply_context(
             personality=personality,
             relationship=relationship,
@@ -112,6 +147,10 @@ class ConversationContextAssembler:
             total_limit=96000,
             budget_mode="wide",
         )
+
+        if portrait_render is not None and compiled.personality != portrait_render.text:
+            # Không trả packet khác nhau do compiler cắt ngầm phần cuối conflict/cost.
+            raise RuntimeError("character_portrait_compiler_modified")
 
         context: dict[str, Any] = {
             "personality_context": compiled.personality,
@@ -135,28 +174,20 @@ class ConversationContextAssembler:
             },
         }
 
-        # Registry là metadata private, không chèn nguyên memory/provenance vào
-        # public prompt hoặc gửi theo UDP. Event thiếu ID (legacy) phải degraded.
-        context["context_assembler"]["evidence_degraded"] = event is None or memory_degraded
-        if event is not None:
-            try:
-                from dataclasses import replace
-                from .claim_evidence import build_evidence_registry
-                ledger_factory = getattr(host, "_ensure_session_turn_ledger", None)
-                ledger = ledger_factory() if callable(ledger_factory) else None
-                turns = ledger.all_turns() if ledger is not None else ()
-                registry = build_evidence_registry(
-                    event=event, state=state, affect=affect,
-                    report=source_report, ledger_turns=turns,
-                    memory_records=memory_records,
-                    sampled_at=__import__("time").time(),
-                )
-                context["__evidence_registry"] = replace(
-                    registry, degraded=memory_degraded or source_report is None,
-                )
-            except Exception as exc:
-                context["context_assembler"]["evidence_degraded"] = True
-                self._debug("context.evidence_registry", exc)
+        # Projection + registry chỉ tồn tại trong runtime_context nội bộ.
+        # Root và writer phải nhận chính cùng chuỗi compiled.personality.
+        context["context_assembler"]["evidence_degraded"] = (event is None or memory_degraded or registry is None)
+        context["context_assembler"]["portrait_degraded"] = event is not None and portrait is None
+        if portrait_render is not None:
+            context["context_assembler"]["portrait_omitted_facets"] = list(portrait_render.omitted_facets)
+            context["context_assembler"]["portrait_overflow"] = portrait_render.overflow
+            context["__character_portrait"] = portrait
+            context["__character_portrait_render"] = portrait_render
+        if registry is not None:
+            from dataclasses import replace
+            context["__evidence_registry"] = replace(
+                registry, degraded=memory_degraded or source_report is None,
+            )
 
         # Mirror compatibility để panel/debug/caller cũ đọc được state mới nhất.
         # Đây là OUTPUT của assembler, không còn là input authority của V12.

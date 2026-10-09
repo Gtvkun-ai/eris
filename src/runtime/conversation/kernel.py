@@ -239,7 +239,9 @@ class ConversationKernel:
                 event=normalized_event,
                 recent_history=recent_history,
                 runtime_context={**dict(runtime_context or {}),
-                                 "__evidence_registry": agent_context.get("__evidence_registry")},
+                                 "__evidence_registry": agent_context.get("__evidence_registry"),
+                                 "__character_portrait": agent_context.get("__character_portrait"),
+                                 "__character_portrait_render": agent_context.get("__character_portrait_render")},
             )
         except Exception as exc:
             self._log("debug", "[conversation-v12] writer failed: %s", exc)

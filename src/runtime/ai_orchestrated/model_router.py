@@ -1927,6 +1927,8 @@ class AIRuntimeModelRouter:
             fallback_preset=str(data.get("performance_hint", "neutral") or "neutral"),
         )
         flattened = utterance.to_flat_payload()
+        from runtime.claim_domain_contract import inspect_claim_manifest
+        manifest_envelope = inspect_claim_manifest(data)
         return {
             "semantic_frame": validation.frame.to_dict(),
             "assistant_act": assistant_validation.act.to_dict(),
@@ -1937,7 +1939,10 @@ class AIRuntimeModelRouter:
             "self_capability_claims": normalize_self_capability_claims(
                 data.get("self_capability_claims", ())
             ),
-            "claim_manifest": list(data.get("claim_manifest", ())) if isinstance(data.get("claim_manifest"), list) else [],
+            # Không biến missing/sai kiểu thành [] (một manifest rỗng hợp lệ).
+            # Envelope private là snapshot raw trước compatibility normalization.
+            "_typed_claim_manifest": manifest_envelope,
+            "claim_manifest": data.get("claim_manifest") if manifest_envelope.present else None,
             **flattened,
             "should_speak": bool(data.get("should_speak", True)),
             "system_action": str(tool_intent or ""),

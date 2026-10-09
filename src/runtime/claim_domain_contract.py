@@ -1,88 +1,116 @@
 # -*- coding: utf-8 -*-
-"""Typed claim-domain contract cho public wording của ERIS.
+"""Typed claim-manifest của writer: không được rửa lỗi bằng normalization.
 
-Surface/public writer được quyền sáng tạo *cách nói*, không được tự mở thêm một
-miền sự thật. Module này cố ý không dò keyword kiểu "quạt", "trời", "phòng".
-Model phải khai báo các claim nó vừa đưa vào câu; runtime chỉ kiểm domain +
-provenance typed. Regex grounding cũ vẫn có thể tồn tại như backstop tương thích,
-nhưng không còn là kiến trúc chính của V42.
+V0.2 chỉ kiểm cấu trúc/domain/ref theo allowlist runtime cấp. Semantic entailment
+(câu nói có thật sự được nguồn chứng minh?) thuộc verifier v0.3, KHÔNG ở đây.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 CLAIM_DOMAIN_VERSION = "eris.claim_domains.v42.typed_surface"
-
 KNOWN_CLAIM_DOMAINS = frozenset({
-    "internal_state",
-    "conversation_history",
-    "user_statement",
-    "user_profile",
-    "shared_episode",
-    "memory",
-    "verified_runtime_clock",
-    "grounded_environment",
-    "engagement_state",
-    "discovery_artifact",
-    "self_capability",
-    "self_preference",
-    "self_model",
-    "self_history",
-    "opinion",
-    "hypothetical",
+    "internal_state", "conversation_history", "user_statement", "user_profile",
+    "shared_episode", "memory", "verified_runtime_clock", "grounded_environment",
+    "engagement_state", "discovery_artifact", "self_capability", "self_preference",
+    "self_model", "self_history", "opinion", "hypothetical",
 })
-
 EVIDENCE_REQUIRED_DOMAINS = frozenset({
-    # P0 integrity: current-world, historical conversation/memory and embodied
-    # self-history claims must carry direct typed provenance.
-    "verified_runtime_clock",
-    "grounded_environment",
-    # "you told me before..." and autobiographical physical habits are
-    # historical claims, not decorative wording. They require a real ref.
-    "conversation_history",
-    "user_statement",
-    "user_profile",
-    "shared_episode",
-    "memory",
-    "self_model",
-    "self_history",
+    "verified_runtime_clock", "grounded_environment", "conversation_history",
+    "user_statement", "user_profile", "shared_episode", "memory", "self_model", "self_history",
 })
+EVIDENCE_EXEMPT_DOMAINS = frozenset({"opinion", "hypothetical", "internal_state", "self_preference"})
 
-# Domain không cần evidence — ý kiến, giả thuyết, trạng thái nội tâm và sở thích.
-# Model được phép khai báo bất kỳ evidence_refs nào (hoặc không có); refs lạ không block.
-EVIDENCE_EXEMPT_DOMAINS = frozenset({
-    "opinion",
-    "hypothetical",
-    "internal_state",
-    "self_preference",
-})
+_MISSING = object()
 
 
-def _compact(value: Any, limit: int = 280) -> str:
-    text = " ".join(str(value or "").split()).strip()
-    return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
+def _freeze(raw: Any) -> Any:
+    """Copy cấu trúc model trả về để nó không đổi được sau validation."""
+    if isinstance(raw, Mapping):
+        return MappingProxyType({str(k): _freeze(v) for k, v in raw.items()})
+    if isinstance(raw, (tuple, list)):
+        return tuple(_freeze(v) for v in raw)
+    return raw
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimManifestEnvelope:
+    present: bool
+    raw: Any
+    structural_status: str  # valid / missing / invalid / oversize
+    normalized: tuple[Mapping[str, Any], ...]
+    violations: tuple[str, ...]
+
+
+def inspect_claim_manifest(payload: Any) -> ClaimManifestEnvelope:
+    """Chặn lỗi trên RAW trước mọi cắt/ngầm bỏ phần tử.
+
+    Nếu truyền Mapping response, kiểm sự tồn tại của key claim_manifest;
+    nếu truyền Sequence, xem như một manifest đã được cấp trực tiếp.
+    """
+    if isinstance(payload, Mapping):
+        present = "claim_manifest" in payload
+        raw = payload.get("claim_manifest", _MISSING)
+    else:
+        present = payload is not None
+        raw = payload if present else _MISSING
+    if not present:
+        return ClaimManifestEnvelope(False, None, "missing", (), ("MANIFEST_MISSING",))
+
+    frozen = _freeze(raw)
+    if not isinstance(raw, (list, tuple)):
+        return ClaimManifestEnvelope(True, frozen, "invalid", (), ("manifest_not_array",))
+    bad: list[str] = []
+    too_many: list[str] = []
+    if len(raw) > 10:
+        too_many.append("claims_exceed_10")
+    normalized: list[Mapping[str, Any]] = []
+    for idx, entry in enumerate(raw):
+        prefix = f"claim[{idx}]"
+        if not isinstance(entry, Mapping):
+            bad.append(f"{prefix}:not_object")
+            continue
+        for required in ("domain", "claim", "evidence_refs"):
+            if required not in entry:
+                bad.append(f"{prefix}:missing_{required}")
+        if set(entry) - {"domain", "claim", "evidence_refs"}:
+            bad.append(f"{prefix}:unknown_field")
+        domain, claim, refs = entry.get("domain"), entry.get("claim"), entry.get("evidence_refs")
+        if not isinstance(domain, str) or not domain.strip():
+            bad.append(f"{prefix}:invalid_domain")
+        if not isinstance(claim, str) or not claim.strip():
+            bad.append(f"{prefix}:invalid_claim")
+        if not isinstance(refs, (list, tuple)):
+            bad.append(f"{prefix}:invalid_evidence_refs")
+        else:
+            if len(refs) > 8:
+                too_many.append(f"{prefix}:refs_exceed_8")
+            if any(not isinstance(ref, str) or not ref.strip() for ref in refs):
+                bad.append(f"{prefix}:invalid_ref")
+        if (isinstance(domain, str) and domain.strip() and isinstance(claim, str)
+                and claim.strip() and isinstance(refs, (list, tuple))
+                and all(isinstance(ref, str) and ref.strip() for ref in refs)):
+            normalized.append(MappingProxyType({
+                "domain": domain.strip().lower(),
+                "claim": claim,   # KHÔNG cắt 320 ký tự
+                "evidence_refs": tuple(refs),  # KHÔNG cắt 8 refs hoặc 140 ký tự
+            }))
+    status = "invalid" if bad else "oversize" if too_many else "valid"
+    return ClaimManifestEnvelope(True, frozen, status,
+                                 tuple(normalized), tuple(bad + too_many))
 
 
 def normalize_claim_manifest(value: Any) -> tuple[dict[str, Any], ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return ()
-    output: list[dict[str, Any]] = []
-    for raw in value[:10]:
-        if not isinstance(raw, Mapping):
-            continue
-        domain = _compact(raw.get("domain", ""), 64).lower()
-        claim = _compact(raw.get("claim", ""), 320)
-        refs_raw = raw.get("evidence_refs", ())
-        refs = tuple(
-            _compact(item, 140)
-            for item in (refs_raw if isinstance(refs_raw, Sequence) and not isinstance(refs_raw, (str, bytes, bytearray)) else ())
-            if _compact(item, 140)
-        )[:8]
-        if not domain:
-            continue
-        output.append({"domain": domain, "claim": claim, "evidence_refs": refs})
-    return tuple(output)
+    """Legacy accessor. KHÔNG dùng output này thay inspect trước khi chặn lỗi.
+
+    Invalid trả (), nhưng caller kiểm an toàn phải dùng inspect_claim_manifest
+    hoặc validate_claim_manifest để phân biệt nó với manifest rỗng hợp lệ.
+    """
+    envelope = inspect_claim_manifest(value)
+    return tuple({"domain": e["domain"], "claim": e["claim"],
+                  "evidence_refs": tuple(e["evidence_refs"])} for e in envelope.normalized) if envelope.structural_status == "valid" else ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,79 +121,52 @@ class ClaimDomainDecision:
     violating_domains: tuple[str, ...] = ()
     unknown_evidence_refs: tuple[str, ...] = ()
     manifest_missing: bool = False
+    structural_violations: tuple[str, ...] = ()
 
 
 def validate_claim_manifest(
-    manifest: Any,
-    *,
-    allowed_domains: Sequence[str],
-    allowed_evidence_refs: Sequence[str] = (),
-    text_present: bool = True,
+    manifest: Any, *, allowed_domains: Sequence[str],
+    allowed_evidence_refs: Sequence[str] = (), text_present: bool = True,
 ) -> ClaimDomainDecision:
-    """Validate domain/provenance, không parse prose.
+    """Runtime allowlist là nguồn quyền, không tin evidence ref do model khai."""
+    envelope = manifest if isinstance(manifest, ClaimManifestEnvelope) else inspect_claim_manifest(manifest)
+    if envelope.structural_status != "valid":
+        status = envelope.structural_status
+        # Không yêu cầu manifest khi không có surface để phát (legacy silence).
+        if status == "missing" and not text_present:
+            return ClaimDomainDecision(True, "no_public_text")
+        reason = {"missing": "claim_manifest_missing", "invalid": "claim_manifest_invalid",
+                  "oversize": "claim_manifest_oversize"}[status]
+        return ClaimDomainDecision(False, reason, len(envelope.normalized),
+                                   manifest_missing=status == "missing",
+                                   structural_violations=envelope.violations)
 
-    ``manifest_missing`` được báo riêng để legacy test/plugin có thể migrate dần.
-    Production schema V42 yêu cầu field này, nên model bình thường không đi qua
-    nhánh thiếu manifest.
-    """
-
-    normalized = normalize_claim_manifest(manifest)
-    allowed = {str(item or "").strip().lower() for item in allowed_domains if str(item or "").strip()}
-    evidence = {str(item or "").strip() for item in allowed_evidence_refs if str(item or "").strip()}
-    missing = bool(text_present and manifest is None)
-    # V42 public boundary: đã có chữ public thì manifest không còn là metadata
-    # trang trí. Thiếu manifest nghĩa là runtime không biết model vừa mở thêm
-    # miền sự thật nào, nên phải fail closed và cho wording retry một lần.
-    if missing:
-        return ClaimDomainDecision(False, "claim_manifest_missing", manifest_missing=True)
+    allowed = {str(x).strip().lower() for x in allowed_domains if isinstance(x, str) and x.strip()}
+    evidence = {x for x in allowed_evidence_refs if isinstance(x, str) and x}
     bad_domains: list[str] = []
     bad_refs: list[str] = []
-    for item in normalized:
-        domain = str(item["domain"])
+    for item in envelope.normalized:
+        domain = item["domain"]
         if domain not in KNOWN_CLAIM_DOMAINS or domain not in allowed:
             bad_domains.append(domain)
             continue
-        refs = tuple(str(ref) for ref in item.get("evidence_refs", ()) if str(ref))
-        if domain in EVIDENCE_REQUIRED_DOMAINS:
-            if not refs:
-                bad_refs.append(f"{domain}:missing")
-            else:
-                bad_refs.extend(ref for ref in refs if ref not in evidence)
-        elif domain in EVIDENCE_EXEMPT_DOMAINS:
-            # Tán nhảm, triết học, ý kiến — không cần evidence và cũng không
-            # phạt model vì khai báo thêm ref tùy ý. Bỏ qua hoàn toàn.
-            pass
-        else:
-            # Domain khác (memory, engagement_state, discovery_artifact…):
-            # nếu runtime có evidence set và model thêm ref lạ thì mới cảnh báo.
-            bad_refs.extend(ref for ref in refs if evidence and ref not in evidence)
+        refs = item["evidence_refs"]
+        if domain in EVIDENCE_REQUIRED_DOMAINS and not refs:
+            bad_refs.append(f"{domain}:missing")
+        # Ref nào model đã khai cũng phải là ref được runtime cấp, kể cả domain
+        # opinion/hypothetical. Ý kiến MỚI không cần ref, nhưng ref giả không được pass.
+        bad_refs.extend(ref for ref in refs if ref not in evidence)
     if bad_domains:
-        return ClaimDomainDecision(
-            False,
-            "claim_domain_not_allowed",
-            len(normalized),
-            tuple(dict.fromkeys(bad_domains)),
-            tuple(dict.fromkeys(bad_refs)),
-            missing,
-        )
+        return ClaimDomainDecision(False, "claim_domain_not_allowed", len(envelope.normalized),
+                                   tuple(dict.fromkeys(bad_domains)), tuple(dict.fromkeys(bad_refs)))
     if bad_refs:
-        return ClaimDomainDecision(
-            False,
-            "claim_evidence_not_allowed",
-            len(normalized),
-            (),
-            tuple(dict.fromkeys(bad_refs)),
-            missing,
-        )
-    return ClaimDomainDecision(True, "claim_domains_grounded", len(normalized), manifest_missing=missing)
+        return ClaimDomainDecision(False, "claim_evidence_not_allowed", len(envelope.normalized),
+                                   (), tuple(dict.fromkeys(bad_refs)))
+    return ClaimDomainDecision(True, "claim_domains_grounded", len(envelope.normalized))
 
 
 __all__ = [
-    "CLAIM_DOMAIN_VERSION",
-    "EVIDENCE_EXEMPT_DOMAINS",
-    "EVIDENCE_REQUIRED_DOMAINS",
-    "KNOWN_CLAIM_DOMAINS",
-    "ClaimDomainDecision",
-    "normalize_claim_manifest",
-    "validate_claim_manifest",
+    "CLAIM_DOMAIN_VERSION", "EVIDENCE_EXEMPT_DOMAINS", "EVIDENCE_REQUIRED_DOMAINS",
+    "KNOWN_CLAIM_DOMAINS", "ClaimDomainDecision", "ClaimManifestEnvelope",
+    "inspect_claim_manifest", "normalize_claim_manifest", "validate_claim_manifest",
 ]

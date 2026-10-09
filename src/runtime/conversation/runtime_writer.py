@@ -11,6 +11,64 @@ from .kernel import KernelTurn
 from .writer import RenderedConversationMove
 
 
+def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any) -> Any:
+    """Gate typed-domain sơ bộ cho từng candidate, kể cả candidate rewrite.
+
+    Không làm semantic verification (Task 5/6 của v0.3). Ref hiện diện chỉ là
+    điều kiện cần, tuyệt đối chưa chứng minh toàn bộ nghĩa của câu.
+    """
+    from runtime.claim_domain_contract import (
+        ClaimManifestEnvelope, inspect_claim_manifest, validate_claim_manifest,
+    )
+    from .claim_evidence import EvidenceRegistry
+    envelope = payload.get("_typed_claim_manifest")
+    if not isinstance(envelope, ClaimManifestEnvelope):
+        # Fake router của những test V12 không có manifest là legacy, không
+        # ngầm gán compliance mới. Router thật luôn trả _typed_claim_manifest.
+        if "claim_manifest" not in payload:
+            return None
+        envelope = inspect_claim_manifest(payload)
+    current = inspect_claim_manifest(payload)
+    if envelope.structural_status != "valid":
+        raise RuntimeError("public_writer_manifest_" + envelope.structural_status)
+    if current.structural_status != "valid" or current.raw != envelope.raw:
+        raise RuntimeError("public_writer_manifest_tampered")
+
+    if isinstance(evidence_registry, EvidenceRegistry):
+        # Allowlist thuộc quyền runtime, không lấy từ những ref writer tự khai.
+        domains = {"opinion", "hypothetical", "internal_state", "self_preference"}
+        refs: list[str] = []
+        source_domains = {
+            "runtime_state": ("self_model",),
+            "user_statement": ("user_statement", "conversation_history"),
+            "assistant_utterance": ("conversation_history",),
+            "memory": ("memory", "user_profile", "shared_episode"),
+            "current_screen": ("grounded_environment",),
+            "live_vision": ("grounded_environment",),
+            "pasted_code": ("discovery_artifact",),
+            "uploaded_file": ("discovery_artifact",),
+            "web": ("discovery_artifact",),
+            "capability_result": ("discovery_artifact", "self_capability"),
+        }
+        for entry in evidence_registry.entries:
+            if entry.status != "supported":
+                continue
+            refs.append(entry.ref)
+            # assistant utterance KHÔNG chứng minh đã làm action; một ref chỉ
+            # được xét trong domain/scope của chính nó, không nâng thành history.
+            for domain in source_domains.get(entry.source_kind, ()):
+                if (entry.source_kind == "memory" and entry.scope in {"summary", "unresolved"}
+                        and domain in {"user_profile", "shared_episode"}):
+                    continue
+                domains.add(domain)
+        decision = validate_claim_manifest(envelope,
+                                           allowed_domains=tuple(domains),
+                                           allowed_evidence_refs=tuple(refs))
+        if not decision.allowed:
+            raise RuntimeError("public_writer_" + decision.reason)
+    return envelope
+
+
 class RuntimeConversationWriter:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -45,6 +103,11 @@ class RuntimeConversationWriter:
             or runtime_context.get("personality_summary", "")
             or ""
         )
+        # Character v0.2: tuyệt đối không render portrait lần hai ở writer.
+        # Dùng đúng canonical text mà ContextAssembler đã giao cho Root.
+        portrait_render = runtime_context.get("__character_portrait_render")
+        if portrait_render is not None and personality_context != portrait_render.text:
+            raise RuntimeError("character_portrait_root_writer_mismatch")
         relationship_context = str(
             runtime_context.get("relationship_context", "")
             or runtime_context.get("relationship_summary", "")
@@ -104,6 +167,8 @@ class RuntimeConversationWriter:
         if not isinstance(payload, Mapping):
             raise RuntimeError("public_writer_invalid_payload")
 
+        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry)
+
         # Post-generation grounding gate từng bị mất call-site khi V12 cutover.
         # Gate chỉ chặn claim vượt evidence; nếu fail, SurfaceWorker được đúng một
         # lần rewrite với cùng semantic move, không giao quyền semantic cho gate.
@@ -136,6 +201,9 @@ class RuntimeConversationWriter:
                 # Defense-in-depth ở DeliveryAdapter vẫn chạy. Gate lỗi nội bộ
                 # không được tự bịa một violation mới.
                 pass
+        # Grounding gate cũ có thể yêu cầu rewrite. Manifest câu SAU rewrite
+        # phải được kiểm lại, không thừa hưởng verdict của candidate thứ nhất.
+        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry)
         display_text = str(payload.get("text", "") or "").strip()
         if not display_text:
             raise RuntimeError("public_writer_empty")
@@ -171,6 +239,8 @@ class RuntimeConversationWriter:
                 "root_capabilities_used": list(used_capabilities),
                 # Metadata private cho Task 5/6; delivery không serialize nó.
                 "evidence_registry": evidence_registry,
+                "character_portrait": runtime_context.get("__character_portrait"),
+                "claim_manifest_envelope": manifest_envelope,
             },
         )
 
