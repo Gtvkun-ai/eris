@@ -159,6 +159,21 @@ class ConversationKernel:
 
         normalized_event = replace(event, session_id=sid, generation=state.generation)
         agent_context = self._agent_runtime_context(sid, runtime_context)
+        # Execution token được kernel cấp, không cho client/model tự chỉ định.
+        agent_context["__conversation_run_id"] = run_id
+        # Pin registry vào normalized generation của kernel. Input trước kernel
+        # có thể mang generation=0; receipt từ Root phải dùng generation THỰC.
+        from .claim_evidence import EvidenceRegistry
+        registry = agent_context.get("__evidence_registry")
+        if isinstance(registry, EvidenceRegistry):
+            if registry.event_id == normalized_event.event_id and registry.session_id == sid:
+                agent_context["__evidence_registry"] = replace(
+                    registry, generation=normalized_event.generation, run_id=run_id,
+                )
+            else:
+                # Deferred continuation có event_id riêng. Tuyệt đối không đem
+                # sources của wake signal khác sang chứng minh lời đang nói.
+                agent_context["__evidence_registry"] = None
         decision = self.agent.decide(
             event=normalized_event,
             recent_history=recent_history,
@@ -223,7 +238,8 @@ class ConversationKernel:
                 turn=turn,
                 event=normalized_event,
                 recent_history=recent_history,
-                runtime_context=dict(runtime_context or {}),
+                runtime_context={**dict(runtime_context or {}),
+                                 "__evidence_registry": agent_context.get("__evidence_registry")},
             )
         except Exception as exc:
             self._log("debug", "[conversation-v12] writer failed: %s", exc)

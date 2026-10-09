@@ -13,6 +13,7 @@ Mọi quyết định *có gọi capability hay không* vẫn thuộc RootAgent.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 
@@ -40,6 +41,23 @@ class ConversationNoteTools:
         self.clear_note()
 
 
+@dataclass(frozen=True, slots=True)
+class CapabilityResultReceipt:
+    """Kết quả executor theo một invocation; Root/model không được tự ký receipt.
+
+    ``result`` là snapshot readonly, không giữ mapping mutable trả về từ tool.
+    """
+    invocation_id: str
+    name: str
+    event_id: str
+    session_id: str
+    generation: int
+    run_id: str
+    status: str
+    result: Mapping[str, Any]
+    source_refs: tuple[str, ...] = ()
+
+
 @dataclass(slots=True)
 class RootCapabilityRegistry:
     """Registry data/runtime-only cho capability mà RootAgent có thể gọi.
@@ -50,6 +68,7 @@ class RootCapabilityRegistry:
 
     capabilities: Mapping[str, Any]
     invocation_log: list[tuple[str, str]] = field(default_factory=list)
+    result_log: list[CapabilityResultReceipt] = field(default_factory=list)
 
     def get(self, name: str) -> Any | None:
         return self.capabilities.get(str(name or "").strip().lower())
@@ -66,9 +85,44 @@ class RootCapabilityRegistry:
         eid = str(event_id or "")[:240]
         return tuple(name for item_event, name in self.invocation_log if item_event == eid and name)
 
+    def record_result(self, *, name: str, invocation_id: str, event: Any,
+                      run_id: str, result: Mapping[str, Any]) -> CapabilityResultReceipt:
+        """Chỉ gọi từ adapter sau khi executor trả về; started != completed.
+
+        Không cho phép cùng invocation_id bị ghi đè bằng một kết quả khác.
+        Event/session/run/generation đều có mặt để ngăn tái sử dụng ở lượt sau.
+        """
+        from .claim_evidence import _freeze
+
+        if not invocation_id or not run_id or not getattr(event, "event_id", ""):
+            raise ValueError("capability_result_missing_identity")
+        for existing in self.result_log:
+            if existing.invocation_id == invocation_id:
+                return existing
+        status = str(result.get("status", "unknown") or "unknown").lower()
+        refs = result.get("source_refs", ())
+        refs = refs if isinstance(refs, (tuple, list)) else ()
+        receipt = CapabilityResultReceipt(
+            invocation_id=str(invocation_id), name=str(name).strip().lower(),
+            event_id=str(event.event_id), session_id=str(event.session_id),
+            generation=int(event.generation), run_id=str(run_id), status=status,
+            result=_freeze(result),
+            source_refs=tuple(str(ref) for ref in refs if isinstance(ref, str) and ref),
+        )
+        self.result_log.append(receipt)
+        if len(self.result_log) > 64:
+            del self.result_log[:-64]
+        return receipt
+
+    def result_receipts_for(self, event_id: str, *, run_id: str,
+                            generation: int) -> tuple[CapabilityResultReceipt, ...]:
+        return tuple(r for r in self.result_log if r.event_id == event_id and
+                     r.run_id == run_id and r.generation == generation)
+
 
 __all__ = [
     "ConversationNoteTools",
     "RootCapabilityRegistry",
+    "CapabilityResultReceipt",
     "normalize_note",
 ]

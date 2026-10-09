@@ -87,6 +87,8 @@ class ScoredMemoryCandidate:
 
 @dataclass(slots=True)
 class MemoryRetrievalResult:
+    # Records được chọn sau WorkingMemoryGate. Không recall lần hai theo text.
+    source_records: tuple[Any, ...] = ()
     activations: tuple[MemoryActivation, ...] = ()
     scored_candidates: tuple[ScoredMemoryCandidate, ...] = ()
     attention_bias: float = 0.0

@@ -54,6 +54,19 @@ class RuntimeConversationWriter:
         if isinstance(engagement, Mapping):
             engagement = json.dumps(dict(engagement), ensure_ascii=False, separators=(",", ":"))
 
+        # Chỉ mở rộng bằng receipt của ĐÚNG run này, sau khi Root đã hoàn tất
+        # capability. Không lấy Root.say làm chứng cứ và chưa bật semantic gate.
+        from .claim_evidence import EvidenceRegistry, extend_evidence_registry, render_evidence_context
+        evidence_registry = runtime_context.get("__evidence_registry")
+        registry = runtime_context.get("__root_capabilities")
+        if isinstance(evidence_registry, EvidenceRegistry):
+            receipts_for = getattr(registry, "result_receipts_for", None)
+            receipts = receipts_for(event.event_id, run_id=turn.run_id,
+                                    generation=turn.generation) if callable(receipts_for) else ()
+            evidence_registry = extend_evidence_registry(evidence_registry, receipts)
+        else:
+            evidence_registry = None
+
         generate_kwargs = {
             "chat_history": tuple(recent_history),
             "user_text": str(event.text or ""),
@@ -75,6 +88,18 @@ class RuntimeConversationWriter:
             "language_hint": str(runtime_context.get("language_hint", "vi") or "vi"),
             "speech_language_hint": str(runtime_context.get("speech_language_hint", "ja") or "ja"),
         }
+        # Chỉ bổ sung source refs CÓ SCOPE vào grounding context (không chạm
+        # root move), để writer thấy kết quả executor của đúng run. Chưa có
+        # semantic verifier ở v0.1 nên refs không tự biến câu nói thành fact.
+        if evidence_registry is not None:
+            rendered_refs = render_evidence_context(evidence_registry)
+            if rendered_refs:
+                generate_kwargs["grounding_context"] = "\n\n".join((
+                    generate_kwargs["grounding_context"],
+                    "CHARACTER_V1_SOURCE_REFS: refs only support their stated scope; "
+                    "assistant utterance or failed/started tool does not prove world facts.\n" + rendered_refs,
+                ))
+
         payload = generate(**generate_kwargs)
         if not isinstance(payload, Mapping):
             raise RuntimeError("public_writer_invalid_payload")
@@ -144,6 +169,8 @@ class RuntimeConversationWriter:
                 "source_grounding_report": runtime_context.get("__source_grounding_report"),
                 "source_grounding_engine": runtime_context.get("__source_grounding_engine"),
                 "root_capabilities_used": list(used_capabilities),
+                # Metadata private cho Task 5/6; delivery không serialize nó.
+                "evidence_registry": evidence_registry,
             },
         )
 

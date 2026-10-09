@@ -39,6 +39,7 @@ from .memory_kernel_contracts import (
     MemoryIngestPlan,
     MemoryIngestResult,
     MemoryKernelConfig,
+    PublicMemoryContext,
     MemoryMaintenanceReport,
 )
 from .memory_maintenance import MemoryMaintenanceRunner
@@ -540,6 +541,37 @@ class MemoryKernel:
 
     def save(self, snapshot: Mapping[str, Any] | None = None) -> None:
         self.core.save(snapshot)
+
+    def build_public_context(self, query: str, *, session_id: str,
+                             user_context_token_budget: int = 6000,
+                             max_lines: int = 64) -> PublicMemoryContext:
+        """CÙNG một selection tạo text + records. Tuyệt đối không recall lần hai.
+
+        ProfileContextPacket có items/episodes nhưng không phải toàn bộ đều có
+        canonical MemoryRecord. Phần chưa resolve phải đánh dấu degraded thay vì
+        dựng giả record hoặc suy provenance từ câu prose đã render.
+        """
+        packet = self.core.recall(query)
+        core_text = self.core.render_context_for_packet(packet, max_lines=max_lines)
+        records = tuple(getattr(packet, "source_records", ()) or ())
+        degraded = False
+        profile_text = ""
+        living_user = self.living_user
+        if living_user is not None:
+            try:
+                profile = living_user.compile_context(
+                    str(query or ""), session_id=session_id,
+                    token_budget=int(user_context_token_budget),
+                )
+                profile_text = profile.render_prompt_context()
+                # Profile projection không đồng nghĩa canonical proof. Chỉ giữ
+                # typed records đã thực sự được packet core chọn; còn lại unknown.
+                if profile_text and (profile.items or profile.episodes or profile.action_context):
+                    degraded = True
+            except Exception:
+                degraded = True
+        combined = "\n\n".join(part for part in (core_text, profile_text) if part).strip()
+        return PublicMemoryContext(text=combined, records=records, degraded=degraded)
 
     def render_context(self, *args: Any, **kwargs: Any) -> str:
         """Render memory context và ghép profile đúng ngữ cảnh.

@@ -62,6 +62,18 @@ deep:
 """
 
 
+@dataclass(frozen=True, slots=True)
+class PublicMemoryContext:
+    """Một lần chọn memory cho cả prose và typed records.
+
+    degraded=True khi có profile/active_state chưa truy nguyên được record.
+    Điều này không gán 'unknown' thành fact và không làm mất legacy context.
+    """
+    text: str
+    records: tuple[Any, ...] = ()
+    degraded: bool = False
+
+
 @dataclass(slots=True)
 class MemoryKernelConfig:
     """Config runtime cho MemoryKernel.

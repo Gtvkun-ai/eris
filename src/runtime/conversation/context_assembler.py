@@ -63,6 +63,8 @@ class ConversationContextAssembler:
         previous_public_context: str = "",
         interrupt_context: str = "",
         recent_history: Sequence[Mapping[str, Any]] = (),
+        event: Any | None = None,
+        source_report: Any | None = None,
     ) -> dict[str, Any]:
         del recent_history  # reserved cho projection sau; không tự suy semantics từ prose.
         host = self.host
@@ -70,7 +72,7 @@ class ConversationContextAssembler:
 
         personality = _call_text(state, "personality_prompt_context", limit=12000)
         relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=12000)
-        memory = self._memory_context(user_text)
+        memory, memory_records, memory_degraded = self._typed_memory_context(user_text)
         world = self._world_context(channel)
         clock = self._clock_context()
         addressing = self._user_addressing_context()
@@ -82,6 +84,7 @@ class ConversationContextAssembler:
 
         affect_payload: dict[str, Any] = {}
         affect_prompt = ""
+        affect = None  # Không sample lần hai chỉ để dựng registry.
         try:
             affect = project_affective_voice_state(host, mind_state=state, channel=channel)
             affect_payload = affect.to_dict()
@@ -132,6 +135,29 @@ class ConversationContextAssembler:
             },
         }
 
+        # Registry là metadata private, không chèn nguyên memory/provenance vào
+        # public prompt hoặc gửi theo UDP. Event thiếu ID (legacy) phải degraded.
+        context["context_assembler"]["evidence_degraded"] = event is None or memory_degraded
+        if event is not None:
+            try:
+                from dataclasses import replace
+                from .claim_evidence import build_evidence_registry
+                ledger_factory = getattr(host, "_ensure_session_turn_ledger", None)
+                ledger = ledger_factory() if callable(ledger_factory) else None
+                turns = ledger.all_turns() if ledger is not None else ()
+                registry = build_evidence_registry(
+                    event=event, state=state, affect=affect,
+                    report=source_report, ledger_turns=turns,
+                    memory_records=memory_records,
+                    sampled_at=__import__("time").time(),
+                )
+                context["__evidence_registry"] = replace(
+                    registry, degraded=memory_degraded or source_report is None,
+                )
+            except Exception as exc:
+                context["context_assembler"]["evidence_degraded"] = True
+                self._debug("context.evidence_registry", exc)
+
         # Mirror compatibility để panel/debug/caller cũ đọc được state mới nhất.
         # Đây là OUTPUT của assembler, không còn là input authority của V12.
         try:
@@ -155,6 +181,27 @@ class ConversationContextAssembler:
         except Exception as exc:
             self._debug("context.state", exc)
             return None
+
+    def _typed_memory_context(self, user_text: str) -> tuple[str, tuple[Any, ...], bool]:
+        """Chỉ gọi đúng một selection khi kernel hỗ trợ typed provenance.
+
+        Host legacy vẫn nhận context prose cũ nhưng được báo degraded.
+        """
+        kernel = getattr(self.host, "memory_kernel", None)
+        build = getattr(kernel, "build_public_context", None)
+        if not callable(build):
+            return self._memory_context(user_text), (), True
+        session = str(getattr(self.host, "conversation_id", "") or
+                      getattr(self.host, "thread_id", "") or "foreground:primary")[:180]
+        try:
+            packet = build(str(user_text or ""), session_id=session,
+                           user_context_token_budget=6000, max_lines=64)
+            return (str(packet.text or "")[:32000],
+                    tuple(getattr(packet, "records", ()) or ()),
+                    bool(getattr(packet, "degraded", True)))
+        except Exception as exc:
+            self._debug("context.typed_memory", exc)
+            return self._memory_context(user_text), (), True
 
     def _memory_context(self, user_text: str) -> str:
         kernel = getattr(self.host, "memory_kernel", None)

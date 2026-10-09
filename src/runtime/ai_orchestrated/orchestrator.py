@@ -812,6 +812,8 @@ class AIChatOrchestrator:
             previous_public_context=str(previous_public_context or ""),
             interrupt_context=str(speech_interrupt_context or ""),
             recent_history=history,
+            event=event,
+            source_report=evidence_context.get("__source_grounding_report"),
         )
         source_context = str(evidence_context.get("source_grounding_context", "") or "").strip()
         if source_context:
@@ -1073,12 +1075,24 @@ class AIAutonomousOrchestrator:
             except Exception as exc:
                 _orchestrator_boundary_note(host, "conversation_signal.state", exc)
         from runtime.conversation.context_assembler import ensure_conversation_context_assembler
+        from runtime.conversation.evidence_assembler import ensure_conversation_evidence_assembler
 
+        # Gán ID một lần trước assemble. Signal thường dùng cùng ID này khi vào
+        # kernel; continuation_due do scheduler sinh ID riêng nên chưa được cấp
+        # registry từ signal giả. Kernel sẽ fail-closed nếu IDs không khớp.
+        prospective_event = ConversationEvent(
+            event_id=str(event_id or f"{signal_kind}:{time.time_ns()}")[:240],
+            session_id=sid, kind=signal_kind,
+            generation=kernel.snapshot(sid).generation,
+        )
+        evidence_context = ensure_conversation_evidence_assembler(host).assemble_autonomous()
         runtime_context = ensure_conversation_context_assembler(host).assemble(
             user_text="",
             channel="autonomous",
             previous_public_context=str(getattr(host, "last_text", "") or ""),
             recent_history=recent_history,
+            event=prospective_event,
+            source_report=evidence_context.get("__source_grounding_report"),
         )
         # Khôi phục self-context từng bị hard-cut: đây chỉ là public-safe
         # projection của state nội tại hiện có, không phải planner và không được
@@ -1087,8 +1101,6 @@ class AIAutonomousOrchestrator:
             runtime_context["autonomous_self_context"] = build_autonomous_self_context(host).to_dict()
         except Exception as exc:
             _orchestrator_boundary_note(host, "conversation_signal.self_context", exc)
-        from runtime.conversation.evidence_assembler import ensure_conversation_evidence_assembler
-        evidence_context = ensure_conversation_evidence_assembler(host).assemble_autonomous()
         source_context = str(evidence_context.get("source_grounding_context", "") or "").strip()
         if source_context:
             runtime_context["grounding_context"] = "\n\n".join(
@@ -1123,13 +1135,7 @@ class AIAutonomousOrchestrator:
             result = None
         if result is None:
             result = kernel.handle_event(
-                ConversationEvent(
-                    event_id=str(event_id or f"{signal_kind}:{time.time_ns()}")[:240],
-                    session_id=sid,
-                    kind=signal_kind,
-                    generation=kernel.snapshot(sid).generation,
-                    metadata=signal_metadata,
-                ),
+                __import__("dataclasses").replace(prospective_event, metadata=signal_metadata),
                 recent_history=recent_history,
                 runtime_context=runtime_context,
             )

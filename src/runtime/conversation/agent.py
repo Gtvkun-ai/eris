@@ -12,6 +12,7 @@ một action rất nhỏ, và public boundary cuối vẫn luôn là đúng mộ
 from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence
+import uuid
 
 from .context import ConversationNoteTools, RootCapabilityRegistry
 from .contracts import (
@@ -221,8 +222,14 @@ class RuntimeModelRootAgent:
                     arguments=arguments,
                     event=event,
                     recent_history=recent_history,
+                    run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
+                )
+                receipt = capabilities.result_receipts_for(
+                    event.event_id, run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
+                    generation=event.generation,
                 )
                 tool_results.append({
+                    "receipt_ref": f"capability:{receipt[-1].invocation_id}" if receipt else "",
                     "kind": "capability_result",
                     "capability": capability_name,
                     "result": _bounded_value(result, depth=0),
@@ -296,20 +303,27 @@ class RuntimeModelRootAgent:
         arguments: Mapping[str, Any],
         event: ConversationEvent,
         recent_history: Sequence[Mapping[str, Any]],
+        run_id: str = "",
     ) -> Mapping[str, Any]:
+        invocation_id = f"cap:{uuid.uuid4().hex}"
         capability = registry.get(name)
-        if capability is None:
-            return {"status": "unavailable", "reason": f"capability_not_registered:{name}"}
-        invoke = getattr(capability, "invoke_for_root", None)
+        invoke = getattr(capability, "invoke_for_root", None) if capability is not None else None
         if not callable(invoke):
-            return {"status": "unavailable", "reason": f"capability_has_no_root_entry:{name}"}
-        try:
-            registry.record_invocation(name, str(getattr(event, "event_id", "") or ""))
-            raw = invoke(arguments=dict(arguments), event=event, recent_history=recent_history)
-            return dict(raw) if isinstance(raw, Mapping) else {"status": "ok", "value": str(raw or "")[:12000]}
-        except Exception as exc:  # noqa: BLE001
-            self._log("debug", "[conversation-v12] capability %s degraded: %s", name, exc)
-            return {"status": "failed", "error": type(exc).__name__, "message": str(exc)[:1200]}
+            reason = "capability_not_registered" if capability is None else "capability_has_no_root_entry"
+            response: Mapping[str, Any] = {"status": "unavailable", "reason": f"{reason}:{name}"}
+        else:
+            try:
+                registry.record_invocation(name, str(event.event_id or ""))
+                raw = invoke(arguments=dict(arguments), event=event, recent_history=recent_history)
+                response = dict(raw) if isinstance(raw, Mapping) else {"status": "unknown", "reason": "untyped_executor_result"}
+            except Exception as exc:  # noqa: BLE001
+                self._log("debug", "[conversation-v12] capability %s degraded: %s", name, exc)
+                response = {"status": "failed", "error": type(exc).__name__, "message": str(exc)[:1200]}
+        # Receipt chỉ phản ánh kết quả đã trả về; không biến 'started' thành success.
+        if run_id:
+            registry.record_result(name=name, invocation_id=invocation_id,
+                                   event=event, run_id=run_id, result=response)
+        return response
 
     @staticmethod
     def _degraded(

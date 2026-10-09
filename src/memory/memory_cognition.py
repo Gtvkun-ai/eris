@@ -535,6 +535,10 @@ class MemoryCognitionCore:
 
     def render_context(self, query: MemoryQuery | str = "", *, snapshot: Any = None, frame: Any = None, max_lines: int = 18) -> str:
         packet = self.recall(query or self._query_from_snapshot(snapshot), frame=frame)
+        return self.render_context_for_packet(packet, max_lines=max_lines)
+
+    def render_context_for_packet(self, packet: MemoryPacket, *, max_lines: int = 18) -> str:
+        """Cùng renderer với render_context, nhưng dùng packet đã chọn sẵn."""
         parts = [packet.render_prompt_context(max_lines=max_lines)]
         active = self.active_state.load()
         active_lines = []

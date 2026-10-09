@@ -125,6 +125,15 @@ class MemoryRetrievalEngine:
         result = self.activation_builder.build(scored, max_activations=max_activations)
         result = self.working_memory_gate.apply(result, cue=cue, requested=max_activations)
         rendered_ids = tuple(item.record_id for item in result.activations)
+        # Lấy CHÍNH candidate.record đã vượt admission/gate, không tìm theo text.
+        # Cùng record_id xuất hiện nhiều lần vẫn chỉ giữ một bản source.
+        allowed = set(rendered_ids)
+        selected_records = {}
+        for scored_item in scored:
+            record = scored_item.candidate.record
+            if record.id in allowed and record.id not in selected_records:
+                selected_records[record.id] = record
+        result.source_records = tuple(selected_records[rid] for rid in rendered_ids if rid in selected_records)
         debug_notes.extend((
             f"admission_retrieved={retrieved_count}",
             f"admission_allowed={len(admitted_trace)}",

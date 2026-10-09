@@ -23,6 +23,8 @@ except Exception:  # pragma: no cover
 
 @dataclass(slots=True)
 class MemoryPacket:
+    # Metadata typed của chính lượt retrieve; không phải store thứ hai.
+    source_records: tuple[Any, ...] = ()
     episodic: list[str] = field(default_factory=list)
     semantic: list[str] = field(default_factory=list)
     relational: list[str] = field(default_factory=list)
@@ -114,6 +116,7 @@ class MemoryPacketBuilder:
             wording_bias=result.wording_bias,
             silence_bias=result.silence_bias,
             activations=result.activations,
+            source_records=result.source_records,
         )
 
         groups = {

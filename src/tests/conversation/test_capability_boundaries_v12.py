@@ -168,3 +168,39 @@ def test_capability_modules_never_record_assistant_or_call_transport():
                 offenders.append(f"{path.name}:{node.lineno}:{node.func.attr}")
 
     assert offenders == []
+
+
+def test_v01_root_receipt_uses_runtime_run_and_real_executor_status():
+    """Dùng RootAgent thật/fake model, không giả sử gọi tool tức completed."""
+    from runtime.conversation.agent import RuntimeModelRootAgent
+    from runtime.conversation.context import RootCapabilityRegistry
+
+    class Router:
+        executive_client = object()
+        calls = 0
+        def invoke_structured_worker(self, client, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {"kind": "use_capability", "capability": "research", "arguments": {"topic": "Eris"}}
+            return {"kind": "move", "intent": "phản hồi", "say": "Không có kết quả hoàn tất",
+                    "delivery": "gọn", "after": "wait_user"}
+
+    class Research:
+        def invoke_for_root(self, **kwargs):
+            return {"status": "started", "job_id": "j1"}
+
+    capabilities = RootCapabilityRegistry({"research": Research()})
+    router = Router()
+    agent = RuntimeModelRootAgent(router)
+    event = ConversationEvent(event_id="e1", session_id="s", kind="user_turn", generation=2,
+                              text="nghiên cứu đi")
+    decision = agent.decide(event=event, recent_history=(), note="", runtime_context={
+        "__root_capabilities": capabilities, "__conversation_run_id": "run:true",
+    })
+    assert decision.say == "Không có kết quả hoàn tất"
+    receipts = capabilities.result_receipts_for("e1", run_id="run:true", generation=2)
+    assert len(receipts) == 1
+    assert receipts[0].status == "started"
+    assert receipts[0].result["job_id"] == "j1"
+    assert capabilities.result_receipts_for("e1", run_id="run:other", generation=2) == ()
+    assert router.calls == 2
