@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import re
 import threading
 import time
 import uuid
@@ -59,6 +60,39 @@ class ConversationRunResult:
     rendered: RenderedConversationMove | None = None
     delivery_id: str = ""
     status: str = "idle"
+    # Chỉ chứa reason code đã lọc; không serialize prompt, response hoặc traceback.
+    failure_reason: str = ""
+
+
+def _safe_failure_reason(exc: Exception) -> str:
+    """Bóc mã lỗi để nhìn thấy nguyên nhân mà không ghi dữ liệu người dùng.
+
+    V0.3 trả mã lỗi từ các stage (generate/manifest/prepare/verify/receipt).
+    Ngoại lệ provider không thuộc mã đã biết chỉ ghi tên exception class.
+    """
+    raw = str(exc).strip()
+    if (len(raw) <= 480 and raw.startswith('v03_candidate_rejected:')
+            and re.fullmatch(r'[a-zA-Z0-9_:;,=]+', raw)):
+        return raw
+    if (len(raw) <= 150 and re.fullmatch(r'(?:v03_|public_writer_|character_portrait_)[a-z0-9_]+', raw)):
+        return raw
+    return type(exc).__name__
+
+
+def _record_run_failure(*, status: str, reason: str, run_id: str,
+                        generation: int) -> None:
+    """JSONL structured event phục vụ tra lỗi sau restart; không ghi lời chat."""
+    try:
+        from runtime.observability import GLOBAL_OBSERVABILITY
+        GLOBAL_OBSERVABILITY.log(
+            'conversation_run_failed',
+            tags={'status': status, 'reason': reason[:120]},
+            fields={'run_id': run_id, 'generation': generation,
+                    'failure_reason': reason},
+            status='degraded',
+        )
+    except Exception:
+        pass
 
 
 class ConversationKernel:
@@ -235,6 +269,7 @@ class ConversationKernel:
                 decision=decision,
                 turn=turn,
                 status="writer_unavailable",
+                failure_reason="WRITER_UNAVAILABLE",
             )
         try:
             rendered = self.writer.realize(
@@ -247,13 +282,21 @@ class ConversationKernel:
                                  "__character_portrait_render": agent_context.get("__character_portrait_render")},
             )
         except Exception as exc:
-            self._log("debug", "[conversation-v12] writer failed: %s", exc)
+            reason = _safe_failure_reason(exc)
+            # Trước hotfix: log debug bị lọc khỏi eris_run; chỉ còn COMPOSING.
+            # Warning này luôn hiện nhưng chỉ có mã lỗi, không có lời nói.
+            self._log("warning",
+                      "[conversation-v12] writer_failed event=%s run=%s generation=%s reason=%s",
+                      normalized_event.event_id, run_id, turn.generation, reason)
+            _record_run_failure(status='writer_failed', reason=reason,
+                                run_id=run_id, generation=turn.generation)
             self._fail_run(turn)
             return ConversationRunResult(
                 event=normalized_event,
                 decision=decision,
                 turn=turn,
                 status="writer_failed",
+                failure_reason=reason,
             )
 
         current = self.store.load(sid)
@@ -274,13 +317,18 @@ class ConversationKernel:
                 turn=turn,
                 rendered=rendered,
                 status="delivery_unavailable",
+                failure_reason="DELIVERY_UNAVAILABLE_OR_PREEMPTED",
             )
         with self._delivery_lock:
             self._delivery_turns[delivery_id] = turn
         try:
             self.delivery.deliver(turn=turn, rendered=rendered, delivery_id=delivery_id)
         except Exception as exc:
-            self._log("warning", "[conversation-v12] delivery failed: %s", exc)
+            reason = _safe_failure_reason(exc)
+            self._log("warning", "[conversation-v12] delivery_failed event=%s run=%s generation=%s reason=%s",
+                      normalized_event.event_id, run_id, turn.generation, reason)
+            _record_run_failure(status='delivery_failed', reason=reason,
+                                run_id=run_id, generation=turn.generation)
             self.settle_delivery_id(
                 session_id=turn.session_id,
                 delivery_id=delivery_id,
@@ -293,6 +341,7 @@ class ConversationKernel:
                 rendered=rendered,
                 delivery_id=delivery_id,
                 status="delivery_failed",
+                failure_reason=reason,
             )
         return ConversationRunResult(
             event=normalized_event,

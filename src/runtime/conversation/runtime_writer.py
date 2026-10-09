@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from typing import Any, Mapping, Sequence
 
 from .contracts import ConversationEvent
 from .delivery import SurfaceEnvelope
 from .kernel import KernelTurn
 from .writer import RenderedConversationMove
+
+
+_SAFE_V03_ERROR = re.compile(r"^(?:v03_[a-z0-9_]+|public_writer_[a-z0-9_]+|[A-Z][A-Z0-9_]+)(?::[A-Z][A-Z0-9_,]*)?$")
+
+
+def _v03_error_code(exc: Exception) -> str:
+    """Chỉ trích mã lỗi cơ học để log/rewrite; không lộ prompt hoặc token API.
+
+    Exception của provider đôi lúc mang nguyên response/request. Không bao giờ
+    đưa chuỗi lạ ấy vào telemetry hoặc prompt sửa câu của SurfaceWorker.
+    """
+    raw = str(exc).strip()
+    return raw[:180] if len(raw) <= 180 and _SAFE_V03_ERROR.fullmatch(raw) else type(exc).__name__
 
 
 def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any) -> Any:
@@ -73,6 +88,34 @@ class RuntimeConversationWriter:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+    def _log_v03(self, level: str, *, turn: KernelTurn, attempt: int,
+                 stage: str, status: str, code: str, duration_ms: int) -> None:
+        """Log ranh giới từng candidate; không lưu câu user/speech hay evidence."""
+        logger = getattr(self.host, 'logger', None)
+        method = getattr(logger, level, None)
+        if callable(method):
+            try:
+                method(
+                    '[character-v03] writer_candidate run=%s generation=%s '
+                    'attempt=%s/2 stage=%s status=%s code=%s duration_ms=%s',
+                    turn.run_id, turn.generation, attempt, stage, status, code,
+                    duration_ms,
+                )
+            except Exception:
+                pass
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.log(
+                'character_writer_candidate',
+                tags={'stage': stage, 'status': status, 'code': code},
+                fields={'run_id': turn.run_id, 'generation': turn.generation,
+                        'attempt': attempt, 'duration_ms': duration_ms},
+                status='ok' if status == 'pass' else 'degraded',
+            )
+        except Exception:
+            # Telemetry không được làm hỏng conversation runtime.
+            pass
+
     def _realize_v03(self, *, generate: Any, kwargs: dict[str, Any], turn: KernelTurn,
                      event: ConversationEvent, runtime_context: Mapping[str, Any],
                      evidence_registry: Any, move_payload: Mapping[str, Any]) -> RenderedConversationMove:
@@ -92,7 +135,10 @@ class RuntimeConversationWriter:
         base = dict(kwargs)
         base['allow_language_repair'] = False  # Router không còn retry ẩn của riêng nó.
         error = 'VERIFIER_UNAVAILABLE'
+        rejected: list[str] = []
         for attempt in range(2):
+            started_at = time.monotonic()
+            stage = 'generate'
             request = dict(base)
             if attempt:
                 request['retry_instruction'] = (
@@ -103,11 +149,13 @@ class RuntimeConversationWriter:
                 request['discourse_context'] = base['discourse_context'] + '\n' + request['retry_instruction']
             try:
                 payload = generate(**request)
+                stage = 'manifest'
                 if not isinstance(payload, Mapping):
                     raise RuntimeError('v03_writer_invalid_payload')
                 envelope = _inspect_writer_manifest(payload, evidence_registry)
                 if envelope is None:
                     raise RuntimeError('MANIFEST_MISSING')
+                stage = 'surfaces'
                 display = str(payload.get('text', '') or '').strip()
                 speech = str(payload.get('speech_text', '') or '').strip()
                 if not display or not speech:
@@ -118,6 +166,7 @@ class RuntimeConversationWriter:
                 # Chặn deterministic false action/sensor, cùng ngân sách rewrite.
                 engine = runtime_context.get('__source_grounding_engine')
                 report = runtime_context.get('__source_grounding_report')
+                stage = 'grounding'
                 if engine is not None and report is not None:
                     from runtime.grounding_surface_gate import evaluate_grounded_surface
                     for text in (display, speech):
@@ -127,10 +176,12 @@ class RuntimeConversationWriter:
                         )
                         if not bool(getattr(verdict,'allowed',True)):
                             raise RuntimeError('v03_grounding_unsupported')
+                stage = 'prepare'
                 prepared = adapter.prepare_candidate(
                     turn=turn,event=event,payload=dict(payload),
                     source_fingerprint=evidence_registry.fingerprint,
                 )
+                stage = 'verify'
                 result = verifier.verify(
                     prepared=prepared,manifest=envelope,move=turn.move,
                     registry=evidence_registry,
@@ -138,10 +189,14 @@ class RuntimeConversationWriter:
                 )
                 if result.status != 'pass':
                     raise RuntimeError('v03_verify_' + result.status + ':' + ','.join(result.reason_codes))
+                stage = 'receipt'
                 receipt = build_verification_receipt(
                     prepared=prepared,result=result,registry=evidence_registry,
                     portrait=runtime_context.get('__character_portrait'),
                 )
+                self._log_v03('info', turn=turn, attempt=attempt + 1,
+                              stage='verified', status='pass', code='PASS',
+                              duration_ms=int((time.monotonic() - started_at) * 1000))
                 return RenderedConversationMove(
                     surface=SurfaceEnvelope(
                         display_text=prepared.display_text,
@@ -166,8 +221,14 @@ class RuntimeConversationWriter:
                     },
                 )
             except Exception as exc:
-                error = str(exc)[:350]
-        raise RuntimeError('v03_candidate_rejected:' + error)
+                error = _v03_error_code(exc)
+                rejected.append(stage + '=' + error)
+                self._log_v03('warning', turn=turn, attempt=attempt + 1,
+                              stage=stage, status='rejected', code=error,
+                              duration_ms=int((time.monotonic() - started_at) * 1000))
+        # Mỗi lần fail đều có reason riêng; lỗi thứ nhất không còn bị ghi đè.
+        # Chuỗi này chỉ chứa mã đã lọc, tuyệt đối không chứa text từ model.
+        raise RuntimeError('v03_candidate_rejected:' + ';'.join(rejected))
 
     def realize(
         self,

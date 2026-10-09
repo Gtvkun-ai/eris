@@ -1247,7 +1247,14 @@ class AIRuntimeModelRouter:
         # theo tên model/tier legacy. Turn executive và tutor đang phục vụ trực
         # tiếp user turn là dependency bắt buộc của foreground chat, nên không
         # được rơi xuống ``post_observer`` chỉ vì legacy tier là subconscious_4b.
-        if cognitive_key == "turn_executive" or cognitive_key.startswith("tutor:"):
+        if (cognitive_key in {"turn_executive", "public_claim_verifier"}
+                or cognitive_key.startswith("tutor:")):
+            # Character v1 HOTFIX: claim verifier là gate BẮT BUỘC trước
+            # public delivery. Trước đây lane này rơi xuống post_observer vì
+            # inference_tier=subconscious_4b => optional/preemptible. Khi chat
+            # đang xử lý, broker có thể loại chính bước kiểm bắt buộc, khiến
+            # writer nhận UNKNOWN, thử lại và Eris im lặng.
+            # Không đổi model, nội dung lời hay điều kiện receipt PASS.
             lane = "chat_tool_required"
         elif "public_reply" in reason_key and "autonomous" not in reason_key:
             lane = "chat_main"
@@ -1437,7 +1444,15 @@ class AIRuntimeModelRouter:
             return _unwrap_schema_payload(parsed, schema)
         except Exception as exc:  # noqa: BLE001
             if self.logger is not None:
-                safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
+                if name == "eris_character_claim_verifier_v1":
+                    # Không log exception message: provider có thể kèm prompt,
+                    # token hoặc dữ liệu riêng trong phần mô tả lỗi.
+                    safe_log(self.logger, "warning",
+                             "[character-v1] verifier provider failed code=VERIFIER_PROVIDER_ERROR "
+                             "error_type=%s model=%s", type(exc).__name__,
+                             getattr(client, "model_name", ""))
+                else:
+                    safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
             return {}
 
     def invoke_structured_worker(

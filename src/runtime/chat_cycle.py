@@ -183,10 +183,17 @@ class ChatCycleMixin:
                 lifecycle = lifecycle_for(self)
                 state = lifecycle.snapshot()
                 if state.turn_id == lifecycle_turn_id and state.state == "COMPOSING":
+                    # Kernel đã ghi chính xác writer_failed/delivery_failed.
+                    # Gắn reason vào dòng chat-cycle để một file eris_run đủ
+                    # chẩn đoán, thay vì chỉ thấy "_send_decision_to_body miss".
+                    last_run = getattr(self, 'last_conversation_run', None)
+                    last_run = last_run if isinstance(last_run, dict) else {}
                     self.logger.warning(
                         "[chat-cycle] lifecycle vẫn COMPOSING sau khi cycle kết thúc "
-                        "(no_public_commit). turn_id=%s — _send_decision_to_body bị miss.",
+                        "(no_public_commit). turn_id=%s kernel_status=%s failure_reason=%s",
                         lifecycle_turn_id,
+                        str(last_run.get('status', 'unavailable'))[:60],
+                        str(last_run.get('failure_reason', ''))[:480],
                     )
                     lifecycle.transition("DEGRADED", turn_id=lifecycle_turn_id, reason="no_public_commit")
             except Exception:

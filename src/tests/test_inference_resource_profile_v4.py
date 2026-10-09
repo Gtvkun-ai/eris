@@ -223,3 +223,54 @@ def test_turn_executive_cognitive_lane_is_required_foreground_broker_lane(monkey
     assert seen["budget_kwargs"]["resource_class"] == "remote_api"
     assert seen["budget_kwargs"]["backend"] == "ds2api_deepseek_web"
     assert seen["budget_kwargs"]["cognitive_lane"] == "turn_executive"
+
+
+def test_character_claim_verifier_is_required_foreground_broker_lane(monkeypatch):
+    """Verifier bắt buộc KHÔNG được rơi vào post_observer optional.
+
+    Trước hotfix cognitive_lane=public_claim_verifier + tier=subconscious_4b
+    bị xếp vào post_observer. Chat có thể loại job này, khiến Eris im lặng.
+    """
+    from contextlib import contextmanager
+    import runtime.inference_broker as broker
+
+    seen = {}
+
+    @contextmanager
+    def fake_context(lane, **kwargs):
+        seen['lane'] = lane
+        seen['optional'] = kwargs['optional']
+        yield
+
+    monkeypatch.setattr(broker, 'inference_context', fake_context)
+    router = AIRuntimeModelRouter(object())
+    out = router._run_inference(
+        'subconscious_4b', lambda: {'ok': True},
+        reason='eris_character_claim_verifier_v1', priority=35,
+        resource_class='remote_api', backend='ds2api_deepseek_web',
+        cognitive_lane='public_claim_verifier',
+    )
+    assert out == {'ok': True}
+    assert seen == {'lane': 'chat_tool_required', 'optional': False}
+
+
+def test_regular_observer_remains_optional_background_lane(monkeypatch):
+    """Hotfix không đổi toàn bộ observer thành request foreground."""
+    from contextlib import contextmanager
+    import runtime.inference_broker as broker
+
+    seen = {}
+
+    @contextmanager
+    def fake_context(lane, **kwargs):
+        seen.update(lane=lane, optional=kwargs['optional'])
+        yield
+
+    monkeypatch.setattr(broker, 'inference_context', fake_context)
+    router = AIRuntimeModelRouter(object())
+    router._run_inference(
+        'subconscious_4b', lambda: None,
+        reason='eris_post_observer', priority=35,
+        cognitive_lane='post_observer',
+    )
+    assert seen == {'lane': 'post_observer', 'optional': True}

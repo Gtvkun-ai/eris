@@ -847,6 +847,8 @@ class AIChatOrchestrator:
             "event_id": result.event.event_id,
             "generation": result.event.generation,
             "status": result.status,
+            # Chỉ có mã lỗi đã lọc ở Kernel; không ghi raw provider response.
+            "failure_reason": result.failure_reason,
             "delivery_id": result.delivery_id,
             "decision": decision_dict,
         }
