@@ -177,8 +177,42 @@ class PublicOutputRuntimeMixin:
             self.logger.debug("[TTS] supersede failed: %s", exc)
             return False
 
-    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None) -> bool:
+    def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None,
+                               prepared=None, verification=None) -> bool:
         channel_name = str(channel or "").strip().lower()
+        # v0.3: receipt là bắt buộc cho V12. Đối chiếu TRƯỚC lifecycle/panel.
+        if prepared is not None:
+            from runtime.conversation.claim_verifier import validate_receipt
+            from runtime.conversation.kernel import KernelTurn
+            from types import SimpleNamespace
+            turn_stub = SimpleNamespace(session_id=prepared.session_id,
+                                        generation=prepared.generation, run_id=prepared.run_id,
+                                        move=SimpleNamespace(move_id=prepared.move_id),
+                                        delivery_id=prepared.delivery_id)
+            validate_receipt(prepared=prepared,receipt=verification,turn=turn_stub)
+            if decision is not prepared.decision:
+                raise RuntimeError('v03_decision_identity_changed')
+            kernel = getattr(self,'conversation_kernel',None)
+            if kernel is not None:
+                state = kernel.store.load(prepared.session_id)
+                if (state.generation != prepared.generation or
+                        state.active_run_id != prepared.run_id or
+                        state.active_delivery_id != prepared.delivery_id):
+                    raise RuntimeError('v03_generation_preempted')
+            if channel_name != prepared.channel:
+                raise RuntimeError('v03_channel_mismatch')
+
+        def v03_current() -> bool:
+            if prepared is None:
+                return True
+            kernel = getattr(self,'conversation_kernel',None)
+            if kernel is None:
+                return True
+            state = kernel.store.load(prepared.session_id)
+            return (state.generation == prepared.generation and
+                    state.active_run_id == prepared.run_id and
+                    state.active_delivery_id == prepared.delivery_id)
+
         # Public audio là một floor có owner. Autonomous vẫn được cognition ở
         # background, nhưng tuyệt đối không được materialize một câu mới khi
         # chat/session speech đang synthesize hoặc phát. User barge-in đi đường
@@ -287,21 +321,70 @@ class PublicOutputRuntimeMixin:
         stage_language = runtime_text("tts", "language", default="ja").strip().lower() or "ja"
         if stage_language in {"", "auto"}:
             stage_language = "ja"
-        stage_builder = getattr(self, "stage_frame_builder", None)
-        if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
-            # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
-            # không làm phình __init__ của coordinator vốn đã rất đông dân.
-            stage_builder = StageFrameBuilder(language_hint=stage_language)
-            self.stage_frame_builder = stage_builder
-        stage_frame = stage_builder.build(
-            decision,
-            payload=payload,
-            channel=channel,
-            frame=None,
-            turn_id=None,
-            segment_id=0,
-        )
+        if prepared is not None:
+            # Không gọi StageFrameBuilder lần hai (ngăn wording thay sau verify).
+            stage_frame = prepared.stage_frame
+        else:
+            stage_builder = getattr(self, "stage_frame_builder", None)
+            if stage_builder is None or str(getattr(stage_builder, "language_hint", "auto")) != stage_language:
+                # StageFrame là lớp dịch giữa Decision và sân khấu.  Giữ lazy-init để
+                # không làm phình __init__ của coordinator vốn đã rất đông dân.
+                stage_builder = StageFrameBuilder(language_hint=stage_language)
+                self.stage_frame_builder = stage_builder
+            stage_frame = stage_builder.build(
+                decision,
+                payload=payload,
+                channel=channel,
+                frame=None,
+                turn_id=None,
+                segment_id=0,
+            )
 
+        # Performance đã được semantic authority chốt trong UtteranceSpec.
+        # Stage chỉ compile preset thành metadata ElevenLabs/Live2D, hoàn toàn local,
+        # không gọi một model thứ hai để diễn giải lại cùng một câu.
+        if prepared is None:
+            if str(stage_frame.tts_text or "").strip():
+                try:
+                    from runtime.voice_profile_compiler import compile_voice_plan_from_payload
+
+                    voice_plan = compile_voice_plan_from_payload(
+                        payload,
+                        fallback_style=stage_frame.prosody_style,
+                    )
+                    stage_frame = replace(stage_frame, voice_plan=dict(voice_plan))
+                except Exception as voice_compile_exc:
+                    self.logger.debug("[voice-profile] deterministic compile skipped: %s", voice_compile_exc)
+
+        # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
+        # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
+        payload["text"] = stage_frame.display_text
+        payload["memory_text"] = stage_frame.memory_text
+        payload.update(stage_frame.to_payload_patch())
+        # User có thể preempt ngay sau khi verifier PASS nhưng trước side effects.
+        # Guard lần nữa tại điểm sát observation và public lifecycle.
+        if not v03_current():
+            return False
+        # Không đánh dấu CONTENT_COMMITTED trước khi chứng minh frame được giữ
+        # nguyên, generation còn sống và UDP payload không bị cắt sau stage.
+        if prepared is not None:
+            from runtime.conversation.public_output_artifact import validate_prepared
+            validate_prepared(prepared)
+            if payload.get('text') != prepared.display_text or payload.get('memory_text') != prepared.memory_text:
+                raise RuntimeError('v03_late_stage_surface_change')
+            # Preflight một bản sao datagram đúng bộ lọc body, trước lifecycle.
+            # Không cho transport tự cắt text sau khi content đã commit.
+            from transport.udp import MAX_UDP_PAYLOAD_BYTES, _sanitize_udp_payload
+            checked_body = sanitize_body_payload(payload)
+            for private_key in ('private_mind_digest', 'private_life_digest', 'emotion_debug', 'depth_v2'):
+                checked_body.pop(private_key, None)
+            checked_bytes = json.dumps(_sanitize_udp_payload(checked_body), ensure_ascii=False).encode('utf-8')
+            if len(checked_bytes) > MAX_UDP_PAYLOAD_BYTES:
+                raise RuntimeError('v03_pre_dispatch_datagram_overflow')
+            if checked_body.get('text') != prepared.display_text:
+                raise RuntimeError('v03_pre_dispatch_text_modified')
+        # Lifecycle chỉ bắt đầu SAU guard; lượt đã bị preempt không ghi
+        # observation/public state hoặc tạo receipt phát ngôn.
         from runtime.public_lifecycle import lifecycle_for
         public_lifecycle = lifecycle_for(self)
         lifecycle_snapshot = public_lifecycle.snapshot()
@@ -318,26 +401,6 @@ class PublicOutputRuntimeMixin:
             reason="utterance_committed",
         )
 
-        # Performance đã được semantic authority chốt trong UtteranceSpec.
-        # Stage chỉ compile preset thành metadata ElevenLabs/Live2D, hoàn toàn local,
-        # không gọi một model thứ hai để diễn giải lại cùng một câu.
-        if str(stage_frame.tts_text or "").strip():
-            try:
-                from runtime.voice_profile_compiler import compile_voice_plan_from_payload
-
-                voice_plan = compile_voice_plan_from_payload(
-                    payload,
-                    fallback_style=stage_frame.prosody_style,
-                )
-                stage_frame = replace(stage_frame, voice_plan=dict(voice_plan))
-            except Exception as voice_compile_exc:
-                self.logger.debug("[voice-profile] deterministic compile skipped: %s", voice_compile_exc)
-
-        # Từ đây trở đi payload public dùng bề mặt đã qua stage transformer:
-        # UI thấy text sạch, TTS đọc text sạch, memory/chat history lưu memory_text.
-        payload["text"] = stage_frame.display_text
-        payload["memory_text"] = stage_frame.memory_text
-        payload.update(stage_frame.to_payload_patch())
         # Observation xảy ra sau khi public surface đã xác định, nhưng trước khi
         # dispatch. Nó chỉ ghi hậu quả cho lượt sau; không được mutate Decision.
         try:
@@ -394,7 +457,7 @@ class PublicOutputRuntimeMixin:
         if stage_output is None:
             stage_output = StageOutputPipeline()
             self.stage_output_pipeline = stage_output
-        stage_frames = stage_output.frames_for_tts(stage_frame)
+        stage_frames = prepared.segments if prepared is not None else stage_output.frames_for_tts(stage_frame)
         if isinstance(payload.get("stage"), dict):
             payload["stage"]["segment_count"] = len(stage_frames)
             payload["stage"]["protocol"] = "eris.stage"
@@ -418,6 +481,8 @@ class PublicOutputRuntimeMixin:
             fallback: bool = False,
         ) -> None:
             """Đưa lifecycle audio thẳng tới Live2D, không phụ thuộc Godot/UI protocol."""
+            if not v03_current():
+                return
 
             bus = getattr(self, "stage_event_bus", None)
             mirror = getattr(bus, "emit_live2d", None) if bus is not None else None
@@ -468,6 +533,8 @@ class PublicOutputRuntimeMixin:
 
         def send_stage_protocol_segments():
             nonlocal stage_payload_sent
+            if not v03_current():
+                return
             if stage_payload_sent:
                 return
             bus = getattr(self, "stage_event_bus", None)
@@ -495,6 +562,8 @@ class PublicOutputRuntimeMixin:
 
         def send_text_payload(release_reason: str = "immediate"):
             nonlocal text_payload_sent, text_release_timer
+            if not v03_current():
+                return
             with text_payload_lock:
                 if text_payload_sent:
                     return
@@ -533,6 +602,15 @@ class PublicOutputRuntimeMixin:
                     "depth_v2",
                 ):
                     body_payload.pop(panel_key, None)
+                if prepared is not None:
+                    if not v03_current():
+                        return
+                    from transport.udp import MAX_UDP_PAYLOAD_BYTES, _sanitize_udp_payload
+                    raw_bytes = json.dumps(_sanitize_udp_payload(body_payload), ensure_ascii=False).encode('utf-8')
+                    if len(raw_bytes) > MAX_UDP_PAYLOAD_BYTES:
+                        raise RuntimeError('v03_udp_datagram_overflow_after_prepare')
+                    if str(body_payload.get('text', '')) != prepared.display_text:
+                        raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
@@ -551,6 +629,8 @@ class PublicOutputRuntimeMixin:
 
         def send_panel_payload():
             nonlocal panel_payload_sent
+            if not v03_current():
+                return
             if panel_payload_sent:
                 return
             panel_payload_sent = True
@@ -600,6 +680,8 @@ class PublicOutputRuntimeMixin:
                 self.logger.warning("Failed to send panel state payload: %s", panel_exc)
 
         def handle_tts_event(event, event_stage_frame):
+            if not v03_current():
+                return
             event_type = str(getattr(event, "type", "") or "").strip().lower()
             event_turn_id = str(
                 getattr(event, "turn_id", "")
@@ -756,6 +838,8 @@ class PublicOutputRuntimeMixin:
                 except Exception:
                     pass
                 def on_first_audio_start() -> None:
+                    if not v03_current():
+                        return
                     # Đây là callback sát thời điểm thiết bị bắt đầu phát nhất.
                     # Gửi một edge ``speaking`` cứu hộ trước; event audio_start
                     # giàu envelope sẽ tới ngay sau và thay thế animation bằng

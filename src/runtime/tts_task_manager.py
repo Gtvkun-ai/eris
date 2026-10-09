@@ -268,11 +268,21 @@ class TtsTaskManager:
         if cancel_event.is_set():
             raise RuntimeError("cancelled_before_synth")
 
-        # Preset WAV có quyền ưu tiên cao nhất. Nếu file chưa được render hoặc hỏng,
-        # fail mềm về TTS live để Eris không câm chỉ vì thiếu một asset.
-        preset_audio = _read_audio_asset(task.frame)
-        if preset_audio:
-            return preset_audio
+        # Bản đã verify PHẢI được so hash trước cache và trước cả preset WAV.
+        # Preset WAV hiện không có chứng chỉ transcript, nên verified V12 không
+        # thể dùng một audio asset cũ để thay câu đã kiểm tra.
+        expected = str(getattr(task.frame, 'speech_contract', {}).get('verified_transcript_hash', '') or '')
+        if expected:
+            from runtime.tts_engine import _clean_text
+            if hashlib.sha256(_clean_text(task.text).encode('utf-8')).hexdigest() != expected:
+                raise RuntimeError('v03_tts_cached_transcript_mismatch')
+            if str(getattr(task.frame, 'audio_asset', '') or ''):
+                raise RuntimeError('v03_unverified_audio_preset')
+        else:
+            # Legacy vẫn giữ cơ chế preset cũ.
+            preset_audio = _read_audio_asset(task.frame)
+            if preset_audio:
+                return preset_audio
 
         cache_key = self._cache_key(task, backend=backend)
         cached = self._cache_get(cache_key)
@@ -822,6 +832,7 @@ def _speech_kwargs(frame: Any) -> dict[str, object]:
         "voice_family": str(contract.get("voice_family", "") or ""),
         "locale": str(contract.get("locale", "") or ""),
         "prelocalized": bool(contract.get("prelocalized", False)),
+        "verified_transcript_hash": str(contract.get("verified_transcript_hash", "") or ""),
     }
 
 

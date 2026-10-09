@@ -2298,6 +2298,7 @@ class _SpeakRequest:
         "stance",
         "on_start_play",
         "prelocalized",
+        "verified_transcript_hash",
         "prosody_style",
         "prosody_notes",
         "voice_director_segment",
@@ -2321,6 +2322,7 @@ class _SpeakRequest:
         stance: str = "",
         on_start_play = None,
         prelocalized: bool = False,
+        verified_transcript_hash: str = "",
         prosody_style: str = "",
         prosody_notes: str = "",
         voice_director_segment: Mapping[str, object] | None = None,
@@ -2343,6 +2345,7 @@ class _SpeakRequest:
         # True khi StageFrame đã chuẩn bị sẵn tts_text theo ngôn ngữ cần đọc.
         # Khi đó engine không dịch lại, tránh "dịch một câu Nhật sang Nhật" làm mất tự nhiên.
         self.prelocalized = bool(prelocalized)
+        self.verified_transcript_hash = str(verified_transcript_hash or '')
         self.prosody_style = str(prosody_style or "")
         self.prosody_notes = str(prosody_notes or "")
         self.voice_director_segment = dict(voice_director_segment or {})
@@ -2531,6 +2534,14 @@ class _TtsWorker:
 
         language_hint = self._request_language(req)
         text_to_speak = str(main_text_raw or "").strip()
+        if req.verified_transcript_hash:
+            import hashlib
+            if hashlib.sha256(_clean_text(text_to_speak).encode('utf-8')).hexdigest() != req.verified_transcript_hash:
+                raise SpeechLocalizationError('v03_verified_tts_transcript_mismatch')
+            if language_hint == 'ja' and not _contains_japanese_chars(text_to_speak):
+                raise SpeechLocalizationError('v03_verified_ja_transcript_invalid')
+            # Không một localizer hay language repair nào được sửa bản đã pass.
+            return text_to_speak, True, language_hint
         if language_hint != "ja" or not text_to_speak:
             return text_to_speak, bool(req.prelocalized), language_hint
         if _contains_japanese_chars(text_to_speak):
@@ -3065,6 +3076,7 @@ class TtsEngine:
         stance: str = "",
         on_start_play = None,
         prelocalized: bool = False,
+        verified_transcript_hash: str = "",
         prosody_style: str = "",
         prosody_notes: str = "",
         voice_director_segment: Mapping[str, object] | None = None,
@@ -3095,6 +3107,10 @@ class TtsEngine:
                     logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
             return
         clean = _clean_text(text)
+        if verified_transcript_hash:
+            import hashlib
+            if hashlib.sha256(clean.encode('utf-8')).hexdigest() != verified_transcript_hash:
+                raise SpeechLocalizationError('v03_tts_input_mutated')
         if not clean:
             if on_event is not None:
                 try:
@@ -3120,6 +3136,7 @@ class TtsEngine:
                 stance,
                 on_start_play,
                 prelocalized=prelocalized,
+                verified_transcript_hash=verified_transcript_hash,
                 prosody_style=prosody_style,
                 prosody_notes=prosody_notes,
                 voice_director_segment=voice_director_segment,
@@ -3163,6 +3180,7 @@ class TtsEngine:
         arousal: float = 0.3,
         stance: str = "",
         prelocalized: bool = False,
+        verified_transcript_hash: str = "",
         prosody_style: str = "",
         prosody_notes: str = "",
         voice_director_segment: Mapping[str, object] | None = None,
@@ -3182,6 +3200,10 @@ class TtsEngine:
         if not _enabled() or not self._ok or self._worker is None:
             raise RuntimeError("tts_disabled")
         clean = _clean_text(text)
+        if verified_transcript_hash:
+            import hashlib
+            if hashlib.sha256(clean.encode('utf-8')).hexdigest() != verified_transcript_hash:
+                raise SpeechLocalizationError('v03_tts_input_mutated')
         if not clean:
             return b""
         if speech_epoch is None:
@@ -3196,6 +3218,7 @@ class TtsEngine:
             stance,
             None,
             prelocalized=prelocalized,
+            verified_transcript_hash=verified_transcript_hash,
             prosody_style=prosody_style,
             prosody_notes=prosody_notes,
             voice_director_segment=voice_director_segment,

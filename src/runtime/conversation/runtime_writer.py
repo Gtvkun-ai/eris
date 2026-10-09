@@ -73,6 +73,102 @@ class RuntimeConversationWriter:
     def __init__(self, host: Any) -> None:
         self.host = host
 
+    def _realize_v03(self, *, generate: Any, kwargs: dict[str, Any], turn: KernelTurn,
+                     event: ConversationEvent, runtime_context: Mapping[str, Any],
+                     evidence_registry: Any, move_payload: Mapping[str, Any]) -> RenderedConversationMove:
+        """Task 6: một ngân sách duy nhất, tối đa 2 writer + 2 verifier.
+
+        Root move/snapshot/registry GIỮ NGUYÊN khi retry; fail/unknown không có
+        RenderedConversationMove để kernel giao cho delivery/observer.
+        """
+        from .delivery_adapter import RuntimeConversationDeliveryAdapter
+        from .claim_verifier import CharacterClaimVerifier, build_verification_receipt
+        from runtime.ai_orchestrated.model_router import _public_display_language_mismatch
+
+        verifier = getattr(self.host, 'character_claim_verifier', None)
+        if verifier is None:
+            verifier = CharacterClaimVerifier(self.host.ai_model_router)
+        adapter = RuntimeConversationDeliveryAdapter(self.host)
+        base = dict(kwargs)
+        base['allow_language_repair'] = False  # Router không còn retry ẩn của riêng nó.
+        error = 'VERIFIER_UNAVAILABLE'
+        for attempt in range(2):
+            request = dict(base)
+            if attempt:
+                request['retry_instruction'] = (
+                    'CHARACTER_V03_REWRITE: ' + error + '. Viết lại CÙNG Root move, '
+                    'không thêm sự kiện, hành động, lịch sử hay chủ đề. '
+                    'Đưa đủ claim_manifest và hai surface cùng nghĩa, đúng ngôn ngữ.'
+                )
+                request['discourse_context'] = base['discourse_context'] + '\n' + request['retry_instruction']
+            try:
+                payload = generate(**request)
+                if not isinstance(payload, Mapping):
+                    raise RuntimeError('v03_writer_invalid_payload')
+                envelope = _inspect_writer_manifest(payload, evidence_registry)
+                if envelope is None:
+                    raise RuntimeError('MANIFEST_MISSING')
+                display = str(payload.get('text', '') or '').strip()
+                speech = str(payload.get('speech_text', '') or '').strip()
+                if not display or not speech:
+                    raise RuntimeError('v03_missing_public_surface')
+                if _public_display_language_mismatch(display,
+                        str(base.get('language_hint', 'vi') or 'vi')):
+                    raise RuntimeError('v03_display_language_mismatch')
+                # Chặn deterministic false action/sensor, cùng ngân sách rewrite.
+                engine = runtime_context.get('__source_grounding_engine')
+                report = runtime_context.get('__source_grounding_report')
+                if engine is not None and report is not None:
+                    from runtime.grounding_surface_gate import evaluate_grounded_surface
+                    for text in (display, speech):
+                        verdict = evaluate_grounded_surface(
+                            engine, text, report=report,
+                            channel='chat' if event.kind == 'user_turn' else 'autonomous',
+                        )
+                        if not bool(getattr(verdict,'allowed',True)):
+                            raise RuntimeError('v03_grounding_unsupported')
+                prepared = adapter.prepare_candidate(
+                    turn=turn,event=event,payload=dict(payload),
+                    source_fingerprint=evidence_registry.fingerprint,
+                )
+                result = verifier.verify(
+                    prepared=prepared,manifest=envelope,move=turn.move,
+                    registry=evidence_registry,
+                    portrait=runtime_context.get('__character_portrait'),
+                )
+                if result.status != 'pass':
+                    raise RuntimeError('v03_verify_' + result.status + ':' + ','.join(result.reason_codes))
+                receipt = build_verification_receipt(
+                    prepared=prepared,result=result,registry=evidence_registry,
+                    portrait=runtime_context.get('__character_portrait'),
+                )
+                return RenderedConversationMove(
+                    surface=SurfaceEnvelope(
+                        display_text=prepared.display_text,
+                        speech_text=str(payload.get('speech_text', '') or ''),
+                        language=str(payload.get('display_language',base.get('language_hint','vi')) or 'vi'),
+                        alignment_safe=bool(payload.get('alignment_safe',False)),
+                        metadata=dict(payload),
+                    ),
+                    decision_payload=move_payload,
+                    metadata={
+                        'writer':'runtime_model_router_v03',
+                        'event_kind':event.kind, 'user_text':event.text,
+                        'provider_payload':dict(payload),
+                        'source_grounding_report':report if engine is not None else None,
+                        'source_grounding_engine':engine,
+                        'root_capabilities_used':(),
+                        'evidence_registry':evidence_registry,
+                        'character_portrait':runtime_context.get('__character_portrait'),
+                        'claim_manifest_envelope':envelope,
+                        'prepared_public_output':prepared,
+                        'claim_verification_receipt':receipt,
+                    },
+                )
+            except Exception as exc:
+                error = str(exc)[:350]
+        raise RuntimeError('v03_candidate_rejected:' + error)
+
     def realize(
         self,
         *,
@@ -162,6 +258,17 @@ class RuntimeConversationWriter:
                     "CHARACTER_V1_SOURCE_REFS: refs only support their stated scope; "
                     "assistant utterance or failed/started tool does not prove world facts.\n" + rendered_refs,
                 ))
+
+        # Test/adapter cũ chỉ stub Router và không có Decision parser, nên vẫn
+        # đi đường compatibility. Host production có parser mới bật gate V0.3.
+        if callable(getattr(getattr(self.host, 'parser', None), 'parse', None)):
+            if evidence_registry is None:
+                raise RuntimeError('v03_evidence_registry_unavailable')
+            return self._realize_v03(
+                generate=generate, kwargs=generate_kwargs, turn=turn,
+                event=event, runtime_context=runtime_context,
+                evidence_registry=evidence_registry, move_payload=move_payload,
+            )
 
         payload = generate(**generate_kwargs)
         if not isinstance(payload, Mapping):

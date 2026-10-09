@@ -1579,6 +1579,7 @@ class AIRuntimeModelRouter:
         retry_instruction: str = "",
         locked_semantic_frame: Mapping[str, Any] | None = None,
         teaching_directive: TeachingDirective | None = None,
+        allow_language_repair: bool = True,
     ) -> dict[str, Any]:
         if locked_semantic_frame:
             try:
@@ -1784,7 +1785,7 @@ class AIRuntimeModelRouter:
         # che hành vi model. Thay vào đó retry provider đúng MỘT lần với language
         # lock rõ ràng; nếu vẫn sai, payload đi tiếp và simulator sẽ đánh FAIL.
         first_public_text = _public_text_from_mapping(payload) if payload else ""
-        if payload and _public_display_language_mismatch(first_public_text, display_code):
+        if allow_language_repair and payload and _public_display_language_mismatch(first_public_text, display_code):
             repair_messages = [
                 *messages,
                 {

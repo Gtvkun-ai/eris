@@ -73,6 +73,7 @@ def _speech_kwargs(frame) -> dict[str, object]:
         "voice_family": str(contract.get("voice_family", "") or ""),
         "locale": str(contract.get("locale", "") or ""),
         "prelocalized": bool(contract.get("prelocalized", False)),
+        "verified_transcript_hash": str(contract.get("verified_transcript_hash", "") or ""),
     }
 
 
@@ -182,6 +183,11 @@ class StageDispatcher:
             if os.environ.get("ERIS_TTS_SEGMENT_DISPATCH", "").strip()
             else str(getattr(self._profile(), "dispatch_mode", "inline") or "inline")
         )
+        # Verified segments không được dán lại thành transcript khác sau gate.
+        if len(frame_list) > 1 and any(
+            bool(frame.speech_contract.get('verified_transcript_hash')) for frame in frame_list
+        ):
+            dispatch_mode = 'queued'
         # Hội thoại mặc định ưu tiên một clip liên tục, NHƯNG hard provider
         # transcript budget có quyền cao hơn continuity. Trước đây pipeline đã
         # chia câu an toàn rồi dispatcher dán tất cả lại thành >260 chars, tự
@@ -277,6 +283,11 @@ class StageDispatcher:
         on_event: Callable[[Any, StageFrame], None] | None,
         speech_epoch: int,
     ) -> bool:
+        if len(frame_list) > 1 and any(
+            bool(frame.speech_contract.get('verified_transcript_hash')) for frame in frame_list
+        ):
+            # Backend queue không có thì fail audio, không bỏ verify để cứu tiếng.
+            return False
         inline_frame = _inline_frame(frame_list)
         if inline_frame is None:
             return False

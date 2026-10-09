@@ -38,6 +38,8 @@ class KernelTurn:
     # này; kernel chỉ truyền lại scheduler để chống self-wake vô hạn.
     continuation_chain_started_at: float = 0.0
     consecutive_self_wakes: int = 0
+    # Cấp trước writer để receipt và TTS dùng một identity bất biến.
+    delivery_id: str = ""
 
     def writer_context(self) -> dict[str, Any]:
         return {
@@ -216,6 +218,7 @@ class ConversationKernel:
             continuation=event.kind == "continuation_due",
             continuation_chain_started_at=float(continuation_meta.get("chain_started_at", 0.0) or 0.0),
             consecutive_self_wakes=max(0, int(continuation_meta.get("consecutive_self_wakes", 0) or 0)),
+            delivery_id=f"delivery:{uuid.uuid4().hex}",
         )
         self.store.mutate(
             sid,
@@ -262,7 +265,7 @@ class ConversationKernel:
                 rendered=rendered,
                 status="stale",
             )
-        delivery_id = f"delivery:{uuid.uuid4().hex}"
+        delivery_id = turn.delivery_id
         if self.delivery is None or not self.mark_delivery_started(turn, delivery_id=delivery_id):
             self._fail_run(turn)
             return ConversationRunResult(
@@ -486,6 +489,7 @@ class ConversationKernel:
                 True,
                 lease.chain_started_at,
                 lease.consecutive_self_wakes,
+                f"delivery:{uuid.uuid4().hex}",
             )
         except Exception:
             self.continuation.release(lease)
