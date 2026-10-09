@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from types import SimpleNamespace
+from collections import Counter
 
 from runtime.conversation import ConversationEvent, ConversationKernel, DeterministicRootAgent, SurfaceEnvelope
 from runtime.conversation.writer import RenderedConversationMove
@@ -143,6 +144,23 @@ def _telemetry(host: Any, result: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         metadata = {}
     registry = metadata.get("evidence_registry")
+    prepared = metadata.get("prepared_public_output")
+    receipt = metadata.get("claim_verification_receipt")
+    manifest = metadata.get("claim_manifest_envelope")
+    portrait = metadata.get("character_portrait")
+    # Nhận đúng object của V0.3, KHÔNG đọc/ghi private state hoặc suy đoán
+    # manifest thiếu đồng nghĩa với manifest rỗng hợp lệ.
+    verification = None
+    if receipt is not None:
+        verification = {
+            "status": getattr(receipt, "status", None),
+            "delivery_id": getattr(receipt, "delivery_id", None),
+            "snapshot_id": getattr(receipt, "snapshot_id", None),
+            "segment_count": len(getattr(receipt, "segment_hashes", ()) or ()),
+            "display_hash": getattr(receipt, "display_hash", None),
+            "speech_hash": getattr(receipt, "speech_hash", None),
+            "memory_hash": getattr(receipt, "memory_hash", None),
+        }
     return {
         "status": result.status,
         "event_id": result.event.event_id,
@@ -154,6 +172,12 @@ def _telemetry(host: Any, result: Any) -> dict[str, Any]:
         "speech_text": getattr(surface, "speech_text", None),
         "delivery_id": result.delivery_id or None,
         "evidence_fingerprint": getattr(registry, "fingerprint", None),
+        "verification": verification,
+        "manifest_status": getattr(manifest, "structural_status", None),
+        "prepared_segment_count": len(prepared.segments) if prepared is not None else None,
+        "character_snapshot_id": getattr(portrait, "snapshot_id", None),
+        "character_facet_count": len(portrait.facets) if portrait is not None else None,
+        "provenance_present": registry is not None and bool(getattr(registry, "entries", ())),
         "evidence_statuses": ({entry.status: sum(x.status == entry.status for x in registry.entries)
                                for entry in registry.entries} if registry is not None else None),
         "model_calls": getattr(host, "model_call_count", None),
@@ -167,7 +191,7 @@ def _telemetry(host: Any, result: Any) -> dict[str, Any]:
 
 def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
                   scenarios: Sequence[Mapping[str, Any]], *, runs: int, label: str,
-                  output_dir: Path) -> Mapping[str, Any]:
+                  output_dir: Path, mode: str = "stub") -> Mapping[str, Any]:
     """Mỗi scenario/variant/run có thư mục tạm và host mới hoàn toàn.
 
     Không tự ghi assistant turn để chữa lỗi. Kernel thất bại: xuất failure row,
@@ -176,9 +200,12 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
     _validate_cases(scenarios)
     if runs < 1:
         raise ValueError("runs_must_be_positive")
+    if mode not in ("stub", "configured"):
+        raise ValueError("invalid_eval_mode")
     folder = Path(output_dir)
     folder.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
+    model_identities: set[str] = set()
     for run_index in range(runs):
         for scenario in scenarios:
             for variant_label, variant in (("candidate", scenario), ("counterpart", scenario["counterpart"])):
@@ -188,6 +215,28 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
                     try:
                         host = host_factory(kwargs)
                         kernel = _host_kernel(host)
+                        if mode == "configured":
+                            # Factory chịu trách nhiệm áp state/records fixture
+                            # vào store riêng của scenario, không dùng tài khoản thật.
+                            if getattr(host, "eval_fixture_applied", False) is not True:
+                                raise ValueError("configured_fixture_not_applied")
+                            if not callable(getattr(host, "build_eval_runtime_context", None)):
+                                raise ValueError("configured_context_builder_missing")
+                            # Mọi factory configured phải công bố model/provider và
+                            # hash config không chứa secret, nếu không KHÔNG đủ dữ
+                            # kiện để chứng minh baseline/candidate cùng settings.
+                            info = getattr(host, "model_info", None)
+                            if not isinstance(info, Mapping) or not all(
+                                isinstance(info.get(key), str) and info[key].strip()
+                                for key in ("provider", "model", "settings_fingerprint")
+                            ):
+                                raise ValueError("configured_model_identity_missing")
+                            if info["provider"] == "deterministic_stub":
+                                raise ValueError("configured_requires_real_model")
+                            public = {key: info[key] for key in
+                                      ("provider", "model", "settings_fingerprint")}
+                            model_identities.add(hashlib.sha256(json.dumps(
+                                public, sort_keys=True).encode()).hexdigest())
                     except Exception as exc:
                         rows.append({"scenario": scenario["id"], "variant": variant_label,
                                      "run_index": run_index, "turn_index": None,
@@ -197,6 +246,7 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
                     recent_public_history: list[dict[str, str]] = []
                     for turn_index, user_turn in enumerate(variant["turns"], 1):
                         started = time.perf_counter()
+                        calls_before = getattr(host, "model_call_count", None)
                         state_before = _safe_state(host)
                         row: dict[str, Any] = {
                             "scenario": scenario["id"], "variant": variant_label,
@@ -208,8 +258,24 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
                         try:
                             event = ConversationEvent.user_turn(session_id=session_id, text=user_turn["text"])
                             # Không gọi Root hay writer trực tiếp: đường thử đi qua kernel.
+                            context = {}
+                            if mode == "configured":
+                                # Host adapter dựng packet bằng ContextAssembler
+                                # THẬT ở thời điểm lượt này; Root và Writer đọc
+                                # chung snapshot/registry. Không lấy đoạn fixture
+                                # description rồi giả làm state đã học.
+                                context = host.build_eval_runtime_context(
+                                    event=event, user_turn=user_turn,
+                                    recent_history=tuple(recent_public_history),
+                                )
+                                if not isinstance(context, Mapping) or not (
+                                    context.get("__evidence_registry") is not None
+                                    and context.get("__character_portrait") is not None
+                                ):
+                                    raise ValueError("configured_context_missing_typed_character_sources")
                             result = kernel.handle_event(
-                                event, recent_history=tuple(recent_public_history), runtime_context={},
+                                event, recent_history=tuple(recent_public_history),
+                                runtime_context=context,
                             )
                             row.update(_telemetry(host, result))
                             # History lấy từ sự kiện thật; assistant chỉ xuất hiện
@@ -230,6 +296,12 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
                             row.update({"status": "kernel_exception", "error": type(exc).__name__,
                                         "display_text": None, "speech_text": None})
                         row["state_after"] = _safe_state(host)
+                        calls_after = getattr(host, "model_call_count", None)
+                        # Một host sống xuyên bốn lượt: counter thường tích lũy.
+                        # Chỉ export DELTA khi cả hai snapshot là số nguyên.
+                        row["model_calls_delta"] = (calls_after - calls_before
+                            if type(calls_before) is int and type(calls_after) is int
+                            and calls_after >= calls_before else None)
                         row["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
                         rows.append(row)
                         if row["status"] not in {"delivering", "no_reply"}:
@@ -239,12 +311,18 @@ def run_scenarios(host_factory: Callable[[Mapping[str, Any]], Any],
         for row in rows:
             out.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
     summary = {
-        "schema": "eris.character_eval.v1", "label": str(label),
+        "schema": "eris.character_eval.v1", "label": str(label), "mode": mode,
+        "configured_model_id": (next(iter(model_identities)) if mode == "configured" and len(model_identities) == 1 else None),
+        "configured_model_id_consistent": mode == "configured" and len(model_identities) == 1,
+        "verification_statuses": dict(Counter(
+            (row.get("verification") or {}).get("status", "unavailable")
+            for row in rows)),
         "scenario_revision": hashlib.sha256(json.dumps(list(scenarios), ensure_ascii=False,
                                                      sort_keys=True).encode()).hexdigest(),
         "runs": runs, "case_count": len(scenarios), "row_count": len(rows),
         "failed_rows": sum(row["status"] not in {"delivering", "no_reply"} for row in rows),
-        "baseline_model": "pending", "python": platform.python_version(),
+        "baseline_model": "pending" if mode == "stub" else "configured_unscored",
+        "python": platform.python_version(),
         "created_at": time.time(), "source": _source_fingerprints(),
         "rows_file": path.name,
     }
@@ -270,7 +348,8 @@ def main() -> int:
         factory = _stub_host_factory
     data = json.loads(args.scenario_file.read_text(encoding="utf-8"))
     cases = data.get("scenarios", ())
-    summary = run_scenarios(factory, cases, runs=args.runs, label=args.label, output_dir=args.output_dir)
+    summary = run_scenarios(factory, cases, runs=args.runs, label=args.label,
+                            output_dir=args.output_dir, mode=args.mode)
     print(json.dumps({"rows": summary["row_count"], "failed_rows": summary["failed_rows"],
                       "model_baseline": summary["baseline_model"]}, ensure_ascii=False))
     return 0 if summary["failed_rows"] == 0 else 1
