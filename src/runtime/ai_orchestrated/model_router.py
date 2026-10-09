@@ -1951,6 +1951,7 @@ class AIRuntimeModelRouter:
             "stage_motion": "",
         }
 
+    @staticmethod
     def _observer_prompt(*, deep: bool = False) -> str:
         extra = (
             "Khi mơ hồ, phân biệt vài khả năng rồi giữ delta quan hệ gần 0; unknown tốt hơn drama. "

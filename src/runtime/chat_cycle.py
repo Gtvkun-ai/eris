@@ -801,11 +801,18 @@ class ChatCycleMixin:
             )
             return getattr(self, "last_vision_grounding_report", None)
 
+        # ERIS_CHAT_MAIN_VISION=1 là override chủ động: khi bật, chat chính phải
+        # được phép lấy frame tươi ngay cả khi câu user không nhắc trực tiếp tới
+        # màn hình. Evidence ladder vẫn có quyền ưu tiên structured evidence tươi
+        # (ví dụ chess state) để tránh gọi vision thừa.
+        force_chat_vision = str(os.getenv("ERIS_CHAT_MAIN_VISION", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         try:
             result = coordinator.prepare_turn(
                 user_text,
                 previous_assistant_text=previous_assistant_text,
-                force_chat_vision=False,
+                force_chat_vision=force_chat_vision,
                 capture_fn=capture_fn,
                 interpret_fn=_interpret,
             )

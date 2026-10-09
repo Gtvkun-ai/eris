@@ -2039,3 +2039,20 @@ def test_screen_anaphora_uses_wider_public_turn_window_than_general_reply_link(m
     monkeypatch.setenv("ERIS_SCREEN_ANAPHORA_WINDOW_SEC", "90")
 
     assert host._previous_assistant_text_for_screen_route() == "Còn video mới thì sao?"
+
+
+def test_observer_prompt_is_callable_from_router_instance_without_binding_self():
+    """Regression: post-turn observer từng chết vì _observer_prompt thiếu @staticmethod.
+
+    Hàm prompt chỉ nhận keyword ``deep``. Nếu thiếu decorator, Python sẽ bind ``self``
+    thành positional argument và mọi completed turn đều fail trước khi observer gọi LLM.
+    """
+    from types import SimpleNamespace
+    from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
+
+    router = AIRuntimeModelRouter(SimpleNamespace(client=None, fallback_client=None))
+    shallow = router._observer_prompt(deep=False)
+    deep = router._observer_prompt(deep=True)
+
+    assert "observer hậu kỳ" in shallow
+    assert "delta quan hệ" in deep
