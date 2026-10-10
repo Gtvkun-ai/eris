@@ -65,7 +65,7 @@ def test_simple_greeting_with_empty_manifest_still_goes_to_delivery(kind):
     result, delivery, router = _run(kind)
     assert result.status == "delivering"
     assert len(delivery.calls) == 1
-    assert len(router.writer_calls) == len(router.worker_calls) == 1
+    assert len(router.writer_calls) == 1 and len(router.worker_calls) == 0
     context = router.writer_calls[0]["grounding_context"]
     assert "CHARACTER_V1_CITABLE_REFS" in context
     assert "claim_manifest=[]" in context
@@ -81,7 +81,7 @@ def test_retry_invalid_ref_to_clean_greeting_reuses_root_move():
     assert result.status == "delivering"
     assert len(delivery.calls) == 1
     assert len(router.writer_calls) == 2
-    assert len(router.worker_calls) == 1  # candidate 1 bị typed gate chặn, không tốn verifier
+    assert len(router.worker_calls) == 0  # candidate 2 được chứng minh là phatic, không tốn verifier
     repair = router.writer_calls[-1]["retry_instruction"]
     assert "UNKNOWN_REF" in repair and "claim_manifest=[]" in repair
     assert router.writer_calls[0]["grounding_context"] == router.writer_calls[1]["grounding_context"]

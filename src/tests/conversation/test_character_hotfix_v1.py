@@ -61,12 +61,13 @@ def _run_with_router(router):
 
 def test_missing_manifest_reports_both_attempts_without_public_commit():
     router = Router()
-    router.payloads = [{'text': 'Chào', 'speech_text': 'こんにちは。'}]
+    router.payloads = [{'text': 'Tớ cần suy nghĩ thêm.', 'speech_text': '少し考えたい。'}]
     outcome, log, delivery, router = _run_with_router(router)
 
     assert outcome.status == 'writer_failed'
-    assert 'manifest=MANIFEST_MISSING' in outcome.failure_reason
-    assert outcome.failure_reason.count('manifest=MANIFEST_MISSING') == 2
+    # Format thiếu chỉ có thể được phục hồi khi *câu cuối* là xã giao thuần túy.
+    assert 'public_writer_manifest_missing' in outcome.failure_reason
+    assert outcome.failure_reason.count('public_writer_manifest_missing') == 2
     assert len(router.writer_calls) == 2
     assert not router.worker_calls  # Deterministic failure không gọi checker tốn phí.
     assert not delivery.calls
@@ -81,6 +82,7 @@ def test_missing_manifest_reports_both_attempts_without_public_commit():
 def test_checker_invalid_schema_is_visible_but_never_bypassed():
     router = Router()
     # Simulate router._call returning {} after provider timeout/admission failure.
+    router.payloads = [{'text': 'Tớ cần suy nghĩ thêm.', 'speech_text': '少し考えたい。', 'claim_manifest': []}]
     router.invoke_structured_worker = lambda *_args, **_kwargs: {}
     outcome, log, delivery, router = _run_with_router(router)
 
@@ -93,17 +95,18 @@ def test_checker_invalid_schema_is_visible_but_never_bypassed():
                for _, line in log.lines)
 
 
-def test_successful_greeting_still_goes_through_verifier():
+def test_successful_greeting_uses_deterministic_proof_without_verifier():
     router = Router()
     outcome, log, delivery, router = _run_with_router(router)
 
     assert outcome.status == 'delivering'
     assert outcome.failure_reason == ''
     assert len(router.writer_calls) == 1
-    assert len(router.worker_calls) == 1
+    assert len(router.worker_calls) == 0
     assert len(delivery.calls) == 1
     rendered = delivery.calls[0]['rendered']
     assert rendered.metadata['claim_verification_receipt'].status == 'pass'
+    assert rendered.metadata['claim_verification_receipt'].verification_method == 'deterministic_phatic'
     assert any('stage=verified status=pass' in line for _, line in log.lines)
 
 

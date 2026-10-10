@@ -8,6 +8,8 @@ receipt và trạng thái trước khi chuyển đến public delivery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 import os
 from typing import Any, Mapping
 
@@ -59,6 +61,8 @@ class ClaimVerificationResult:
     surface_equivalence: bool
     memory_equivalence: bool
     reason_codes: tuple[str, ...]
+    # Phân biệt semantic model và chứng nhận cơ học, không dùng model metadata.
+    verification_method: str = 'semantic'
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,7 @@ class ClaimVerificationReceipt:
     memory_hash: str
     segment_hashes: tuple[str, ...]
     status: str = 'pass'
+    verification_method: str = 'semantic'
 
 
 def _unknown(reason: str) -> ClaimVerificationResult:
@@ -102,11 +107,43 @@ def _verifier_timeout_seconds() -> float | None:
     return value if 0 < value < float('inf') else None
 
 
+
+def normalize_verifier_wire_format(raw: Any) -> Any:
+    """Chỉ sửa LỚP ĐÓNG GÓI JSON DS2API, không tự thêm field/verdict.
+
+    Chấp nhận một JSON object thuần, fenced JSON toàn bộ nội dung, hoặc
+    wrapper {"result": {...}} đơn nhất. Không trích một object nằm giữa
+    prose/chain-of-thought, không đoán status hay đổi list thành dict.
+    """
+    if isinstance(raw, Mapping):
+        if set(raw) == {'result'} and isinstance(raw['result'], Mapping):
+            return raw['result']
+        return raw
+    if not isinstance(raw, str) or len(raw) > 150_000:
+        return raw
+    content = raw.strip()
+    fenced = re.fullmatch(r'```(?:json)?\s*(\{.*\})\s*```', content,
+                          flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        content = fenced.group(1)
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return raw
+    return normalize_verifier_wire_format(parsed) if isinstance(parsed, Mapping) else raw
+
+
 def validate_verifier_result(raw: Mapping[str, Any], *, prepared: PreparedPublicOutput,
                              registry: Any) -> ClaimVerificationResult:
     if not isinstance(raw, Mapping):
-        return _unknown('VERIFIER_UNAVAILABLE')
-    if set(raw) != {'status','findings','surface_equivalence','memory_equivalence'}:
+        # Có nội dung trả về nhưng không phải JSON object là lỗi FORMAT,
+        # khác với provider không trả gì/không khả dụng.
+        return _unknown('VERIFIER_UNAVAILABLE' if raw is None else 'VERIFIER_SCHEMA_INVALID')
+    # DeepSeek/DS2API đôi khi bổ sung trường giải thích dù đã yêu cầu JSON schema.
+    # Chỉ nhận 4 trường BẮT BUỘC; trường dư không cấp quyền PASS hay làm bằng
+    # chứng. Bốn trường cốt lõi và mọi finding vẫn được kiểm kiểu/span/ref/scope.
+    required = {'status', 'findings', 'surface_equivalence', 'memory_equivalence'}
+    if not required.issubset(raw):
         return _unknown('VERIFIER_SCHEMA_INVALID')
     status = raw.get('status')
     if status not in ('pass','fail','unknown') or not isinstance(raw.get('surface_equivalence'),bool) or not isinstance(raw.get('memory_equivalence'),bool):
@@ -127,7 +164,9 @@ def validate_verifier_result(raw: Mapping[str, Any], *, prepared: PreparedPublic
     }
     codes: list[str] = []
     for finding in findings:
-        if not isinstance(finding,Mapping) or set(finding) != {'surface','segment_id','span','domain','support_refs','verdict','reason_code'}:
+        finding_fields = {'surface', 'segment_id', 'span', 'domain',
+                          'support_refs', 'verdict', 'reason_code'}
+        if not isinstance(finding, Mapping) or not finding_fields.issubset(finding):
             return _unknown('VERIFIER_SCHEMA_INVALID')
         surface, seg_id, span = finding['surface'], finding['segment_id'], finding['span']
         if surface not in ('display','speech','memory') or type(seg_id) is not int or not isinstance(span,str) or not span.strip():
@@ -174,6 +213,47 @@ def validate_verifier_result(raw: Mapping[str, Any], *, prepared: PreparedPublic
     if not raw['surface_equivalence'] and 'SURFACE_MISMATCH' not in codes:
         codes.append('SURFACE_MISMATCH')
     return ClaimVerificationResult(status,tuple(findings),raw['surface_equivalence'],raw['memory_equivalence'],tuple(codes))
+
+
+def _verifier_shape_reason(raw: Any) -> str:
+    """Phân loại lỗi JSON an toàn để ghi log, KHÔNG ghi nội dung user/model.
+
+    Hỗ trợ chẩn đoán lỗi thật trên DS2API, khi log thường chỉ có độ dài
+    reasoning/content. Không tự chữa status, claim, ref hay ý nghĩa câu trả lời.
+    """
+    if not isinstance(raw, Mapping):
+        return 'non_mapping'
+    required = {'status', 'findings', 'surface_equivalence', 'memory_equivalence'}
+    if not required.issubset(raw):
+        return 'missing_top_level'
+    if raw.get('status') not in ('pass', 'fail', 'unknown'):
+        return 'invalid_status'
+    if type(raw.get('surface_equivalence')) is not bool or type(raw.get('memory_equivalence')) is not bool:
+        return 'invalid_equivalence_type'
+    findings = raw.get('findings')
+    if not isinstance(findings, list):
+        return 'invalid_findings_type'
+    if len(findings) > 30:
+        return 'findings_overflow'
+    fields = {'surface', 'segment_id', 'span', 'domain', 'support_refs', 'verdict', 'reason_code'}
+    for item in findings:
+        if not isinstance(item, Mapping) or not fields.issubset(item):
+            return 'missing_finding_field'
+        if item.get('surface') not in ('display', 'speech', 'memory'):
+            return 'invalid_surface'
+        if type(item.get('segment_id')) is not int:
+            return 'invalid_segment_type'
+        if not isinstance(item.get('span'), str) or not item['span'].strip():
+            return 'invalid_span_type'
+        if not isinstance(item.get('domain'), str) or item['domain'] not in KNOWN_CLAIM_DOMAINS:
+            return 'invalid_domain'
+        if not isinstance(item.get('support_refs'), list) or not all(isinstance(v, str) for v in item['support_refs']):
+            return 'invalid_refs_type'
+        if item.get('verdict') not in ('supported', 'unsupported', 'unknown'):
+            return 'invalid_verdict'
+        if not isinstance(item.get('reason_code'), str):
+            return 'invalid_reason_code'
+    return 'unknown_schema_mismatch'
 
 
 class CharacterClaimVerifier:
@@ -240,7 +320,18 @@ class CharacterClaimVerifier:
             if reason in ('VERIFIER_TIMEOUT', 'VERIFIER_PROVIDER_ERROR'):
                 return _unknown(reason)
             return _unknown('VERIFIER_UNAVAILABLE')
-        return validate_verifier_result(raw,prepared=prepared,registry=registry)
+        raw = normalize_verifier_wire_format(raw)
+        checked = validate_verifier_result(raw, prepared=prepared, registry=registry)
+        if checked.reason_codes == ('VERIFIER_SCHEMA_INVALID',):
+            # Log duy nhất mã lỗi cấu trúc, tuyệt đối không dump raw response:
+            # nó có thể chứa ký ức người dùng hoặc nội dung màn hình.
+            from runtime.diagnostic_logging import safe_log
+            logger = getattr(self.router, 'logger', None)
+            if logger is not None:
+                safe_log(logger, 'warning',
+                         '[character-v1] verifier_schema_rejected shape=%s',
+                         _verifier_shape_reason(raw))
+        return checked
 
 
 def build_verification_receipt(*, prepared: PreparedPublicOutput,
@@ -248,8 +339,20 @@ def build_verification_receipt(*, prepared: PreparedPublicOutput,
                                portrait: Any) -> ClaimVerificationReceipt:
     from .public_output_artifact import validate_prepared
     validate_prepared(prepared)
-    if result.status != 'pass' or not result.surface_equivalence or not result.memory_equivalence:
+    if (result.status != 'pass' or not result.surface_equivalence or not result.memory_equivalence
+            or result.verification_method not in ('semantic', 'deterministic_phatic')):
         raise RuntimeError('v03_no_receipt_for_unverified_candidate')
+    if result.verification_method == 'deterministic_phatic':
+        # Defense in depth: phương thức fast path không được chỉ dựa vào
+        # một object Result(status=pass) do caller chế ra.
+        from runtime.claim_domain_contract import inspect_claim_manifest
+        from .public_claim_gate import certify_phatic
+        proof = certify_phatic(
+            prepared=prepared,
+            original_manifest=inspect_claim_manifest(prepared.payload),
+        )
+        if proof is None:
+            raise RuntimeError('v03_phatic_receipt_requires_proof')
     if prepared.event_id != registry.event_id or prepared.source_fingerprint != registry.fingerprint:
         raise RuntimeError('v03_source_registry_mismatch')
     return ClaimVerificationReceipt(
@@ -257,6 +360,7 @@ def build_verification_receipt(*, prepared: PreparedPublicOutput,
         prepared.move_id,prepared.delivery_id,str(registry.snapshot_id),
         int(registry.state_version),registry.fingerprint,prepared.display_hash,
         prepared.speech_hash,prepared.memory_hash,prepared.segment_hashes,
+        verification_method=result.verification_method,
     )
 
 
@@ -264,8 +368,17 @@ def validate_receipt(*, prepared: PreparedPublicOutput, receipt: ClaimVerificati
                      turn: Any) -> None:
     from .public_output_artifact import validate_prepared
     validate_prepared(prepared)
-    if not isinstance(receipt, ClaimVerificationReceipt) or receipt.status != 'pass':
+    if (not isinstance(receipt, ClaimVerificationReceipt) or receipt.status != 'pass'
+            or receipt.verification_method not in ('semantic', 'deterministic_phatic')):
         raise RuntimeError('v03_receipt_missing')
+    if receipt.verification_method == 'deterministic_phatic':
+        from runtime.claim_domain_contract import inspect_claim_manifest
+        from .public_claim_gate import certify_phatic
+        if certify_phatic(
+            prepared=prepared,
+            original_manifest=inspect_claim_manifest(prepared.payload),
+        ) is None:
+            raise RuntimeError('v03_phatic_receipt_requires_proof')
     for field in ('session_id','generation','run_id','move_id','delivery_id'):
         expected = turn.move.move_id if field == 'move_id' else getattr(turn,field)
         if getattr(receipt,field) != expected or getattr(prepared,field) != expected:

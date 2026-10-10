@@ -219,6 +219,8 @@ class RuntimeConversationWriter:
                     'MISSING_REF: bỏ claim lịch sử không có nguồn. '
                     'UNKNOWN_REF: không bịa ref, bỏ claim không chứng minh được. '
                     'WRONG_SCOPE: không dùng lời assistant hay user để xác nhận action/sự kiện. '
+                    'UNDECLARED_SELF_ACTION/SHARED_HISTORY: đừng nói đã làm việc hoặc '
+                    'từng có trải nghiệm khi không có nguồn runtime hợp lệ. '
                     'Lời chào/phản ứng/cảm thán không thêm factual claim thì claim_manifest=[]. '
                     'Đừng đổi ý của Root, chỉ bỏ thông tin bổ sung thiếu bằng chứng. '
                     'Nếu speech_language=ja thì speech_text và utterance.speech.text '
@@ -230,6 +232,17 @@ class RuntimeConversationWriter:
                 stage = 'manifest'
                 if not isinstance(payload, Mapping):
                     raise RuntimeError('v03_writer_invalid_payload')
+                from runtime.claim_domain_contract import inspect_claim_manifest
+                from .public_claim_gate import can_normalize_empty_manifest
+                original_manifest = inspect_claim_manifest(payload)
+                # Schema DS2API thiếu/đưa "[]" dưới dạng chuỗi: chỉ chuẩn hóa
+                # TẠM manifest rỗng. Sau Stage phải chứng minh 3 surface thật
+                # sự là phatic; nếu không sẽ bác, không cấp quyền bằng model.
+                recovered_manifest = original_manifest.structural_status != 'valid'
+                if recovered_manifest and can_normalize_empty_manifest(original_manifest):
+                    payload = dict(payload)
+                    payload['claim_manifest'] = []
+                    payload.pop('_typed_claim_manifest', None)
                 envelope = _inspect_writer_manifest(payload, evidence_registry, evidence_policy)
                 if envelope is None:
                     raise RuntimeError('MANIFEST_MISSING')
@@ -271,11 +284,31 @@ class RuntimeConversationWriter:
                     source_fingerprint=evidence_registry.fingerprint,
                 )
                 stage = 'verify'
-                result = verifier.verify(
-                    prepared=prepared,manifest=envelope,move=turn.move,
-                    registry=evidence_registry,
-                    portrait=runtime_context.get('__character_portrait'),
+                from .public_claim_gate import certify_phatic, undeclared_high_risk_claims
+                # Bộ phát hiện cơ học độc lập: không cho manifest rỗng hoặc
+                # opinion giả che lời tự nhận ĐÃ làm việc/đã gặp user.
+                violations = undeclared_high_risk_claims(
+                    prepared=prepared, manifest=envelope,
                 )
+                if violations:
+                    raise RuntimeError('public_writer_undeclared_claim:' + ','.join(violations))
+                # Chứng nhận cơ học ĐỘC LẬP manifest từ model. Chỉ lời xã
+                # giao thuộc allowlist, đủ cả display/memory/speech cuối mới
+                # được bỏ worker DeepSeek. Không nhận câu dài/fact trá hình.
+                result = certify_phatic(
+                    prepared=prepared, original_manifest=original_manifest,
+                )
+                if result is None:
+                    # Trường hợp đã chuẩn hóa lỗi định dạng nhưng thực tế
+                    # chứa nội dung không thuộc tập an toàn: KHÔNG được gửi
+                    # cho verifier cùng một manifest rỗng giả.
+                    if recovered_manifest:
+                        raise RuntimeError('public_writer_manifest_' + original_manifest.structural_status)
+                    result = verifier.verify(
+                        prepared=prepared,manifest=envelope,move=turn.move,
+                        registry=evidence_registry,
+                        portrait=runtime_context.get('__character_portrait'),
+                    )
                 if result.status != 'pass':
                     raise RuntimeError('v03_verify_' + result.status + ':' + ','.join(result.reason_codes))
                 stage = 'receipt'
@@ -284,7 +317,9 @@ class RuntimeConversationWriter:
                     portrait=runtime_context.get('__character_portrait'),
                 )
                 self._log_v03('info', turn=turn, attempt=attempt + 1,
-                              stage='verified', status='pass', code='PASS',
+                              stage='verified', status='pass', code=(
+                                  'DETERMINISTIC_PHATIC' if result.verification_method == 'deterministic_phatic'
+                                  else 'SEMANTIC_PASS'),
                               duration_ms=int((time.monotonic() - started_at) * 1000))
                 return RenderedConversationMove(
                     surface=SurfaceEnvelope(

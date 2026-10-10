@@ -111,6 +111,8 @@ def test_verifier_timeout_does_not_request_second_writer_candidate():
     from test_character_hotfix_v1 import _run_with_router
     from test_character_claim_integrity_v1 import Router
     router = Router()
+    # Timeout chỉ phải chặn lượt có claim/ngữ nghĩa cần model kiểm.
+    router.payloads = [{'text':'Tớ chưa chắc điều đó.', 'speech_text':'それはわからない。', 'claim_manifest': []}]
     router.invoke_structured_worker = lambda *_a, **_k: {
         '_runtime_verifier_error': 'VERIFIER_TIMEOUT',
     }
@@ -122,7 +124,7 @@ def test_verifier_timeout_does_not_request_second_writer_candidate():
 
 
 @pytest.mark.parametrize('kind', ['user_turn', 'autonomous_signal'])
-def test_production_writer_verifies_prelocalized_speech(kind):
+def test_production_writer_certifies_prelocalized_phatic_speech(kind):
     from runtime.conversation.claim_evidence import build_evidence_registry
     from runtime.conversation.contracts import ConversationEvent, NextConversationMove
     from runtime.conversation.kernel import ConversationKernel
@@ -158,10 +160,10 @@ def test_production_writer_verifies_prelocalized_speech(kind):
     outcome = kernel.handle_event(event, runtime_context={'__evidence_registry': registry})
     assert outcome.status == 'delivering'
     assert len(router.writer_calls) == 1
-    assert len(router.worker_calls) == 1
+    # Mẫu chào ngắn đã được chứng minh cơ học, không cần gọi DeepSeek.
+    assert router.worker_calls == []
     assert len(delivery.calls) == 1
-    checked = router.worker_calls[0]['payload']['candidate']['speech_segments']
-    assert checked[0]['text'] == 'こんにちは。'
+    assert delivery.calls[0]['rendered'].metadata['claim_verification_receipt'].verification_method == 'deterministic_phatic'
     artifact = delivery.calls[0]['rendered'].metadata['prepared_public_output']
     assert artifact.speech_text == 'こんにちは。'
     assert artifact.stage_frame.tts_text == 'こんにちは。'

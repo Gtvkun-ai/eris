@@ -43,6 +43,8 @@ def event():
 
 def test_kernel_root_writer_passes_through_verifier_and_receipt():
     router=Router();h=host(router)
+    # Lượt không thuộc phatic allowlist phải đi semantic verifier.
+    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。','claim_manifest':[]}]
     deliveries=[]
     class Agent:
         def decide(self,**kwargs):
@@ -85,6 +87,7 @@ def test_one_rewrite_budget_for_structural_error_and_semantic_failure():
 
 def test_failed_semantic_two_candidates_are_never_delivered():
     router=Router();h=host(router)
+    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。','claim_manifest':[]}]
     router.verdicts=[{'status':'fail','surface_equivalence':False,'memory_equivalence':True,'findings':[]} for _ in range(2)]
     class Agent:
         def decide(self,**kwargs):return NextConversationMove(intent='answer',say='answer')
