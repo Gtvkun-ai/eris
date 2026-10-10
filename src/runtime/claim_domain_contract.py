@@ -122,11 +122,13 @@ class ClaimDomainDecision:
     unknown_evidence_refs: tuple[str, ...] = ()
     manifest_missing: bool = False
     structural_violations: tuple[str, ...] = ()
+    evidence_failure_codes: tuple[str, ...] = ()  # HOTFIX 03: không log ref/content nhạy cảm
 
 
 def validate_claim_manifest(
     manifest: Any, *, allowed_domains: Sequence[str],
     allowed_evidence_refs: Sequence[str] = (), text_present: bool = True,
+    evidence_domains_by_ref: Mapping[str, Sequence[str]] | None = None,
 ) -> ClaimDomainDecision:
     """Runtime allowlist là nguồn quyền, không tin evidence ref do model khai."""
     envelope = manifest if isinstance(manifest, ClaimManifestEnvelope) else inspect_claim_manifest(manifest)
@@ -145,6 +147,12 @@ def validate_claim_manifest(
     evidence = {x for x in allowed_evidence_refs if isinstance(x, str) and x}
     bad_domains: list[str] = []
     bad_refs: list[str] = []
+    failure_codes: list[str] = []
+    # Domain chỉ cấp quyền ở loại nguồn tương ứng, không được lấy ref screen
+    # để chứng minh chuyện user nói, hoặc ref assistant để xác nhận action.
+    per_ref_domains = ({ref: {domain for domain, refs in evidence_domains_by_ref.items()
+                             if ref in refs} for ref in evidence}
+                       if evidence_domains_by_ref is not None else None)
     for item in envelope.normalized:
         domain = item["domain"]
         if domain not in KNOWN_CLAIM_DOMAINS or domain not in allowed:
@@ -153,15 +161,24 @@ def validate_claim_manifest(
         refs = item["evidence_refs"]
         if domain in EVIDENCE_REQUIRED_DOMAINS and not refs:
             bad_refs.append(f"{domain}:missing")
+            failure_codes.append("MISSING_REF")
         # Ref nào model đã khai cũng phải là ref được runtime cấp, kể cả domain
         # opinion/hypothetical. Ý kiến MỚI không cần ref, nhưng ref giả không được pass.
-        bad_refs.extend(ref for ref in refs if ref not in evidence)
+        for ref in refs:
+            if ref not in evidence:
+                bad_refs.append(ref)
+                failure_codes.append("UNKNOWN_REF")
+            elif (per_ref_domains is not None and domain not in EVIDENCE_EXEMPT_DOMAINS
+                  and domain not in per_ref_domains[ref]):
+                bad_refs.append(ref)
+                failure_codes.append("WRONG_SCOPE")
     if bad_domains:
         return ClaimDomainDecision(False, "claim_domain_not_allowed", len(envelope.normalized),
                                    tuple(dict.fromkeys(bad_domains)), tuple(dict.fromkeys(bad_refs)))
     if bad_refs:
         return ClaimDomainDecision(False, "claim_evidence_not_allowed", len(envelope.normalized),
-                                   (), tuple(dict.fromkeys(bad_refs)))
+                                   (), tuple(dict.fromkeys(bad_refs)),
+                                   evidence_failure_codes=tuple(dict.fromkeys(failure_codes)))
     return ClaimDomainDecision(True, "claim_domains_grounded", len(envelope.normalized))
 
 

@@ -268,5 +268,112 @@ def render_evidence_context(registry: EvidenceRegistry) -> str:
     return "\n".join(lines)
 
 
+# HOTFIX 03: CATALOG HIỂN THỊ CHO PUBLIC WRITER
+# Registry là kho chứng cứ typed toàn lượt, còn catalog là phần writer được PHÉP
+# viện dẫn. Hai khái niệm không đồng nhất: unknown/legacy vẫn có trong registry
+# để verifier phát hiện vấn đề, nhưng không phải bằng chứng hợp lệ cho writer.
+_WRITER_KIND_DOMAINS = {
+    "runtime_state": frozenset({"self_model"}),
+    "user_statement": frozenset({"user_statement", "conversation_history"}),
+    "assistant_utterance": frozenset({"conversation_history"}),
+    "memory": frozenset({"memory", "user_profile", "shared_episode"}),
+    "current_screen": frozenset({"grounded_environment"}),
+    "live_vision": frozenset({"grounded_environment"}),
+    "pasted_code": frozenset({"discovery_artifact"}),
+    "uploaded_file": frozenset({"discovery_artifact"}),
+    "web": frozenset({"discovery_artifact"}),
+    "capability_result": frozenset({"discovery_artifact", "self_capability"}),
+}
+_WRITER_FREE_DOMAINS = frozenset({"opinion", "hypothetical", "internal_state", "self_preference"})
+
+
+def _writer_domains(entry: EvidenceEntry) -> frozenset[str]:
+    """Xác định DOMAIN mà nguồn có thể phục vụ; KHÔNG tự xác nhận nghĩa claim.
+
+    Một câu assistant, fiction hay summary không chứng minh một sự kiện ngoài đời.
+    Verifier vẫn phải kiểm entailment trên từng claim ngay cả khi domain/ref đúng.
+    """
+    if entry.status != "supported":
+        return frozenset()
+    if entry.scope == "fiction":
+        return frozenset({"hypothetical"})
+    domains = _WRITER_KIND_DOMAINS.get(entry.source_kind, frozenset())
+    if entry.source_kind == "memory":
+        if entry.scope in {"summary", "unresolved"}:
+            return frozenset()
+        if entry.scope == "utterance":
+            # Ký ức về phát ngôn chỉ chứng minh ai đó ĐÃ NÓI câu này.
+            return frozenset({"conversation_history"})
+    return domains
+
+
+@dataclass(frozen=True, slots=True)
+class WriterEvidencePolicy:
+    """Snapshot nguồn hiển thị và quyền viện dẫn đúng cùng một lượt.
+
+    `refs_by_domain` được runtime cấp, không suy luận từ manifest model trả về.
+    Catalog chỉ có nguồn hiện rõ trong prompt; registry còn đầy đủ cho verifier.
+    """
+    rendered: str
+    refs_by_domain: Mapping[str, tuple[str, ...]]
+    allowed_domains: frozenset[str]
+    allowed_refs: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "refs_by_domain", MappingProxyType({
+            str(domain): tuple(refs) for domain, refs in self.refs_by_domain.items()
+        }))
+
+
+def build_writer_evidence_policy(registry: EvidenceRegistry, *, max_chars: int = 6000) -> WriterEvidencePolicy:
+    """Render nguyên ref trước, rồi mới cho nó vào allowlist.
+
+    Tránh lỗi cũ: registry có ref `unknown`/không render nhưng writer lại
+    tưởng có quyền viện dẫn. Không chia cắt một dòng hoặc xuất nội dung private
+    của nguồn không được hỗ trợ. max_chars chỉ giới hạn context hiển thị.
+    """
+    lines: list[str] = []
+    selected: dict[str, list[str]] = {}
+    used = 0
+    for entry in registry.entries:
+        domains = _writer_domains(entry)
+        if not domains:
+            continue
+        body = entry.content
+        if isinstance(body, Mapping):
+            body = body.get("text", body.get("status", ""))
+        # Ghi rõ phạm vi: user_statement = user ĐÃ NÓI, không phải sự kiện xảy ra.
+        line = (f"ref={entry.ref} kind={entry.source_kind} scope={entry.scope} "
+                f"domains={','.join(sorted(domains))} text={str(body or '')[:240]}")
+        if used + len(line) + 1 > max_chars:
+            continue
+        lines.append(line)
+        used += len(line) + 1
+        for domain in domains:
+            selected.setdefault(domain, []).append(entry.ref)
+    # Giữ một dấu hiệu về nguồn bị loại để đối chiếu (không đưa ref bị loại).
+    # HOTFIX 03: test legacy vẫn có thể thấy `status=unknown`, nhưng model
+    # KHÔNG thể copy một ref unknown vào claim_manifest rồi tự nghĩ là valid.
+    excluded = {}
+    for entry in registry.entries:
+        if entry.status != "supported":
+            key = (entry.source_kind, entry.status)
+            excluded[key] = excluded.get(key, 0) + 1
+    if excluded:
+        notice = "NON_CITABLE_SOURCES (NO ref IDs): " + "; ".join(
+            f"kind={kind} status={status} count={count}"
+            for (kind, status), count in sorted(excluded.items())
+        )
+        if used + len(notice) + 1 <= max_chars:
+            lines.append(notice)
+    return WriterEvidencePolicy(
+        rendered="\n".join(lines),
+        refs_by_domain={domain: tuple(refs) for domain, refs in selected.items()},
+        allowed_domains=_WRITER_FREE_DOMAINS | frozenset(selected),
+        allowed_refs=frozenset(ref for refs in selected.values() for ref in refs),
+    )
+
+
 __all__ = ["EvidenceEntry", "EvidenceRegistry", "build_evidence_registry",
-           "extend_evidence_registry", "render_evidence_context"]
+           "extend_evidence_registry", "render_evidence_context",
+           "WriterEvidencePolicy", "build_writer_evidence_policy"]

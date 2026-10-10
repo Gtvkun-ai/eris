@@ -86,7 +86,8 @@ def test_checker_invalid_schema_is_visible_but_never_bypassed():
 
     assert outcome.status == 'writer_failed'
     assert 'verify=v03_verify_unknown:VERIFIER_SCHEMA_INVALID' in outcome.failure_reason
-    assert len(router.writer_calls) == 2
+    # HOTFIX 02: lỗi schema/provider không thể sửa bằng cách sinh câu khác.
+    assert len(router.writer_calls) == 1
     assert not delivery.calls
     assert any('stage=verify' in line and 'VERIFIER_SCHEMA_INVALID' in line
                for _, line in log.lines)

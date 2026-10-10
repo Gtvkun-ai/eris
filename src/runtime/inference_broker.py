@@ -48,6 +48,12 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "chat_main": LanePolicy(10, False, 8, 35.0, 2),
     "chat": LanePolicy(10, False, 8, 35.0, 2),
     "chat_tool_required": LanePolicy(20, False, 6, 25.0, 2),
+    # Character HOTFIX 02: verifier nằm trong đường phát lời bắt buộc.
+    # DS2API có thể sinh reasoning dài trước JSON cuối; deadline của broker
+    # không được giết request còn làm việc. 0 = không áp deadline theo đồng hồ
+    # (cơ chế cancel scope/preempt vẫn do broker quản lý). Có thể đặt giới hạn
+    # bằng ERIS_BROKER_DEADLINE_SEC_PUBLIC_CLAIM_VERIFIER nếu cần vận hành.
+    "public_claim_verifier": LanePolicy(20, False, 6, 0.0, 2),
     "directive": LanePolicy(20, False, 6, 20.0, 2),
     "tts_current_turn": LanePolicy(30, False, 3, 18.0, 1),
     "tts": LanePolicy(30, True, 3, 18.0, 1),
@@ -280,7 +286,14 @@ def inference_context(
         )
     if actual_deadline is None:
         actual_deadline = parent.deadline_at
-    elif parent.deadline_at is not None:
+    elif parent.deadline_at is not None and not (
+        # HOTFIX 02: verifier public là một continuation bắt buộc của lượt
+        # hiện tại, có thể đang chờ raw reasoning dài từ DS2API. Cho phép duy
+        # nhất lane này xin deadline=inf. Quyền hủy vẫn kế thừa từ parent qua
+        # cancel_scope, không cấp quyền cho post_observer/autonomous.
+        str(lane).strip().lower() == 'public_claim_verifier'
+        and actual_deadline == math.inf
+    ):
         # V96: deadline con không được "reset đồng hồ" của user turn cha.
         # Trước đây fallback có thể xin thêm 90s rồi sống lâu hơn foreground,
         # tạo ra lượt chat treo hàng phút dù writer ban đầu chỉ xin vài chục giây.

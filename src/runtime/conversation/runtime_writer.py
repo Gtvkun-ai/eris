@@ -26,7 +26,88 @@ def _v03_error_code(exc: Exception) -> str:
     return raw[:180] if len(raw) <= 180 and _SAFE_V03_ERROR.fullmatch(raw) else type(exc).__name__
 
 
-def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any) -> Any:
+# Lỗi hạ tầng/verifier KHÔNG thể chữa bằng cách yêu cầu writer viết câu khác.
+# Thử lại chỉ gây tốn thời gian, tăng chi phí và làm Eris im lặng lâu hơn.
+_V03_NON_REWRITABLE = frozenset({
+    'VERIFIER_TIMEOUT', 'VERIFIER_UNAVAILABLE', 'VERIFIER_PROVIDER_ERROR',
+    'VERIFIER_SCHEMA_INVALID', 'v03_speech_localization_cancelled',
+})
+
+
+def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
+                            language_hint: str) -> dict[str, Any]:
+    """Chốt bản TTS thực tế TRƯỚC prepare/verify, không dịch muộn sau PASS.
+
+    Writer đôi lúc trả bản romaji/Việt trong `speech_text` hoặc trong
+    `utterance.speech.text`. Stage ưu tiên trường nested nên PHẢI sửa cả hai
+    trên bản sao candidate, không mutate object router trả. Nếu không thể dịch
+    ra kana/kanji hợp lệ, từ chối candidate; không phát bản chưa kiểm.
+
+    SpeechLocalizer là owner dịch ĐÃ CÓ trong Eris, không tạo translator mới.
+    Hàm này không cập nhật history/body, chỉ yêu cầu một transcript candidate.
+    """
+    result = dict(payload)
+    from runtime.stage_contracts import _contains_japanese_script
+    from runtime.utterance_spec import UtteranceSpec
+
+    if str(language_hint or '').lower() not in ('ja', 'jp', 'japanese'):
+        return result
+    spec = UtteranceSpec.from_mapping(result,
+                                      fallback_text=str(result.get('text', '') or ''),
+                                      default_speech_language='ja')
+    source = str(spec.speech.text or '').strip()
+    if not source:
+        return result
+    if _contains_japanese_script(source):
+        # UtteranceSpec/Stage có thể ưu tiên speech nested so với field phẳng.
+        # Giữ metadata cùng một transcript thật, không để hai bản lệch nhau.
+        result['speech_text'] = source
+        return result
+
+    localizer = getattr(host, 'character_speech_localizer', None)
+    if localizer is None:
+        # Reuse instance/cache across turns on same host. Không gán cờ đã
+        # localize khi kết quả không đúng ngôn ngữ.
+        localizer = getattr(host, '_character_preverify_localizer', None)
+        if localizer is None:
+            from runtime.speech_localizer import SpeechLocalizer
+            localizer = SpeechLocalizer()
+            setattr(host, '_character_preverify_localizer', localizer)
+    translate = getattr(localizer, 'localize', None)
+    if not callable(translate):
+        raise RuntimeError('v03_speech_localizer_unavailable')
+    try:
+        converted = str(translate(source, language_hint='ja', strict=True) or '').strip()
+    except Exception as exc:
+        from runtime.speech_localizer import SpeechLocalizationCancelled
+        if isinstance(exc, SpeechLocalizationCancelled):
+            raise RuntimeError('v03_speech_localization_cancelled') from None
+        # Không ghi exception text, vì đôi lúc có API credentials/prompt.
+        raise RuntimeError('v03_speech_localizer_unavailable') from None
+    if not converted or not _contains_japanese_script(converted):
+        raise RuntimeError('v03_speech_localizer_unavailable')
+
+    result['speech_text'] = converted
+    result['speech_language'] = 'ja'
+    result['tts_language'] = 'ja'
+    top_speech = result.get('speech')
+    if isinstance(top_speech, Mapping):
+        result['speech'] = {**dict(top_speech), 'text': converted, 'language': 'ja'}
+    elif isinstance(top_speech, str):
+        result['speech'] = converted
+    nested = result.get('utterance')
+    if isinstance(nested, Mapping):
+        revised = dict(nested)
+        previous = revised.get('speech')
+        revised['speech'] = ({**dict(previous), 'text': converted, 'language': 'ja'}
+                             if isinstance(previous, Mapping) else
+                             {'text': converted, 'language': 'ja'})
+        result['utterance'] = revised
+    return result
+
+
+def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any,
+                             evidence_policy: Any = None) -> Any:
     """Gate typed-domain sơ bộ cho từng candidate, kể cả candidate rewrite.
 
     Không làm semantic verification (Task 5/6 của v0.3). Ref hiện diện chỉ là
@@ -50,37 +131,24 @@ def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any)
         raise RuntimeError("public_writer_manifest_tampered")
 
     if isinstance(evidence_registry, EvidenceRegistry):
-        # Allowlist thuộc quyền runtime, không lấy từ những ref writer tự khai.
-        domains = {"opinion", "hypothetical", "internal_state", "self_preference"}
-        refs: list[str] = []
-        source_domains = {
-            "runtime_state": ("self_model",),
-            "user_statement": ("user_statement", "conversation_history"),
-            "assistant_utterance": ("conversation_history",),
-            "memory": ("memory", "user_profile", "shared_episode"),
-            "current_screen": ("grounded_environment",),
-            "live_vision": ("grounded_environment",),
-            "pasted_code": ("discovery_artifact",),
-            "uploaded_file": ("discovery_artifact",),
-            "web": ("discovery_artifact",),
-            "capability_result": ("discovery_artifact", "self_capability"),
-        }
-        for entry in evidence_registry.entries:
-            if entry.status != "supported":
-                continue
-            refs.append(entry.ref)
-            # assistant utterance KHÔNG chứng minh đã làm action; một ref chỉ
-            # được xét trong domain/scope của chính nó, không nâng thành history.
-            for domain in source_domains.get(entry.source_kind, ()):
-                if (entry.source_kind == "memory" and entry.scope in {"summary", "unresolved"}
-                        and domain in {"user_profile", "shared_episode"}):
-                    continue
-                domains.add(domain)
-        decision = validate_claim_manifest(envelope,
-                                           allowed_domains=tuple(domains),
-                                           allowed_evidence_refs=tuple(refs))
+        from .claim_evidence import build_writer_evidence_policy
+        # Chính catalog đã cho Writer nhìn thấy phải là nguồn allowlist; không
+        # được âm thầm cho phép thêm ref chỉ vì nó nằm trong registry private.
+        policy = evidence_policy or build_writer_evidence_policy(evidence_registry)
+        decision = validate_claim_manifest(
+            envelope,
+            allowed_domains=tuple(policy.allowed_domains),
+            allowed_evidence_refs=tuple(policy.allowed_refs),
+            evidence_domains_by_ref=policy.refs_by_domain,
+        )
         if not decision.allowed:
-            raise RuntimeError("public_writer_" + decision.reason)
+            # Chỉ log mã cơ học, tuyệt đối không log raw ref/user text/API URL.
+            # MISSING_REF: claim lịch sử nhưng không khai nguồn;
+            # UNKNOWN_REF: writer tự đặt ref / lấy ref unknown;
+            # WRONG_SCOPE: ref tồn tại nhưng không thuộc domain đã khai.
+            suffix = (':' + ','.join(decision.evidence_failure_codes)
+                      if decision.evidence_failure_codes else '')
+            raise RuntimeError('public_writer_' + decision.reason + suffix)
     return envelope
 
 
@@ -118,7 +186,8 @@ class RuntimeConversationWriter:
 
     def _realize_v03(self, *, generate: Any, kwargs: dict[str, Any], turn: KernelTurn,
                      event: ConversationEvent, runtime_context: Mapping[str, Any],
-                     evidence_registry: Any, move_payload: Mapping[str, Any]) -> RenderedConversationMove:
+                     evidence_registry: Any, evidence_policy: Any,
+                     move_payload: Mapping[str, Any]) -> RenderedConversationMove:
         """Task 6: một ngân sách duy nhất, tối đa 2 writer + 2 verifier.
 
         Root move/snapshot/registry GIỮ NGUYÊN khi retry; fail/unknown không có
@@ -144,7 +213,16 @@ class RuntimeConversationWriter:
                 request['retry_instruction'] = (
                     'CHARACTER_V03_REWRITE: ' + error + '. Viết lại CÙNG Root move, '
                     'không thêm sự kiện, hành động, lịch sử hay chủ đề. '
-                    'Đưa đủ claim_manifest và hai surface cùng nghĩa, đúng ngôn ngữ.'
+                    'Đưa đủ claim_manifest và hai surface cùng nghĩa. '
+                    'MANIFEST REPAIR: chỉ dùng ref ĐÚNG NGUYÊN VĂN từ '
+                    'CHARACTER_V1_CITABLE_REFS, đúng domain/scope. '
+                    'MISSING_REF: bỏ claim lịch sử không có nguồn. '
+                    'UNKNOWN_REF: không bịa ref, bỏ claim không chứng minh được. '
+                    'WRONG_SCOPE: không dùng lời assistant hay user để xác nhận action/sự kiện. '
+                    'Lời chào/phản ứng/cảm thán không thêm factual claim thì claim_manifest=[]. '
+                    'Đừng đổi ý của Root, chỉ bỏ thông tin bổ sung thiếu bằng chứng. '
+                    'Nếu speech_language=ja thì speech_text và utterance.speech.text '
+                    'PHẢI là chữ Nhật (かな/漢字), tuyệt đối không ghi tiếng Việt/romaji.'
                 )
                 request['discourse_context'] = base['discourse_context'] + '\n' + request['retry_instruction']
             try:
@@ -152,7 +230,7 @@ class RuntimeConversationWriter:
                 stage = 'manifest'
                 if not isinstance(payload, Mapping):
                     raise RuntimeError('v03_writer_invalid_payload')
-                envelope = _inspect_writer_manifest(payload, evidence_registry)
+                envelope = _inspect_writer_manifest(payload, evidence_registry, evidence_policy)
                 if envelope is None:
                     raise RuntimeError('MANIFEST_MISSING')
                 stage = 'surfaces'
@@ -163,6 +241,17 @@ class RuntimeConversationWriter:
                 if _public_display_language_mismatch(display,
                         str(base.get('language_hint', 'vi') or 'vi')):
                     raise RuntimeError('v03_display_language_mismatch')
+                # Localize trước cả grounding/Stage/Verifier. Nội dung được
+                # checker so sánh sẽ đúng là transcript TTS cuối cùng.
+                stage = 'localize'
+                from runtime.runtime_settings_store import runtime_text
+                speech_language = runtime_text('tts', 'language', default='ja').strip().lower() or 'ja'
+                if speech_language == 'auto':
+                    speech_language = 'ja'
+                payload = _prelocalize_v03_speech(
+                    payload, host=self.host, language_hint=speech_language,
+                )
+                speech = str(payload.get('speech_text', '') or '').strip()
                 # Chặn deterministic false action/sensor, cùng ngân sách rewrite.
                 engine = runtime_context.get('__source_grounding_engine')
                 report = runtime_context.get('__source_grounding_report')
@@ -226,6 +315,12 @@ class RuntimeConversationWriter:
                 self._log_v03('warning', turn=turn, attempt=attempt + 1,
                               stage=stage, status='rejected', code=error,
                               duration_ms=int((time.monotonic() - started_at) * 1000))
+                # Hạ tầng checker chết/timeout: giữ nguyên nguồn/candidate,
+                # không gọi SurfaceWorker và checker lần 2 vô nghĩa.
+                if (error in _V03_NON_REWRITABLE
+                        or (stage == 'verify' and any(reason in error
+                            for reason in _V03_NON_REWRITABLE))):
+                    break
         # Mỗi lần fail đều có reason riêng; lỗi thứ nhất không còn bị ghi đè.
         # Chuỗi này chỉ chứa mã đã lọc, tuyệt đối không chứa text từ model.
         raise RuntimeError('v03_candidate_rejected:' + ';'.join(rejected))
@@ -276,7 +371,7 @@ class RuntimeConversationWriter:
 
         # Chỉ mở rộng bằng receipt của ĐÚNG run này, sau khi Root đã hoàn tất
         # capability. Không lấy Root.say làm chứng cứ và chưa bật semantic gate.
-        from .claim_evidence import EvidenceRegistry, extend_evidence_registry, render_evidence_context
+        from .claim_evidence import EvidenceRegistry, extend_evidence_registry, build_writer_evidence_policy
         evidence_registry = runtime_context.get("__evidence_registry")
         registry = runtime_context.get("__root_capabilities")
         if isinstance(evidence_registry, EvidenceRegistry):
@@ -311,14 +406,27 @@ class RuntimeConversationWriter:
         # Chỉ bổ sung source refs CÓ SCOPE vào grounding context (không chạm
         # root move), để writer thấy kết quả executor của đúng run. Chưa có
         # semantic verifier ở v0.1 nên refs không tự biến câu nói thành fact.
-        if evidence_registry is not None:
-            rendered_refs = render_evidence_context(evidence_registry)
-            if rendered_refs:
-                generate_kwargs["grounding_context"] = "\n\n".join((
-                    generate_kwargs["grounding_context"],
-                    "CHARACTER_V1_SOURCE_REFS: refs only support their stated scope; "
-                    "assistant utterance or failed/started tool does not prove world facts.\n" + rendered_refs,
-                ))
+        evidence_policy = (build_writer_evidence_policy(evidence_registry)
+                           if isinstance(evidence_registry, EvidenceRegistry) else None)
+        if evidence_policy is not None:
+            # Luôn đưa contract cả khi không có ref (autonomous trống nguồn).
+            # Nguồn unknown chỉ để verifier kiểm lịch sử, TUYỆT ĐỐI không được
+            # render thành một ref mà writer tưởng có thể trích dẫn.
+            ref_context = (
+                "CHARACTER_V1_CITABLE_REFS — ONLY these exact ref IDs may be "
+                "used in claim_manifest; each line states allowed domains/scope. "
+                "Refs elsewhere in old grounding/memory text are NOT citations. "
+                "A user utterance proves 'user said X', not that X occurred; "
+                "assistant statements prove only words spoken. "
+                "For a simple greeting/reaction WITHOUT added factual/history "
+                "claims return claim_manifest=[]. "
+                "Fresh opinion/hypothetical/internal_state/self_preference may "
+                "have evidence_refs=[]. Do not invent refs or episodes.\n"
+                + (evidence_policy.rendered or "(no citable refs in this turn)")
+            )
+            generate_kwargs["grounding_context"] = "\n\n".join((
+                generate_kwargs["grounding_context"], ref_context,
+            ))
 
         # Test/adapter cũ chỉ stub Router và không có Decision parser, nên vẫn
         # đi đường compatibility. Host production có parser mới bật gate V0.3.
@@ -328,14 +436,15 @@ class RuntimeConversationWriter:
             return self._realize_v03(
                 generate=generate, kwargs=generate_kwargs, turn=turn,
                 event=event, runtime_context=runtime_context,
-                evidence_registry=evidence_registry, move_payload=move_payload,
+                evidence_registry=evidence_registry, evidence_policy=evidence_policy,
+                move_payload=move_payload,
             )
 
         payload = generate(**generate_kwargs)
         if not isinstance(payload, Mapping):
             raise RuntimeError("public_writer_invalid_payload")
 
-        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry)
+        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry, evidence_policy)
 
         # Post-generation grounding gate từng bị mất call-site khi V12 cutover.
         # Gate chỉ chặn claim vượt evidence; nếu fail, SurfaceWorker được đúng một
@@ -371,7 +480,7 @@ class RuntimeConversationWriter:
                 pass
         # Grounding gate cũ có thể yêu cầu rewrite. Manifest câu SAU rewrite
         # phải được kiểm lại, không thừa hưởng verdict của candidate thứ nhất.
-        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry)
+        manifest_envelope = _inspect_writer_manifest(payload, evidence_registry, evidence_policy)
         display_text = str(payload.get("text", "") or "").strip()
         if not display_text:
             raise RuntimeError("public_writer_empty")

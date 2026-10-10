@@ -8,6 +8,7 @@ receipt và trạng thái trước khi chuyển đến public delivery.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Mapping
 
 from runtime.claim_domain_contract import (
@@ -84,6 +85,21 @@ def _unknown(reason: str) -> ClaimVerificationResult:
 
 def _fail(reason: str) -> ClaimVerificationResult:
     return ClaimVerificationResult('fail', (), False, False, (reason,))
+
+
+def _verifier_timeout_seconds() -> float | None:
+    """Không cắt DeepSeek chỉ vì reasoning dài trước JSON trả lời.
+
+    Mặc định None: không truyền HTTP request timeout từ Character verifier.
+    Người vận hành có thể đặt số dương bằng biến môi trường. Timeout thật của
+    proxy/HTTP transport vẫn có thể tồn tại và được báo VERIFIER_TIMEOUT.
+    """
+    raw = os.getenv('ERIS_CHARACTER_VERIFIER_TIMEOUT_SEC', '0').strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 0 < value < float('inf') else None
 
 
 def validate_verifier_result(raw: Mapping[str, Any], *, prepared: PreparedPublicOutput,
@@ -214,9 +230,15 @@ class CharacterClaimVerifier:
                                 for e in registry.entries],
                 }, schema=SCHEMA, name='eris_character_claim_verifier_v1',
                 cognitive_lane='public_claim_verifier', max_tokens=2400,
-                timeout_seconds=10.0, temperature=0.0,
+                timeout_seconds=_verifier_timeout_seconds(), temperature=0.0,
             )
         except Exception:
+            return _unknown('VERIFIER_UNAVAILABLE')
+        # Lỗi được transport mã hóa riêng, không giả là JSON/schema sai.
+        if isinstance(raw, Mapping) and '_runtime_verifier_error' in raw:
+            reason = raw['_runtime_verifier_error']
+            if reason in ('VERIFIER_TIMEOUT', 'VERIFIER_PROVIDER_ERROR'):
+                return _unknown(reason)
             return _unknown('VERIFIER_UNAVAILABLE')
         return validate_verifier_result(raw,prepared=prepared,registry=registry)
 

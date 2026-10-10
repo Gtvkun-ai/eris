@@ -1247,8 +1247,12 @@ class AIRuntimeModelRouter:
         # theo tên model/tier legacy. Turn executive và tutor đang phục vụ trực
         # tiếp user turn là dependency bắt buộc của foreground chat, nên không
         # được rơi xuống ``post_observer`` chỉ vì legacy tier là subconscious_4b.
-        if (cognitive_key in {"turn_executive", "public_claim_verifier"}
-                or cognitive_key.startswith("tutor:")):
+        if cognitive_key == "public_claim_verifier":
+            # Verifier có thể chờ rất lâu ở DeepSeek Web (raw thinking).
+            # Dùng lane riêng không deadline thay vì kế thừa chat_tool_required
+            # 25s. Nó vẫn là request bắt buộc, không phải background optional.
+            lane = "public_claim_verifier"
+        elif cognitive_key == "turn_executive" or cognitive_key.startswith("tutor:"):
             # Character v1 HOTFIX: claim verifier là gate BẮT BUỘC trước
             # public delivery. Trước đây lane này rơi xuống post_observer vì
             # inference_tier=subconscious_4b => optional/preemptible. Khi chat
@@ -1299,6 +1303,10 @@ class AIRuntimeModelRouter:
         with inference_context(
             lane,
             optional=optional,
+            # Timeout 0 chỉ dành cho verifier đã được runtime xác định là
+            # bước bắt buộc. Context này giữ cancel_scope của user turn nhưng
+            # không kế thừa deadline tổng đã hết trong lúc DeepSeek suy luận.
+            timeout_seconds=0.0 if lane == 'public_claim_verifier' else None,
             coalesce_key=coalesce_key,
             metadata={
                 "router_reason": reason,
@@ -1427,7 +1435,12 @@ class AIRuntimeModelRouter:
                     max_tokens=max_tokens,
                     response_format=response_format,
                     reasoning_effort=reasoning_effort,
-                    timeout=timeout_seconds,
+                    # Sentinel 0 trên lane verifier: tắt deadline HTTP của
+                    # DS2API khi caller không chủ động đặt giới hạn. Nếu để
+                    # None, OpenAICompatibleClient sẽ tự dùng self.timeout=30s.
+                    # Những lane khác vẫn theo timeout mặc định như trước.
+                    timeout=(0.0 if name == 'eris_character_claim_verifier_v1'
+                             and timeout_seconds is None else timeout_seconds),
                 )
 
             resource_class, backend = self._client_inference_profile(client)
@@ -1453,6 +1466,14 @@ class AIRuntimeModelRouter:
                              getattr(client, "model_name", ""))
                 else:
                     safe_log(self.logger, "debug", "[ai runtime model] %s failed model=%s: %s", name, getattr(client, "model_name", ""), exc)
+            if name == "eris_character_claim_verifier_v1":
+                # Không trộn lỗi provider (timeout, network, cancellation) với
+                # lỗi JSON schema. Chỉ chuyển TÊN LỚP lỗi, không lộ thông tin
+                # request/secret/response từ exception của provider.
+                kind = type(exc).__name__
+                return {"_runtime_verifier_error": (
+                    "VERIFIER_TIMEOUT" if "Timeout" in kind else "VERIFIER_PROVIDER_ERROR"
+                )}
             return {}
 
     def invoke_structured_worker(

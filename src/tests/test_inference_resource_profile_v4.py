@@ -251,7 +251,7 @@ def test_character_claim_verifier_is_required_foreground_broker_lane(monkeypatch
         cognitive_lane='public_claim_verifier',
     )
     assert out == {'ok': True}
-    assert seen == {'lane': 'chat_tool_required', 'optional': False}
+    assert seen == {'lane': 'public_claim_verifier', 'optional': False}
 
 
 def test_regular_observer_remains_optional_background_lane(monkeypatch):

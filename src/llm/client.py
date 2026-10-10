@@ -926,7 +926,16 @@ class ChainedFallbackClient:
             if requested_value <= 0.0:
                 requested_value = math.inf
 
-            if is_ds2api:
+            # Character HOTFIX 02: DeepSeek Web có thể suy luận rất lâu trước
+            # khi trả JSON. Chỉ request verifier foreground KHÔNG dùng ngưỡng
+            # failfast 90s mặc định. Sentinel 0 đi xuyên tới _brokered_post
+            # để requests dùng timeout=None, broker dùng deadline=infinity.
+            # Request vẫn bị hủy nếu cancel scope của turn bị thu hồi.
+            unbounded_verifier = (lane == 'public_claim_verifier' and is_ds2api
+                                  and (requested_timeout is None or requested_value == math.inf))
+            if unbounded_verifier:
+                timeout_value = (remaining_budget if remaining_budget is not None else 0.0)
+            elif is_ds2api:
                 worker_role = str(getattr(client, "worker_role", "") or "").strip().lower()
                 executive_lane = worker_role == "executive"
                 timeout_env = (
@@ -947,7 +956,8 @@ class ChainedFallbackClient:
                 timeout_value = min(timeout_value, remaining_budget)
             if not math.isfinite(timeout_value):
                 timeout_value = 90.0
-            call_kwargs["timeout"] = max(0.05, float(timeout_value))
+            call_kwargs["timeout"] = (0.0 if unbounded_verifier and remaining_budget is None
+                                       else max(0.05, float(timeout_value)))
 
             try:
                 if idx == 0:
