@@ -68,23 +68,15 @@ def test_simple_greeting_with_empty_manifest_still_goes_to_delivery(kind):
     assert len(router.writer_calls) == 1 and len(router.worker_calls) == 0
     context = router.writer_calls[0]["grounding_context"]
     assert "CHARACTER_V1_CITABLE_REFS" in context
-    assert "claim_manifest=[]" in context
+    assert "Không cần khai manifest" in context
 
 
-def test_retry_invalid_ref_to_clean_greeting_reuses_root_move():
-    invalid = [{"domain": "user_statement", "claim": "Bạn đã chào",
-                "evidence_refs": ["evidence:phantom"]}]
-    result, delivery, router = _run(payloads=[
-        {"text": "Chào cậu.", "speech_text": "こんにちは。", "claim_manifest": invalid},
-        {"text": "Chào cậu.", "speech_text": "こんにちは。", "claim_manifest": []},
-    ])
-    assert result.status == "delivering"
-    assert len(delivery.calls) == 1
-    assert len(router.writer_calls) == 2
-    assert len(router.worker_calls) == 0  # candidate 2 được chứng minh là phatic, không tốn verifier
-    repair = router.writer_calls[-1]["retry_instruction"]
-    assert "UNKNOWN_REF" in repair and "claim_manifest=[]" in repair
-    assert router.writer_calls[0]["grounding_context"] == router.writer_calls[1]["grounding_context"]
+def test_invalid_model_ref_is_not_a_semantic_public_gate():
+    invalid=[{'domain':'user_statement','claim':'Bạn đã chào','evidence_refs':['evidence:phantom']}]
+    result,delivery,router=_run(payloads=[
+        {'text':'Chào cậu.','speech_text':'こんにちは。','claim_manifest':invalid}])
+    assert result.status=='delivering' and len(delivery.calls)==1
+    assert len(router.writer_calls)==1 and router.worker_calls==[]
 
 
 def test_unknown_only_registry_entry_has_no_citable_id():

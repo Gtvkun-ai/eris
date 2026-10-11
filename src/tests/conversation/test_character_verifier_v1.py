@@ -53,7 +53,14 @@ def test_invalid_schema_is_unknown_not_pass():
 def test_receipt_binds_all_surfaces_and_rejects_tampering():
     _,p=prepared();r=registry()
     # Registry của fixture build event có snapshot revision khác, nhưng cùng event ID.
+    from runtime.conversation.public_output_artifact import _artifact_hash
     p=replace(p,source_fingerprint=r.fingerprint)
+    p=replace(p,sealed_hash=_artifact_hash(
+        session_id=p.session_id,generation=p.generation,run_id=p.run_id,
+        move_id=p.move_id,delivery_id=p.delivery_id,channel=p.channel,
+        display_text=p.display_text,memory_text=p.memory_text,
+        speech_text=p.speech_text,source_fingerprint=p.source_fingerprint,
+        segment_hashes=p.segment_hashes))
     verdict=validate_verifier_result(result(),prepared=p,registry=r)
     receipt=build_verification_receipt(prepared=p,result=verdict,registry=r,portrait=None)
     validate_receipt(prepared=p,receipt=receipt,turn=turn())

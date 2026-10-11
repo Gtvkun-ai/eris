@@ -34,18 +34,24 @@ class RuntimeConversationDeliveryAdapter:
             self._started.add(did)
 
         prepared = rendered.metadata.get("prepared_public_output")
-        receipt = rendered.metadata.get("claim_verification_receipt")
         if prepared is not None:
-            from .public_output_artifact import PreparedPublicOutput, lock_verified_segments
-            from .claim_verifier import validate_receipt
+            from .public_output_artifact import (
+                PreparedPublicOutput, lock_prepared_segments, validate_prepared,
+            )
             if not isinstance(prepared, PreparedPublicOutput):
                 raise RuntimeError("v03_prepared_wrong_type")
-            validate_receipt(prepared=prepared, receipt=receipt, turn=turn)
+            validate_prepared(prepared)
+            if (prepared.session_id != turn.session_id or
+                    prepared.generation != turn.generation or
+                    prepared.run_id != turn.run_id or
+                    prepared.move_id != turn.move.move_id or
+                    prepared.delivery_id != did):
+                raise RuntimeError('public_artifact_turn_mismatch')
             # State nguồn không được bị thay lén giữa prepare và dispatch.
             registry = rendered.metadata.get("evidence_registry")
-            if getattr(registry, "fingerprint", None) != prepared.source_fingerprint:
+            if registry is not None and getattr(registry, "fingerprint", None) != prepared.source_fingerprint:
                 raise RuntimeError("v03_source_changed_before_dispatch")
-            prepared = lock_verified_segments(prepared)
+            prepared = lock_prepared_segments(prepared)
             decision = prepared.decision
             channel = prepared.channel
             display_text, memory_text = prepared.display_text, prepared.memory_text
@@ -144,21 +150,8 @@ class RuntimeConversationDeliveryAdapter:
             except Exception as exc:
                 self._log("debug", "[conversation-v12] surface commit degraded: %s", exc)
 
-            # Defense-in-depth: writer đã có một grounding rewrite pass. Nếu câu sau
-            # rewrite vẫn claim sensor/action không có evidence thì không được commit
-            # false public history.
-            engine = rendered.metadata.get("source_grounding_engine")
-            report = rendered.metadata.get("source_grounding_report")
-            if engine is not None and report is not None:
-                try:
-                    from runtime.grounding_surface_gate import evaluate_grounded_surface
-                    verdict = evaluate_grounded_surface(engine, display_text, report=report, channel=channel)
-                    if not bool(getattr(verdict, "allowed", True)):
-                        raise RuntimeError("public_grounding_gate_blocked")
-                except RuntimeError:
-                    raise
-                except Exception as exc:
-                    self._log("debug", "[conversation-v12] grounding defense degraded: %s", exc)
+            # Không đưa semantic grounding classifier lên critical path.
+            # Báo cáo nguồn vẫn giữ trong metadata để chạy test và sửa core.
 
         send = getattr(self.host, "_send_decision_to_body", None)
         if not callable(send):
@@ -172,9 +165,8 @@ class RuntimeConversationDeliveryAdapter:
                 if (state.generation != turn.generation or state.active_run_id != turn.run_id
                         or state.active_delivery_id != did):
                     raise RuntimeError("v03_preempted_before_dispatch")
-            # Real PublicOutputRuntimeMixin phải nhận prepared + receipt; tuyệt
-            # đối không fallback sang send legacy khi host chưa hỗ trợ gate.
-            accepted = send(decision, channel=channel, prepared=prepared, verification=receipt)
+            # Gửi artifact đã niêm phong; không có semantic verifier receipt.
+            accepted = send(decision, channel=channel, prepared=prepared)
         else:
             accepted = send(decision, channel=channel)
         # Runtime production trả bool; test/adapter cũ trả None và được coi là

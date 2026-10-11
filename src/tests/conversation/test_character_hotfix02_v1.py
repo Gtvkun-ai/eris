@@ -117,10 +117,9 @@ def test_verifier_timeout_does_not_request_second_writer_candidate():
         '_runtime_verifier_error': 'VERIFIER_TIMEOUT',
     }
     outcome, _, delivery, router = _run_with_router(router)
-    assert outcome.status == 'writer_failed'
-    assert 'VERIFIER_TIMEOUT' in outcome.failure_reason
+    assert outcome.status == 'delivering'
     assert len(router.writer_calls) == 1
-    assert not delivery.calls
+    assert len(delivery.calls) == 1
 
 
 @pytest.mark.parametrize('kind', ['user_turn', 'autonomous_signal'])
@@ -163,7 +162,7 @@ def test_production_writer_certifies_prelocalized_phatic_speech(kind):
     # Mẫu chào ngắn đã được chứng minh cơ học, không cần gọi DeepSeek.
     assert router.worker_calls == []
     assert len(delivery.calls) == 1
-    assert delivery.calls[0]['rendered'].metadata['claim_verification_receipt'].verification_method == 'deterministic_phatic'
+    assert 'claim_verification_receipt' not in delivery.calls[0]['rendered'].metadata
     artifact = delivery.calls[0]['rendered'].metadata['prepared_public_output']
     assert artifact.speech_text == 'こんにちは。'
     assert artifact.stage_frame.tts_text == 'こんにちは。'

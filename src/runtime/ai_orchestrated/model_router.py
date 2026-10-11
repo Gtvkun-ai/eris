@@ -593,13 +593,13 @@ CLAIM_MANIFEST_SCHEMA: dict[str, Any] = {
 }
 
 # Contract public writer V42. Ba surface field vẫn là availability payload;
-# claim_manifest là integrity metadata bắt buộc để runtime kiểm domain sự thật. Metadata semantic vẫn
-# được phép đi kèm nhưng là soft metadata: runtime sanitize riêng và lỗi của nó
-# tuyệt đối không được xóa câu public hợp lệ.
+# claim_manifest là metadata TÙY CHỌN để nghiên cứu offline, không phải
+# hợp đồng phát lời. Giữ schema để đọc benchmark cũ nhưng chỉ cần ba trường
+# cốt lõi; lỗi manifest không được khiến Eris im lặng.
 PUBLIC_REPLY_CORE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_speak", "text", "speech_text", "claim_manifest"],
+    "required": ["should_speak", "text", "speech_text"],
     "properties": {
         "should_speak": {"type": "boolean"},
         "text": {"type": "string"},
@@ -652,7 +652,7 @@ PUBLIC_REPLY_SCHEMA: dict[str, Any] = {
 PUBLIC_WORDING_REWRITE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["should_speak", "text", "speech_text", "claim_manifest"],
+    "required": ["should_speak", "text", "speech_text"],
     "properties": {
         "should_speak": {"type": "boolean"},
         "text": {"type": "string"},
@@ -1568,7 +1568,7 @@ class AIRuntimeModelRouter:
         return (
             f"Bạn đang là giọng nói trực tiếp của ERIS trong một lượt chat. Trả đúng MỘT JSON. "
             f"{CHAT_VOICE_CORE_V39} {style_rules} "
-            f"Bốn field bắt buộc là should_speak, text bằng {display_language}, speech_text bằng {speech_language}, và claim_manifest. "
+            f"Ba field bắt buộc là should_speak, text bằng {display_language} và speech_text bằng {speech_language}. "
             "text là câu hiển thị thật; speech_text là câu ERIS thực sự đọc và phải cùng nghĩa/tông với text. "
             "HARD DISPLAY LANGUAGE LOCK: text chỉ được dùng đúng display language đã chỉ định; tuyệt đối không đổi cả câu sang Nhật/Trung/Anh nếu display là tiếng Việt. "
             "Không markdown, không reasoning, không stage direction trong text, không ghép tiếng Nhật vào text tiếng Việt. "
@@ -1579,8 +1579,8 @@ class AIRuntimeModelRouter:
             "Nếu `say` yêu cầu một câu hỏi hoặc một teaching move thì hiện thực đúng nó; nếu không, đừng thêm câu hỏi điều hướng chỉ để giữ hội thoại. Rhetorical fragment hoặc trailing thought tự nhiên thì được. "
             "Không phát minh grounding, memory hay capability. Grounding chỉ được dùng làm evidence để wording đúng với move hiện tại. "
             "Nếu Current grounding chứa EVIDENCE_ENRICHMENT_V73, đó là positive semantic input đã được runtime tuyển từ user profile, shared episodes, recent turns và self-model có provenance. Dùng nó để làm câu trả lời liên tục và cụ thể hơn; không bắt buộc nhắc fact không liên quan, không nâng unknown thành fact, và không tự bịa cầu nối ký ức. "
-            "V42 claim-domain contract: mọi factual/sensory/memory/runtime claim được thêm vào câu phải khai báo trong claim_manifest. "
-            "Chỉ dùng domain/evidence ref mà Current grounding cho phép; user_profile/shared_episode/self_model phải dùng ref thật; opinion/hypothetical/internal_state có thể không cần evidence ref. Không có claim thì claim_manifest=[]. "
+            "claim_manifest là metadata KHÔNG BẮT BUỘC, chỉ dùng khi có thể trích dẫn ref đã được cung cấp; không sinh ref giả. "
+            "Sử dụng evidence đúng phạm vi để viết tự nhiên, không tự nhận đã hoàn tất tool nếu không có receipt; thiếu ref thì tránh khẳng định chắc chắn, không cần thêm một bước tự kiểm duyệt. "
             "Không cần tự giải thích personality, MBTI, reasoning hay confidence. Dùng personality context như quyền biểu đạt: nó phải đổi cadence, độ gần, mức tự bộc lộ và cạnh hài khi phù hợp, chứ không được nằm chết như metadata. "
             "performance_hint/performance_intensity/nonverbal_cue/delivery_priority/interruptible là tùy chọn; bỏ qua nếu không cần. "
             "semantic_frame, assistant_act và self_capability_claims cũng chỉ là SOFT METADATA: nếu chắc thì có thể trả thêm; nếu không chắc thì bỏ qua. "

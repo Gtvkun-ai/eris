@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Character v0.3: bản nháp public ĐÃ QUA stage, chưa có tác dụng phụ.
+"""Artifact public bất biến trước dispatch; KHÔNG chứng nhận ngữ nghĩa.
 
-Không gọi mạng, không ghi history, không phát âm thanh. Chỉ những bytes/chữ đã
-được đóng băng ở đây mới có thể được đối chiếu với receipt của verifier.
+Giữ hash transcript, generation và nội dung qua Stage/TTS/UDP; không có LLM
+thứ hai quyết định Eris có được nói không. Không ghi history tại đây.
 """
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ class PreparedPublicOutput:
     segments: tuple[Any, ...]
     payload: Mapping[str, Any]
     source_fingerprint: str
+    sealed_hash: str = ""
     # Decision được chuẩn bị cùng frame, giữ riêng trong process; tuyệt đối
     # không serialize object này vào UDP/memory.
     decision: Any = None
@@ -70,6 +71,17 @@ class PreparedPublicOutput:
     @property
     def segment_hashes(self) -> tuple[str, ...]:
         return tuple(sha(tts_clean(f.tts_text)) for f in self.segments)
+
+
+def _artifact_hash(*, session_id: str, generation: int, run_id: str, move_id: str,
+                   delivery_id: str, channel: str, display_text: str,
+                   memory_text: str, speech_text: str, source_fingerprint: str,
+                   segment_hashes: tuple[str, ...]) -> str:
+    """Niêm phong nội dung đã prepare, độc lập với semantic verifier."""
+    values = (session_id, generation, run_id, move_id, delivery_id, channel,
+              display_text, memory_text, speech_text, source_fingerprint,
+              segment_hashes)
+    return sha(json.dumps(values, ensure_ascii=False, separators=(',', ':')))
 
 
 def prepare_public_output(*, event_id: str, turn: Any, channel: str, decision: Any,
@@ -144,22 +156,32 @@ def prepare_public_output(*, event_id: str, turn: Any, channel: str, decision: A
         raise RuntimeError('v03_udp_display_changed')
     if udp_clean(frame.memory_text) != frame.memory_text:
         raise RuntimeError('v03_udp_memory_changed')
+    speech_text = ' '.join(tts_clean(f.tts_text) for f in segments)
+    sealed_hash = _artifact_hash(
+        session_id=turn.session_id, generation=turn.generation,
+        run_id=turn.run_id, move_id=turn.move.move_id, delivery_id=did,
+        channel=channel, display_text=frame.display_text, memory_text=frame.memory_text,
+        speech_text=speech_text, source_fingerprint=source_fingerprint,
+        segment_hashes=tuple(sha(tts_clean(f.tts_text)) for f in segments),
+    )
     return PreparedPublicOutput(
         event_id=event_id, session_id=turn.session_id, generation=turn.generation,
         run_id=turn.run_id, move_id=turn.move.move_id, delivery_id=did,
         channel=channel, display_text=frame.display_text,
-        speech_text=' '.join(tts_clean(f.tts_text) for f in segments),
+        speech_text=speech_text,
         memory_text=frame.memory_text, stage_frame=frame, segments=segments,
         payload=safe_payload, source_fingerprint=source_fingerprint,
-        decision=decision,
+        sealed_hash=sealed_hash, decision=decision,
     )
 
 
-def lock_verified_segments(prepared: PreparedPublicOutput) -> PreparedPublicOutput:
-    """Mang token hash tới TTS task và kiểm cả cache hits.
+def lock_prepared_segments(prepared: PreparedPublicOutput) -> PreparedPublicOutput:
+    """Ràng buộc hash TTS vào artifact đã prepare, KHÔNG phải semantic PASS.
 
-    Cần dùng SAU verdict pass, không set cờ trusted từ trước kiểm.
+    Tên field `verified_transcript_hash` là wire contract cũ trong TTS engine:
+    nó chỉ xác minh byte transcript, không xác minh sự thật trong lời nói.
     """
+    validate_prepared(prepared)
     segments = []
     for frame in prepared.segments:
         contract = dict(frame.speech_contract)
@@ -169,8 +191,12 @@ def lock_verified_segments(prepared: PreparedPublicOutput) -> PreparedPublicOutp
     return replace(prepared, segments=tuple(segments))
 
 
+# Giữ alias để các consumer/test artifact cũ còn hoạt động.
+lock_verified_segments = lock_prepared_segments
+
+
 def validate_prepared(prepared: PreparedPublicOutput) -> None:
-    """Không tin object đã qua stage nếu bị mutate lúc chờ callback."""
+    """Từ chối nội dung bị sửa sau prepare; không đánh giá claim đúng/sai."""
     if prepared.stage_frame.display_text != prepared.display_text:
         raise RuntimeError('v03_stage_display_tampered')
     if prepared.stage_frame.memory_text != prepared.memory_text:
@@ -178,5 +204,15 @@ def validate_prepared(prepared: PreparedPublicOutput) -> None:
     if any(sha(tts_clean(frame.tts_text)) != prepared.segment_hashes[i]
            for i, frame in enumerate(prepared.segments)):
         raise RuntimeError('v03_speech_tampered')
+    expected = _artifact_hash(
+        session_id=prepared.session_id, generation=prepared.generation,
+        run_id=prepared.run_id, move_id=prepared.move_id,
+        delivery_id=prepared.delivery_id, channel=prepared.channel,
+        display_text=prepared.display_text, memory_text=prepared.memory_text,
+        speech_text=prepared.speech_text, source_fingerprint=prepared.source_fingerprint,
+        segment_hashes=prepared.segment_hashes,
+    )
+    if not prepared.sealed_hash or expected != prepared.sealed_hash:
+        raise RuntimeError('public_artifact_seal_mismatch')
     if len(prepared.segments) == 0 or str(prepared.decision.text) != prepared.display_text:
         raise RuntimeError('v03_candidate_tampered')

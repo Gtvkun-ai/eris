@@ -152,6 +152,6 @@ def test_runtime_writer_rewrites_once_when_grounding_gate_rejects_first_draft():
         },
     )
 
-    assert len(router.calls) == 2
-    assert "GROUNDING_REWRITE_V12" in router.calls[1]["discourse_context"]
-    assert rendered.surface.display_text.startswith("Nếu bạn")
+    assert len(router.calls) == 1
+    assert 'GROUNDING_REWRITE_V12' not in router.calls[0]['discourse_context']
+    assert rendered.surface.display_text.startswith('Tôi thấy')

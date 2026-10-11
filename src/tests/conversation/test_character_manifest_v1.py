@@ -89,26 +89,22 @@ def test_full_claim_strings_are_not_silently_cut():
         good.normalized[0]["claim"] = "tampered"
 
 
-def test_router_payload_to_runtime_writer_blocks_structural_invalidity():
+def test_legacy_runtime_writer_does_not_block_invalid_model_manifest():
     class Router:
-        def __init__(self, raw):
-            self.model = AIRuntimeModelRouter(llm_service=None, logger=None)
-            self.raw = raw
-        def generate_public_reply(self, **kw):
+        def __init__(self,raw):
+            self.model=AIRuntimeModelRouter(llm_service=None,logger=None)
+            self.raw=raw
+        def generate_public_reply(self,**kw):
             return self.model._compat_public_envelope(self.raw)
-    event = ConversationEvent(event_id="e1", session_id="s", kind="user_turn", text="Hi")
-    turn = KernelTurn(session_id="s", generation=1, run_id="r1",
-                      move=NextConversationMove(intent="answer", say="reply"), note="")
-    for manifest in ("wrong type", [_item() for _ in range(11)], None):
-        raw = {"text": "Xin chào", "speech_text": "こんにちは"}
-        if manifest is not None: raw["claim_manifest"] = manifest
-        with pytest.raises(RuntimeError, match="public_writer_manifest_"):
-            RuntimeConversationWriter(type("Host", (), {"ai_model_router": Router(raw)})()).realize(
-                turn=turn, event=event, recent_history=(), runtime_context={})
-    raw = {"text": "Tôi thích trò chơi", "speech_text": "ゲームが好き", "claim_manifest": [_item()]}
-    rendered = RuntimeConversationWriter(type("Host", (), {"ai_model_router": Router(raw)})()).realize(
-        turn=turn, event=event, recent_history=(), runtime_context={})
-    assert rendered.metadata["claim_manifest_envelope"].structural_status == "valid"
+    event=ConversationEvent(event_id='e1',session_id='s',kind='user_turn',text='Hi')
+    turn=KernelTurn(session_id='s',generation=1,run_id='r1',
+                    move=NextConversationMove(intent='answer',say='reply'),note='')
+    for manifest in ('wrong type',[_item() for _ in range(11)],None):
+        raw={'text':'Xin chào','speech_text':'こんにちは'}
+        if manifest is not None:raw['claim_manifest']=manifest
+        rendered=RuntimeConversationWriter(type('Host',(),{'ai_model_router':Router(raw)})()).realize(
+            turn=turn,event=event,recent_history=(),runtime_context={})
+        assert rendered.surface.display_text=='Xin chào'
 
 
 def test_router_compat_does_not_hide_manifest_value_inside_private_metadata():
@@ -120,56 +116,47 @@ def test_router_compat_does_not_hide_manifest_value_inside_private_metadata():
     assert "_typed_claim_manifest" not in public_payload(result)
 
 
-def test_writer_registry_allowlist_rejects_unknown_ref_and_domain():
+def test_writer_model_ref_is_not_authority_for_runtime_state():
     from types import SimpleNamespace
     from runtime.conversation.claim_evidence import build_evidence_registry
-    event = ConversationEvent(event_id="e2", session_id="s", kind="user_turn", text="Tôi thích trà", generation=1)
-    reg = build_evidence_registry(event=event, state=SimpleNamespace(version=10, last_applied_turn_seq=1),
-                                  affect=None, report=None, ledger_turns=(), memory_records=(), sampled_at=100)
-    turn = KernelTurn(session_id="s", generation=1, run_id="r1",
-                      move=NextConversationMove(intent="answer", say="reply"), note="")
+    event=ConversationEvent(event_id='e2',session_id='s',kind='user_turn',text='Tôi thích trà',generation=1)
+    reg=build_evidence_registry(event=event,state=SimpleNamespace(version=10,last_applied_turn_seq=1),
+                                affect=None,report=None,ledger_turns=(),memory_records=(),sampled_at=100)
+    turn=KernelTurn(session_id='s',generation=1,run_id='r1',
+                    move=NextConversationMove(intent='answer',say='reply'),note='')
     class Router:
-        def __init__(self, manifest):
-            self.m = manifest
-            self.model = AIRuntimeModelRouter(llm_service=None, logger=None)
-        def generate_public_reply(self, **kwargs):
-            return self.model._compat_public_envelope({"text": "Trà thơm thật", "speech_text": "お茶", "claim_manifest": self.m})
-    def realize(manifest):
-        host = type("Host", (), {"ai_model_router": Router(manifest)})()
-        return RuntimeConversationWriter(host).realize(
-            turn=turn, event=event, recent_history=(),
-            runtime_context={"__evidence_registry": __import__("dataclasses").replace(reg, run_id="r1")})
-    realize([_item("user_statement", "Bạn vừa bảo thích trà", ["event:e2"])])
-    with pytest.raises(RuntimeError, match="claim_evidence_not_allowed"):
-        realize([_item("user_statement", "Bạn vừa bảo thích trà", ["event:not-real"])])
-    with pytest.raises(RuntimeError, match="claim_domain_not_allowed"):
-        realize([_item("shared_episode", "Chúng ta từng đi Kyoto", ["event:e2"])])
-    realize([_item("self_preference", "Tôi thích trà")])
+        def __init__(self,manifest):
+            self.m=manifest; self.model=AIRuntimeModelRouter(llm_service=None,logger=None)
+        def generate_public_reply(self,**kwargs):
+            return self.model._compat_public_envelope({'text':'Trà thơm thật','speech_text':'お茶',
+                                                        'claim_manifest':self.m})
+    for manifest in ([_item('user_statement','X',['event:fake'])],
+                     [_item('shared_episode','Kyoto',['event:e2'])],
+                     [_item('self_preference','Tôi thích trà')]):
+        host=type('Host',(),{'ai_model_router':Router(manifest)})()
+        rendered=RuntimeConversationWriter(host).realize(turn=turn,event=event,recent_history=(),
+             runtime_context={'__evidence_registry':reg})
+        assert rendered.surface.display_text=='Trà thơm thật'
 
 
-def test_writer_rechecks_claim_manifest_after_grounding_rewrite(monkeypatch):
-    """Rewrite của grounding V12 không thể mượn manifest pass của candidate đầu."""
+def test_no_semantic_grounding_rewrite_or_second_writer_call(monkeypatch):
     from types import SimpleNamespace
     class Router:
-        def __init__(self):
-            self.i = 0
-            self.model = AIRuntimeModelRouter(llm_service=None, logger=None)
-        def generate_public_reply(self, **kwargs):
-            self.i += 1
-            manifest = [_item()] if self.i == 1 else "broken"
-            return self.model._compat_public_envelope({"text":"Xin chào", "speech_text":"こんにちは", "claim_manifest": manifest})
+        def __init__(self):self.i=0;self.model=AIRuntimeModelRouter(llm_service=None,logger=None)
+        def generate_public_reply(self,**kwargs):
+            self.i+=1
+            return self.model._compat_public_envelope({'text':'Xin chào','speech_text':'こんにちは',
+                                                       'claim_manifest':'broken'})
     class Verdict:
-        allowed = False
-        def retry_instruction(self): return "viết lại"
+        allowed=False
+        def retry_instruction(self):return 'viết lại'
     import runtime.grounding_surface_gate as gate
-    monkeypatch.setattr(gate, "evaluate_grounded_surface", lambda *args, **kwargs: Verdict())
-    router = Router()
-    event = ConversationEvent(event_id="e1", session_id="s", kind="user_turn", text="Hi")
-    turn = KernelTurn(session_id="s", generation=1, run_id="r1",
-                      move=NextConversationMove(intent="answer", say="reply"), note="")
-    with pytest.raises(RuntimeError, match="public_writer_manifest_invalid"):
-        RuntimeConversationWriter(SimpleNamespace(ai_model_router=router)).realize(
-            turn=turn, event=event, recent_history=(),
-            runtime_context={"__source_grounding_engine": object(),
-                             "__source_grounding_report": object()})
-    assert router.i == 2
+    monkeypatch.setattr(gate,'evaluate_grounded_surface',lambda *a,**k:Verdict())
+    router=Router()
+    event=ConversationEvent(event_id='e1',session_id='s',kind='user_turn',text='Hi')
+    turn=KernelTurn(session_id='s',generation=1,run_id='r1',
+                    move=NextConversationMove(intent='answer',say='reply'),note='')
+    rendered=RuntimeConversationWriter(SimpleNamespace(ai_model_router=router)).realize(
+        turn=turn,event=event,recent_history=(),
+        runtime_context={'__source_grounding_engine':object(),'__source_grounding_report':object()})
+    assert router.i==1 and rendered.surface.display_text=='Xin chào'

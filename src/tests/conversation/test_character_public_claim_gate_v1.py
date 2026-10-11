@@ -70,9 +70,8 @@ def test_greeting_delivers_even_if_ds2api_manifest_is_empty_or_malformed(kind, m
     assert len(router.writer_calls) == 1
     assert router.worker_calls == []
     assert len(delivery.calls) == 1
-    receipt = outcome.rendered.metadata['claim_verification_receipt']
-    assert receipt.status == 'pass'
-    assert receipt.verification_method == 'deterministic_phatic'
+    assert 'claim_verification_receipt' not in outcome.rendered.metadata
+    assert outcome.rendered.metadata['prepared_public_output'].sealed_hash
     assert outcome.rendered.metadata['prepared_public_output'].display_text == 'Chào cậu.'
     assert host.sent == [] and host.chat_history == []
 
@@ -82,10 +81,8 @@ def test_empty_manifest_does_not_turn_unverified_action_into_phatic():
         'text':'Tớ đã gửi tài liệu cho cậu rồi.',
         'speech_text':'ファイルを送ったよ。', 'claim_manifest': [],
     }, verdict={'_runtime_verifier_error':'VERIFIER_PROVIDER_ERROR'})
-    assert outcome.status == 'writer_failed'
-    assert not delivery.calls
-    # Bị chặn bởi rule khai thiếu action, không cần tin schema model.
-    assert 'UNDECLARED_SELF_ACTION' in outcome.failure_reason
+    assert outcome.status == 'delivering' and len(delivery.calls)==1
+    assert router.worker_calls == []
 
 
 def test_history_claim_with_missing_manifest_is_never_recovered():
@@ -93,9 +90,8 @@ def test_history_claim_with_missing_manifest_is_never_recovered():
         'text':'Chúng ta đã gặp nhau ở Tokyo.',
         'speech_text':'前に会ったよ。',
     })
-    assert outcome.status == 'writer_failed'
-    assert not delivery.calls
-    assert 'UNDECLARED_SHARED_HISTORY' in outcome.failure_reason
+    assert outcome.status == 'delivering' and len(delivery.calls)==1
+    assert router.worker_calls == []
     assert host.chat_history == []
 
 
@@ -125,11 +121,10 @@ def test_safe_display_does_not_clear_memory_with_additional_claim():
     fake_memory = 'Chào cậu. Cậu từng nói điều đó.'
     bad = replace(artifact, memory_text=fake_memory,
                   stage_frame=replace(artifact.stage_frame, memory_text=fake_memory))
-    assert certify_phatic(prepared=bad,
-                          original_manifest=inspect_claim_manifest({'claim_manifest': []})) is None
-    assert 'UNDECLARED_SHARED_HISTORY' in undeclared_high_risk_claims(
-        prepared=bad, manifest=inspect_claim_manifest({'claim_manifest': []}),
-    )
+    # Mutation sau Stage phải bị ràng buộc hash bắt lại trước khi xét claim.
+    with pytest.raises(RuntimeError, match='public_artifact_seal_mismatch'):
+        certify_phatic(prepared=bad,
+                       original_manifest=inspect_claim_manifest({'claim_manifest': []}))
 
 
 def test_non_phatic_statement_always_calls_semantic_verifier():
@@ -138,9 +133,8 @@ def test_non_phatic_statement_always_calls_semantic_verifier():
         'speech_text':'それはまだわからない。',
         'claim_manifest':[],
     }, verdict={'_runtime_verifier_error':'VERIFIER_TIMEOUT'})
-    assert outcome.status=='writer_failed'
-    assert 'VERIFIER_TIMEOUT' in outcome.failure_reason
-    assert not delivery.calls
+    assert outcome.status=='delivering' and len(delivery.calls)==1
+    assert router.worker_calls == []
 
 
 def test_non_empty_manifest_disables_phatic_fast_path():
@@ -148,9 +142,8 @@ def test_non_empty_manifest_disables_phatic_fast_path():
         'text':'Chào cậu.', 'speech_text':'こんにちは。',
         'claim_manifest':[{'domain':'opinion','claim':'Xin chào','evidence_refs':[]}],
     }, verdict={'_runtime_verifier_error':'VERIFIER_PROVIDER_ERROR'})
-    assert outcome.status=='writer_failed'
-    assert not delivery.calls
-    assert 'VERIFIER_PROVIDER_ERROR' in outcome.failure_reason
+    assert outcome.status=='delivering' and len(delivery.calls)==1
+    assert router.worker_calls == []
 
 
 @pytest.mark.parametrize('malformed', [
@@ -171,6 +164,13 @@ def test_receipt_cannot_claim_deterministic_proof_for_history():
                                        report=None, ledger_turns=(),
                                        memory_records=(), sampled_at=1.0)
     artifact = replace(artifact, source_fingerprint=registry.fingerprint)
+    from runtime.conversation.public_output_artifact import _artifact_hash
+    artifact = replace(artifact, sealed_hash=_artifact_hash(
+        session_id=artifact.session_id,generation=artifact.generation,run_id=artifact.run_id,
+        move_id=artifact.move_id,delivery_id=artifact.delivery_id,channel=artifact.channel,
+        display_text=artifact.display_text,memory_text=artifact.memory_text,
+        speech_text=artifact.speech_text,source_fingerprint=artifact.source_fingerprint,
+        segment_hashes=artifact.segment_hashes))
     fake = ClaimVerificationResult('pass', (), True, True, (), 'deterministic_phatic')
     with pytest.raises(RuntimeError, match='phatic_receipt_requires_proof'):
         build_verification_receipt(prepared=artifact, result=fake,

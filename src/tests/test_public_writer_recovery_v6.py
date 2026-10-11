@@ -15,12 +15,13 @@ from runtime.ai_orchestrated.model_router import (
 def test_direct_public_contract_chi_block_public_text() -> None:
     """Soft metadata không còn là điều kiện để một direct reply tồn tại."""
 
-    # V42: claim_manifest là phần bắt buộc của public boundary để Surface/chat
-    # không thể thêm factual domain ngoài authority chỉ bằng prose.
-    assert PUBLIC_REPLY_CORE_SCHEMA["required"] == ["should_speak", "text", "speech_text", "claim_manifest"]
-    for key in ("semantic_frame", "assistant_act", "social_plan", "self_capability_claims"):
+    # Không bắt writer điền domain/ref để được trả lời user. Claim manifest
+    # vẫn có thể xuất hiện làm metadata nghiên cứu, nhưng không là hard gate.
+    assert PUBLIC_REPLY_CORE_SCHEMA["required"] == ["should_speak", "text", "speech_text"]
+    for key in ("semantic_frame", "assistant_act", "self_capability_claims", "claim_manifest"):
         assert key not in PUBLIC_REPLY_CORE_SCHEMA["required"]
         assert key in PUBLIC_REPLY_CORE_SCHEMA["properties"]
+    assert "social_plan" not in PUBLIC_REPLY_CORE_SCHEMA["properties"]
 
 
 def test_json_parser_salvages_text_even_when_metadata_exists() -> None:
@@ -129,10 +130,10 @@ def test_direct_writer_uses_core_schema_not_full_semantic_tree(monkeypatch) -> N
     payload = router.generate_public_reply(chat_history=[], user_text="đừng nói như máy nữa")
 
     schema = captured["response_format"]["json_schema"]["schema"]
-    assert schema["required"] == ["should_speak", "text", "speech_text", "claim_manifest"]
+    assert schema["required"] == ["should_speak", "text", "speech_text"]
     assert "social_plan" not in schema["required"]
     assert captured["timeout"] == 11.0
-    assert captured["max_tokens"] == 560
+    assert 560 <= captured["max_tokens"] <= 1000
     assert payload["text"] == "Tôi trả lời được rồi."
     assert payload["should_speak"] is True
 

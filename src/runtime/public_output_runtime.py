@@ -180,16 +180,11 @@ class PublicOutputRuntimeMixin:
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None,
                                prepared=None, verification=None) -> bool:
         channel_name = str(channel or "").strip().lower()
-        # v0.3: receipt là bắt buộc cho V12. Đối chiếu TRƯỚC lifecycle/panel.
+        # V12: chuẩn bị và niêm phong transcript; semantic verifier đã bị gỡ.
+        # Điều kiện cứng còn lại: đúng decision, generation, channel, stage bytes.
         if prepared is not None:
-            from runtime.conversation.claim_verifier import validate_receipt
-            from runtime.conversation.kernel import KernelTurn
-            from types import SimpleNamespace
-            turn_stub = SimpleNamespace(session_id=prepared.session_id,
-                                        generation=prepared.generation, run_id=prepared.run_id,
-                                        move=SimpleNamespace(move_id=prepared.move_id),
-                                        delivery_id=prepared.delivery_id)
-            validate_receipt(prepared=prepared,receipt=verification,turn=turn_stub)
+            from runtime.conversation.public_output_artifact import validate_prepared
+            validate_prepared(prepared)
             if decision is not prepared.decision:
                 raise RuntimeError('v03_decision_identity_changed')
             kernel = getattr(self,'conversation_kernel',None)

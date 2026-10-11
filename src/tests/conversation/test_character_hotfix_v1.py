@@ -59,55 +59,34 @@ def _run_with_router(router):
     return outcome, log, delivery, router
 
 
-def test_missing_manifest_reports_both_attempts_without_public_commit():
-    router = Router()
-    router.payloads = [{'text': 'Tớ cần suy nghĩ thêm.', 'speech_text': '少し考えたい。'}]
-    outcome, log, delivery, router = _run_with_router(router)
-
-    assert outcome.status == 'writer_failed'
-    # Format thiếu chỉ có thể được phục hồi khi *câu cuối* là xã giao thuần túy.
-    assert 'public_writer_manifest_missing' in outcome.failure_reason
-    assert outcome.failure_reason.count('public_writer_manifest_missing') == 2
-    assert len(router.writer_calls) == 2
-    assert not router.worker_calls  # Deterministic failure không gọi checker tốn phí.
-    assert not delivery.calls
-    assert len([line for level, line in log.lines
-                if level == 'warning' and 'writer_candidate' in line]) == 2
-    assert any('writer_failed' in line and 'failure_reason=' not in line and
-               'reason=v03_candidate_rejected:' in line
-               for _, line in log.lines)
-    assert all('xin chào' not in line for _, line in log.lines)
+def test_missing_manifest_does_not_silence_valid_writer_output():
+    router=Router()
+    router.payloads=[{'text':'Tớ cần suy nghĩ thêm.', 'speech_text':'少し考えたい。'}]
+    outcome,log,delivery,router=_run_with_router(router)
+    assert outcome.status=='delivering' and len(delivery.calls)==1
+    assert len(router.writer_calls)==1 and router.worker_calls==[]
+    assert any('stage=prepared status=pass code=WRITER_DIRECT' in line for _,line in log.lines)
+    assert all('xin chào' not in line for _,line in log.lines)
 
 
-def test_checker_invalid_schema_is_visible_but_never_bypassed():
-    router = Router()
-    # Simulate router._call returning {} after provider timeout/admission failure.
-    router.payloads = [{'text': 'Tớ cần suy nghĩ thêm.', 'speech_text': '少し考えたい。', 'claim_manifest': []}]
-    router.invoke_structured_worker = lambda *_args, **_kwargs: {}
-    outcome, log, delivery, router = _run_with_router(router)
-
-    assert outcome.status == 'writer_failed'
-    assert 'verify=v03_verify_unknown:VERIFIER_SCHEMA_INVALID' in outcome.failure_reason
-    # HOTFIX 02: lỗi schema/provider không thể sửa bằng cách sinh câu khác.
-    assert len(router.writer_calls) == 1
-    assert not delivery.calls
-    assert any('stage=verify' in line and 'VERIFIER_SCHEMA_INVALID' in line
-               for _, line in log.lines)
+def test_dead_verifier_provider_is_never_consulted():
+    router=Router()
+    router.payloads=[{'text':'Tớ cần suy nghĩ thêm.', 'speech_text':'少し考えたい。','claim_manifest':[]}]
+    router.invoke_structured_worker=lambda *_args,**_kwargs: (_ for _ in ()).throw(RuntimeError('must not call'))
+    outcome,log,delivery,router=_run_with_router(router)
+    assert outcome.status=='delivering' and len(delivery.calls)==1
+    assert len(router.writer_calls)==1
 
 
-def test_successful_greeting_uses_deterministic_proof_without_verifier():
-    router = Router()
-    outcome, log, delivery, router = _run_with_router(router)
-
-    assert outcome.status == 'delivering'
-    assert outcome.failure_reason == ''
-    assert len(router.writer_calls) == 1
-    assert len(router.worker_calls) == 0
-    assert len(delivery.calls) == 1
-    rendered = delivery.calls[0]['rendered']
-    assert rendered.metadata['claim_verification_receipt'].status == 'pass'
-    assert rendered.metadata['claim_verification_receipt'].verification_method == 'deterministic_phatic'
-    assert any('stage=verified status=pass' in line for _, line in log.lines)
+def test_successful_greeting_needs_no_semantic_receipt():
+    router=Router();outcome,log,delivery,router=_run_with_router(router)
+    assert outcome.status=='delivering' and outcome.failure_reason==''
+    assert len(router.writer_calls)==1 and router.worker_calls==[]
+    assert len(delivery.calls)==1
+    rendered=delivery.calls[0]['rendered']
+    assert 'claim_verification_receipt' not in rendered.metadata
+    assert rendered.metadata['prepared_public_output'].sealed_hash
+    assert any('stage=prepared status=pass' in line for _,line in log.lines)
 
 
 def test_provider_exception_message_never_reaches_log_or_rewrite():

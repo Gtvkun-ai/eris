@@ -41,72 +41,62 @@ def event():
     return ConversationEvent(event_id='user:1',session_id='s',kind='user_turn',text='xin chào')
 
 
-def test_kernel_root_writer_passes_through_verifier_and_receipt():
+def test_kernel_root_writer_delivers_without_semantic_verifier():
     router=Router();h=host(router)
-    # Lượt không thuộc phatic allowlist phải đi semantic verifier.
-    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。','claim_manifest':[]}]
+    router.payloads=[{'text':'Tớ chưa chắc điều đó.', 'speech_text':'それはわからない。', 'claim_manifest':[]}]
     deliveries=[]
     class Agent:
-        def decide(self,**kwargs):
-            return NextConversationMove(intent='đáp',say='chào lại')
+        def decide(self,**kwargs): return NextConversationMove(intent='đáp',say='chào lại')
     class Delivery:
-        def deliver(self,**kwargs):
-            deliveries.append(kwargs)
+        def deliver(self,**kwargs): deliveries.append(kwargs)
     kernel=ConversationKernel(Agent(),writer=RuntimeConversationWriter(h),delivery=Delivery())
     e=event();r=build_evidence_registry(event=e,state=None,affect=None,
         report=None,ledger_turns=(),memory_records=(),sampled_at=1.)
     outcome=kernel.handle_event(e,runtime_context={'__evidence_registry':r})
     assert outcome.status=='delivering'
-    assert len(router.writer_calls)==1 and len(router.worker_calls)==1
-    assert router.writer_calls[0]['allow_language_repair'] is False
-    assert outcome.rendered.metadata['claim_verification_receipt'].status=='pass'
+    assert len(router.writer_calls)==1 and router.worker_calls==[]
+    assert 'claim_verification_receipt' not in outcome.rendered.metadata
     assert outcome.rendered.metadata['prepared_public_output'].delivery_id==outcome.delivery_id
-    assert h.sent==[] and h.chat_history==[]
+    assert len(deliveries)==1 and h.sent==[] and h.chat_history==[]
 
 
-def test_one_rewrite_budget_for_structural_error_and_semantic_failure():
-    router=Router();h=host(router)
-    e=event();r=build_evidence_registry(event=e,state=None,affect=None,
-        report=None,ledger_turns=(),memory_records=(),sampled_at=1.)
-    class Agent:
-        def decide(self,**kwargs):
-            return NextConversationMove(intent='answer',say='answer')
-    class Delivery:
-        def __init__(self):self.count=0
-        def deliver(self,**kwargs):self.count+=1
-    d=Delivery()
-    router.payloads=[{'text':'Câu đầu.','speech_text':'こんにちは。'},
-                     {'text':'Câu sửa.','speech_text':'こんにちは。','claim_manifest':[]}]
-    kernel=ConversationKernel(Agent(),writer=RuntimeConversationWriter(h),delivery=d)
-    outcome=kernel.handle_event(e,runtime_context={'__evidence_registry':r})
-    assert outcome.status=='delivering'
-    assert len(router.writer_calls)==2 and len(router.worker_calls)==1
-    assert d.count==1
-    assert 'REWRITE' in router.writer_calls[-1].get('retry_instruction','')
-
-
-def test_failed_semantic_two_candidates_are_never_delivered():
-    router=Router();h=host(router)
-    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。','claim_manifest':[]}]
-    router.verdicts=[{'status':'fail','surface_equivalence':False,'memory_equivalence':True,'findings':[]} for _ in range(2)]
+def test_missing_manifest_is_not_reason_for_silence():
+    router=Router(); h=host(router)
+    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。'}]
     class Agent:
         def decide(self,**kwargs):return NextConversationMove(intent='answer',say='answer')
     class Delivery:
-        def deliver(self,**kwargs):raise AssertionError('should not deliver')
-    kernel=ConversationKernel(Agent(),writer=RuntimeConversationWriter(h),delivery=Delivery())
-    e=event();r=build_evidence_registry(event=e,state=None,affect=None,
+        def __init__(self):self.calls=[]
+        def deliver(self,**kwargs):self.calls.append(kwargs)
+    d=Delivery();e=event();r=build_evidence_registry(event=e,state=None,affect=None,
         report=None,ledger_turns=(),memory_records=(),sampled_at=1.)
-    outcome=kernel.handle_event(e,runtime_context={'__evidence_registry':r})
-    assert outcome.status=='writer_failed' and len(router.writer_calls)==2
-    assert len(router.worker_calls)==2 and h.sent==[] and h.chat_history==[]
+    outcome=ConversationKernel(Agent(),writer=RuntimeConversationWriter(h),delivery=d).handle_event(
+        e,runtime_context={'__evidence_registry':r})
+    assert outcome.status=='delivering' and len(d.calls)==1
+    assert len(router.writer_calls)==1 and not router.worker_calls
+
+
+def test_semantic_verifier_failure_cannot_block_writer():
+    router=Router();h=host(router)
+    router.payloads=[{'text':'Tớ chưa chắc điều đó.','speech_text':'それはわからない。'}]
+    router.verdicts=[{'status':'fail','surface_equivalence':False,'memory_equivalence':True,'findings':[]}]
+    class Agent:
+        def decide(self,**kwargs):return NextConversationMove(intent='answer',say='answer')
+    class Delivery:
+        def __init__(self):self.calls=[]
+        def deliver(self,**kwargs):self.calls.append(kwargs)
+    d=Delivery();e=event();r=build_evidence_registry(event=e,state=None,affect=None,
+        report=None,ledger_turns=(),memory_records=(),sampled_at=1.)
+    outcome=ConversationKernel(Agent(),writer=RuntimeConversationWriter(h),delivery=d).handle_event(
+        e,runtime_context={'__evidence_registry':r})
+    assert outcome.status=='delivering' and len(d.calls)==1
+    assert len(router.writer_calls)==1 and router.worker_calls==[]
 
 
 def _verified_delivery_fixture():
     """Host giả ghi đúng side effects, còn prepared/receipt là object thật."""
-    from runtime.conversation.claim_verifier import build_verification_receipt
     from runtime.conversation.writer import RenderedConversationMove
     from runtime.conversation.delivery import SurfaceEnvelope
-    from runtime.conversation.claim_verifier import validate_verifier_result
     t=__import__('test_character_output_artifact_v1', fromlist=['turn']).turn()
     ev=event()
     # Id của event và source phải cùng nhau (chống chứng cứ xuyên lượt).
@@ -122,13 +112,9 @@ def _verified_delivery_fixture():
     p=RuntimeConversationDeliveryAdapter(h).prepare_candidate(
         turn=t,event=ev,payload={'text':'Chào cậu.','speech_text':'こんにちは。','claim_manifest':[]},
         source_fingerprint=r.fingerprint)
-    result=validate_verifier_result({'status':'pass','findings':[],
-        'surface_equivalence':True,'memory_equivalence':True},prepared=p,registry=r)
-    receipt=build_verification_receipt(prepared=p,result=result,registry=r,portrait=None)
     rendered=RenderedConversationMove(surface=SurfaceEnvelope(display_text=p.display_text,
         speech_text=p.speech_text,language='vi'),decision_payload=t.move.to_dict(),
-        metadata={'prepared_public_output':p,'claim_verification_receipt':receipt,
-                  'evidence_registry':r,'event_kind':'user_turn','user_text':ev.text})
+        metadata={'prepared_public_output':p,'evidence_registry':r,'event_kind':'user_turn','user_text':ev.text})
     return h,t,rendered
 
 
@@ -144,15 +130,13 @@ def test_real_delivery_adapter_uses_locked_verified_artifact_once():
     assert h.history[0]==('assistant',rendered.metadata['prepared_public_output'].memory_text)
 
 
-def test_real_delivery_adapter_tampered_receipt_has_no_public_commit():
-    from runtime.conversation.writer import RenderedConversationMove
+def test_real_delivery_adapter_tampered_artifact_has_no_public_commit():
     from dataclasses import replace as rep
     h,t,rendered=_verified_delivery_fixture()
     meta=dict(rendered.metadata)
-    meta['claim_verification_receipt']=rep(meta['claim_verification_receipt'],
-                                          speech_hash='bad')
+    meta['prepared_public_output']=rep(meta['prepared_public_output'], speech_text='sai')
     corrupt=rep(rendered,metadata=meta)
-    with pytest.raises(RuntimeError,match='receipt_surface_or_source_mismatch'):
+    with pytest.raises(RuntimeError,match='public_artifact_seal_mismatch'):
         RuntimeConversationDeliveryAdapter(h).deliver(turn=t,rendered=corrupt,
                                                        delivery_id=t.delivery_id)
     assert h.sent==[] and h.history==[] and h.positions==[]
