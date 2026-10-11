@@ -58,7 +58,9 @@ from runtime.outcome_observer import OutcomeObserver
 from runtime.policy_settings import RuntimePolicySettings
 from runtime.private_life_daemon import PrivateLifeDaemon
 from runtime.private_mind_daemon import PrivateMindDaemon
-from runtime.public_payload_policy import sanitize_body_payload
+from runtime.public_payload_policy import (
+    build_speech_body_payload, speech_body_udp_bytes,
+)
 from runtime.public_turn_ledger import PublicTurnLedger
 from runtime.public_turn_runtime import PublicTurnRuntime
 from runtime.repair_state import RepairStateController
@@ -360,24 +362,24 @@ class PublicOutputRuntimeMixin:
         # Guard lần nữa tại điểm sát observation và public lifecycle.
         if not v03_current():
             return False
-        # Không đánh dấu CONTENT_COMMITTED trước khi chứng minh frame được giữ
-        # nguyên, generation còn sống và UDP payload không bị cắt sau stage.
+        # Niêm phong datagram thoại TRƯỚC public commit. Payload của panel
+        # Identity / cognition đi một lane riêng và có thể phình >63KB mà
+        # không ảnh hưởng lời nói. Dùng lại đúng object này lúc UDP dispatch;
+        # không build lại lần hai sau các tác dụng phụ của observation.
+        preflight_body_payload = None
         if prepared is not None:
             from runtime.conversation.public_output_artifact import validate_prepared
             validate_prepared(prepared)
             if payload.get('text') != prepared.display_text or payload.get('memory_text') != prepared.memory_text:
                 raise RuntimeError('v03_late_stage_surface_change')
-            # Preflight một bản sao datagram đúng bộ lọc body, trước lifecycle.
-            # Không cho transport tự cắt text sau khi content đã commit.
-            from transport.udp import MAX_UDP_PAYLOAD_BYTES, _sanitize_udp_payload
-            checked_body = sanitize_body_payload(payload)
-            for private_key in ('private_mind_digest', 'private_life_digest', 'emotion_debug', 'depth_v2'):
-                checked_body.pop(private_key, None)
-            checked_bytes = json.dumps(_sanitize_udp_payload(checked_body), ensure_ascii=False).encode('utf-8')
-            if len(checked_bytes) > MAX_UDP_PAYLOAD_BYTES:
-                raise RuntimeError('v03_pre_dispatch_datagram_overflow')
-            if checked_body.get('text') != prepared.display_text:
+            preflight_body_payload = build_speech_body_payload(payload)
+            if preflight_body_payload.get('text') != prepared.display_text:
                 raise RuntimeError('v03_pre_dispatch_text_modified')
+            # Đo bytes trên packet sau khi tách panel (không phải payload gộp).
+            self.logger.debug(
+                '[public-udp] speech preflight bytes=%d panel separated',
+                speech_body_udp_bytes(preflight_body_payload),
+            )
         # Lifecycle chỉ bắt đầu SAU guard; lượt đã bị preempt không ghi
         # observation/public state hoặc tạo receipt phát ngôn.
         from runtime.public_lifecycle import lifecycle_for
@@ -584,26 +586,14 @@ class PublicOutputRuntimeMixin:
                 # Godot chỉ cần text/action/stage. Parser trace là metadata nội
                 # bộ; gửi nó sang body khiến console in ba dòng AI Debug cho
                 # mỗi câu, trong khi chẳng giúp nhân vật cử động tốt hơn.
-                body_payload = sanitize_body_payload(payload)
-                # Panel đi một datagram riêng. Nếu để chung, payload Director /
-                # stage / diary vượt 63 KB thì transport buộc bỏ sạch emotion,
-                # private_mind và depth_v2; kết quả là mọi panel cùng trống dù
-                # cognition vẫn chạy. Tách lane để câu nói và panel không kéo
-                # nhau rơi xuống overflow fallback.
-                for panel_key in (
-                    "private_mind_digest",
-                    "private_life_digest",
-                    "emotion_debug",
-                    "depth_v2",
-                ):
-                    body_payload.pop(panel_key, None)
+                # Với prepared transcript dùng NGUYÊN BẢN datagram đã
+                # preflight. Không vô ý nạp identity_runtime hoặc cognitive_views
+                # trở lại gói chat sau public commit/observation.
+                body_payload = (preflight_body_payload if prepared is not None
+                                else build_speech_body_payload(payload))
                 if prepared is not None:
                     if not v03_current():
                         return
-                    from transport.udp import MAX_UDP_PAYLOAD_BYTES, _sanitize_udp_payload
-                    raw_bytes = json.dumps(_sanitize_udp_payload(body_payload), ensure_ascii=False).encode('utf-8')
-                    if len(raw_bytes) > MAX_UDP_PAYLOAD_BYTES:
-                        raise RuntimeError('v03_udp_datagram_overflow_after_prepare')
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
