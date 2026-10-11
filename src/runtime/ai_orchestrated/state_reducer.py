@@ -312,19 +312,29 @@ class StateReducer:
         loops = [item.text for item in active_goal_records(goal_records)]
 
         candidates = list(state.memory_candidates)
-        if observation.memory_worthy and observation.memory_candidate and observation.confidence >= 0.68:
-            candidates.append(
-                {
-                    "turn_id": observation.turn_id,
-                    "turn_seq": observation.turn_seq,
-                    "text": observation.memory_candidate,
-                    "confidence": observation.confidence,
-                    "evidence": list(observation.evidence),
-                    "source": observation.source,
-                    "created_at": now,
-                }
+        # Không lưu suy đoán thiếu evidence thành ký ức dù confidence cao.
+        if observation.memory_worthy and observation.memory_candidate and observation.confidence >= 0.68 and observation.evidence:
+            # Cùng một cách diễn giải xuất hiện trong nhiều lượt không tự biến
+            # thành nhiều ký ức. Dedupe theo nội dung chuẩn hóa, không dựa vào
+            # turn_id mới (turn_id khác chưa chứng minh sự kiện độc lập).
+            normalized = " ".join(observation.memory_candidate.casefold().split())
+            already_seen = any(
+                " ".join(str(item.get("text", "")).casefold().split()) == normalized
+                for item in candidates
             )
-            candidates = candidates[-12:]
+            if not already_seen:
+                candidates.append(
+                    {
+                        "turn_id": observation.turn_id,
+                        "turn_seq": observation.turn_seq,
+                        "text": observation.memory_candidate,
+                        "confidence": observation.confidence,
+                        "evidence": list(observation.evidence),
+                        "source": observation.source,
+                        "created_at": now,
+                    }
+                )
+                candidates = candidates[-12:]
 
         return RuntimeMindState(
             version=state.version + 1,

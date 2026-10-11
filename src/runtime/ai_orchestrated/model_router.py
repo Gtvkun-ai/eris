@@ -21,12 +21,97 @@ from runtime.eris_voice_contract import (
 )
 from runtime.pedagogical_contracts import TeachingDirective, validate_directive
 from llm.deepseek import is_deepseek
+from llm.raw_trace import record_observer_diagnostic
 
 
 from .contracts import CognitiveObservation, IntentionPlan
 from .discovery import DiscoveryPlan
 from .identity import CONFLICT_TEMPLATES, DEFAULT_DEFENSES, DEFAULT_EMERGENT_VALUES, DEFAULT_MOTIVES, DEFAULT_RELATIONSHIP, DEFAULT_VALUES
 from .personality import DEFAULT_CORE, DEFAULT_MOOD, DEFAULT_TEMPERAMENT
+
+
+class ObserverInferenceError(RuntimeError):
+    """Lỗi có phân loại của observer, không chứa prompt, token hay raw provider.
+
+    Router phải PHÁT RA lỗi này thay vì biến sự cố thành `{}` rồi để
+    CognitiveObservation.from_mapping() tự dựng một quan sát `neutral` giả.
+    """
+
+    VALID_STATUSES = {"empty_output", "parse_error", "provider_error", "timeout"}
+
+    def __init__(self, status: str, *, detail: str = "") -> None:
+        self.status = status if status in self.VALID_STATUSES else "provider_error"
+        # Chỉ giữ metadata ngắn đã kiểm soát; không nhận str(exception) từ provider.
+        self.detail = detail[:100]
+        super().__init__(self.status)
+
+
+def _observer_output_budget(*, deep: bool = False) -> int:
+    """Schema objective có nhiều trường; 520 token trước đây dễ làm JSON cụt.
+
+    Tách ngân sách output khỏi HTTP timeout; giới hạn để tránh request vô hạn.
+    Có thể tune từ thực nghiệm, không cam kết một con số đúng với mọi model.
+    """
+    name = "ERIS_POST_OBSERVER_DEEP_MAX_TOKENS" if deep else "ERIS_POST_OBSERVER_MAX_TOKENS"
+    default = 2300 if deep else 1800
+    try:
+        return max(800, min(4096, int(os.getenv(name, str(default)) or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _validate_observer_object(data: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
+    """Kiểm tra objective schema trước khi model được coi là quan sát hợp lệ.
+
+    Strict=false ở gateway chỉ là gợi ý. Không tin rằng model đã tuân thủ;
+    fail rõ `parse_error` thay vì lén điền hàng chục default vào state.
+    Không đưa dữ liệu của user/model vào chuỗi lỗi, chỉ tên trường.
+    """
+    import math
+
+    def validate(value: Any, definition: Mapping[str, Any], path: str = "root") -> None:
+        kind = definition.get("type")
+        if kind == "object":
+            if not isinstance(value, Mapping):
+                raise ObserverInferenceError("parse_error", detail=f"invalid_type:{path}")
+            missing = [str(k) for k in definition.get("required", ()) if k not in value]
+            if missing:
+                raise ObserverInferenceError("parse_error", detail="missing:" + ",".join(missing)[:90])
+            for key, member in definition.get("properties", {}).items():
+                if key in value and isinstance(member, Mapping):
+                    validate(value[key], member, str(key))
+        elif kind == "array":
+            if not isinstance(value, list):
+                raise ObserverInferenceError("parse_error", detail=f"invalid_type:{path}")
+            if "maxItems" in definition and len(value) > int(definition["maxItems"]):
+                raise ObserverInferenceError("parse_error", detail=f"too_many_items:{path}")
+            member = definition.get("items", {})
+            if isinstance(member, Mapping):
+                for item in value:
+                    validate(item, member, path + "[]")
+        elif kind == "string":
+            if not isinstance(value, str):
+                raise ObserverInferenceError("parse_error", detail=f"invalid_type:{path}")
+        elif kind == "boolean":
+            if not isinstance(value, bool):
+                raise ObserverInferenceError("parse_error", detail=f"invalid_type:{path}")
+        elif kind in {"integer", "number"}:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+                kind == "integer" and not isinstance(value, int)
+            ) or not math.isfinite(float(value)):
+                raise ObserverInferenceError("parse_error", detail=f"invalid_type:{path}")
+            if "minimum" in definition and value < definition["minimum"]:
+                raise ObserverInferenceError("parse_error", detail=f"out_of_range:{path}")
+            if "maximum" in definition and value > definition["maximum"]:
+                raise ObserverInferenceError("parse_error", detail=f"out_of_range:{path}")
+        if "enum" in definition and value not in definition["enum"]:
+            raise ObserverInferenceError("parse_error", detail=f"invalid_enum:{path}")
+
+    validate(data, schema)
+    if not str(data.get("user_act", "")).strip() or not str(data.get("relationship_meaning", "")).strip():
+        raise ObserverInferenceError("parse_error", detail="missing_semantic_act")
+
+
 
 
 def _deepseek_web_authority_mode() -> bool:
@@ -1411,7 +1496,10 @@ class AIRuntimeModelRouter:
         conversation_messages: Sequence[Mapping[str, Any]] | None = None,
         raw_reply_sink: list[str] | None = None,
     ) -> dict[str, Any]:
+        observer_call = name.startswith("eris_cognitive_observation")
         if client is None:
+            if observer_call:
+                raise ObserverInferenceError("provider_error", detail="missing_client")
             return {}
         # PDF cleanup annotation: JSON-schema strictness is a contract choice,
         # not a removed-model compatibility branch.
@@ -1462,12 +1550,30 @@ class AIRuntimeModelRouter:
             content = _content(raw)
             parsed = _json(content, public_reply=False)
             result = _unwrap_schema_payload(parsed, schema)
+            if observer_call:
+                if not isinstance(content, str) or not content.strip():
+                    raise ObserverInferenceError("empty_output")
+                if not result:
+                    raise ObserverInferenceError("parse_error", detail="invalid_json_or_empty_object")
+                _validate_observer_object(result, schema)
             # Lưu nguyên văn câu trả lời trên wire. Serialize lại dict parsed
             # sẽ khác JSON thật và khiến SessionGuard reset ở lượt tiếp theo.
             if raw_reply_sink is not None and isinstance(content, str) and content.strip() and result:
                 raw_reply_sink.append(content)
             return result
         except Exception as exc:  # noqa: BLE001
+            if observer_call:
+                if isinstance(exc, ObserverInferenceError):
+                    failure = exc
+                else:
+                    name_safe = type(exc).__name__
+                    status = "timeout" if "timeout" in name_safe.lower() or "deadline" in name_safe.lower() else "provider_error"
+                    failure = ObserverInferenceError(status, detail=name_safe)
+                # Không dump exception gốc vào logger vì có thể chứa prompt/key.
+                if self.logger is not None:
+                    safe_log(self.logger, "warning", "[observer] inference_failed status=%s detail=%s model=%s",
+                             failure.status, failure.detail, getattr(client, "model_name", ""))
+                raise failure from exc
             if self.logger is not None:
                 if name == "eris_character_claim_verifier_v1":
                     # Không log exception message: provider có thể kèm prompt,
@@ -2166,7 +2272,7 @@ class AIRuntimeModelRouter:
             return observation
 
         base_source = str(observation.source or "observer")
-        return CognitiveObservation.from_mapping(
+        return replace(CognitiveObservation.from_mapping(
             data,
             turn_id=observation.turn_id,
             turn_seq=observation.turn_seq,
@@ -2174,7 +2280,7 @@ class AIRuntimeModelRouter:
             relationship_id=observation.relationship_id,
             source=(source_suffix if model_was_empty else f"{base_source}+{source_suffix}"),
             latency_ms=observation.latency_ms,
-        )
+        ), observation_status=observation.observation_status)
 
     @staticmethod
     def _should_reflect_personality(observation: CognitiveObservation) -> bool:
@@ -2185,6 +2291,8 @@ class AIRuntimeModelRouter:
         không được trang điểm thành ba trait signal rồi ghi vào personality.
         """
 
+        if observation.observation_status != "success":
+            return False
         if "deterministic_anchor" in str(observation.source or ""):
             # Fallback cơ học chỉ để bảo vệ continuity/repair. Không dùng nó làm
             # nguyên liệu viết lại personality, nếu không một lần provider 429 có
@@ -2321,7 +2429,7 @@ class AIRuntimeModelRouter:
         reflection_notes = str(reflected.get("notes", "") or "").strip()
         if reflection_notes:
             merged["notes"] = " ".join(part for part in (observation.notes, reflection_notes) if part)[:220]
-        return CognitiveObservation.from_mapping(
+        return replace(CognitiveObservation.from_mapping(
             merged,
             turn_id=observation.turn_id,
             turn_seq=observation.turn_seq,
@@ -2329,7 +2437,7 @@ class AIRuntimeModelRouter:
             relationship_id=observation.relationship_id,
             source=f"{observation.source}+self_reflection",
             latency_ms=observation.latency_ms + (time.perf_counter() - started) * 1000.0,
-        )
+        ), observation_status=observation.observation_status)
 
     @staticmethod
     def _fast_observer_payload(user_text: str, *, event_kind: str) -> tuple[dict[str, Any], str] | None:
@@ -2439,31 +2547,49 @@ class AIRuntimeModelRouter:
         if fast is not None:
             primary_payload, source = fast
         else:
-            primary_payload = self._call(
-                self.observer_client,
+            call_options = dict(
                 system=self._observer_prompt(deep=False),
                 payload=payload,
                 schema=OBJECTIVE_OBSERVATION_SCHEMA,
                 name="eris_cognitive_observation",
-                max_tokens=520,
+                max_tokens=_observer_output_budget(),
                 reasoning_effort=None,
                 timeout_seconds=observer_timeout,
+                cognitive_lane="post_observer",
             )
-            source = self._client_source_label(self.observer_client, "groq_observer")
-            fallback_enabled = str(
-                os.getenv("ERIS_POST_OBSERVER_FALLBACK_ENABLED", "0") or "0"
-            ).strip().lower() in {"1", "true", "yes", "on"}
-            if not primary_payload and fallback_enabled and self.fallback_client is not None:
-                primary_payload = self._call(
-                    self.fallback_client,
-                    system=self._observer_prompt(deep=False),
-                    payload=payload,
-                    schema=OBJECTIVE_OBSERVATION_SCHEMA,
-                    name="eris_cognitive_observation",
-                    max_tokens=520,
-                    timeout_seconds=observer_timeout,
-                )
-                source = self._client_source_label(self.fallback_client, "groq_observer_fallback")
+            try:
+                primary_payload = self._call(self.observer_client, **call_options)
+                source = self._client_source_label(self.observer_client, "groq_observer")
+            except ObserverInferenceError as primary_error:
+                fallback_enabled = str(os.getenv("ERIS_POST_OBSERVER_FALLBACK_ENABLED", "0") or "0").strip().lower() in {
+                    "1", "true", "yes", "on"
+                }
+                if not fallback_enabled or self.fallback_client is None:
+                    record_observer_diagnostic(
+                        turn_id=turn_id, turn_seq=turn_seq, status=primary_error.status,
+                        source="primary", detail=primary_error.detail, max_tokens=call_options["max_tokens"],
+                    )
+                    raise
+                try:
+                    primary_payload = self._call(self.fallback_client, **call_options)
+                    source = self._client_source_label(self.fallback_client, "groq_observer_fallback")
+                except ObserverInferenceError as fallback_error:
+                    record_observer_diagnostic(
+                        turn_id=turn_id, turn_seq=turn_seq, status=fallback_error.status,
+                        source="fallback", detail=fallback_error.detail, max_tokens=call_options["max_tokens"],
+                    )
+                    raise
+        # Thành công chỉ khi model thực sự trả JSON có cấu trúc; unknown là
+        # phán đoán bất định hợp lệ, khác hoàn toàn lỗi transport/parse.
+        outcome_status = (
+            "model_unknown" if str(primary_payload.get("user_act", "")).strip().lower() == "unknown"
+            and str(primary_payload.get("relationship_meaning", "")).strip().lower() in {"neutral", "unknown"}
+            else "success"
+        )
+        record_observer_diagnostic(
+            turn_id=turn_id, turn_seq=turn_seq, status=outcome_status,
+            source=source, detail="", max_tokens=0 if fast is not None else _observer_output_budget(),
+        )
         primary = CognitiveObservation.from_mapping(
             primary_payload,
             turn_id=turn_id,
@@ -2473,6 +2599,7 @@ class AIRuntimeModelRouter:
             source=source,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+        primary = replace(primary, observation_status=outcome_status)
         primary = self._apply_deterministic_observation_anchor(
             primary,
             user_text=user_text,
@@ -2497,16 +2624,21 @@ class AIRuntimeModelRouter:
             and importance >= 0.55
         ):
             deep_started = time.perf_counter()
-            deep_payload = self._call(
-                self.deep_client,
-                system=self._observer_prompt(deep=True),
-                payload=payload,
-                schema=OBJECTIVE_OBSERVATION_SCHEMA,
-                name="eris_cognitive_observation_deep",
-                max_tokens=820,
-                reasoning_effort=None,
-                timeout_seconds=observer_timeout,
-            )
+            try:
+                deep_payload = self._call(
+                    self.deep_client,
+                    system=self._observer_prompt(deep=True),
+                    payload=payload,
+                    schema=OBJECTIVE_OBSERVATION_SCHEMA,
+                    name="eris_cognitive_observation_deep",
+                    max_tokens=_observer_output_budget(deep=True),
+                    reasoning_effort=None,
+                    timeout_seconds=observer_timeout,
+                    cognitive_lane="post_observer_deep",
+                )
+            except ObserverInferenceError:
+                # Nhánh deep là tùy chọn; lỗi của nó không làm hỏng primary hợp lệ.
+                deep_payload = None
             deep = CognitiveObservation.from_mapping(
                 deep_payload,
                 turn_id=turn_id,
@@ -2516,7 +2648,8 @@ class AIRuntimeModelRouter:
                 source=self._client_source_label(self.deep_client, "groq_observer_deep"),
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
-            if deep.confidence >= max(0.62, primary.confidence + 0.04):
+            if deep_payload and deep.confidence >= max(0.62, primary.confidence + 0.04):
+                deep = replace(deep, observation_status=("model_unknown" if deep.user_act == "unknown" else "success"))
                 return (
                     self._reflect_personality(deep, payload=payload, deep=True)
                     if self._should_reflect_personality(deep)

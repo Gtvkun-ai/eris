@@ -185,3 +185,26 @@ def begin_http_attempt(*, url: str, model: str, body: Any, headers: Any, lane: s
             "request_chars": len(payload.decode('utf-8'))},
            payload=payload, payload_key="raw_request_ref", payload_kind="json")
     return attempt
+
+
+def record_observer_diagnostic(*, turn_id: str, turn_seq: int, status: str,
+                               source: str, detail: str, max_tokens: int) -> None:
+    """Index trạng thái parse/validation để ghép với raw HTTP trace theo lượt.
+
+    Chỉ ghi khi raw-trace đã bật. KHÔNG ghi prompt/response ở đây; chúng đã nằm
+    trong object store của HTTP trace. Detail chỉ là mã an toàn từ router.
+    """
+    if not enabled():
+        return
+    _write({
+        "event": "observer_diagnostic",
+        "at_utc": datetime.now(timezone.utc).isoformat(),
+        "worker_role": "observer",
+        "cognitive_lane": "post_observer",
+        "turn_id": str(turn_id or "")[:100],
+        "turn_seq": int(turn_seq or 0),
+        "status": str(status or "")[:40],
+        "source": str(source or "")[:80],
+        "detail": str(detail or "")[:100],
+        "max_tokens": int(max_tokens or 0),
+    })

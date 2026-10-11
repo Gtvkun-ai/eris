@@ -320,30 +320,33 @@ class PostTurnObserver:
             return
         self._detach_ticket(ticket)
         ticket._state = "completed"
-        if not ticket.future.done():
-            ticket.future.set_result(observation)
-
+        # Future chỉ được hoàn tất SAU khi event (nếu có) đã được gửi tới
+        # reducer, để caller chờ future không đọc nhầm trạng thái giữa chừng.
+        status = str(getattr(observation, "observation_status", "success") or "success")
         payload = observation.to_dict()
         if ticket.user_meta is not None:
             ticket.user_meta["cognitive_observation"] = payload
             ticket.user_meta["cognitive_observation_pending"] = False
+            ticket.user_meta["cognitive_observation_status"] = status
         if ticket.assistant_meta is not None:
             ticket.assistant_meta["cognitive_observation_source"] = observation.source
-        from memory.claim_provenance import classify_ingress
-        event = StateEvent.from_observation(
+        # unknown thật là kết quả model hợp lệ, nhưng không phải evidence để
+        # state học thêm. Không tự tạo sự kiện neutral có thể xóa state trước.
+        if status == "success":
+            from memory.claim_provenance import classify_ingress
+            event = StateEvent.from_observation(
             observation, base_version=self.reducer.snapshot().version,
         )
-        # Không mượn origin=user của lời assistant hoặc bản tóm tắt observer.
-        # Source không xuất phát từ observation.to_dict() do worker viết.
-        event.payload["claim_provenance"] = classify_ingress(
-            "ai_post_turn_observer", turn_id=ticket.turn_id,
-        )
-        self.reducer.submit(event)
+            # Không mượn origin=user của lời assistant hoặc bản tóm tắt observer.
+            event.payload["claim_provenance"] = classify_ingress(
+                "ai_post_turn_observer", turn_id=ticket.turn_id,
+            )
+            self.reducer.submit(event)
         try:
             from runtime.observability import GLOBAL_OBSERVABILITY
 
             GLOBAL_OBSERVABILITY.increment(
-                "observer_completed_total", tags={"event_kind": ticket.event_kind}
+                "observer_completed_total", tags={"event_kind": ticket.event_kind, "status": status}
             )
             GLOBAL_OBSERVABILITY.observe(
                 "observer_latency_ms",
@@ -352,10 +355,13 @@ class PostTurnObserver:
             )
         except Exception as exc:
             self._log("debug", "post-observer metric emission failed: %s", exc)
+        if not ticket.future.done():
+            ticket.future.set_result(observation)
         self._log(
             "info",
-            "[post observer] turn=%s act=%s meaning=%s conf=%.2f repair=%s traits=%s frame=%s strategy=%s source=%s latency=%.0fms",
+            "[post observer] turn=%s status=%s act=%s meaning=%s conf=%.2f repair=%s traits=%s frame=%s strategy=%s source=%s latency=%.0fms",
             observation.turn_seq,
+            status,
             observation.user_act,
             observation.relationship_meaning,
             observation.confidence,
@@ -372,12 +378,26 @@ class PostTurnObserver:
             return
         self._detach_ticket(ticket)
         ticket._state = "failed"
-        if not ticket.future.done():
-            ticket.future.set_exception(exc)
+        # Future chỉ báo lỗi sau khi metadata trạng thái đã được cập nhật.
+        # Không đưa message của provider ra log: có thể chứa API key/prompt.
+        from .model_router import ObserverInferenceError
+        status = exc.status if isinstance(exc, ObserverInferenceError) else (
+            "timeout" if "timeout" in type(exc).__name__.lower() else "provider_error"
+        )
         if ticket.user_meta is not None:
             ticket.user_meta["cognitive_observation_pending"] = False
             ticket.user_meta["cognitive_observation_failed"] = True
-        self._log("warning", "[post observer] failed turn=%s: %s", ticket.turn_seq, exc)
+            ticket.user_meta["cognitive_observation_status"] = status
+        if ticket.assistant_meta is not None:
+            ticket.assistant_meta["cognitive_observation_source"] = status
+        try:
+            from runtime.observability import GLOBAL_OBSERVABILITY
+            GLOBAL_OBSERVABILITY.increment("observer_failure_total", tags={"event_kind": ticket.event_kind, "status": status})
+        except Exception:
+            pass
+        if not ticket.future.done():
+            ticket.future.set_exception(exc)
+        self._log("warning", "[post observer] failed turn=%s status=%s error_type=%s", ticket.turn_seq, status, type(exc).__name__)
 
     def _detach_ticket(self, ticket: ObservationTicket) -> None:
         with self._lock:

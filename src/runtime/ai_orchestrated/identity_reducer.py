@@ -8,6 +8,7 @@ StateReducer gọi lớp này trong cùng single-writer thread. File riêng đ�
 from __future__ import annotations
 
 import time
+import hashlib
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
@@ -231,6 +232,10 @@ class IdentityKernelReducer:
                 defenses[target_name] = after
 
             elif dimension == "belief" and self._valid_belief_key(target_name):
+                if float(getattr(observation, "confidence", 0.0) or 0.0) < 0.62:
+                    # Signal tự tuyên bố chắc chắn nhưng observation lại không
+                    # chắc thì không được dùng nó để chỉnh niềm tin bền vững.
+                    continue
                 # Belief là niềm tin tương đối bền vững, KHÔNG phải "cách Eris
                 # vừa cư xử". Một signal của reflection có thể chỉ là diễn giải
                 # về lần thử hành vi khác thói quen. Chờ ít nhất hai *lượt*
@@ -243,8 +248,23 @@ class IdentityKernelReducer:
                     continue
                 count_key = f"belief:{target_name}:{direction}"
                 seen_key = f"belief_last_turn:{target_name}:{direction}"
-                if turn_seq > corroboration.get(seen_key, 0):
+                # Không đếm hai bản sao của cùng lời giải thích thành hai
+                # trải nghiệm độc lập, dù observer gắn turn_seq khác nhau.
+                # Dùng SHA256 ổn định thay vì hash() ngẫu nhiên mỗi tiến trình.
+                # Lấy evidence gắn với signal trước (cụ thể nhất); một nhãn
+                # tổng quan mới của observation không biến signal cũ thành mới.
+                primary_evidence = tuple(signal.evidence or ()) or tuple(getattr(observation, "evidence", ()) or ())
+                distinct_evidence = tuple(
+                    sorted({" ".join(str(item).lower().split()) for item in primary_evidence if str(item).strip()})
+                )
+                evidence_fingerprint = int.from_bytes(
+                    hashlib.sha256("|".join(distinct_evidence).encode("utf-8")).digest()[:8], "big"
+                )
+                fp_key = f"belief_evidence_hash:{target_name}:{direction}"
+                if (turn_seq > corroboration.get(seen_key, 0)
+                        and evidence_fingerprint != corroboration.get(fp_key, -1)):
                     corroboration[seen_key] = turn_seq
+                    corroboration[fp_key] = evidence_fingerprint
                     corroboration[count_key] = min(1000, corroboration.get(count_key, 0) + 1)
                     changed = True
                 if corroboration.get(count_key, 0) < 2:

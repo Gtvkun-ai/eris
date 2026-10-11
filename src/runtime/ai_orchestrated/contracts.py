@@ -191,6 +191,9 @@ class CognitiveObservation:
     notes: str = ""
     source: str = "none"
     latency_ms: float = 0.0
+    # Runtime-owned: không nhận status từ model. Dùng để phân biệt model
+    # chủ động nói unknown với request hỏng (request hỏng không tạo object).
+    observation_status: str = "success"
 
     @classmethod
     def from_mapping(
