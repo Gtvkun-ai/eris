@@ -18,6 +18,11 @@ from .session_store import ConversationSessionStore
 def ensure_conversation_kernel(host: Any) -> ConversationKernel:
     current = getattr(host, "conversation_kernel", None)
     if isinstance(current, ConversationKernel):
+        # Kernel có thể được tạo bởi một signal sớm hơn phase AI cuối;
+        # đến lúc router sẵn sàng vẫn phải đăng ký warm-up một lần.
+        preload = getattr(current.agent, "preload_self", None)
+        if callable(preload):
+            preload(host)
         return current
 
     logger = getattr(host, "logger", None)
@@ -40,6 +45,11 @@ def ensure_conversation_kernel(host: Any) -> ConversationKernel:
         logger=logger,
     )
     host.conversation_kernel = kernel
+    # Warm-up chỉ một lần khi kernel thật được lắp. Đọc Self đã có và gửi
+    # toàn bộ vào DeepSeek trước lượt chat; không sinh database/snapshot khác.
+    preload = getattr(root, "preload_self", None)
+    if callable(preload):
+        preload(host)
     return kernel
 
 

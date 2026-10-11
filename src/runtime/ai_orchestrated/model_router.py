@@ -1252,7 +1252,7 @@ class AIRuntimeModelRouter:
             # Dùng lane riêng không deadline thay vì kế thừa chat_tool_required
             # 25s. Nó vẫn là request bắt buộc, không phải background optional.
             lane = "public_claim_verifier"
-        elif cognitive_key == "turn_executive" or cognitive_key.startswith("tutor:"):
+        elif cognitive_key in {"turn_executive", "root_conversation"} or cognitive_key.startswith("tutor:"):
             # Character v1 HOTFIX: claim verifier là gate BẮT BUỘC trước
             # public delivery. Trước đây lane này rơi xuống post_observer vì
             # inference_tier=subconscious_4b => optional/preemptible. Khi chat
@@ -1408,6 +1408,8 @@ class AIRuntimeModelRouter:
         timeout_seconds: float | None = None,
         cognitive_lane: str = "",
         temperature: float | None = None,
+        conversation_messages: Sequence[Mapping[str, Any]] | None = None,
+        raw_reply_sink: list[str] | None = None,
     ) -> dict[str, Any]:
         if client is None:
             return {}
@@ -1425,10 +1427,14 @@ class AIRuntimeModelRouter:
         try:
             def invoke() -> Any:
                 return client.create_chat_completion(
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False)},
-                    ],
+                    messages=(
+                        [dict(message) for message in conversation_messages]
+                        if conversation_messages is not None
+                        else [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False)},
+                        ]
+                    ),
                     temperature=float(temperature if temperature is not None else 0.0),
                     frequency_penalty=0.0,
                     presence_penalty=0.0,
@@ -1453,8 +1459,14 @@ class AIRuntimeModelRouter:
                 backend=backend,
                 cognitive_lane=str(cognitive_lane or name),
             )
-            parsed = _json(_content(raw), public_reply=False)
-            return _unwrap_schema_payload(parsed, schema)
+            content = _content(raw)
+            parsed = _json(content, public_reply=False)
+            result = _unwrap_schema_payload(parsed, schema)
+            # Lưu nguyên văn câu trả lời trên wire. Serialize lại dict parsed
+            # sẽ khác JSON thật và khiến SessionGuard reset ở lượt tiếp theo.
+            if raw_reply_sink is not None and isinstance(content, str) and content.strip() and result:
+                raw_reply_sink.append(content)
+            return result
         except Exception as exc:  # noqa: BLE001
             if self.logger is not None:
                 if name == "eris_character_claim_verifier_v1":
@@ -1491,6 +1503,8 @@ class AIRuntimeModelRouter:
         timeout_seconds: float | None = None,
         cognitive_lane: str = "",
         temperature: float | None = None,
+        conversation_messages: Sequence[Mapping[str, Any]] | None = None,
+        raw_reply_sink: list[str] | None = None,
     ) -> dict[str, Any]:
         """Transport boundary cho typed role-owned workers.
 
@@ -1518,6 +1532,8 @@ class AIRuntimeModelRouter:
             timeout_seconds=timeout_seconds,
             cognitive_lane=cognitive_lane,
             temperature=temperature,
+            conversation_messages=conversation_messages,
+            raw_reply_sink=raw_reply_sink,
         )
 
     def plan_teaching_episode(self, *, request_context: Mapping[str, Any]) -> Mapping[str, Any]:

@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Protocol, Sequence
 import uuid
 
+from .root_session import RootConversationSession
+
 from .context import ConversationNoteTools, RootCapabilityRegistry
 from .contracts import (
     ConversationAfter,
@@ -131,6 +133,17 @@ class RuntimeModelRootAgent:
         self.router = router
         self.logger = logger
         self.max_root_steps = max(2, min(12, int(max_root_steps or 6)))
+        # Một dòng hội thoại của Root, không chia sẻ với Surface/Observer.
+        # Self gốc vẫn nằm trong reducer/SubjectService; đây chỉ là remote cache.
+        self._root_session = RootConversationSession(logger=logger)
+
+    def preload_self(self, host: Any) -> None:
+        """Đăng ký warm-up lúc startup, không chờ DeepSeek trên main thread."""
+        self._root_session.start(
+            host=host, router=self.router,
+            system=self._system_prompt(RootCapabilityRegistry({})),
+            schema=ROOT_STEP_SCHEMA,
+        )
 
     def decide(
         self,
@@ -172,19 +185,28 @@ class RuntimeModelRootAgent:
                 step_index=step_index,
             )
             try:
-                raw = invoke(
-                    client,
-                    system=system,
-                    payload=payload,
-                    schema=ROOT_STEP_SCHEMA,
-                    name="eris_root_conversation_step_v12",
-                    max_tokens=1200,
-                    reasoning_effort="medium",
-                    inference_tier="subconscious_4b",
-                    cognitive_lane="root_conversation",
-                    priority=70,
-                    temperature=0.3,
+                raw = self._root_session.ask(
+                    router=self.router, client=client, system=system,
+                    schema=ROOT_STEP_SCHEMA, payload=payload,
+                    runtime_context=runtime_context,
+                    recent_history=recent_history,
                 )
+                if raw is None:
+                    # Không chờ warm-up đang chạy / không hỗ trợ session /
+                    # reset do lỗi. Luồng cũ trả lời ngay với context đầy đủ.
+                    raw = invoke(
+                        client,
+                        system=system,
+                        payload=payload,
+                        schema=ROOT_STEP_SCHEMA,
+                        name="eris_root_conversation_step_v12",
+                        max_tokens=1200,
+                        reasoning_effort="medium",
+                        inference_tier="subconscious_4b",
+                        cognitive_lane="root_conversation",
+                        priority=70,
+                        temperature=0.3,
+                    )
             except Exception as exc:  # noqa: BLE001
                 self._log("debug", "[conversation-v12] root model degraded: %s", exc)
                 return self._degraded(event, recent_history, current_note, runtime_context)
@@ -244,7 +266,10 @@ class RuntimeModelRootAgent:
 
     @staticmethod
     def _system_prompt(capabilities: RootCapabilityRegistry) -> str:
-        available = ", ".join(capabilities.available_names()) or "none"
+        # Giữ system contract ổn định giữa bootstrap và các lượt bình thường.
+        # Registry thật vẫn kiểm soát action, không nhờ prompt gán quyền tool.
+        del capabilities
+        available = "tutor, work, research, action (chỉ dùng khi được registry cấp)"
         return (
             "Bạn là RootAgent của Eris và là semantic/social authority duy nhất cho lời public. "
             "Mỗi lần chỉ trả đúng MỘT action JSON. Bạn có thể finalize ngay bằng kind=move hoặc kind=no_reply; "

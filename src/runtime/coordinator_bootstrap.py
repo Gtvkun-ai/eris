@@ -1064,6 +1064,14 @@ class CoordinatorBootstrapMixin:
             self.ai_autonomous_orchestrator = None
             self.logger.warning("Không khởi tạo được architecture C: %s", exc)
         if bool(getattr(self, "ai_runtime_enabled", False)):
+            # Sau khi AI router + Subject Core đã có, cho Root đọc nguyên Self
+            # ngay lúc startup; warm-up chạy daemon, không block avatar/UI.
+            # Nếu provider chưa sẵn sàng, lần chat sau vẫn chạy one-shot.
+            try:
+                from runtime.conversation.bootstrap import ensure_conversation_kernel
+                ensure_conversation_kernel(self)
+            except Exception as exc:
+                safe_log(self.logger, "warning", "[root-session] preload unavailable: %s", type(exc).__name__)
             # Architecture C sở hữu hot path. Thought/private-life vẫn là read-model
             # nền; không module nào được viết hoặc sửa câu public song song.
             self.mental_process_enabled = False

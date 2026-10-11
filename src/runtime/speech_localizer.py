@@ -669,15 +669,31 @@ def _translate_with_deepseek_api(
         "max_tokens": max(128, min(1024, int(max_output_tokens or 384))),
         "thinking": {"type": "disabled"},
     }
-    response = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=max(1.0, float(timeout_seconds or 4.0)),
+    # Localizer gọi requests.post trực tiếp, KHÔNG đi qua llm/client.py.
+    # Gắn cùng raw trace để danh sách DeepSeek lane không bị thiếu TTS localizer.
+    from llm.raw_trace import begin_http_attempt
+
+    trace = begin_http_attempt(
+        url=url, model=model_name, body=payload, headers={},
+        lane="tts_localizer", cognitive_lane="speech_localization",
+        router_reason="tts_stage_localize", worker_role="tts_localizer",
     )
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=max(1.0, float(timeout_seconds or 4.0)),
+        )
+    except BaseException as exc:
+        if trace is not None:
+            trace.error(exc)
+        raise
+    if trace is not None:
+        trace.response(response)
     response.raise_for_status()
     return response.json()
 

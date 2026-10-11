@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from eris_secrets import get_secret
+from llm.raw_trace import worker_role_context
 
 
 WORKER_ROLES: tuple[str, ...] = (
@@ -474,7 +475,10 @@ class JsonlWorkerClient:
                     response_format=kwargs.get("response_format"),
                     error=last_error,
                 )
-            payload = self._client.create_chat_completion(**request_kwargs)
+            # ContextVar thay vì gắn role lên client: nhiều worker có thể dùng
+            # cùng transport mà không dẫm nhãn trace của nhau.
+            with worker_role_context(self.worker_role):
+                payload = self._client.create_chat_completion(**request_kwargs)
             if not structured:
                 return payload
             try:

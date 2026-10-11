@@ -22,6 +22,7 @@ from runtime.inference_broker import (
 )
 from llm.key_pool import get_provider_circuit
 from llm.web_session_guard import GLOBAL_WEB_SESSION_GUARD
+from llm.raw_trace import active_worker_role, begin_http_attempt
 from llm.model_catalog import DEFAULT_OPEN_MODEL_ID, requires_open_model_hygiene
 from llm.deepseek import (
     is_deepseek,
@@ -293,6 +294,13 @@ def _brokered_post(
     provider = _pressure_provider(base_url, model_name)
     prompt_tokens = _estimate_tokens(messages)
     original_payload = request_kwargs.get("json")
+    # Lấy lane TẠI caller trước khi broker có thể chuyển sang thread khác.
+    # Trace chỉ dùng field ngắn; toàn bộ prompt nằm ở request body thực tế.
+    trace_context = current_inference_context()
+    trace_metadata = dict(getattr(trace_context, "metadata", {}) or {})
+    trace_lane = str(getattr(trace_context, "lane", "transport") or "transport")
+    trace_deepseek = is_deepseek(base_url, model_name)
+    trace_worker_role = active_worker_role()
     # Gateway có session giữ lịch sử riêng: trim message sau khi chọn session
     # sẽ làm transcript thực tế khác transcript guard vừa xác nhận. Không cho
     # broker âm thầm rút prompt của một phiên persistent.
@@ -373,7 +381,31 @@ def _brokered_post(
         _record_pressure_request(
             base_url, model_name, effective_messages, effective_max_tokens
         )
-        response = requests.post(url, timeout=effective_timeout, **effective_kwargs)
+        # Ghi trước HTTP, để cả request timeout/đột ngột chết cũng còn đầu vào.
+        # Chỉ DeepSeek; Gemini/Groq không vô tình chui vào log này.
+        trace = begin_http_attempt(
+            url=url,
+            model=model_name,
+            body=effective_kwargs.get("json"),
+            headers=effective_kwargs.get("headers"),
+            lane=trace_lane,
+            cognitive_lane=str(trace_metadata.get("cognitive_lane", "") or ""),
+            router_reason=str(trace_metadata.get("router_reason", "") or ""),
+            worker_role=trace_worker_role,
+        ) if trace_deepseek else None
+        # Correlate Eris -> Whale2API -> DeepSeek Web without leaking headers to
+        # trace. This header is used only by a patched local gateway; ignored elsewhere.
+        if trace is not None and "headers" in effective_kwargs:
+            effective_kwargs["headers"] = dict(effective_kwargs["headers"] or {})
+            effective_kwargs["headers"]["X-Eris-Trace-ID"] = trace.request_id
+        try:
+            response = requests.post(url, timeout=effective_timeout, **effective_kwargs)
+        except BaseException as exc:
+            if trace is not None:
+                trace.error(exc)
+            raise
+        if trace is not None:
+            trace.response(response)
         if cancel_token is not None:
             cancel_token.raise_if_cancelled(actual_request)
         # retry-after, RPM and TPM headers are consumed once here.  The client

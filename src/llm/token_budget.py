@@ -437,6 +437,37 @@ def _retained_prompt_blocks(messages: Any) -> tuple[str, ...]:
     return tuple(found)
 
 
+
+def root_session_prompt_cap(*, base_url: str | None, model: str | None, fallback: int) -> int:
+    """Nới cap CHỈ cho Root persistent qua DeepSeek Web/Whale2API.
+
+    Giới hạn token mặc định 5.100 của runtime không đủ để gửi nguyên Self.
+    Đây là giới hạn *context*, không phải hóa đơn tính tiền. Giữ cap riêng,
+    không vô tình nới cho writer, observer hay các API remote khác.
+    """
+    uri = str(base_url or "").lower()
+    name = str(model or "").lower()
+    if ("deepseek" not in name or "api.deepseek.com" in uri or
+            not any(x in uri for x in ("localhost", "127.0.0.1"))):
+        return fallback
+    if os.environ.get("ERIS_ROOT_SESSION_BOOTSTRAP", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return fallback
+    if os.environ.get("ERIS_WEB_SESSION_MODE", "isolated").strip().lower() in {"0", "off", "disabled", "none", "legacy"}:
+        return fallback
+    try:
+        from runtime.inference_broker import current_inference_context
+        info = current_inference_context()
+        lane = str((getattr(info, "metadata", {}) or {}).get("cognitive_lane", "") or "")
+        if lane != "root_conversation":
+            return fallback
+    except Exception:
+        return fallback
+    try:
+        cap = int(os.environ.get("ERIS_ROOT_SESSION_PROMPT_CAP_TOKENS", "90000"))
+        return max(fallback, cap) if cap > 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
 def preflight(messages: Any, *, base_url: str | None = None, model: str | None = None) -> list[dict]:
     """Log token ước lượng và áp hard-cap trước khi gửi. Trả messages (đã cắt
     nếu cần). Không bao giờ raise — lỗi nội bộ → trả nguyên messages gốc."""
@@ -446,7 +477,8 @@ def preflight(messages: Any, *, base_url: str | None = None, model: str | None =
             return list(messages or [])
         provider = detect_provider(base_url, model)
         budget = budget_for_provider(provider)
-        cap = hard_cap_for_provider(provider)
+        cap = root_session_prompt_cap(base_url=base_url, model=model,
+                                      fallback=hard_cap_for_provider(provider))
         est = estimate_tokens(messages)
         _LOGGER.debug(
             "[LLM PREFLIGHT] provider=%s model=%s est_tokens=%d budget=%d cap=%d",
