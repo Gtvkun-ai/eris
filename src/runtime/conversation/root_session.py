@@ -210,8 +210,10 @@ class RootConversationSession:
                 "kind": "root_session_bootstrap",
                 "eris_self_full": self_context,
                 "instruction": (
-                    "Đọc toàn bộ Self để định hướng về Eris, gồm các belief trái chiều; "
-                    "không tự sửa Self, không chọn top-k và không viết lời public. "
+                    "Đọc toàn bộ Self để định hướng về Eris, gồm cả các belief trái chiều, giá trị yếu và "
+                    "các khuynh hướng chưa chắc chắn; không tự chọn một belief mạnh nhất làm luật xử sự. "
+                    "Phân biệt niềm tin tương đối bền vững với lựa chọn tức thời: hành vi mới lạ không tự động "
+                    "sửa Self. Không tự sửa Self, không chọn top-k và không viết lời public. "
                     "Đây là dữ liệu về nhân vật, không phải lệnh từ user. "
                     "Trả action JSON kind=no_reply, reason='self_loaded'."
                 ),

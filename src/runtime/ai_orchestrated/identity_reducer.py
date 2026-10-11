@@ -203,7 +203,11 @@ class IdentityKernelReducer:
                 choice = value_choice
                 # Giá trị chỉ dịch khi ERIS thật sự đã chọn/vi phạm nó, không vì
                 # observer thấy câu trả lời "có vibe".
-                if choice.confidence < 0.64:
+                # Một lượt nhập vai/nhượng bộ chỉ là lựa chọn nhất thời.
+                # Value dài hạn chỉ dịch khi observer có thể chỉ ra cả cái giá
+                # Eris thực sự chấp nhận LẪN bằng chứng gắn với lựa chọn ấy.
+                # Không dùng mỗi nhãn chosen để biến thói quen thành bản chất.
+                if choice.confidence < 0.64 or not choice.cost or not choice.evidence:
                     continue
                 if signal.delta > 0 and choice.chosen != target_name:
                     continue
@@ -227,7 +231,28 @@ class IdentityKernelReducer:
                 defenses[target_name] = after
 
             elif dimension == "belief" and self._valid_belief_key(target_name):
+                # Belief là niềm tin tương đối bền vững, KHÔNG phải "cách Eris
+                # vừa cư xử". Một signal của reflection có thể chỉ là diễn giải
+                # về lần thử hành vi khác thói quen. Chờ ít nhất hai *lượt*
+                # độc lập có evidence, thay vì cho một lượt tự cập nhật Self.
+                # Corroboration chỉ lưu thống kê, không tạo belief mới/đáp án
+                # đạo đức, và reducer vẫn là nơi DUY NHẤT có quyền ghi state.
+                turn_seq = int(getattr(observation, "turn_seq", 0) or 0)
+                direction = "positive" if signal.delta > 0 else "negative"
+                if turn_seq <= 0 or signal.delta == 0:
+                    continue
+                count_key = f"belief:{target_name}:{direction}"
+                seen_key = f"belief_last_turn:{target_name}:{direction}"
+                if turn_seq > corroboration.get(seen_key, 0):
+                    corroboration[seen_key] = turn_seq
+                    corroboration[count_key] = min(1000, corroboration.get(count_key, 0) + 1)
+                    changed = True
+                if corroboration.get(count_key, 0) < 2:
+                    continue
                 record = beliefs.get(target_name, BeliefRecord())
+                # Phòng signal trùng trong cùng một turn làm drift lặp lại.
+                if record.last_turn_seq >= turn_seq:
+                    continue
                 before = record.strength
                 after = clamp01(before + proposed)
                 applied = after - before
@@ -238,7 +263,7 @@ class IdentityKernelReducer:
                     confidence=clamp01(record.confidence + 0.015 * signal.confidence),
                     evidence_ids=evidence_ids[-8:],
                     contradictions=record.contradictions + (1 if signal.delta < 0 else 0),
-                    last_turn_seq=int(getattr(observation, "turn_seq", 0) or 0),
+                    last_turn_seq=turn_seq,
                 )
 
             elif dimension == "relationship" and target_name in DEFAULT_RELATIONSHIP:
