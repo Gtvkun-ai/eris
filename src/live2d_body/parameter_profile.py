@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """Quy ước parameter cho model INFJ theo góc nhìn của người dùng.
 
-Model này không hoàn toàn theo preset Cubism chuẩn: ``ParamAngleX`` có biên
-trái/phải bất đối xứng và ``ParamMouthOpenY`` dùng -1..1 thay vì 0..1. Gom mọi
-quy ước vào một profile giúp renderer, gaze và biểu cảm không tự diễn giải dấu
-theo ba cách khác nhau, một truyền thống phần mềm khá lâu đời nhưng không đáng
-duy trì.
+Model này dùng ``ParamAngleX`` biên ±30 và ``ParamMouthOpenY`` dùng -1..1 thay vì 0..1.
+Gom mọi quy ước vào một profile giúp renderer, gaze và biểu cảm đồng bộ.
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ class InfjParameterProfile:
     # Người dùng nhìn: âm = đầu sang trái, dương = đầu sang phải.
     angle_x_left: float = -30.0
     angle_x_center: float = 0.0
-    angle_x_right: float = 10.0
+    angle_x_right: float = 30.0
     angle_z_min: float = -30.0
     angle_z_max: float = 30.0
 

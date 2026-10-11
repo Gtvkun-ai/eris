@@ -71,7 +71,7 @@ def test_web_session_is_persistent_only_for_conversation_lanes(monkeypatch) -> N
     assert "X-Session-ID" not in digest["headers"]
 
 
-def test_web_session_contract_is_stable_but_role_isolated(monkeypatch) -> None:
+def test_web_session_rolls_generation_when_grounding_or_role_changes(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_RUNTIME_SESSION_ID", "runtime-abc")
 
     first = _invoke_local(
@@ -93,8 +93,10 @@ def test_web_session_contract_is_stable_but_role_isolated(monkeypatch) -> None:
         system="You are ERIS.\n\nGrounding B",
     )["headers"]["X-Session-ID"]
 
-    assert first == second
-    assert first != other
+    # Cùng role nhưng grounding mới không thể dùng session cũ, vì gateway cũ
+    # sẽ chỉ gửi latest user message và bỏ mất grounding của request mới.
+    assert first != second
+    assert second != other
 
 
 def test_web_session_mode_can_be_disabled_or_rolled_back(monkeypatch) -> None:
@@ -132,7 +134,7 @@ def test_context_compiler_does_not_feed_memory_archive_to_greeting() -> None:
 
     assert compiled.memory == ""
     assert compiled.grounding == ""
-    assert len(compiled.personality) <= 440
+    assert len(compiled.personality) <= 640
     assert len(compiled.relationship) <= 340
     assert compiled.total_chars < 2000
 

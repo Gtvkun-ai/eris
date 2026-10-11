@@ -56,7 +56,7 @@ class Live2DBodyConfig:
     eye_inner_ratio: float = 0.78
     head_follow_degrees: float = 2.4
     head_follow_left_degrees: float = 4.8
-    head_follow_right_degrees: float = 2.4
+    head_follow_right_degrees: float = 4.8
     face_anchor_y: float = 0.17
     z_order_sync: bool = True
 
@@ -91,7 +91,7 @@ class Live2DBodyConfig:
             eye_inner_ratio=max(0.55, min(1.0, _float_env("ERIS_LIVE2D_EYE_INNER_RATIO", 0.78))),
             head_follow_degrees=max(0.0, min(8.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_DEGREES", 2.4))),
             head_follow_left_degrees=max(0.0, min(12.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_LEFT_DEGREES", 4.8))),
-            head_follow_right_degrees=max(0.0, min(8.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_RIGHT_DEGREES", 2.4))),
+            head_follow_right_degrees=max(0.0, min(12.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_RIGHT_DEGREES", 4.8))),
             face_anchor_y=max(0.05, min(0.45, _float_env("ERIS_LIVE2D_FACE_ANCHOR_Y", 0.17))),
             z_order_sync=_bool_env("ERIS_LIVE2D_Z_ORDER_SYNC", True),
         )

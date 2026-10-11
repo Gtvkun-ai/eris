@@ -153,7 +153,7 @@ def test_renderer_control_shutdown_is_recorded() -> None:
 def test_parameter_profile_matches_viewer_semantics() -> None:
     profile = INFJ_PARAMETER_PROFILE
     assert profile.clamp_angle_x(-99.0) == -30.0
-    assert profile.clamp_angle_x(99.0) == 10.0
+    assert profile.clamp_angle_x(99.0) == 30.0
     assert profile.mouth_open_from_ratio(0.0) == -1.0
     assert profile.mouth_open_from_ratio(0.5) == 0.0
     assert profile.mouth_open_from_ratio(1.0) == 1.0

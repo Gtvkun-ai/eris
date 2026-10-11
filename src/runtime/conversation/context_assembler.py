@@ -66,7 +66,8 @@ class ConversationContextAssembler:
         event: Any | None = None,
         source_report: Any | None = None,
     ) -> dict[str, Any]:
-        del recent_history  # reserved cho projection sau; không tự suy semantics từ prose.
+        # Chỉ dùng tối đa hai câu user trước làm gợi ý truy xuất Self; không
+        # diễn giải lịch sử bằng rule hoặc đưa transcript vào state.
         host = self.host
         state = self._mind_state()
 
@@ -108,6 +109,7 @@ class ConversationContextAssembler:
         registry = None
         portrait = None
         portrait_render = None
+        subject_view = None
         memory_degraded = bool(memory_degraded)
         if event is not None:
             try:
@@ -123,9 +125,39 @@ class ConversationContextAssembler:
                     memory_records=memory_records, sampled_at=sampled_at,
                 )
                 if state is not None:
+                    # V12 Self-to-Root: SubjectService chỉ CUNG CẤP self-view
+                    # đã hình thành qua lịch sử. Root và Writer cùng nhận đúng
+                    # một CharacterPortrait; không mở planner/moral-agent mới.
+                    subject_owner = getattr(host, "subject_service", None)
+                    self_view = getattr(subject_owner, "self_view", None)
+                    if callable(self_view):
+                        try:
+                            candidate = self_view()
+                            if isinstance(candidate, Mapping):
+                                subject_view = candidate
+                        except Exception as exc:
+                            self._debug("context.subject_self", exc)
+                    # Chỉ dùng lịch sử user gần nhất để gợi topic, KHÔNG nhét
+                    # toàn bộ transcript vào portrait và không sửa self-state.
+                    current_topic = str(user_text or "").strip()[:1600]
+                    # Không để chủ đề quá khứ luôn lấn át câu hỏi hiện tại.
+                    # Chỉ mượn topic của các lượt trước khi user dùng một lời
+                    # nối mơ hồ ("vậy còn điều đó?", "cậu nghĩ sao?").
+                    # Đây là heuristic truy xuất, KHÔNG quyết định Root nói gì.
+                    is_follow_up = (len(current_topic) <= 140 and (
+                        current_topic.casefold().startswith(("vậy", "thế còn", "còn điều", "nếu vậy", "ý đó", "điều đó"))
+                        or "nghĩ sao" in current_topic.casefold()
+                        or "thì sao" in current_topic.casefold()
+                    ))
+                    previous_user = ([str(item.get("content", "") or "")[:500]
+                                      for item in recent_history[-6:]
+                                      if isinstance(item, Mapping) and item.get("role") == "user"]
+                                     if is_follow_up else [])
+                    focus_text = " ".join([current_topic, *previous_user[-2:]])
                     portrait = build_character_portrait(
                         state, affect=affect, snapshot_id=registry.snapshot_id,
                         sampled_at=sampled_at, source_registry=registry,
+                        focus_text=focus_text, subject_self_view=subject_view,
                     )
                     portrait_render = render_character_portrait(portrait, max_chars=6000)
                     personality = portrait_render.text
@@ -181,6 +213,13 @@ class ConversationContextAssembler:
         if portrait_render is not None:
             context["context_assembler"]["portrait_omitted_facets"] = list(portrait_render.omitted_facets)
             context["context_assembler"]["portrait_overflow"] = portrait_render.overflow
+            # Telemetry cơ học để chứng minh Self có ĐẾN được Root/Writer hay
+            # không. Chỉ lưu ID facet, không tiết lộ nội tâm hoặc raw history.
+            context["context_assembler"]["self_projection"] = {
+                "subject_available": subject_view is not None,
+                "identity_beliefs": [f.facet_id for f in portrait.facets if f.kind == "belief"],
+                "subject_facets": [f.facet_id for f in portrait.facets if f.kind == "subject_self"],
+            }
             context["__character_portrait"] = portrait
             context["__character_portrait_render"] = portrait_render
         if registry is not None:

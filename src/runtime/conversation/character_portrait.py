@@ -8,6 +8,8 @@ StateReducer/PersistentInternalState vẫn giữ quyền sở hữu state; RootA
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+import unicodedata
 from typing import Any, Mapping
 
 from .claim_evidence import EvidenceRegistry
@@ -59,9 +61,59 @@ def _top(values: Any, *, minimum: float = 0.52, max_items: int = 5) -> str:
     )
 
 
+def _fold_text(text: Any) -> str:
+    """Chuẩn hóa chữ có dấu để truy xuất state; không suy luận ngữ nghĩa."""
+    clean = unicodedata.normalize("NFD", str(text or "").casefold())
+    return " ".join(re.findall(r"[a-z0-9]+", "".join(
+        "d" if c == "đ" else c for c in clean if unicodedata.category(c) != "Mn"
+    )))
+
+
+def _search_words(text: Any) -> set[str]:
+    """Tách từ chỉ để *tìm state liên quan*, không phân loại đạo đức/ý định.
+
+    Phép chiếu này cố ý không hỏi model thứ hai chọn ``Eris nên tin gì``.
+    """
+    stopwords = {"khong", "nhung", "dang", "dieu", "chuyen", "minh", "nguoi", "cho", "cua", "theo"}
+    return {word for word in _fold_text(text).split() if len(word) >= 3 and word not in stopwords}
+
+
+def _relevance(focus: str, key: str, summary: str = "") -> float:
+    """Tính điểm truy xuất, không hề suy ra niềm tin hoặc chọn câu trả lời.
+
+    Belief ID của Identity là tiếng Anh, trong khi người dùng thường nói tiếng
+    Việt; map một vài CHỦ ĐỀ rộng để belief về ``world`` không bị bỏ sót khi
+    người dùng nói ``thế giới/cuộc sống``. Đây không phải bảng đáp án đạo đức.
+    """
+    words = _search_words(focus)
+    if not words:
+        return 0.0
+    overlap = len(words & (_search_words(key) | _search_words(summary)))
+    score = min(3.0, float(overlap) * 0.8)
+    key_root = str(key).split(".", 1)[0]
+    normalized_focus = _fold_text(focus)
+    # Kiểm tra cụm từ thay vì một từ dễ trùng: "đạo hàm" không phải đạo đức,
+    # "thế giới" không phải "thay thế" trong quan hệ với user.
+    world_topics = (
+        "the gioi", "cuoc song", "dang song", "con song", "dang de song",
+        "ton tai", "y nghia", "vo nghia", "hu vo", "dao duc", "long tot",
+        "an ui", "cai chet", "tuyet vong", "mang song",
+    )
+    user_topics = ("quan he", "tin tuong", "phan boi", "thay the", "gan gui", "nguoi dung")
+    self_topics = ("noi tam", "ban sac", "ban than", "danh tinh", "eris")
+    if key_root == "world" and any(topic in normalized_focus for topic in world_topics):
+        score += 3.0
+    elif key_root == "self" and any(topic in normalized_focus for topic in self_topics):
+        score += 2.0
+    elif key_root == "user" and any(topic in normalized_focus for topic in user_topics):
+        score += 2.0
+    return score
+
+
 def build_character_portrait(
     state: Any | None, *, affect: Any | None, snapshot_id: str,
     sampled_at: float, source_registry: EvidenceRegistry,
+    focus_text: str = "", subject_self_view: Mapping[str, Any] | None = None,
 ) -> CharacterPortrait:
     """Projection deterministic: facet nguồn là state revision, KHÔNG là episode.
 
@@ -136,19 +188,62 @@ def build_character_portrait(
             add("relationship", "relationship", "Quan hệ trong state: " + _top(props, minimum=0.0, max_items=5), priority=25)
         beliefs = getattr(identity, "beliefs", {})
         if isinstance(beliefs, Mapping):
-            for name, belief in sorted(beliefs.items(), key=lambda kv: (-_number(getattr(kv[1], "strength", 0)) * _number(getattr(kv[1], "confidence", 0)), str(kv[0])))[:5]:
+            # Trước đây lấy cứng 5 belief mạnh nhất, khiến belief vừa phải nhưng
+            # liên quan trực tiếp đến vấn đề bị mất khỏi Root và Writer.
+            # Giữ tối đa 5 belief, nhưng truy xuất theo câu hỏi hiện tại trước;
+            # không nâng strength/confidence trong state và không cập nhật belief.
+            ranked = sorted(beliefs.items(), key=lambda kv: (
+                -_relevance(focus_text, str(kv[0])),
+                -_number(getattr(kv[1], "strength", 0)) * _number(getattr(kv[1], "confidence", 0)),
+                str(kv[0]),
+            ))
+            for name, belief in ranked[:5]:
                 basis = tuple(str(ref) for ref in getattr(belief, "evidence_ids", ()) if str(ref) in known)
+                relevance = _relevance(focus_text, str(name))
                 add("belief:" + str(name), "belief", (
                     f"Niềm tin có thể sai '{name}': strength={_number(getattr(belief, 'strength', 0)):.2f}; "
                     f"confidence={_number(getattr(belief, 'confidence', 0)):.2f}; "
                     f"contradictions={getattr(belief, 'contradictions', 0)}; "
                     f"last_turn_seq={getattr(belief, 'last_turn_seq', 0)}."
-                ), priority=36, origin="identity_belief", confidence=_number(getattr(belief, "confidence", 0)),
+                ), priority=32 if relevance else 36, origin="identity_belief", confidence=_number(getattr(belief, "confidence", 0)),
                     source_refs=refs + basis)
         for name, values in (("values", getattr(identity, "values", {})),
                              ("motives", getattr(identity, "motives", {})),
                              ("defenses", getattr(identity, "defenses", {}))):
             add(name, name, "Xu hướng " + name + " (không phải mệnh lệnh): " + _top(values), priority=46)
+
+    # Subject Core là chủ của self-model dẫn xuất từ các lựa chọn và kết quả
+    # thực tế. Projection chỉ đọc self_view() đã tồn tại; không sinh Self thứ hai.
+    # Một source_ref không có trong evidence registry KHÔNG được biến thành
+    # chứng cứ công khai. Nếu chưa có ref kiểm chứng, chỉ nói đây là tự diễn giải.
+    subject = subject_self_view if isinstance(subject_self_view, Mapping) else {}
+    raw_facets = subject.get("facets", ())
+    if isinstance(raw_facets, (list, tuple)):
+        candidates = [x for x in raw_facets[:48] if isinstance(x, Mapping)]
+        # Chỉ lấy facet có causal refs, tránh dùng một phỏng đoán do model viết
+        # mà không có trải nghiệm làm nền. Những ref không ở registry vẫn không
+        # được tuyên bố là sự kiện độc lập đã được xác nhận.
+        candidates = [x for x in candidates if x.get("evidence_refs") and
+                      _number(x.get("confidence")) >= 0.35 and str(x.get("statement", "")).strip()]
+        candidates.sort(key=lambda x: (
+            -_relevance(focus_text, str(x.get("facet_id", "")), str(x.get("statement", ""))),
+            -(_number(x.get("confidence")) + _number(x.get("stability")) + _number(x.get("pressure"))),
+            str(x.get("facet_id", "")),
+        ))
+        for item in candidates[:3]:
+            fid = str(item.get("facet_id", ""))[:100]
+            if not fid:
+                continue
+            evidence_ids = item.get("evidence_refs", ())
+            valid = tuple(str(r) for r in evidence_ids[:12] if str(r) in known) if isinstance(evidence_ids, (tuple, list)) else ()
+            summary = " ".join(str(item.get("statement", "")).split())[:520]
+            confidence = _number(item.get("confidence"))
+            relevance = _relevance(focus_text, fid, summary)
+            add("subject:" + fid, "subject_self", (
+                f"Tự diễn giải từ Subject Core (không phải sự kiện ngoài đời): {summary}; "
+                f"confidence={confidence:.2f}; stability={_number(item.get('stability')):.2f}."
+            ), priority=34 if relevance else 44, origin="subject_self_projection",
+                confidence=confidence, source_refs=refs + valid, scope="self_model_snapshot")
 
     if personality is not None:
         add("temperament", "disposition", "Xu hướng dài hạn, KHÔNG đồng nhất mood: " + _top(getattr(personality, "temperament", {}), max_items=9), priority=52)

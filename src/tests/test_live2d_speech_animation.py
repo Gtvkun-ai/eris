@@ -85,7 +85,7 @@ def test_question_and_stage_actions_use_brows_eyes_head_and_gaze(monkeypatch) ->
     assert "question" in snapshot.speech_cue
     assert "wink" in snapshot.speech_cue
 
-    assert -30.0 <= params["ParamAngleX"] <= 10.0
+    assert -30.0 <= params["ParamAngleX"] <= 30.0
     assert -1.0 <= params["ParamMouthForm"] <= 1.0
     assert -1.0 <= params["ParamMouthOpenY"] <= 1.0
     assert 0.0 <= snapshot.eye_open_left <= 1.0

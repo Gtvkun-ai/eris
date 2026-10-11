@@ -39,6 +39,10 @@ config/
 !/config/example.json
 !/config/low_level_speech_policy.yaml
 !/config/secrets.example.json
+# Gateway configuration package contains Go source, not local configuration.
+!/tools/whale2api/internal/config/
+/tools/whale2api/internal/config/*
+!/tools/whale2api/internal/config/*.go
 memory_core/
 data/subject_core/capability_keyring/
 

@@ -61,7 +61,7 @@ class GazeController:
         )
         self.head_follow_right_degrees = max(
             0.0,
-            min(8.0, float(head_follow_right_degrees if head_follow_right_degrees is not None else legacy)),
+            min(12.0, float(head_follow_right_degrees if head_follow_right_degrees is not None else legacy)),
         )
         self.response_x = max(1.0, min(30.0, float(response_x)))
         self.response_y = max(1.0, min(30.0, float(response_y)))

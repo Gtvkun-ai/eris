@@ -21,6 +21,7 @@ from runtime.inference_broker import (
     inference_context,
 )
 from llm.key_pool import get_provider_circuit
+from llm.web_session_guard import GLOBAL_WEB_SESSION_GUARD
 from llm.model_catalog import DEFAULT_OPEN_MODEL_ID, requires_open_model_hygiene
 from llm.deepseek import (
     is_deepseek,
@@ -98,6 +99,40 @@ def _system_contract_seed(messages) -> str:
         return re.sub(r"\s+", " ", first_paragraph).strip()[:1200]
     return ""
 
+
+
+
+def _attach_deepseek_json_schema(messages, response_format):
+    """Giữ schema cho model dù DeepSeek API chỉ chấp nhận ``json_object``.
+
+    Hạ ``json_schema`` xuống ``json_object`` mà không chuyển nội dung schema
+    thành instruction sẽ âm thầm làm mất ràng buộc field/type. Gắn schema vào
+    system prompt trước khi xác minh session để mọi thay đổi schema đều khiến
+    gateway mở phiên mới, không kế thừa chỉ thị sai từ phiên cũ.
+    """
+    if not isinstance(response_format, dict) or response_format.get("type") != "json_schema":
+        return messages
+    requested = response_format.get("json_schema")
+    if not isinstance(requested, dict) or not isinstance(requested.get("schema"), dict):
+        return messages
+
+    import json
+    schema_json = json.dumps(requested, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    instruction = (
+        "\n\n[OUTPUT_JSON_SCHEMA_REQUIREMENT]\n"
+        "Trả lời bằng đúng một JSON object hợp lệ theo JSON Schema dưới đây; "
+        "không có Markdown hoặc lời giải thích ngoài JSON.\n"
+        f"JSON Schema: {schema_json}\n"
+        "[/OUTPUT_JSON_SCHEMA_REQUIREMENT]"
+    )
+    updated = [dict(message) for message in messages]
+    for index, message in enumerate(updated):
+        if str(message.get("role", "")).lower() == "system" and isinstance(message.get("content"), str):
+            message["content"] += instruction
+            return updated
+    # Không có system message: thêm một chỉ thị hệ thống, không viết đè câu hỏi.
+    updated.insert(0, {"role": "system", "content": instruction.strip()})
+    return updated
 
 def _web_session_header(messages, response_format=None) -> str:
     """Build an isolated persistent Whale2API session key for this inference lane.
@@ -258,8 +293,14 @@ def _brokered_post(
     provider = _pressure_provider(base_url, model_name)
     prompt_tokens = _estimate_tokens(messages)
     original_payload = request_kwargs.get("json")
+    # Gateway có session giữ lịch sử riêng: trim message sau khi chọn session
+    # sẽ làm transcript thực tế khác transcript guard vừa xác nhận. Không cho
+    # broker âm thầm rút prompt của một phiên persistent.
+    session_headers = request_kwargs.get("headers") or {}
+    has_persistent_session = bool(session_headers.get("X-Session-ID")) if isinstance(session_headers, dict) else False
     supports_input_degrade = bool(
-        isinstance(original_payload, dict)
+        not has_persistent_session
+        and isinstance(original_payload, dict)
         and isinstance(original_payload.get("messages"), list)
     )
     supports_output_degrade = bool(
@@ -635,6 +676,8 @@ class OpenAICompatibleClient:
         thinking_mode=None,
     ):
         messages = _preflight(messages, base_url=self.base_url, model=self.model_name)
+        if is_deepseek(self.base_url, self.model_name):
+            messages = _attach_deepseek_json_schema(messages, response_format)
         pressure_provider = _pressure_provider(self.base_url, self.model_name)
         if response_format and response_format.get("type") == "json_object":
             last_msg_has_json = False
@@ -719,9 +762,16 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        session_id = _web_session_header(messages, response_format=response_format)
-        if session_id:
-            headers["X-Session-ID"] = session_id
+        # Các gateway chưa sửa vẫn bỏ FinalPrompt khi tái sử dụng session.
+        # Guard xác minh transcript trước mỗi HTTP attempt; với legacy, giữ
+        # nguyên hành vi cũ để rollback. ``off`` gửi full request không session.
+        web_session_mode = str(os.environ.get("ERIS_WEB_SESSION_MODE", "isolated") or "isolated").strip().lower()
+        session_base = (
+            _web_session_header(messages, response_format=response_format)
+            if deepseek_request and not is_official_deepseek else ""
+        )
+        if session_base and web_session_mode == "legacy":
+            headers["X-Session-ID"] = session_base
         url = f"{self.base_url}/chat/completions"
 
         # Có pool: gặp 429 thì xoay key kế và thử lại, tối đa bằng số key trong pool.
@@ -750,6 +800,26 @@ class OpenAICompatibleClient:
                     continue
                 seen_signatures.add(signature)
 
+                # Mỗi variant/retry là một HTTP attempt riêng. Một HTTP 400,
+                # timeout hoặc 429 cũng có thể đã chạm remote session, vì thế
+                # attempt tiếp theo không được tái sử dụng phiên chưa commit.
+                lease = None
+                request_headers = dict(headers)
+                if session_base and web_session_mode not in {"legacy", "off", "disabled", "none", "0"}:
+                    lease = GLOBAL_WEB_SESSION_GUARD.reserve(
+                        base_session_id=session_base,
+                        base_url=self.base_url,
+                        model=self.model_name,
+                        credential=self.api_key,
+                        messages=messages,
+                        request_contract={
+                            **{key: value for key, value in candidate.items() if key != "messages"},
+                            # Gateway/DeepSeek có thể chỉ nhìn thấy json_object;
+                            # vẫn phân biệt schema gốc, kể cả cùng tên.
+                            "original_response_format": response_format,
+                        },
+                    )
+                    request_headers["X-Session-ID"] = lease.session_id
                 try:
                     self._provider_circuit.before_request(self.provider_circuit_id)
                     actual_timeout = self.timeout if timeout is None else timeout
@@ -760,13 +830,15 @@ class OpenAICompatibleClient:
                         max_tokens=max_tokens,
                         timeout_seconds=actual_timeout,
                         url=url,
-                        headers=headers,
+                        headers=request_headers,
                         json=candidate,
                     )
                     response.raise_for_status()
                     try:
                         payload_json = response.json()
                     except ValueError as exc:
+                        if lease is not None:
+                            GLOBAL_WEB_SESSION_GUARD.abort(lease)
                         last_error = exc
                         continue
 
@@ -785,12 +857,25 @@ class OpenAICompatibleClient:
                             last_error = RuntimeError("Empty output content received from provider")
                             raise last_error
 
+                    # Chỉ lời trả thành công mới là bằng chứng server đã thêm
+                    # turn vào session. Không dùng response lỗi hoặc output rỗng.
+                    if lease is not None:
+                        first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                        reply = first.get("message") if isinstance(first.get("message"), dict) else {}
+                        # Khi output bị cắt (length) hoặc kết thúc không rõ,
+                        # transcript không thể xem là đã đồng bộ hoàn chỉnh.
+                        if first.get("finish_reason") == "stop":
+                            GLOBAL_WEB_SESSION_GUARD.commit(lease, reply.get("content", ""))
+                        else:
+                            GLOBAL_WEB_SESSION_GUARD.abort(lease)
                     self._provider_circuit.record_success()
                     _record_pressure_success(pressure_provider)
                     if self.key_pool is not None and lease is not None:
                         self.key_pool.mark_success(lease=lease)
                     return payload_json
                 except requests.HTTPError as exc:
+                    if lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
                     status_code = exc.response.status_code if exc.response is not None else None
                     if status_code == 429:
@@ -807,10 +892,14 @@ class OpenAICompatibleClient:
                         continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
                     raise last_error
                 except (requests.Timeout, requests.ConnectionError) as exc:
+                    if lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
                     last_error = exc
                     self._provider_circuit.record_failure(provider=self.provider_circuit_id, status=None)
                     break
                 except Exception as exc:
+                    if lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
                     last_error = exc
                     raise
 
