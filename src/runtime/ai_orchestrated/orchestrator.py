@@ -66,14 +66,6 @@ from .self_context import build_autonomous_self_context
 _LOG = logging.getLogger(__name__)
 
 
-def _is_nonlinguistic_body_decision(decision: Any) -> bool:
-    """Return true only when body transport carries no linguistic surface."""
-
-    return not str(getattr(decision, "text", "") or "").strip() and not str(
-        getattr(decision, "speech_text", "") or ""
-    ).strip()
-
-
 def _foreground_hard_deadline_seconds() -> float:
     """Ngân sách remote tuyệt đối cho một user turn foreground.
 
@@ -874,59 +866,10 @@ class AIChatOrchestrator:
 class AIAutonomousOrchestrator:
     def __init__(self, host: Any) -> None:
         self.host = host
-        self._last_body_only_at = 0.0
-        self._last_body_only_signature = ""
-        from .autonomous_trace import public_turn_trace_store
-
-        self.trace_store = public_turn_trace_store(logger=getattr(host, "logger", None))
-
-    def _emit_body_only(
-        self,
-        *,
-        reason: str,
-        activity_kind: str = "unknown",
-        motion_hint: str = "",
-        turn_seq: int,
-        signature: str = "",
-    ) -> bool:
-        """Phát hiện diện phi ngôn ngữ sau deliberation của main planner.
-
-        ``activity_kind`` chỉ là annotation typed từ planner. Motion lấy từ
-        ``performance_hint``; runtime không phân loại game/code/media.
-        """
-        host = self.host
-        now = time.time()
-        signature = str(signature or f"{reason}:{motion_hint}")[:200]
-        if now - self._last_body_only_at < 24.0 or (signature and signature == self._last_body_only_signature):
-            return False
-        try:
-            from domain.decision import Decision
-            hint = str(motion_hint or "").strip().lower()
-            motion = {
-                "focus": "focus",
-                "curious": "tilt_head",
-                "thinking": "blink_slow",
-                "quiet_presence": "look_aside",
-                "soft": "lean_in_small",
-            }.get(hint, "tilt_head")
-            decision = Decision(
-                text="", animation="stand", should_speak=False, confidence=0.82,
-                performance_hint="quiet_presence", stage_motion=motion, motion_intent=motion,
-                nonverbal_cue="small_presence", debug_trace=f"body_only:{reason}",
-            )
-            if not _is_nonlinguistic_body_decision(decision):
-                raise ValueError("body_only_requires_empty_text")
-            host._send_decision_to_body(decision, channel="autonomous")
-            self._last_body_only_at = now
-            self._last_body_only_signature = signature
-            self.trace_store.append("body_only", {
-                "turn_seq": turn_seq, "activity_kind": activity_kind, "reason": reason,
-                "motion_hint": hint, "result": "emitted", "body_only": True,
-            }, now=now)
-            return True
-        except Exception as exc:
-            _orchestrator_boundary_note(host, "body_only.emit", exc)
-            return False
+        # P2: đường body_only cũ không có consumer production, nhưng vẫn có
+        # thể gửi trực tiếp qua _send_decision_to_body ngoài Kernel. Đã bỏ để
+        # giữ đúng một cửa phát ngôn. Nonverbal tương lai phải có adapter stage
+        # không được giả làm một câu chat public.
 
     def run_startup(self) -> bool:
         """Prime continuity state only; startup no longer fabricates public speech.

@@ -103,6 +103,14 @@ class ConversationContextAssembler:
         conversation_status = self._conversation_status(state, channel=channel)
         engagement_text = _json_text(engagement, limit=8000)
         discourse = self._discourse_context()
+        # P2: dùng chung proposal inbox, nhưng chỉ projection nhỏ *không phải*
+        # bằng chứng về thế giới/user. Root có thể bỏ qua hoàn toàn các ý này.
+        proposal_hints: tuple[dict[str, Any], ...] = ()
+        try:
+            from runtime.behavior_proposals import ensure_proposal_bus
+            proposal_hints = ensure_proposal_bus(host).root_snapshot(limit=6)
+        except Exception as exc:
+            self._debug("context.proposal_bus", exc)
 
         # Registry được dựng trước compiler; portrait KHÔNG dùng chuỗi persona
         # bị cắt từ personality_prompt_context() làm input.
@@ -196,6 +204,7 @@ class ConversationContextAssembler:
             "affective_voice_context": affect_prompt[:8000],
             "conversation_status": conversation_status,
             "private_cognition_context": self._private_cognition_context(),
+            "background_proposals": list(proposal_hints),
             "user_addressing_context": addressing,
             "previous_public_excerpt": str(previous_public_context or "")[-6000:],
             "context_assembler": {

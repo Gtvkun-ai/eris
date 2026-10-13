@@ -53,15 +53,9 @@ def _legacy_writer_calls(source: str) -> list[tuple[int, str]]:
 
 def _delivery_authority_calls(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
-    nonlinguistic_lines: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_emit_body_only":
-            nonlinguistic_lines.update(range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1))
     calls: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
-            continue
-        if node.lineno in nonlinguistic_lines:
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr in {
             "_send_decision_to_body",

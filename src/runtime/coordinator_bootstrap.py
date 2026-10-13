@@ -560,10 +560,14 @@ class CoordinatorBootstrapMixin:
             wake_callback=getattr(self, "_wake_autonomous_loop", None),
             logger=self.logger,
         )
+        # P2: Subject Core giữ nguyên quyền nội bộ của nó, chỉ chiếu các
+        # đề xuất chưa kiểm chứng lên inbox chung. Root/Kernel vẫn quyết lời.
+        from runtime.proposal_bridge import mirror_subject_ideas
         self.subject_ingress = SubjectIngress(
             self.subject_service,
             mind_loop=self.subject_mind_loop,
             neuro_continuation=self.neuro_continuation_runtime,
+            proposal_mirror=lambda items: mirror_subject_ideas(self, items),
         )
         self.logger.info(
             "[subject-core] authoritative subject=%s data=%s",

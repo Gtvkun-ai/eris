@@ -144,6 +144,13 @@ class MentalMaterialRuntime:
         self._conversation_boundary_until = max(
             self._conversation_boundary_until, current + max(15.0, float(hold_seconds))
         )
+        # Chủ đề cũ đã đóng thì đề xuất public từ material cũ cũng phải đóng.
+        bus = getattr(self.host, "behavior_proposal_bus", None)
+        revoke = getattr(bus, "revoke", None)
+        if callable(revoke):
+            for material in tuple(self._materials.values()):
+                if material.created_at <= current:
+                    revoke(source="mental_material", proposal_key=material.material_id)
         self._log(
             "info", "[conversation rhythm] material boundary reason=%s hold=%.0fs",
             reason, max(0.0, self._conversation_boundary_until - current),
@@ -191,6 +198,15 @@ class MentalMaterialRuntime:
             if timestamp < cutoff:
                 self._answered_user_events.pop(key, None)
         if keys:
+            # P2: candidate đã mất quyền public tại source cũng phải biến mất
+            # khỏi proposal inbox, nếu không Root có thể xem đây là một gợi ý
+            # mới rồi tự trả lời user lần thứ hai (bypass P0 floor guard).
+            bus = getattr(self.host, "behavior_proposal_bus", None)
+            revoke = getattr(bus, "revoke", None)
+            if callable(revoke):
+                for material in tuple(self._materials.values()):
+                    if material.cause_kind == "user_event" and material.cause_id in keys:
+                        revoke(source="mental_material", proposal_key=material.material_id)
             self._log("info", "[mental material] consumed user event public floor causes=%s", ",".join(keys))
         return keys
 
@@ -268,6 +284,22 @@ class MentalMaterialRuntime:
             freshness=1.0,
         )
         self._materials[material.material_id] = material
+        # P2: cùng một material chỉ nộp một *ý tưởng riêng tư* lên bus.
+        # Bus không sinh câu, không wake/commit; source owner vẫn giữ material.
+        # Nếu bus unavailable, cognitive lifecycle cũ vẫn hoạt động bình thường.
+        try:
+            # Chỉ nộp nếu cause/topic còn đủ quyền đề xuất public. Suy nghĩ
+            # private vẫn được lưu ngay cả khi user đã nhận câu trả lời.
+            if not self._public_route_consumed(material, now=current):
+                from runtime.behavior_proposals import ensure_proposal_bus
+                ensure_proposal_bus(self.host).submit(
+                    source="mental_material", kind="mental_material",
+                    subject=material.content, proposal_key=material.material_id,
+                    payload={"source_refs": material.source_refs, "material_kind": material.material_kind},
+                    confidence=material.quality, ttl_seconds=material.ttl_seconds,
+                )
+        except Exception as exc:
+            self._log("debug", "[proposal-bus] mental material degraded: %s", type(exc).__name__)
 
         # V76: một development seed bám ConversationTrajectory là private work
         # thật và phải tiêu private budget/energy ngay khi material sinh. Nếu không

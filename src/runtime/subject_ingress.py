@@ -8,7 +8,7 @@ autonomous/blocking deliberation vẫn thuộc MindLoop. Adapter frame/outcome c
 from __future__ import annotations
 
 import uuid
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from cortex.subject.contracts import (
     MindDecision, ObservationOrigin, SubjectDeliberationFrame,
@@ -30,11 +30,14 @@ class SubjectIngress:
         mind_loop: MindLoop | None = None,
         autonomous_proposals: AutonomousProposalSource | None = None,
         neuro_continuation: Any | None = None,
+        proposal_mirror: Callable[[Sequence[Mapping[str, Any]]], Any] | None = None,
     ) -> None:
         self.service = service
         self.mind_loop = mind_loop or MindLoop(subject=service)
         self.autonomous_proposals = autonomous_proposals or AutonomousProposalSource(service)
         self.neuro_continuation = neuro_continuation
+        # Chỉ đọc/chiếu đề xuất; Subject vẫn sở hữu deliberation gốc.
+        self._proposal_mirror = proposal_mirror
 
     def user_observation(
         self,
@@ -229,6 +232,14 @@ class SubjectIngress:
             turn_id=turn_id,
             planning_context=context,
         )
+        # P2: chia sẻ semantic hints vào bus cho Root, không thay đổi các
+        # proposal do Subject dùng tính utility hay action của MindLoop.
+        if callable(self._proposal_mirror):
+            try:
+                self._proposal_mirror(proposals)
+            except Exception:
+                # Optional projection; không làm đổ nguyên một Subject turn.
+                pass
         reply_expected = bool(proposal_context["reply_expected"])
         user_busy = bool(proposal_context.get("user_busy", False))
         engagement_active = bool(proposal_context["engagement_active"])

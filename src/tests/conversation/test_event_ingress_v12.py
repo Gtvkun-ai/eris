@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 from runtime.ai_orchestrated.orchestrator import (
     AIAutonomousOrchestrator,
-    _is_nonlinguistic_body_decision,
 )
 from runtime.conversation.contracts import (
     ConversationAfter,
@@ -17,7 +16,6 @@ from runtime.conversation.contracts import (
 from runtime.conversation.kernel import ConversationKernel
 from runtime.conversation.delivery import SurfaceEnvelope
 from runtime.conversation.writer import RenderedConversationMove
-from domain.decision import Decision
 
 
 class _Agent:
@@ -134,15 +132,10 @@ def test_social_signal_reenters_root_without_a_social_writer():
     assert agent.events[0].metadata["source"] == "social_observer"
 
 
-def test_body_only_path_rejects_display_or_speech_text():
-    quiet = Decision(text="", animation="stand", should_speak=False)
-    display = Decision(text="hello", animation="stand", should_speak=False)
-    speech = Decision(text="", animation="stand", should_speak=False)
-    speech.speech_text = "hello"
-
-    assert _is_nonlinguistic_body_decision(quiet) is True
-    assert _is_nonlinguistic_body_decision(display) is False
-    assert _is_nonlinguistic_body_decision(speech) is False
+def test_orchestrator_has_no_unused_direct_body_transport_path():
+    # P2: helper body_only cũ không có consumer và bypass Kernel.
+    # Khi cần motion không lời sẽ bổ sung stage-specific port, không gọi TTS.
+    assert not hasattr(AIAutonomousOrchestrator, "_emit_body_only")
 
 
 def test_production_autonomous_iteration_enters_kernel_instead_of_self_turn_pipeline(monkeypatch):

@@ -134,15 +134,13 @@ def test_attention_router_never_authorizes_speech() -> None:
     assert "speak" not in decision.actions
 
 
-def test_only_executive_governor_can_submit_public_speech() -> None:
+def test_proposal_bus_is_never_a_public_speech_authority() -> None:
+    # P2: thậm chí "executive_governor" cũng không thể mạo danh Root/Kernel.
     bus = ProposalBus(clock=lambda: 1000.0)
-    with pytest.raises(PermissionError):
-        bus.submit(source="seed_worker", kind="speak", public=True)
-    proposal = bus.submit(
-        source="executive_governor", kind="speak", subject="reply", public=True,
-        payload={"text": "ok"}, confidence=0.9,
-    )
-    assert proposal.public is True and proposal.source == "executive_governor"
+    for source in ("seed_worker", "executive_governor", "conversation_root_agent_v12"):
+        with pytest.raises(PermissionError):
+            bus.submit(source=source, kind="speak", public=True)
+    assert not bus.tail()
 
 
 def test_intent_normalizer_distinguishes_environment_text_pixels_and_capability() -> None:
