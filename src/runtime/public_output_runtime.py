@@ -1159,7 +1159,9 @@ class PublicOutputRuntimeMixin:
                 bus.emit(playback_event(event, stage_frame=stage_frame))
         except Exception as exc:
             self.logger.debug("[stage-protocol] playback event failed: %s", exc)
-        if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        # Godot cần nhận audio_start/done để phân biệt đang nói và đã dừng.
+        # Gói này chỉ là lifecycle/ID, không chở transcript nên rất nhỏ.
+        if os.environ.get("ERIS_TTS_EVENT_PAYLOAD", "1").strip().lower() in {"1", "true", "yes", "on"}:
             try:
                 legacy_record = {key: value for key, value in record.items() if key != "type"}
                 self.transport.send_json({"type": "tts_event", "event_type": event_type, **legacy_record})

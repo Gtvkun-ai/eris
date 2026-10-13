@@ -203,6 +203,33 @@ def _localizer_output_tokens(text: str) -> int:
     return max(256, min(1024, len(clean) + 192))
 
 
+def _split_localizer_chunks(text: str, *, max_chars: int = 540) -> tuple[str, ...]:
+    """Chia bản VI thành mảnh đủ ngắn để dịch NHẬT mà không bỏ câu nào.
+
+    Chỉ chia trên khoảng trắng nếu có thể, giữ nguyên thứ tự từ. Đây không
+    phải segment TTS hay cơ chế ép Eris nói ngắn: chỉ là transport cho localizer.
+    """
+    source = _normalize_transcript(text)
+    if not source:
+        return ()
+    if len(source) <= max_chars:
+        return (source,)
+    pieces: list[str] = []
+    while len(source) > max_chars:
+        candidate = source[: max_chars + 1]
+        # Ưu tiên ranh giới câu, rồi mới đến ranh giới từ.
+        boundaries = [match.end() for match in re.finditer(r"[.!?。！？]\s+", candidate)]
+        valid = [pos for pos in boundaries if pos >= max_chars // 2]
+        cut = valid[-1] if valid else candidate.rfind(" ")
+        if cut < max_chars // 2:
+            cut = max_chars
+        pieces.append(source[:cut].strip())
+        source = source[cut:].strip()
+    if source:
+        pieces.append(source)
+    return tuple(p for p in pieces if p)
+
+
 class SpeechLocalizer:
     """Dịch/style câu public thành transcript TTS đúng language contract."""
 
@@ -265,13 +292,25 @@ class SpeechLocalizer:
             return clean
 
         try:
-            translated = self._translate_to_japanese(
-                clean,
-                prosody_style=style,
-                persona_policy=persona_policy,
-                cancel_event=cancel_event,
-                authority_check=authority_check,
-            )
+            # Với lời dài, dịch ĐỦ từng chunk rồi mới nối, tuyệt đối không
+            # cắt transcript do token budget. Một chunk lỗi = lượt dịch lỗi;
+            # không có chuyện đọc âm thanh Nhật 1/2 mà báo thành công.
+            chunks = _split_localizer_chunks(clean)
+            translated_parts: list[str] = []
+            for chunk in chunks:
+                _raise_if_cancelled(cancel_event, authority_check)
+                chunk_policy = resolve_speech_persona_policy(chunk, prosody_style=style)
+                translated_part = self._translate_to_japanese(
+                    chunk,
+                    prosody_style=style,
+                    persona_policy=chunk_policy,
+                    cancel_event=cancel_event,
+                    authority_check=authority_check,
+                )
+                if not _valid_japanese_translation(chunk, translated_part, persona_policy=chunk_policy):
+                    raise SpeechLocalizationError("japanese_localization_chunk_invalid")
+                translated_parts.append(translated_part)
+            translated = " ".join(translated_parts)
         except SpeechLocalizationCancelled:
             raise
         except SpeechLocalizationError:
@@ -327,14 +366,15 @@ class SpeechLocalizer:
                 )
                 if not plan.allowed:
                     raise SpeechLocalizationError(f"speech_localizer_budget_denied:{plan.reason}")
-                from llm.token_budget import truncate_text_to_budget
-
-                budgeted_text = truncate_text_to_budget(
-                    budgeted_text,
-                    max(80, plan.prompt_limit - 220),
-                    marker="…[transcript localizer rút gọn]…",
-                    preserve_tail=True,
-                )
+                # Token-pressure phải TỪ CHỐI nếu không đủ chỗ, không được cắt
+                # câu mà TTS vẫn hiển thị thành công. Chunking được làm trước
+                # tại localize(); không để một model silently omit nửa văn bản.
+                from llm.token_budget import estimate_tokens
+                full_prompt_tokens = estimate_tokens([{"role": "user", "content": budgeted_text}])
+                if full_prompt_tokens > max(80, plan.prompt_limit - 220):
+                    raise SpeechLocalizationError(
+                        f"speech_localizer_budget_insufficient:{full_prompt_tokens}>{plan.prompt_limit - 220}"
+                    )
             except SpeechLocalizationError:
                 raise
             except Exception:

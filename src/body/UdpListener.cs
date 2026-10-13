@@ -54,6 +54,11 @@ public partial class UdpListener : Node2D
 	private BodyAudioController _audio;
 	private string _ttsBodyAudioTurnId = "";
 	private int _ttsBodyAudioSegmentCount = 1;
+	// UI chỉ hiển thị text đã commit; con trỏ đọc thuộc quyền người dùng.
+	// Một lượt speech dài không được tự cuộn/tự biến mất khi người dùng đang đọc.
+	private const int LongSpeechImmediateChars = 260;
+	private bool _speechIsLong = false;
+	private bool _speechIsBeingRead = false;
 	private string _lastSpeechBubbleText = "";
 	private ulong _lastSpeechBubbleTextAtMs = 0;
 	private ErisProcessManager _processes;
@@ -797,6 +802,10 @@ public partial class UdpListener : Node2D
 		// Tutor panel là decoration (MouseFilter.Ignore); chỉ nút Ẩn cần nhận click.
 		if (TryGetVisibleControlMouseRect(_tutorHideButton, mouse, out rect))
 			return true;
+		// Nếu không tính bubble, Windows vẫn bật WS_EX_TRANSPARENT và chuột
+		// đi xuyên qua label dù Godot đã bật ScrollActive/MouseFilter.Stop.
+		if (TryGetVisibleControlMouseRect(ActiveSpeechBubble(), mouse, out rect))
+			return true;
 
 		rect = default;
 		return false;
@@ -812,6 +821,7 @@ public partial class UdpListener : Node2D
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, ActiveSpeechBubble(), 4f);
 	}
 
 	private bool IsMouseOverInteractiveOverlay(Vector2 mouse)
@@ -1229,10 +1239,32 @@ public partial class UdpListener : Node2D
 	{
 		if (_bubble != null)
 		{
-			_bubble.MouseFilter = Control.MouseFilterEnum.Ignore;
+			// Bubble phải nhận chuột để scroll được trên desktop overlay.
+			// Vùng ngoài bubble vẫn click-through như trước.
+			_bubble.MouseFilter = Control.MouseFilterEnum.Pass;
 			_bubble.ZIndex = 999;
 			_bubble.ZAsRelative = false;
 			_bubble.Modulate = Colors.White;
+			// Bubble legacy không có header do code dựng như Live2D:
+			// thêm nút đóng nhỏ để user thoát chế độ đọc lời dài.
+			if (_bubble.GetNodeOrNull<Button>("SpeechCloseButton") == null)
+			{
+				var closeSpeech = new Button
+				{
+					Name = "SpeechCloseButton",
+					Text = "×",
+					TooltipText = "Đóng lời thoại",
+					AnchorLeft = 1f,
+					AnchorRight = 1f,
+					OffsetLeft = -34f,
+					OffsetRight = -6f,
+					OffsetTop = 6f,
+					OffsetBottom = 32f,
+					MouseFilter = Control.MouseFilterEnum.Stop,
+				};
+				closeSpeech.Pressed += () => DismissSpeechBubble();
+				_bubble.AddChild(closeSpeech);
+			}
 		}
 		if (_bubbleFrame != null)
 		{
@@ -1242,7 +1274,9 @@ public partial class UdpListener : Node2D
 		}
 		if (_label != null)
 		{
-			_label.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_label.MouseFilter = Control.MouseFilterEnum.Stop;
+			_label.ScrollActive = true;
+			_label.ScrollFollowing = false;
 			_label.AddThemeColorOverride("default_color", new Color(0.34f, 0.29f, 0.34f, 1f));
 			_label.AddThemeFontSizeOverride("normal_font_size", 17);
 			_label.AddThemeFontSizeOverride("bold_font_size", 17);
@@ -1254,7 +1288,7 @@ public partial class UdpListener : Node2D
 	{
 		if (_live2DSpeechBubble != null)
 		{
-			_live2DSpeechBubble.MouseFilter = Control.MouseFilterEnum.Ignore;
+			_live2DSpeechBubble.MouseFilter = Control.MouseFilterEnum.Pass;
 			_live2DSpeechBubble.ZIndex = 999;
 			_live2DSpeechBubble.ZAsRelative = false;
 		}
@@ -1272,7 +1306,7 @@ public partial class UdpListener : Node2D
 			Visible = false,
 			Size = new Vector2(500f, 174f),
 			CustomMinimumSize = new Vector2(500f, 174f),
-			MouseFilter = Control.MouseFilterEnum.Ignore,
+			MouseFilter = Control.MouseFilterEnum.Pass,
 			ZIndex = 999,
 		};
 		_live2DSpeechBubble.AddThemeStyleboxOverride("panel", MakeFlatStyle(
@@ -1320,15 +1354,26 @@ public partial class UdpListener : Node2D
 		status.AddThemeFontSizeOverride("font_size", 12);
 		header.AddChild(status);
 
+		// Đóng bubble thủ công: lời dài không tự biến mất và không chắn màn hình mãi.
+		var closeSpeech = new Button
+		{
+			Text = "×", TooltipText = "Đóng lời thoại (lịch sử chat vẫn được lưu)",
+			CustomMinimumSize = new Vector2(24f, 24f),
+			MouseFilter = Control.MouseFilterEnum.Stop,
+		};
+		closeSpeech.Pressed += () => DismissSpeechBubble();
+		header.AddChild(closeSpeech);
+
 		text = new RichTextLabel
 		{
 			BbcodeEnabled = false,
 			FitContent = false,
-			ScrollActive = false,
+			ScrollActive = true,
+			ScrollFollowing = false,
 			AutowrapMode = TextServer.AutowrapMode.WordSmart,
 			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
 			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-			MouseFilter = Control.MouseFilterEnum.Ignore,
+			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		text.AddThemeColorOverride("default_color", darkText ? new Color(0.08f, 0.16f, 0.11f, 1f) : new Color(0.91f, 0.98f, 0.94f, 1f));
 		text.AddThemeFontSizeOverride("normal_font_size", 17);
@@ -1484,7 +1529,7 @@ public partial class UdpListener : Node2D
 		Control activeBubble = ActiveSpeechBubble();
 		if (activeBubble == null || !activeBubble.Visible)
 			return;
-		if (_bubbleHideAtMs == 0)
+		if (_bubbleHideAtMs == 0 || _speechIsBeingRead || _ttsBodyAudioTurnId.Length > 0)
 			return;
 		if (Time.GetTicksMsec() < _bubbleHideAtMs)
 			return;
@@ -4125,6 +4170,8 @@ public partial class UdpListener : Node2D
 			}
 			HideAllSpeechBubbles();
 			_bubbleHideAtMs = 0;
+			_speechIsLong = false;
+			_speechIsBeingRead = false;
 			_lastSpeechBubbleText = "";
 			_lastSpeechBubbleTextAtMs = 0;
 			if (_label != null)
@@ -4149,6 +4196,8 @@ public partial class UdpListener : Node2D
 		}
 		_lastSpeechBubbleText = normalizedText;
 		_lastSpeechBubbleTextAtMs = nowMs;
+		_speechIsLong = normalizedText.Length > LongSpeechImmediateChars;
+		_speechIsBeingRead = _speechIsLong;
 
 		if (_textTween != null && _textTween.IsValid())
 		{
@@ -4181,7 +4230,7 @@ public partial class UdpListener : Node2D
 
 		activeLabel.ClipContents = true;
 		activeLabel.ScrollActive = true;
-		activeLabel.ScrollFollowing = true;
+		activeLabel.ScrollFollowing = false;
 		activeLabel.VisibleCharacters = -1;
 		activeLabel.Text = "";
 		if (activeStatus != null)
@@ -4194,24 +4243,35 @@ public partial class UdpListener : Node2D
 			SyncLegacySpeechBubbleOverlayTransform();
 		ScheduleTransientOverlayRefresh();
 	
+		// Với lời dài: hiện ĐỦ NGAY, không ép user đuổi theo ký tự và giọng
+		// Nhật. Scroll ở đầu, người dùng tự đọc và tự cuộn. Không auto-hide.
+		if (_speechIsLong)
+		{
+			SetSpeechLabelText(_label, normalizedText);
+			SetSpeechLabelText(_live2DSpeechLabel, normalizedText);
+			ResetSpeechScrollToTop(_label);
+			ResetSpeechScrollToTop(_live2DSpeechLabel);
+			if (activeStatus != null)
+				activeStatus.Text = "cứ đọc theo nhịp của bạn";
+			_bubbleHideAtMs = 0;
+			return;
+		}
+
+		// Với lời ngắn: vẫn giữ hiệu ứng gõ nhẹ. Không auto-follow xuống cuối.
 		_textTween = CreateTween();
-
-		float speedPerChar = 0.05f;
-		float totalDuration = Mathf.Max(0.01f, text.Length * speedPerChar);
-
-		// Lên lịch tự ẩn: gõ xong + chừa thời gian đọc (tỉ lệ theo độ dài câu).
+		float totalDuration = Mathf.Max(0.01f, normalizedText.Length * 0.05f);
 		if (BubbleReadSeconds > 0f)
 		{
-			float readSeconds = Mathf.Max(BubbleReadSeconds, text.Length * 0.06f);
+			float readSeconds = Mathf.Max(BubbleReadSeconds, normalizedText.Length * 0.06f);
 			_bubbleHideAtMs = Time.GetTicksMsec() + (ulong)((totalDuration + readSeconds) * 1000f);
 		}
 		else
 		{
-			_bubbleHideAtMs = 0; // không tự ẩn
+			_bubbleHideAtMs = 0;
 		}
-
-		// thực thi hiệu ứng gõ chữ
-		_textTween.TweenMethod(Callable.From<int>(count => RevealTypewriterText(text, count)), 0, text.Length, totalDuration);
+		_textTween.TweenMethod(
+			Callable.From<int>(count => RevealTypewriterText(normalizedText, count)),
+			0, normalizedText.Length, totalDuration);
 	}
 
 	private void RevealTypewriterText(string fullText, int count)
@@ -4231,9 +4291,27 @@ public partial class UdpListener : Node2D
 		if (target == null)
 			return;
 		target.Text = text ?? "";
-		VScrollBar scrollBar = target.GetVScrollBar();
-		if (scrollBar != null)
-			scrollBar.Value = scrollBar.MaxValue;
+		// TUYỆT ĐỐI không chỉnh Value ở đây: user có thể đang đọc dòng đầu.
+	}
+
+	private static void ResetSpeechScrollToTop(RichTextLabel target)
+	{
+		if (target == null)
+			return;
+		// Deferred sau layout: scrollbar thường chưa tính xong ở frame set Text.
+		target.CallDeferred("scroll_to_line", 0);
+	}
+
+	private void DismissSpeechBubble()
+	{
+		if (_textTween != null && _textTween.IsValid())
+			_textTween.Kill();
+		HideAllSpeechBubbles();
+		_bubbleHideAtMs = 0;
+		_speechIsBeingRead = false;
+		_speechIsLong = false;
+		_lastSpeechBubbleText = "";
+		UpdateMousePassthrough();
 	}
 
 	private void UpdateAnimation()
@@ -4673,6 +4751,8 @@ public partial class UdpListener : Node2D
 				_ttsBodyAudioTurnId = turnId;
 				_ttsBodyAudioSegmentCount = Math.Max(segmentCount, segmentId + 1);
 				_audio?.SetTtsExclusiveMute(true);
+				if (!_speechIsLong && ActiveSpeechStatusLabel() is { } status)
+					status.Text = "đang nói";
 				return true;
 			}
 
@@ -4684,7 +4764,11 @@ public partial class UdpListener : Node2D
 				{
 					int totalSegments = Math.Max(_ttsBodyAudioSegmentCount, segmentCount);
 					if (segmentId >= totalSegments - 1)
+					{
 						ClearTtsBodyAudioMute();
+						if (ActiveSpeechStatusLabel() is { } status)
+							status.Text = _speechIsLong ? "giọng đã dừng • bạn cứ đọc tiếp" : "đã nói xong";
+					}
 				}
 				return true;
 			}
@@ -4692,6 +4776,8 @@ public partial class UdpListener : Node2D
 			if (eventType == "audio_failed" || eventType == "audio_cancelled")
 			{
 				ClearTtsBodyAudioMute();
+				if (ActiveSpeechStatusLabel() is { } status)
+					status.Text = _speechIsLong ? "đã ngắt giọng • vẫn đọc được" : "giọng đã ngắt";
 				return true;
 			}
 

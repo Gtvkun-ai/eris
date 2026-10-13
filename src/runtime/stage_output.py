@@ -369,9 +369,12 @@ class StageOutputPipeline:
                     # Khi số mảnh display và speech không khớp (dịch Nhật có
                     # thể đổi nhịp), dùng nguyên bubble Việt cho mảnh đầu và để
                     # các mảnh sau không ghi đè UI/memory bằng transcript Nhật.
+                    # Chỉ map theo index khi số phân đoạn khớp. Dịch Việt→Nhật
+                    # có thể thêm/bớt câu: ghép index mù sẽ để mất phần chữ
+                    # Việt ở event stage. Khi lệch, phát nguyên display một lần.
                     display_text = (
                         display_parts[part_index]
-                        if part_index < len(display_parts)
+                        if len(display_parts) == len(beat_parts)
                         else beat_display if part_index == 0 else ""
                     )
                     frames.append(
@@ -413,14 +416,17 @@ class StageOutputPipeline:
                 style_hint=frame.prosody_style,
                 notes_hint=frame.prosody_notes,
             )
+            # VI/JP khác số câu không có nghĩa tương đương theo index.
+            # Đừng tự nhận cặp bất kỳ là aligned. Giữ toàn văn Việt/memory
+            # ở segment đầu, còn playback vẫn chia đủ số segment Nhật.
             display_text = (
                 display_segments[index]
-                if index < len(display_segments)
+                if len(display_segments) == len(segments)
                 else frame.display_text if index == 0 else ""
             )
             memory_text = (
                 memory_segments[index]
-                if index < len(memory_segments)
+                if len(memory_segments) == len(segments)
                 else frame.memory_text if index == 0 else ""
             )
             frames.append(
