@@ -185,7 +185,7 @@ class RuntimeConversationDeliveryAdapter:
         if memory_text:
             append_history = getattr(self.host, "_append_chat_history", None)
             if callable(append_history):
-                append_history("assistant", memory_text, invalid=False)
+                append_history("assistant", memory_text, invalid=False, pending_delivery_id=did)
         ledger_factory = getattr(self.host, "_ensure_session_turn_ledger", None)
         if callable(ledger_factory):
             assistant_turn = ledger_factory().record_assistant(
@@ -197,8 +197,45 @@ class RuntimeConversationDeliveryAdapter:
                     "generation": turn.generation,
                     "run_id": turn.run_id,
                     "next_conversation_move": turn.move.to_dict(),
+                    "delivery_status": "pending",  # Chưa có terminal TTS receipt.
                 },
             )
+
+        # Đăng ký receipt chỉ SAU khi commit history/ledger. Nếu TTS no_tts
+        # callback hoàn tất đồng bộ trong send(), helper sẽ áp receipt đã đến sớm.
+        # Side effect Observation / living-memory chỉ được ghi khi thực sự
+        # phát xong (hoặc no_tts), không phải khi audio mới bắt đầu buffer.
+        # Chỉ giữ primitive cho callback bất đồng bộ; không bắt closure mang
+        # toàn bộ rendered/turn/registry (có thể rất lớn) trong lúc TTS buffer.
+        delivered_user_text = str(rendered.metadata.get("user_text", "") or "")[:2000]
+        delivered_speech_act = str(getattr(decision, "speech_act", "") or turn.move.intent or "public_commit")[:240]
+        delivered_turn_index = int(getattr(assistant_turn, "index", 0) or 0)
+
+        def _on_delivered() -> None:
+            journal = getattr(self.host, "_journal_conversation_turn", None)
+            if callable(journal) and memory_text:
+                try:
+                    journal("assistant", memory_text)
+                except Exception as exc:
+                    self._log("debug", "[delivery-adapter] memory journal degraded: %s", exc)
+            try:
+                from runtime.conversation.observation_bridge import ensure_conversation_observation_bridge
+                history = tuple(getattr(self.host, "chat_history", ()) or ())[-12:]
+                ensure_conversation_observation_bridge(self.host).observe_assistant_commit(
+                    memory_text or display_text,
+                    turn_ref=did,
+                    turn_index=delivered_turn_index,
+                    speech_act=delivered_speech_act,
+                    event_kind=event_kind or channel,
+                    causal_receipt=causal_receipt,
+                    recent_history=tuple(item for item in history if isinstance(item, dict)),
+                    user_text=delivered_user_text,
+                )
+            except Exception as exc:
+                self._log("debug", "[conversation-v12] delivered observation degraded: %s", exc)
+
+        from .speech_outcome import register_public_surface
+        register_public_surface(self.host, delivery_id=did, on_delivered=_on_delivered)
 
         self.host.last_text = display_text
         self.host.last_chat_answer = display_text
@@ -243,22 +280,6 @@ class RuntimeConversationDeliveryAdapter:
             }, logger=getattr(self.host, "logger", None))
         except Exception as exc:
             self._log("debug", "[conversation-v12] public trace provenance degraded: %s", exc)
-
-        try:
-            from runtime.conversation.observation_bridge import ensure_conversation_observation_bridge
-            history = tuple(getattr(self.host, "chat_history", ()) or ())[-12:]
-            ensure_conversation_observation_bridge(self.host).observe_assistant_commit(
-                memory_text or display_text,
-                turn_ref=did,
-                turn_index=int(getattr(assistant_turn, "index", 0) or 0),
-                speech_act=str(getattr(decision, "speech_act", "") or turn.move.intent or "public_commit"),
-                event_kind=event_kind or channel,
-                causal_receipt=causal_receipt,
-                recent_history=tuple(item for item in history if isinstance(item, dict)),
-                user_text=str(rendered.metadata.get("user_text", "") or ""),
-            )
-        except Exception as exc:
-            self._log("debug", "[conversation-v12] observation write-back degraded: %s", exc)
 
     def prepare_candidate(self, *, turn: KernelTurn, event: Any,
                           payload: dict[str, Any], source_fingerprint: str):

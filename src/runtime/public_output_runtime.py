@@ -122,6 +122,16 @@ def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool)
     did = str(turn_id or "")[:180]
     if not did:
         return False
+    # TTS đã có kết quả dù Kernel run cũ có thể bị user preempt. Kết quả
+    # phải cập nhật đúng delivery_id ở transcript, nhưng KHÔNG được hồi sinh
+    # continuation hoặc làm thay đổi phase của generation mới.
+    try:
+        from runtime.conversation.speech_outcome import note_public_delivery_outcome
+        note_public_delivery_outcome(
+            host, delivery_id=did, status="delivered" if successful else "failed",
+        )
+    except Exception:
+        pass
     try:
         from runtime.conversation.bootstrap import ensure_conversation_kernel
         from runtime.conversation.contracts import DeliveryReceipt
@@ -665,9 +675,24 @@ class PublicOutputRuntimeMixin:
                 self.logger.warning("Failed to send panel state payload: %s", panel_exc)
 
         def handle_tts_event(event, event_stage_frame):
-            if not v03_current():
-                return
             event_type = str(getattr(event, "type", "") or "").strip().lower()
+            if not v03_current():
+                # Trường hợp P0: user chen lời làm generation cũ stale trước
+                # khi callback TTS quay về. Không phát event sân khấu cũ đè
+                # lên turn mới, nhưng phải lưu trạng thái audio của câu cũ.
+                if event_type in {"audio_done", "audio_failed", "audio_cancelled"}:
+                    try:
+                        from runtime.conversation.speech_outcome import note_public_delivery_outcome
+                        old_id = str(payload.get("event_trace_id") or getattr(event, "turn_id", "") or "")
+                        status = {"audio_done": "delivered", "audio_failed": "failed", "audio_cancelled": "cancelled"}[event_type]
+                        # audio_done của một segment chưa chắc là hết cả câu.
+                        segment = int(getattr(event, "segment_id", 0) or 0)
+                        total = len(tuple(getattr(event, "turn_segments", ()) or ())) or len(stage_frames) or 1
+                        if event_type != "audio_done" or segment >= total - 1:
+                            note_public_delivery_outcome(self, delivery_id=old_id, status=status)
+                    except Exception as exc:
+                        self.logger.debug("[conversation-v12] stale audio receipt degraded: %s", exc)
+                return
             event_turn_id = str(
                 getattr(event, "turn_id", "")
                 or getattr(event_stage_frame, "turn_id", "")
@@ -1037,6 +1062,20 @@ class PublicOutputRuntimeMixin:
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         }
         self.last_tts_event = record
+        # ``audio_cancelled`` trước đây chỉ đổi trạng thái UI, không settle
+        # transcript V12. P0 bổ sung outcome riêng cho history/ledger, không
+        # đồng nhất "đã hiện chữ" với "đã nói xong".
+        if event_type in {"audio_done", "audio_failed", "audio_cancelled"}:
+            try:
+                from runtime.conversation.speech_outcome import note_public_delivery_outcome
+                last_segment = int(record["segment_id"]) >= max(0, int(record["segment_count"]) - 1)
+                if event_type != "audio_done" or last_segment:
+                    note_public_delivery_outcome(
+                        self, delivery_id=str(trace_id or record["turn_id"]),
+                        status={"audio_done": "delivered", "audio_failed": "failed", "audio_cancelled": "cancelled"}[event_type],
+                    )
+            except Exception as exc:
+                self.logger.debug("[conversation-v12] public speech outcome degraded: %s", exc)
         try:
             from runtime.ai_orchestrated.autonomous_trace import append_public_turn_trace
             public_trace_id = str(trace_id or record["turn_id"] or "")
@@ -1122,6 +1161,13 @@ class PublicOutputRuntimeMixin:
                         )
                 except Exception as exc:
                     self.logger.debug("[conversation-v12] post-audio lifecycle degraded: %s", exc)
+        elif event_type == "audio_cancelled":
+            # Settlement failure chỉ dành cho run còn đang active. Nếu user
+            # đã preempt, Kernel tự bỏ receipt cũ, status history vẫn được ghi
+            # độc lập ở phía trên theo đúng delivery_id.
+            _settle_conversation_delivery_event(
+                self, turn_id=str(record.get("turn_id", "") or ""), successful=False
+            )
         elif event_type == "audio_failed":
             self.logger.warning(
                 "[TTS:event] audio_failed turn=%s segment=%s error=%s reason=%s",

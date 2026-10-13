@@ -126,25 +126,41 @@ class IncomingMessageDispatcher:
             timestamp = float(msg.get("timestamp") or self.clock())
         except (TypeError, ValueError):
             timestamp = float(self.clock())
-        owner._capture_speech_interrupt_for_user(user_text, timestamp=timestamp)
-
-        # V12: backchannel ngắn trong lúc Eris đang phát audio là tín hiệu nghe,
-        # không mặc định là steering. Vì vậy không hủy audio/generation chỉ vì
-        # "ừ/à/đúng rồi". Khi audio không bận, cùng câu đó vẫn là một user turn
-        # bình thường và đi qua root agent như mọi input khác.
+        # P0: Đến đây mới có nội dung cuối của user. Không huỷ TTS ở
+        # chat_start, vì khi ấy không thể phân biệt "ừ" với "dừng lại".
+        # Dù client bỏ quên chat_start, message chat vẫn tự mở chat mode.
+        if not bool(getattr(owner, "chat_mode", False)):
+            owner._enter_chat_cycle()
+        cancel_audio = True  # Fail-safe nếu bộ phân loại bị lỗi.
         try:
             from runtime.conversation import InterruptKind, classify_interrupt
             interrupt = classify_interrupt(user_text, final=True)
             clock = getattr(owner, "interaction_clock", None)
             speech_busy = bool(getattr(clock, "speech_floor_busy", False))
             if interrupt.kind == InterruptKind.BACKCHANNEL and speech_busy:
+                # Đây chỉ là tiếng đệm trong lúc Eris đang nói; không gửi thành
+                # user turn thứ hai, không làm mất câu đang phát hoặc Root run.
                 owner.logger.debug("[conversation-v12] preserved audio on backchannel=%r", user_text[:80])
+                # Đây là transcript cuối: nếu không đóng chat_mode, một
+                # backchannel có thể giữ Autonomous ở trạng thái paused.
+                finish = getattr(owner, "_end_chat_cycle", None)
+                if callable(finish):
+                    finish()
                 return
-            if interrupt.cancel_audio:
-                owner._supersede_tts_for_new_user_turn("user_chat_supersede")
-        except Exception:
-            # Fail-safe cũ: nếu classifier unavailable, ưu tiên barge-in thật sự.
-            owner._supersede_tts_for_new_user_turn("user_chat_supersede")
+            cancel_audio = bool(interrupt.cancel_audio)
+        except Exception as exc:
+            logger = getattr(owner, "logger", None)
+            if callable(getattr(logger, "debug", None)):
+                logger.debug("[conversation-v12] interrupt classification failed: %s", exc)
+        owner._capture_speech_interrupt_for_user(user_text, timestamp=timestamp)
+        preempt = getattr(owner, "_preempt_for_classified_user_turn", None)
+        if callable(preempt):
+            preempt(cancel_audio=cancel_audio)
+        elif cancel_audio:
+            # Adapter test/host cũ chưa có ChatCycleMixin: vẫn giữ barge-in.
+            supersede = getattr(owner, "_supersede_tts_for_new_user_turn", None)
+            if callable(supersede):
+                supersede("user_chat_supersede")
         owner._run_chat_cycle(user_text, user_timestamp=timestamp)
 
     def _handle_force_speak(self, _msg: dict[str, Any]) -> None:

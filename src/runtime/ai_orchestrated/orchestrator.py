@@ -719,11 +719,18 @@ class AIChatOrchestrator:
             ledger = ledger_factory() if callable(ledger_factory) else None
             assistant_turns = ledger.assistant_turns() if ledger is not None else []
             previous_assistant = assistant_turns[-1] if assistant_turns else None
+            previous_assistant_text = str(getattr(previous_assistant, "text", "") or "")
+            if previous_assistant is not None:
+                delivery_status = str(getattr(previous_assistant, "meta", {}).get("delivery_status", "") or "")
+                if delivery_status in {"pending", "cancelled", "failed"}:
+                    # Observer cũng phải biết câu cũ chỉ hiện trên panel hoặc
+                    # bị cắt tiếng, không suy rằng user đã nghe trọn câu.
+                    previous_assistant_text = f"[TTS {delivery_status}; chưa xác nhận nghe trọn] {previous_assistant_text}"
             ensure_conversation_observation_bridge(host).observe_user_turn(
                 str(user_text or ""),
                 turn_ref=(f"session_turn:{int(getattr(user_turn, 'index', 0) or 0)}" if user_turn is not None else ""),
                 turn_index=int(getattr(user_turn, "index", 0) or 0),
-                previous_assistant_text=str(getattr(previous_assistant, "text", "") or getattr(host, "last_text", "") or ""),
+                previous_assistant_text=previous_assistant_text or (str(getattr(host, "last_text", "") or "") if previous_assistant is None else ""),
                 previous_assistant_turn_ref=(f"session_turn:{int(getattr(previous_assistant, 'index', 0) or 0)}" if previous_assistant is not None else ""),
                 previous_assistant_turn_index=int(getattr(previous_assistant, "index", 0) or 0),
                 now=cycle_start,
@@ -735,11 +742,17 @@ class AIChatOrchestrator:
         # ``user_text``. Vì vậy history ở đây PHẢI chỉ chứa các lượt trước; nếu
         # append current user trước khi chụp history, cùng một câu sẽ xuất hiện
         # hai lần trong cả root payload lẫn writer messages.
-        history = tuple(
-            item
-            for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
-            if isinstance(item, Mapping)
-        )
+        # P0: foreground trước đây dùng trực tiếp raw chat_history; metadata
+        # delivery_status không được dịch ra context nên Root có thể tưởng
+        # audio bị huỷ đã nói xong. Dùng cùng projection với Autonomous.
+        history_reader = getattr(host, "_chat_history_for_llm", None)
+        if callable(history_reader):
+            history = tuple(history_reader(limit=32))
+        else:
+            history = tuple(
+                item for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
+                if isinstance(item, Mapping)
+            )
         append_history = getattr(host, "_append_chat_history", None)
         if callable(append_history):
             append_history("user", str(user_text or ""))

@@ -67,6 +67,12 @@ class SocialSpeechCandidate:
     idempotency_key: str = ""
     seed_id: str = ""
     seed_mode: str = ""
+    # P0: MentalMaterialRuntime.project() đã phát ra ba thuộc tính này nhưng
+    # contract cũ không nhận, gây TypeError và làm mất proposal của RootAgent.
+    # Đây là metadata nội bộ, tuyệt đối không cấp quyền tự phát ngôn cho Seed.
+    seed_event_kind: str = ""
+    seed_epistemic_mode: str = ""
+    seed_open_loop: bool = False
     source_kind: str = ""
     topic_tags: tuple[str, ...] = ()
     desired_response: tuple[str, ...] = ()
@@ -199,6 +205,9 @@ class SocialSpeechCandidate:
             idempotency_key=_compact(data.get("idempotency_key", ""), 180),
             seed_id=_compact(seed.get("seed_id", data.get("seed_id", "")), 80),
             seed_mode=_compact(seed.get("mode", data.get("seed_mode", "")), 24).lower(),
+            seed_event_kind=_compact(data.get("seed_event_kind", seed.get("seed_event_kind", "")), 64).lower(),
+            seed_epistemic_mode=_compact(data.get("seed_epistemic_mode", seed.get("seed_epistemic_mode", "")), 48).lower(),
+            seed_open_loop=bool(data.get("seed_open_loop", seed.get("seed_open_loop", False))),
             source_kind=_compact(seed.get("source_kind", data.get("source_kind", "")), 40).lower(),
             topic_tags=topic_tags,
             desired_response=desired_response,

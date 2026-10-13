@@ -18,19 +18,36 @@ class ChatCycleMixin:
     """
 
     def _enter_chat_cycle(self) -> None:
-        self._chat_last_activity_at = time.time()
-        try:
-            from runtime.public_lifecycle import lifecycle_for
-            lifecycle_for(self).interrupt(reason="new_user_input")
-        except Exception as exc:
-            self.logger.debug("Public lifecycle interrupt failed: %s", exc)
-        supersede_tts = getattr(self, "_supersede_tts_for_new_user_turn", None)
-        if callable(supersede_tts):
-            try:
-                supersede_tts("user_speech_started")
-            except Exception as exc:
-                self.logger.debug("TTS early barge-in cancel failed: %s", exc)
+        """Chat-start chỉ giữ quyền lượt, chưa biết user sẽ nói gì.
 
+        P0: UDP gửi ``chat_start`` trước ``chat``. Huỷ TTS ở đây khiến một
+        backchannel như "ừ" cũng cắt câu Eris, dù classifier phía sau nói
+        ``cancel_audio=False``. Chỉ khi đã có văn bản và phân loại xong mới
+        được preempt lời nói/công việc/generation.
+        """
+        self._chat_last_activity_at = time.time()
+        if self.chat_mode:
+            return
+        self.chat_mode = True
+        self.repeated_user_count = 0
+        self.last_user_signature = ""
+        self.last_user_text_for_semantics = ""
+        self.logger.info("Entered chat mode; pending user input, audio kept until interrupt classification.")
+
+    def _preempt_for_classified_user_turn(self, *, cancel_audio: bool) -> None:
+        """Một nơi duy nhất áp quyết định interrupt cho user turn đã rõ nội dung."""
+        if cancel_audio:
+            try:
+                from runtime.public_lifecycle import lifecycle_for
+                lifecycle_for(self).interrupt(reason="new_user_input")
+            except Exception as exc:
+                self.logger.debug("Public lifecycle interrupt failed: %s", exc)
+            supersede_tts = getattr(self, "_supersede_tts_for_new_user_turn", None)
+            if callable(supersede_tts):
+                try:
+                    supersede_tts("user_chat_supersede")
+                except Exception as exc:
+                    self.logger.debug("TTS classified barge-in cancel failed: %s", exc)
         discovery = getattr(self, "ai_discovery_runtime", None)
         preempt_discovery = getattr(discovery, "preempt_for_chat", None)
         if callable(preempt_discovery):
@@ -38,20 +55,12 @@ class ChatCycleMixin:
                 preempt_discovery(reason="enter_chat_mode")
             except Exception as exc:
                 self.logger.debug("Discovery cooperative cancel failed: %s", exc)
-
-        if self.chat_mode:
-            return
         cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
         if callable(cancel_generation):
             try:
                 cancel_generation(reason="enter_chat_mode")
             except Exception as exc:
                 self.logger.debug("LLM cooperative cancel failed: %s", exc)
-        self.chat_mode = True
-        self.repeated_user_count = 0
-        self.last_user_signature = ""
-        self.last_user_text_for_semantics = ""
-        self.logger.info("Entered chat mode; autonomous is paused for user messages.")
 
     def _end_chat_cycle(self) -> None:
         if not getattr(self, "chat_mode", False):

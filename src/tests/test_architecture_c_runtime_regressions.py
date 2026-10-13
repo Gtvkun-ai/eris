@@ -229,16 +229,20 @@ def test_observer_anchor_overrides_generic_feedback_unknown_frame() -> None:
     assert "deterministic_anchor" in anchored.source
 
 
-def test_chat_start_supersedes_tts_before_asr_text_arrives() -> None:
+def test_chat_start_preserves_tts_until_final_interrupt_classification() -> None:
+    """P0: chat_start không chứa chữ, không được suy user đang yêu cầu stop."""
     from runtime.chat_cycle import ChatCycleMixin
 
     class _Logger:
         def debug(self, *_args, **_kwargs):
             return None
 
+        def info(self, *_args, **_kwargs):
+            return None
+
     class _ChatHost(ChatCycleMixin):
         def __init__(self) -> None:
-            self.chat_mode = True
+            self.chat_mode = False
             self.logger = _Logger()
             self.ai_discovery_runtime = None
             self.reasons: list[str] = []
@@ -249,7 +253,11 @@ def test_chat_start_supersedes_tts_before_asr_text_arrives() -> None:
 
     host = _ChatHost()
     host._enter_chat_cycle()
-    assert host.reasons == ["user_speech_started"]
+    assert host.chat_mode is True
+    assert host.reasons == []
+    # Khi đã phân loại được user thật sự chen lời, mới huỷ đúng một lần.
+    host._preempt_for_classified_user_turn(cancel_audio=True)
+    assert host.reasons == ["user_chat_supersede"]
 
 
 def test_conversation_profile_uses_independent_tts_turn_manager() -> None:

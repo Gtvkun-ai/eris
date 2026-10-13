@@ -322,9 +322,19 @@ class PromptContextBuilderMixin:
                 ts = float(item.get("ts", 0.0) or 0.0)
                 if ts > 0.0 and (now - ts) > ttl:
                     continue
-            valid_entries.append(
-                {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
-            )
+            content = str(item.get("content", ""))
+            # Câu đã đưa lên màn hình có thể bị cắt trước khi giọng nói xong.
+            # Khi gửi lại model phải thể hiện rõ sự khác biệt ấy; không biến
+            # một phát ngôn bị ngắt thành bằng chứng Eris đã nói trọn câu.
+            status = str(item.get("delivery_status", "") or "")
+            if item.get("role") == "assistant" and status in {"pending", "cancelled", "failed"}:
+                context_note = {
+                    "pending": "[Đã hiển thị; TTS chưa xác nhận phát xong]",
+                    "cancelled": "[Đã hiển thị; âm thanh bị ngắt giữa chừng]",
+                    "failed": "[Đã hiển thị; phát âm thanh thất bại]",
+                }[status]
+                content = f"{context_note} {content}"
+            valid_entries.append({"role": str(item.get("role", "")), "content": content})
         return valid_entries[-limit:]
 
     def _user_addressing_snapshot(self) -> dict[str, object]:
@@ -338,7 +348,8 @@ class PromptContextBuilderMixin:
         existing = str(context or "").strip()
         return "\n\n".join(part for part in (addressing, existing) if part).strip()
 
-    def _append_chat_history(self, role: str, content: str, *, invalid: bool = False) -> None:
+    def _append_chat_history(self, role: str, content: str, *, invalid: bool = False,
+                             pending_delivery_id: str = "") -> None:
         # Explicit addressing correction is synchronous shared state. It must be
         # visible to the very reply generated for this user turn, not to some
         # later background digest after the social damage is already done.
@@ -370,37 +381,46 @@ class PromptContextBuilderMixin:
         entry = {"role": role, "content": content, "ts": time.time()}
         if invalid:
             entry["invalid"] = True
+        if role == "assistant" and pending_delivery_id:
+            entry["delivery_id"] = str(pending_delivery_id)[:180]
+            entry["delivery_status"] = "pending"
         self.chat_history.append(entry)
-        # Đồng thời ghi journal episode cho living user memory. Đây chỉ là buffer
-        # tóm tắt; raw conversation history vẫn thuộc chat/event ledger.
-        if not invalid:
-            living_user = getattr(getattr(self, "memory_kernel", None), "living_user", None)
-            recorder = getattr(living_user, "record_conversation_turn", None)
-            if callable(recorder):
-                try:
-                    session_id = ""
-                    stage_bus = getattr(self, "stage_event_bus", None)
-                    snapshot_fn = getattr(stage_bus, "session_snapshot", None)
-                    if callable(snapshot_fn):
-                        session_id = str((snapshot_fn() or {}).get("session_id") or "")
-                    workspace = getattr(self, "workspace_manager", None)
-                    project_id = str(
-                        getattr(workspace, "active_project_id", "")
-                        or getattr(self, "active_project_id", "")
-                        or ""
-                    )
-                    recorder(
-                        role,
-                        content,
-                        session_id=session_id,
-                        context={"project_id": project_id},
-                    )
-                except Exception:
-                    # Episode journal là enrichment; không được làm hỏng chat history.
-                    pass
+        # Living-memory không được học ngay câu còn đang buffer/chưa nói xong.
+        # Khi terminal TTS thành công, speech_outcome mới gọi journal một lần.
+        if not invalid and not pending_delivery_id:
+            self._journal_conversation_turn(role, content)
         # Cap rộng để autonomous (vốn cũng ghi vào đây) không làm phình vô hạn.
         if len(self.chat_history) > 64:
             self.chat_history = self.chat_history[-64:]
+
+    def _journal_conversation_turn(self, role: str, content: str) -> None:
+        """Ghi episodic memory SAU khi lời assistant được phát xong."""
+        # Đồng thời ghi journal episode cho living user memory. Đây chỉ là buffer
+        # tóm tắt; raw conversation history vẫn thuộc chat/event ledger.
+        living_user = getattr(getattr(self, "memory_kernel", None), "living_user", None)
+        recorder = getattr(living_user, "record_conversation_turn", None)
+        if callable(recorder):
+            try:
+                session_id = ""
+                stage_bus = getattr(self, "stage_event_bus", None)
+                snapshot_fn = getattr(stage_bus, "session_snapshot", None)
+                if callable(snapshot_fn):
+                    session_id = str((snapshot_fn() or {}).get("session_id") or "")
+                workspace = getattr(self, "workspace_manager", None)
+                project_id = str(
+                    getattr(workspace, "active_project_id", "")
+                    or getattr(self, "active_project_id", "")
+                    or ""
+                )
+                recorder(
+                    role,
+                    content,
+                    session_id=session_id,
+                    context={"project_id": project_id},
+                )
+            except Exception:
+                # Episode journal là enrichment; không được làm hỏng chat history.
+                pass
 
     def _build_conversation_context(self, *, limit: int = 6) -> str:
         """Render đuôi hội thoại gần nhất (còn tươi) thành block prompt.
