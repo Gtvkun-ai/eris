@@ -182,21 +182,39 @@ class ConversationKernel:
             state = self.store.load(sid)
             if event.generation not in {0, state.generation}:
                 return ConversationRunResult(event=event, decision=None, status="stale")
-            state = self.store.mutate(
-                sid,
-                lambda prior, now: replace(
-                    prior,
-                    active_run_id=run_id,
-                    active_move_id="",
-                    active_delivery_id="",
-                    phase=RunPhase.THINKING,
-                ),
-            )
+            # P1: các signal nền không có quyền chiếm active_run của một Root
+            # đang suy nghĩ hay một câu đang phát. Chốt này phải ở Kernel, vì
+            # pre-check ngoài orchestrator không atomic khi nhiều thread đua.
+            busy_phases = {RunPhase.THINKING, RunPhase.WORKING, RunPhase.WRITING, RunPhase.DELIVERING}
+            if state.phase in busy_phases:
+                return ConversationRunResult(event=event, decision=None, status="busy")
+
+            def claim_idle_run(prior: ConversationSessionState, now: float) -> ConversationSessionState:
+                # Recheck bên trong store.mutate/transaction: không ghi đè run
+                # của user hoặc một background event vừa claim trước mình.
+                if prior.generation != state.generation or prior.phase in busy_phases:
+                    return prior
+                return replace(prior, active_run_id=run_id, active_move_id="",
+                               active_delivery_id="", phase=RunPhase.THINKING)
+
+            state = self.store.mutate(sid, claim_idle_run)
+            if state.active_run_id != run_id:
+                return ConversationRunResult(
+                    event=event, decision=None,
+                    status="stale" if event.generation not in {0, state.generation} else "busy",
+                )
 
         normalized_event = replace(event, session_id=sid, generation=state.generation)
         agent_context = self._agent_runtime_context(sid, runtime_context)
         # Execution token được kernel cấp, không cho client/model tự chỉ định.
         agent_context["__conversation_run_id"] = run_id
+        # Sau khi user chen vào, Root còn đang đợi DeepSeek/tool sẽ không được
+        # tiếp tục làm hành động của run cũ. Callback này không vào model payload.
+        def root_run_active() -> bool:
+            # Một snapshot atomic/session read cho từng lần kiểm tra.
+            current_run = self.store.load(sid)
+            return current_run.generation == state.generation and current_run.active_run_id == run_id
+        agent_context["__root_run_active"] = root_run_active
         # Pin registry vào normalized generation của kernel. Input trước kernel
         # có thể mang generation=0; receipt từ Root phải dùng generation THỰC.
         from .claim_evidence import EvidenceRegistry
@@ -388,9 +406,13 @@ class ConversationKernel:
             if self.store.load(sid).generation == lease.generation:
                 self.continuation.release(lease)
             raise
-        if result.status in {"writer_failed", "writer_unavailable"}:
+        if result.status in {"writer_failed", "writer_unavailable", "busy"}:
+            # Một run khác vừa chiếm governor thì KHÔNG được nuốt mất lease.
+            # Trả lease về pending để Root đánh giá lại sau khi run kia kết thúc.
             if self.store.load(sid).generation == lease.generation:
                 self.continuation.release(lease)
+            else:
+                self.continuation.consume(lease)
         else:
             self.continuation.consume(lease)
         return result

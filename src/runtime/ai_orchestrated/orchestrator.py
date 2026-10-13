@@ -833,7 +833,11 @@ class AIChatOrchestrator:
             runtime_context["grounding_context"] = "\n\n".join(
                 part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
             )[:48000]
+        # Truy xuất ký ức có chọn lọc là công cụ ROOT sở hữu. Nó chỉ hoạt động
+        # nếu model tự gọi recall_memory; không áp thêm memory-search ở mọi turn.
+        from runtime.conversation.context import memory_recall_tools_for_host
         runtime_context.update({
+            "__root_memory_recall_tools": memory_recall_tools_for_host(host, session_id=sid),
             "__source_grounding_report": evidence_context.get("__source_grounding_report"),
             "__source_grounding_engine": evidence_context.get("__source_grounding_engine"),
             # Dependency nội bộ cho root loop; RuntimeModelRootAgent không
@@ -1121,6 +1125,10 @@ class AIAutonomousOrchestrator:
             runtime_context["grounding_context"] = "\n\n".join(
                 part for part in (str(runtime_context.get("grounding_context", "") or ""), source_context) if part.strip()
             )[:48000]
+        # Event autonomous cũng có quyền tự nhớ lại, nhưng không được tự phát
+        # ngôn: mọi công cụ phải qua RootAgent/ConversationKernel.
+        from runtime.conversation.context import memory_recall_tools_for_host
+        runtime_context["__root_memory_recall_tools"] = memory_recall_tools_for_host(host, session_id=sid)
         runtime_context["__source_grounding_report"] = evidence_context.get("__source_grounding_report")
         runtime_context["__source_grounding_engine"] = evidence_context.get("__source_grounding_engine")
         status = dict(runtime_context.get("conversation_status", {}) or {})

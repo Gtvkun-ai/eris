@@ -42,6 +42,55 @@ class ConversationNoteTools:
 
 
 @dataclass(frozen=True, slots=True)
+class RootMemoryRecallTools:
+    """Cổng đọc ký ức theo yêu cầu *của Root*, không tự chọn/chèn lời thoại.
+
+    Callback luôn trả kết quả public-safe từ MemoryKernel; không cho model gọi
+    trực tiếp filesystem hoặc sửa ký ức. Công cụ này không ghi memory mới.
+    """
+
+    recall: Callable[[str], Mapping[str, Any]]
+
+    def query(self, text: str) -> Mapping[str, Any]:
+        # Tránh truy vấn rỗng hoặc input dài bất thường từ model.
+        query = " ".join(str(text or "").strip().split())[:600]
+        if not query:
+            return {"status": "invalid", "reason": "empty_memory_query"}
+        return self.recall(query)
+
+
+def memory_recall_tools_for_host(host: Any, *, session_id: str) -> RootMemoryRecallTools:
+    """Dùng MemoryKernel hiện hữu; không tạo thêm kho nhớ hoặc semantic planner.
+
+    ``build_public_context`` vốn ghép cả đoạn văn và record provenance trong
+    cùng một lần selection. Ta chỉ trao Root đoạn văn + cờ degraded; không tự
+    biến một ký ức không rõ nguồn thành fact chắc chắn.
+    """
+    sid = str(session_id or "foreground:primary")[:180]
+
+    def recall(query: str) -> Mapping[str, Any]:
+        kernel = getattr(host, "memory_kernel", None)
+        build = getattr(kernel, "build_public_context", None)
+        if not callable(build):
+            return {"status": "unavailable", "reason": "memory_kernel_unavailable"}
+        try:
+            packet = build(query, session_id=sid, user_context_token_budget=1500, max_lines=24)
+        except Exception as exc:  # noqa: BLE001
+            # Không nhét traceback hoặc nội dung exception có thể chứa dữ liệu
+            # cá nhân vào context trả cho LLM.
+            return {"status": "failed", "reason": type(exc).__name__}
+        text = str(getattr(packet, "text", "") or "").strip()[:12000]
+        return {
+            "status": "found" if text else "empty",
+            "text": text,
+            "degraded": bool(getattr(packet, "degraded", True)),
+            "source_count": len(tuple(getattr(packet, "records", ()) or ())),
+        }
+
+    return RootMemoryRecallTools(recall=recall)
+
+
+@dataclass(frozen=True, slots=True)
 class CapabilityResultReceipt:
     """Kết quả executor theo một invocation; Root/model không được tự ký receipt.
 
@@ -122,6 +171,8 @@ class RootCapabilityRegistry:
 
 __all__ = [
     "ConversationNoteTools",
+    "RootMemoryRecallTools",
+    "memory_recall_tools_for_host",
     "RootCapabilityRegistry",
     "CapabilityResultReceipt",
     "normalize_note",
