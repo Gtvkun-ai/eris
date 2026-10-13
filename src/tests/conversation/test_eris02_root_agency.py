@@ -102,7 +102,10 @@ def test_root_can_continue_thinking_and_then_choose_silence_in_autonomous_mode()
 
 def test_root_repeated_memory_query_does_not_execute_recall_twice():
     calls = []
-    tools = RootMemoryRecallTools(recall=lambda q: calls.append(q) or {"status": "empty"})
+    # Bước đầu trả 'found' có nghĩa (tiến triển) nên lần recall thứ hai cùng
+    # query chỉ 'duplicate' (streak=1) không chạm trần no-progress của FEAT-003.
+    tools = RootMemoryRecallTools(
+        recall=lambda q: calls.append(q) or {"status": "found", "text": "một ký ức"})
     router = FakeRouter(
         {"kind": "recall_memory", "query": "khung cảnh đang nói"},
         {"kind": "recall_memory", "query": "khung cảnh đang nói"},

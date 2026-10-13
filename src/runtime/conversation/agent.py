@@ -218,10 +218,13 @@ class RuntimeModelRootAgent:
     decision; không fallback về planner/social runtime cũ.
     """
 
-    def __init__(self, router: Any, *, logger: Any = None, max_root_steps: int = 6) -> None:
+    def __init__(self, router: Any, *, logger: Any = None, max_root_steps: int = 8) -> None:
         self.router = router
         self.logger = logger
-        self.max_root_steps = max(2, min(12, int(max_root_steps or 6)))
+        # max_root_steps là trần CỨNG TUYỆT ĐỐI: clamp 2..12, không bao giờ bỏ.
+        # Default nâng 6->8 cho đủ đất khi đang thật sự tiến triển, nhưng vòng
+        # còn một cơ chế cắt sớm riêng khi phát hiện không tiến triển (bên dưới).
+        self.max_root_steps = max(2, min(12, int(max_root_steps or 8)))
         # Một dòng hội thoại của Root, không chia sẻ với Surface/Observer.
         # Self gốc vẫn nằm trong reducer/SubjectService; đây chỉ là remote cache.
         self._root_session = RootConversationSession(logger=logger)
@@ -275,6 +278,12 @@ class RuntimeModelRootAgent:
         reflection_state: dict[str, int] = {"count": 0}
         current_note = str(note or "")[:12000]
         system = self._system_prompt(capabilities)
+        # Phát hiện 'không tiến triển': đếm số bước LIÊN TIẾP mà toàn bộ
+        # tool_result sinh ra đều vô nghĩa (duplicate/empty/failed/limit_reached/
+        # unavailable/invalid hoặc trùng result cùng loại ở bước trước). Trần
+        # cứng vẫn giữ nguyên; đây chỉ cắt sớm khi loop quay vòng vô ích.
+        no_progress_streak = 0
+        last_meaningful_fingerprint: set[str] = set()
 
         for step_index in range(self.max_root_steps):
             if not still_active():
@@ -348,6 +357,7 @@ class RuntimeModelRootAgent:
                     if isinstance(a, Mapping)
                     and str(a.get("kind", "") or "").strip().lower() not in {"move", "no_reply"}
                 ][:4]
+                step_results: list[dict[str, Any]] = []
                 for action in actions:
                     # Preempt giữa chừng: user đã chen vào thì dừng ngay, không
                     # chạy nốt các action còn lại trong batch.
@@ -367,6 +377,7 @@ class RuntimeModelRootAgent:
                     )
                     if result is not None:
                         tool_results.append(result)
+                        step_results.append(result)
                         if result.get("kind") == "note_result":
                             # Note là state dùng lại ở payload lượt sau; đồng bộ
                             # bản cache cục bộ theo operation.
@@ -374,6 +385,16 @@ class RuntimeModelRootAgent:
                                 current_note = str(action.get("text", "") or "").strip()[:12000]
                             elif result.get("operation") == "clear" and result.get("ok"):
                                 current_note = ""
+                # Cập nhật progress-streak cho cả batch rồi mới quyết cắt sớm.
+                early = self._advance_progress_and_maybe_finalize(
+                    step_results=step_results,
+                    last_meaningful_fingerprint=last_meaningful_fingerprint,
+                    streak_ref=no_progress_streak,
+                )
+                no_progress_streak = early["streak"]
+                if early["stop"]:
+                    return self._no_progress_decision(
+                        event, recent_history, current_note, runtime_context)
                 # batch KHÔNG tự finalize: quay lại vòng model kế với toàn bộ
                 # tool_results mới.
                 continue
@@ -399,6 +420,15 @@ class RuntimeModelRootAgent:
                     current_note = str(raw.get("text", "") or "").strip()[:12000]
                 elif result.get("operation") == "clear" and result.get("ok"):
                     current_note = ""
+            early = self._advance_progress_and_maybe_finalize(
+                step_results=[result],
+                last_meaningful_fingerprint=last_meaningful_fingerprint,
+                streak_ref=no_progress_streak,
+            )
+            no_progress_streak = early["streak"]
+            if early["stop"]:
+                return self._no_progress_decision(
+                    event, recent_history, current_note, runtime_context)
             continue
 
         self._log("warning", "[conversation-v12] root step circuit breaker reached")
@@ -499,6 +529,109 @@ class RuntimeModelRootAgent:
 
         # Finalize (move/no_reply) hoặc kind không nhận diện: caller xử lý.
         return None
+
+    # Các status được coi là KHÔNG tiến triển. Một tool_result mang một trong
+    # các status này (hoặc rỗng) không đóng góp bằng chứng mới cho model.
+    _NON_PROGRESS_STATUSES = frozenset(
+        {"duplicate", "empty", "failed", "limit_reached", "unavailable", "invalid"}
+    )
+
+    @staticmethod
+    def _result_fingerprint(result: Mapping[str, Any]) -> str:
+        """Chữ ký ổn định của MỘT tool_result theo (loại, định danh, nội dung).
+
+        Dùng để nhận ra model quay vòng trả lại cùng một kết quả cho cùng một
+        loại action ở các bước liên tiếp (tiến triển giả).
+        """
+        kind = str(result.get("kind", "") or "")
+        if kind == "memory_result":
+            inner = result.get("result")
+            inner = inner if isinstance(inner, Mapping) else {}
+            payload = {k: inner.get(k) for k in ("status", "text") if k in inner}
+            return "memory_result:" + str(result.get("query", "")) + ":" + json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, default=str)
+        if kind == "capability_result":
+            inner = result.get("result")
+            inner = inner if isinstance(inner, Mapping) else {}
+            return "capability_result:" + str(result.get("capability", "")) + ":" + json.dumps(
+                inner, ensure_ascii=False, sort_keys=True, default=str)
+        if kind == "reflection_result":
+            return "reflection_result:" + str(result.get("status", "")) + ":" + str(result.get("focus", ""))
+        if kind == "note_result":
+            return "note_result:" + str(result.get("operation", "")) + ":" + str(result.get("ok", ""))
+        return kind + ":" + json.dumps(
+            {k: v for k, v in result.items() if k != "receipt_ref"},
+            ensure_ascii=False, sort_keys=True, default=str)
+
+    @classmethod
+    def _is_meaningful_result(
+        cls, result: Mapping[str, Any], *, prior_fingerprints: set[str]
+    ) -> bool:
+        """True nếu result mang bằng chứng MỚI có nghĩa cho model.
+
+        False nếu result rỗng, status thuộc tập không-tiến-triển, HOẶC trùng
+        chữ ký của một result cùng loại ở bước trước. reflection_result chỉ coi
+        là tiến triển khi còn trong hạn (status 'continued'); limit_reached thì
+        không. note_result 'set/clear ok' luôn là một thay đổi state có nghĩa.
+        """
+        if not isinstance(result, Mapping) or not result:
+            return False
+        kind = str(result.get("kind", "") or "")
+        # Lấy status ở cả cấp ngoài lẫn trong 'result' (memory/capability lồng).
+        status = str(result.get("status", "") or "").strip().lower()
+        inner = result.get("result")
+        if not status and isinstance(inner, Mapping):
+            status = str(inner.get("status", "") or "").strip().lower()
+        if status in cls._NON_PROGRESS_STATUSES:
+            return False
+        if kind == "note_result" and not result.get("ok"):
+            return False
+        fingerprint = cls._result_fingerprint(result)
+        if fingerprint in prior_fingerprints:
+            return False
+        return True
+
+    def _advance_progress_and_maybe_finalize(
+        self,
+        *,
+        step_results: Sequence[Mapping[str, Any]],
+        last_meaningful_fingerprint: set[str],
+        streak_ref: int,
+    ) -> dict[str, Any]:
+        """Cập nhật no_progress_streak sau MỘT bước (single hoặc batch).
+
+        Nếu không có result nào trong bước là meaningful -> streak += 1; ngược
+        lại streak = 0 và ghi lại chữ ký các result có nghĩa để bước sau so
+        trùng. Trả {'streak': int, 'stop': bool}; stop=True khi streak >= 2
+        (caller sẽ finalize sớm). Nếu bước không sinh result nào (vd batch rỗng)
+        coi như không tiến triển.
+        """
+        meaningful_fps: set[str] = set()
+        for result in step_results:
+            if self._is_meaningful_result(result, prior_fingerprints=last_meaningful_fingerprint):
+                meaningful_fps.add(self._result_fingerprint(result))
+        if meaningful_fps:
+            streak = 0
+            last_meaningful_fingerprint.clear()
+            last_meaningful_fingerprint.update(meaningful_fps)
+        else:
+            streak = streak_ref + 1
+        stop = streak >= 2
+        if stop:
+            self._log("info", "[root-agent] no_progress streak=%d forcing early finalize", streak)
+        return {"streak": streak, "stop": stop}
+
+    def _no_progress_decision(
+        self,
+        event: ConversationEvent,
+        recent_history: Sequence[Mapping[str, Any]],
+        note: str,
+        runtime_context: Mapping[str, Any],
+    ) -> ConversationDecision:
+        """Finalize sớm khi loop trì trệ: degraded cho user_turn, NoReply khác."""
+        if event.kind == "user_turn":
+            return self._degraded(event, recent_history, note, runtime_context)
+        return NoReply(reason="no_progress")
 
     def _verify_move(
         self,
