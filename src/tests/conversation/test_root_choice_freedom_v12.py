@@ -69,7 +69,9 @@ def test_root_can_voluntarily_agree_while_keeping_its_self_unchanged():
     move = root.decide(event=event, recent_history=(), note="", runtime_context={})
     assert isinstance(move, NextConversationMove)
     assert "Đồng ý" in move.say
-    assert len(router.calls) == 1  # Không cần điều phối/LLM mới ngoài Root.
+    # Move nay thêm một lượt SELF-VERIFY; router trả lại chính move dict (kind
+    # 'move') -> không phải tín hiệu verify hợp lệ -> giữ move gốc, fail-soft.
+    assert len(router.calls) == 2  # Vẫn chỉ trong Root, không điều phối ngoài.
     assert "belief" not in move.to_dict()
     assert "value_choice" not in move.to_dict()
 
