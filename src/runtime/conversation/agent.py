@@ -142,6 +142,40 @@ ROOT_STEP_SCHEMA: dict[str, Any] = {
 }
 
 
+# Các entry non-finalize của ROOT_STEP_SCHEMA (bỏ move/no_reply). Dùng để dựng
+# nhánh batch: mỗi phần tử trong actions[] phải là MỘT trong các action nội bộ
+# độc lập này, finalize không bao giờ được phép nằm trong batch.
+_NON_FINALIZE_STEP_SCHEMAS: list[dict[str, Any]] = [
+    schema for schema in ROOT_STEP_SCHEMA["oneOf"]
+    if not set(schema["properties"]["kind"].get("enum", [])) & {"move", "no_reply"}
+]
+
+
+# Schema một iteration cho nhánh one-shot invoke: giống ROOT_STEP_SCHEMA nhưng
+# THÊM một kind='batch' cho phép model trả nhiều action nội bộ ĐỘC LẬP chạy song
+# song trong cùng một bước. ROOT_STEP_SCHEMA KHÔNG đổi (giữ 7 oneOf cho
+# root_session.ask()); batch chỉ khả dụng qua invoke_structured_worker fallback.
+ROOT_BATCH_STEP_SCHEMA: dict[str, Any] = {
+    "oneOf": [
+        *ROOT_STEP_SCHEMA["oneOf"],
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "actions"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["batch"]},
+                "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"oneOf": _NON_FINALIZE_STEP_SCHEMAS},
+                },
+            },
+        },
+    ],
+}
+
+
 class RootAgent(Protocol):
     def decide(
         self,
@@ -236,7 +270,9 @@ class RuntimeModelRootAgent:
 
         tool_results: list[dict[str, Any]] = []
         prior_actions: set[str] = set()
-        reflection_count = 0
+        # reflection_state là object mutable để continue_thinking tăng đếm dùng
+        # chung giữa single-step và batch (và xuyên nhiều batch trong một event).
+        reflection_state: dict[str, int] = {"count": 0}
         current_note = str(note or "")[:12000]
         system = self._system_prompt(capabilities)
 
@@ -261,11 +297,13 @@ class RuntimeModelRootAgent:
                 if raw is None:
                     # Không chờ warm-up đang chạy / không hỗ trợ session /
                     # reset do lỗi. Luồng cũ trả lời ngay với context đầy đủ.
+                    # CHỈ nhánh fallback này mở schema batch: model được phép
+                    # trả kind='batch' với nhiều action nội bộ độc lập.
                     raw = invoke(
                         client,
                         system=system,
                         payload=payload,
-                        schema=ROOT_STEP_SCHEMA,
+                        schema=ROOT_BATCH_STEP_SCHEMA,
                         name="eris_root_conversation_step_v12",
                         max_tokens=1200,
                         reasoning_effort="medium",
@@ -301,90 +339,166 @@ class RuntimeModelRootAgent:
                     step_index=step_index,
                 )
 
-            if kind == "continue_thinking":
-                # Đây là một vòng Root→Root nội bộ, KHÔNG sinh lời public hay
-                # gọi Writer/TTS. Giới hạn riêng nhằm tránh model tự lặp vô hạn.
-                reflection_count += 1
-                if reflection_count > 2:
-                    tool_results.append({"kind": "reflection_result", "status": "limit_reached", "next": "finalize"})
-                else:
-                    focus = str(raw.get("focus", "") or "").strip()[:900]
-                    tool_results.append({"kind": "reflection_result", "status": "continued", "focus": focus,
-                                         "next": "reassess_and_finalize_or_use_evidence"})
+            if kind == "batch":
+                # Nhiều action nội bộ ĐỘC LẬP trong một bước. Bỏ phần tử finalize
+                # (phòng thủ dù schema đã cấm), giới hạn 4 phần tử đầu.
+                raw_actions = raw.get("actions")
+                actions = [
+                    a for a in (raw_actions if isinstance(raw_actions, Sequence) else [])
+                    if isinstance(a, Mapping)
+                    and str(a.get("kind", "") or "").strip().lower() not in {"move", "no_reply"}
+                ][:4]
+                for action in actions:
+                    # Preempt giữa chừng: user đã chen vào thì dừng ngay, không
+                    # chạy nốt các action còn lại trong batch.
+                    if not still_active():
+                        return NoReply(reason="root_turn_preempted")
+                    result = self._run_single_action(
+                        action,
+                        step_index=step_index,
+                        event=event,
+                        recent_history=recent_history,
+                        runtime_context=runtime_context,
+                        capabilities=capabilities,
+                        memory_tools=memory_tools,
+                        note_tools=note_tools,
+                        prior_actions=prior_actions,
+                        reflection_state=reflection_state,
+                    )
+                    if result is not None:
+                        tool_results.append(result)
+                        if result.get("kind") == "note_result":
+                            # Note là state dùng lại ở payload lượt sau; đồng bộ
+                            # bản cache cục bộ theo operation.
+                            if result.get("operation") == "set" and result.get("ok"):
+                                current_note = str(action.get("text", "") or "").strip()[:12000]
+                            elif result.get("operation") == "clear" and result.get("ok"):
+                                current_note = ""
+                # batch KHÔNG tự finalize: quay lại vòng model kế với toàn bộ
+                # tool_results mới.
                 continue
 
-            if kind == "recall_memory":
-                query = str(raw.get("query", "") or "").strip()[:600]
-                fingerprint = "memory:" + query.casefold()
-                if fingerprint in prior_actions:
-                    outcome = {"status": "duplicate", "reason": "same_query_already_attempted"}
-                else:
-                    prior_actions.add(fingerprint)
-                    try:
-                        outcome = (memory_tools.query(query) if memory_tools is not None else
-                                   {"status": "unavailable", "reason": "memory_recall_not_registered"})
-                    except Exception as exc:  # noqa: BLE001
-                        outcome = {"status": "failed", "reason": type(exc).__name__}
-                tool_results.append({"kind": "memory_result", "query": query,
-                                     "result": _bounded_value(outcome, depth=0)})
-                self._log("info", "[root-agent] memory_result step=%d status=%s",
-                          step_index + 1, str(outcome.get("status", "unknown"))[:40])
-                continue
-
-            if kind == "set_note":
-                text = str(raw.get("text", "") or "")[:12000]
-                if note_tools is not None:
-                    note_tools.set(text)
-                    current_note = text.strip()[:12000]
-                tool_results.append({"kind": "note_result", "operation": "set", "ok": note_tools is not None})
-                continue
-
-            if kind == "clear_note":
-                if note_tools is not None:
-                    note_tools.clear()
+            result = self._run_single_action(
+                raw,
+                step_index=step_index,
+                event=event,
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+                capabilities=capabilities,
+                memory_tools=memory_tools,
+                note_tools=note_tools,
+                prior_actions=prior_actions,
+                reflection_state=reflection_state,
+            )
+            if result is None:
+                self._log("debug", "[conversation-v12] unknown root step kind=%r", kind)
+                break
+            tool_results.append(result)
+            if result.get("kind") == "note_result":
+                if result.get("operation") == "set" and result.get("ok"):
+                    current_note = str(raw.get("text", "") or "").strip()[:12000]
+                elif result.get("operation") == "clear" and result.get("ok"):
                     current_note = ""
-                tool_results.append({"kind": "note_result", "operation": "clear", "ok": note_tools is not None})
-                continue
-
-            if kind == "use_capability":
-                capability_name = str(raw.get("capability", "") or "").strip().lower()
-                arguments = raw.get("arguments") if isinstance(raw.get("arguments"), Mapping) else {}
-                # Không tự gọi lại cùng một công cụ cùng args trong một event.
-                # Model sẽ nhận receipt duplicate và chọn hướng khác.
-                fingerprint = "cap:" + capability_name + ":" + json.dumps(
-                    _bounded_value(arguments, depth=0), ensure_ascii=False, sort_keys=True, default=str)
-                if fingerprint in prior_actions:
-                    tool_results.append({"kind": "capability_result", "capability": capability_name,
-                                         "result": {"status": "duplicate", "reason": "same_call_already_attempted"}})
-                    continue
-                prior_actions.add(fingerprint)
-                result = self._invoke_capability(
-                    registry=capabilities,
-                    name=capability_name,
-                    arguments=arguments,
-                    event=event,
-                    recent_history=recent_history,
-                    run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
-                )
-                receipt = capabilities.result_receipts_for(
-                    event.event_id, run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
-                    generation=event.generation,
-                )
-                tool_results.append({
-                    "receipt_ref": f"capability:{receipt[-1].invocation_id}" if receipt else "",
-                    "kind": "capability_result",
-                    "capability": capability_name,
-                    "result": _bounded_value(result, depth=0),
-                })
-                self._log("info", "[root-agent] capability_result step=%d capability=%s status=%s",
-                          step_index + 1, capability_name[:32], str(result.get("status", "unknown"))[:40])
-                continue
-
-            self._log("debug", "[conversation-v12] unknown root step kind=%r", kind)
-            break
+            continue
 
         self._log("warning", "[conversation-v12] root step circuit breaker reached")
         return self._degraded(event, recent_history, current_note, runtime_context)
+
+    def _run_single_action(
+        self,
+        raw: Mapping[str, Any],
+        *,
+        step_index: int,
+        event: ConversationEvent,
+        recent_history: Sequence[Mapping[str, Any]],
+        runtime_context: Mapping[str, Any],
+        capabilities: RootCapabilityRegistry,
+        memory_tools: Any,
+        note_tools: Any,
+        prior_actions: set[str],
+        reflection_state: dict[str, int],
+    ) -> dict[str, Any] | None:
+        """Thực thi MỘT action nội bộ non-finalize, trả về tool_result dict.
+
+        Dùng chung cho single-step và batch nên dedup (``prior_actions``) và
+        giới hạn ``continue_thinking`` (``reflection_state['count']``) áp dụng
+        xuyên suốt. Trả None nếu kind là finalize (move/no_reply) hoặc không
+        nhận diện — caller tự quyết finalize/break. Luôn fail-soft: lỗi tool
+        được gói thành result status 'failed', không ném exception.
+        """
+        kind = str(raw.get("kind", "") or "").strip().lower()
+
+        if kind == "continue_thinking":
+            # Vòng Root→Root nội bộ, KHÔNG sinh lời public hay gọi Writer/TTS.
+            # Giới hạn riêng nhằm tránh model tự lặp vô hạn.
+            reflection_state["count"] = reflection_state.get("count", 0) + 1
+            if reflection_state["count"] > 2:
+                return {"kind": "reflection_result", "status": "limit_reached", "next": "finalize"}
+            focus = str(raw.get("focus", "") or "").strip()[:900]
+            return {"kind": "reflection_result", "status": "continued", "focus": focus,
+                    "next": "reassess_and_finalize_or_use_evidence"}
+
+        if kind == "recall_memory":
+            query = str(raw.get("query", "") or "").strip()[:600]
+            fingerprint = "memory:" + query.casefold()
+            if fingerprint in prior_actions:
+                outcome: Mapping[str, Any] = {"status": "duplicate", "reason": "same_query_already_attempted"}
+            else:
+                prior_actions.add(fingerprint)
+                try:
+                    outcome = (memory_tools.query(query) if memory_tools is not None else
+                               {"status": "unavailable", "reason": "memory_recall_not_registered"})
+                except Exception as exc:  # noqa: BLE001
+                    outcome = {"status": "failed", "reason": type(exc).__name__}
+            self._log("info", "[root-agent] memory_result step=%d status=%s",
+                      step_index + 1, str(outcome.get("status", "unknown"))[:40])
+            return {"kind": "memory_result", "query": query, "result": _bounded_value(outcome, depth=0)}
+
+        if kind == "set_note":
+            text = str(raw.get("text", "") or "")[:12000]
+            if note_tools is not None:
+                note_tools.set(text)
+            return {"kind": "note_result", "operation": "set", "ok": note_tools is not None}
+
+        if kind == "clear_note":
+            if note_tools is not None:
+                note_tools.clear()
+            return {"kind": "note_result", "operation": "clear", "ok": note_tools is not None}
+
+        if kind == "use_capability":
+            capability_name = str(raw.get("capability", "") or "").strip().lower()
+            arguments = raw.get("arguments") if isinstance(raw.get("arguments"), Mapping) else {}
+            # Không tự gọi lại cùng một công cụ cùng args trong một event.
+            # Model sẽ nhận receipt duplicate và chọn hướng khác.
+            fingerprint = "cap:" + capability_name + ":" + json.dumps(
+                _bounded_value(arguments, depth=0), ensure_ascii=False, sort_keys=True, default=str)
+            if fingerprint in prior_actions:
+                return {"kind": "capability_result", "capability": capability_name,
+                        "result": {"status": "duplicate", "reason": "same_call_already_attempted"}}
+            prior_actions.add(fingerprint)
+            result = self._invoke_capability(
+                registry=capabilities,
+                name=capability_name,
+                arguments=arguments,
+                event=event,
+                recent_history=recent_history,
+                run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
+            )
+            receipt = capabilities.result_receipts_for(
+                event.event_id, run_id=str(runtime_context.get("__conversation_run_id", "") or ""),
+                generation=event.generation,
+            )
+            self._log("info", "[root-agent] capability_result step=%d capability=%s status=%s",
+                      step_index + 1, capability_name[:32], str(result.get("status", "unknown"))[:40])
+            return {
+                "receipt_ref": f"capability:{receipt[-1].invocation_id}" if receipt else "",
+                "kind": "capability_result",
+                "capability": capability_name,
+                "result": _bounded_value(result, depth=0),
+            }
+
+        # Finalize (move/no_reply) hoặc kind không nhận diện: caller xử lý.
+        return None
 
     def _verify_move(
         self,
@@ -516,6 +630,9 @@ class RuntimeModelRootAgent:
             "nếu chưa có điều gì cần nói thêm, chọn no_reply thay vì lặp lại ý cũ. "
             "Nếu cần giữ working context cho lượt sau, dùng set_note; nếu note cũ không còn giá trị, dùng clear_note. "
             "Note là trí nhớ làm việc tùy chọn, không phải checklist bắt buộc và không được dùng để cưỡng ép user quay lại topic cũ. "
+            "Nếu cần vài action nội bộ ĐỘC LẬP không phụ thuộc nhau (ví dụ recall_memory song song với use_capability), "
+            "có thể trả kind=batch với actions là danh sách 1..4 action non-finalize để chạy một lượt rồi quan sát chung; "
+            "move/no_reply LUÔN đứng riêng, không bao giờ nằm trong batch. "
             "Sau mỗi capability/memory/note/continue_thinking action, bạn được gọi lại với tool_results mới nhất "
             "để QUAN SÁT kết quả rồi tự quyết bước kế tiếp: tiếp tục, nói hoặc im. "
             "Không lặp lại tool có cùng tham số trong một event nếu kết quả trước thất bại hoặc không như ý. "
@@ -690,6 +807,7 @@ def _bounded_value(value: Any, *, depth: int) -> Any:
 __all__ = [
     "DeterministicRootAgent",
     "NEXT_MOVE_SCHEMA",
+    "ROOT_BATCH_STEP_SCHEMA",
     "ROOT_STEP_SCHEMA",
     "VERIFY_SCHEMA",
     "RootAgent",
