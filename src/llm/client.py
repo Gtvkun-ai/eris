@@ -64,6 +64,17 @@ _PERSISTENT_WEB_SESSION_LANES = frozenset({
     "daydream",
 })
 
+# Chat-only account affinity: pin consecutive turns of one conversation to a
+# single gateway account via X-Whale2-Affinity-Key (FEAT-001 contract). This is
+# a deliberately NARROWER set than _PERSISTENT_WEB_SESSION_LANES — background
+# lanes (autonomous/inner/private_mind/daydream/directive) must never be pinned
+# to one account, only the user-facing chat lanes.
+_CHAT_AFFINITY_LANES = frozenset({
+    "chat_main",
+    "chat",
+    "chat_tool_required",
+})
+
 
 def _compact_session_component(value: object, *, limit: int = 36) -> str:
     text = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(value or "").strip()).strip("-:._")
@@ -193,6 +204,46 @@ def _web_session_header(messages, response_format=None) -> str:
         _compact_session_component(purpose, limit=36),
         digest,
     ))
+
+
+def _chat_affinity_key() -> str:
+    """Return the opaque X-Whale2-Affinity-Key value for the current lane.
+
+    Pins consecutive turns of one runtime conversation to a single gateway
+    account (FEAT-001 contract). Only user-facing chat lanes are eligible;
+    background lanes stay on normal round-robin. Returns "" to mean "do not
+    send the header", preserving exact current behavior when the kill-switch
+    ERIS_CHAT_ACCOUNT_AFFINITY is off (default on = "1"; "0"/false/off/no =
+    never send). The chat-only lane set is overridable via
+    ERIS_CHAT_AFFINITY_LANES (comma-separated), mirroring how _web_session_header
+    handles ERIS_WEB_SESSION_PERSISTENT_LANES. The value is derived from the same
+    ERIS_RUNTIME_SESSION_ID X-Session-ID uses and compacted the same way, so it
+    is stable across turns of one conversation and distinct across conversations.
+    """
+
+    toggle = str(os.environ.get("ERIS_CHAT_ACCOUNT_AFFINITY", "1") or "1").strip().lower()
+    if toggle in {"0", "false", "off", "no"}:
+        return ""
+
+    runtime_session = str(os.environ.get("ERIS_RUNTIME_SESSION_ID", "") or "").strip()
+    if not runtime_session:
+        return ""
+
+    lane = str(getattr(current_inference_context(), "lane", "transport") or "transport").strip().lower()
+    configured_lanes = str(os.environ.get("ERIS_CHAT_AFFINITY_LANES", "") or "").strip()
+    affinity_lanes = (
+        frozenset(
+            item.strip().lower()
+            for item in configured_lanes.split(",")
+            if item.strip()
+        )
+        if configured_lanes
+        else _CHAT_AFFINITY_LANES
+    )
+    if lane not in affinity_lanes:
+        return ""
+
+    return _compact_session_component(runtime_session, limit=48)
 
 
 def _runtime_reasoning_effort() -> str:
@@ -797,6 +848,13 @@ class OpenAICompatibleClient:
         # Các gateway chưa sửa vẫn bỏ FinalPrompt khi tái sử dụng session.
         # Guard xác minh transcript trước mỗi HTTP attempt; với legacy, giữ
         # nguyên hành vi cũ để rollback. ``off`` gửi full request không session.
+        #
+        # Chat account affinity (see _chat_affinity_key): the X-Whale2-Affinity-Key
+        # header is gated by this SAME web_session_mode check. Two extra envs tune it:
+        #   ERIS_CHAT_ACCOUNT_AFFINITY (default "1" = on; "0"/false/off/no = never
+        #     send X-Whale2-Affinity-Key = exact current behavior, a kill-switch).
+        #   ERIS_CHAT_AFFINITY_LANES (comma-separated override for the chat-only
+        #     affinity lane set; empty = default _CHAT_AFFINITY_LANES).
         web_session_mode = str(os.environ.get("ERIS_WEB_SESSION_MODE", "isolated") or "isolated").strip().lower()
         session_base = (
             _web_session_header(messages, response_format=response_format)
@@ -852,6 +910,13 @@ class OpenAICompatibleClient:
                         },
                     )
                     request_headers["X-Session-ID"] = lease.session_id
+                    # Chat-only account affinity (FEAT-001 contract). Under the
+                    # SAME web_session_mode gate as X-Session-ID, pin consecutive
+                    # turns of one conversation to a single gateway account. Set
+                    # on the per-attempt copy so it re-applies on every retry.
+                    affinity = _chat_affinity_key()
+                    if affinity:
+                        request_headers["X-Whale2-Affinity-Key"] = affinity
                 try:
                     self._provider_circuit.before_request(self.provider_circuit_id)
                     actual_timeout = self.timeout if timeout is None else timeout
