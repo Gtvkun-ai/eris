@@ -15,6 +15,13 @@ from .writer import RenderedConversationMove
 
 _SAFE_V03_ERROR = re.compile(r"^(?:v03_[a-z0-9_]+|public_writer_[a-z0-9_]+|[A-Z][A-Z0-9_]+)(?::[A-Z][A-Z0-9_,]*)?$")
 
+# Câu đệm Nhật an toàn, dùng DUY NHẤT khi localizer fail SAU 1 retry (nhánh cuối
+# cùng, hiếm gặp). Toàn hiragana hợp lệ nên qua được guard _contains_japanese_script
+# và prepare's ja-contract; ngắn, trung tính, chỉ là một tiếng ngập ngừng tự nhiên.
+# Không bịa thông tin, không lộ secret, không tự nhận đã làm gì — và KHÔNG để turn
+# rơi vào trạng thái câm/no_public_commit.
+_V03_SPEECH_JA_FILLER = "えっと…"
+
 
 def _v03_error_code(exc: Exception) -> str:
     """Chỉ trích mã lỗi cơ học để log/rewrite; không lộ prompt hoặc token API.
@@ -44,10 +51,14 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
 
     if str(language_hint or '').lower() not in ('ja', 'jp', 'japanese'):
         return result
+    display_text = str(result.get('text', '') or '').strip()
     spec = UtteranceSpec.from_mapping(result,
-                                      fallback_text=str(result.get('text', '') or ''),
+                                      fallback_text=display_text,
                                       default_speech_language='ja')
-    source = str(spec.speech.text or '').strip()
+    # Nguồn để dịch: speech.text nếu có, nếu rỗng thì fallback sang display text
+    # để writer trả speech_text rỗng KHÔNG dẫn tới prepare raise mismatch. Chỉ
+    # bỏ qua khi THẬT SỰ không có gì để nói (cả speech lẫn display đều rỗng).
+    source = str(spec.speech.text or '').strip() or display_text
     if not source:
         return result
     if _contains_japanese_script(source):
@@ -68,17 +79,39 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     translate = getattr(localizer, 'localize', None)
     if not callable(translate):
         raise RuntimeError('v03_speech_localizer_unavailable')
-    try:
-        converted = str(translate(source, language_hint='ja', strict=True) or '').strip()
-    except Exception as exc:
-        from runtime.speech_localizer import SpeechLocalizationCancelled
-        if isinstance(exc, SpeechLocalizationCancelled):
-            raise RuntimeError('v03_speech_localization_cancelled') from None
-        # Không ghi exception text, vì đôi lúc có API credentials/prompt.
-        raise RuntimeError('v03_speech_localizer_unavailable') from None
-    if not converted or not _contains_japanese_script(converted):
-        raise RuntimeError('v03_speech_localizer_unavailable')
 
+    from runtime.speech_localizer import SpeechLocalizationCancelled
+
+    def _try_localize() -> str:
+        return str(translate(source, language_hint='ja', strict=True) or '').strip()
+
+    # Một retry nhẹ trong budget còn lại (ERIS_TTS_LOCALIZER_TIMEOUT_SEC giữ 45s
+    # ở localizer, không chỉnh ở đây). Cancellation KHÔNG retry: nó là preempt
+    # hợp lệ nên ném thẳng v03_speech_localization_cancelled.
+    converted = ''
+    for _attempt in range(2):
+        try:
+            candidate = _try_localize()
+        except Exception as exc:
+            if isinstance(exc, SpeechLocalizationCancelled):
+                raise RuntimeError('v03_speech_localization_cancelled') from None
+            candidate = ''
+        if candidate and _contains_japanese_script(candidate):
+            converted = candidate
+            break
+
+    if converted:
+        return _apply_ja_speech(result, converted)
+
+    # Nhánh CUỐI CÙNG: localize fail sau retry. Fail-SOFT nhưng KHÔNG câm — phát
+    # một câu đệm Nhật an toàn (b) để prepare pass và vẫn có tiếng. Không giữ
+    # global ja-pin thay đổi; không bịa; không nhận đã làm gì.
+    _log_localizer_fallback(host)
+    return _apply_ja_speech(result, _V03_SPEECH_JA_FILLER)
+
+
+def _apply_ja_speech(result: dict[str, Any], converted: str) -> dict[str, Any]:
+    """Ghi transcript Nhật đã chốt vào cả field phẳng lẫn nested, đồng bộ nhau."""
     result['speech_text'] = converted
     result['speech_language'] = 'ja'
     result['tts_language'] = 'ja'
@@ -96,6 +129,17 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
                              {'text': converted, 'language': 'ja'})
         result['utterance'] = revised
     return result
+
+
+def _log_localizer_fallback(host: Any) -> None:
+    """Log một dòng cảnh báo an toàn cho nhánh filler cuối; không lộ nội dung."""
+    logger = getattr(host, 'logger', None)
+    method = getattr(logger, 'warning', None)
+    if callable(method):
+        try:
+            method('[character-v03] %s', 'v03_speech_localizer_fallback_ja_filler')
+        except Exception:
+            pass
 
 
 def _inspect_writer_manifest(payload: Mapping[str, Any], evidence_registry: Any,

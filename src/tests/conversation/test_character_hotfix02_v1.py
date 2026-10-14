@@ -97,14 +97,27 @@ def test_localizer_pins_flat_and_nested_speech_before_verification():
     assert revised['claim_manifest'] == []
 
 
-def test_localizer_absence_cannot_masquerade_as_verified_japanese():
+def test_localizer_non_japanese_output_cannot_masquerade_as_verified_japanese():
+    # Rescue Change 3: khi localizer trả bản KHÔNG phải tiếng Nhật ('Okaeri'),
+    # nó KHÔNG được chốt làm speech_text giả-Nhật. Trước đây nhánh này raise
+    # v03_speech_localizer_unavailable (-> mute). Giờ fail-SOFT: thử lại 1 lần,
+    # rồi phát câu đệm Nhật AN TOÀN (fallback (b)) để vẫn CÓ TIẾNG, không câm.
+    # Invariant giữ nguyên: 'Okaeri' (non-JP) KHÔNG bao giờ bị coi là JP đã verify.
+    from runtime.conversation.runtime_writer import _V03_SPEECH_JA_FILLER
+    from runtime.stage_contracts import _contains_japanese_script
+
+    calls = []
     class BrokenLocalizer:
         def localize(self, *_args, **_kwargs):
+            calls.append(1)
             return 'Okaeri'
     host = SimpleNamespace(character_speech_localizer=BrokenLocalizer())
-    with pytest.raises(RuntimeError, match='v03_speech_localizer_unavailable'):
-        _prelocalize_v03_speech({'text': 'Chào', 'speech_text': 'Okaeri'},
-                               host=host, language_hint='ja')
+    revised = _prelocalize_v03_speech({'text': 'Chào', 'speech_text': 'Okaeri'},
+                                      host=host, language_hint='ja')
+    assert revised['speech_text'] != 'Okaeri'
+    assert revised['speech_text'] == _V03_SPEECH_JA_FILLER
+    assert _contains_japanese_script(revised['speech_text'])
+    assert len(calls) == 2  # thử localize 2 lần trước khi dùng filler
 
 
 def test_verifier_timeout_does_not_request_second_writer_candidate():
