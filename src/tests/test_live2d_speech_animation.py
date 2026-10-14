@@ -68,7 +68,12 @@ def test_question_and_stage_actions_use_brows_eyes_head_and_gaze(monkeypatch) ->
         "tts_text": "Hửm?",
         "emotion": "curious",
         "motion": "tilt_head",
-        "data": {"prosody_style": "curious_soft", "speech_act": "question"},
+        "data": {
+            "prosody_style": "curious_soft", "speech_act": "question",
+            "audio_envelope": [0.72] * 20,
+            "audio_frame_ms": 40,
+            "audio_duration_ms": 800,
+        },
     })
 
     clock["now"] = 10.14
@@ -263,27 +268,7 @@ def test_stage_state_merges_segment_expression_with_audio_envelope(monkeypatch) 
     assert snapshot.gaze_bias_y > 0.0
 
 
-def test_v62_sparse_audio_envelope_falls_back_to_text_mouth_cues() -> None:
-    """Một spike đơn độc không được giữ miệng đóng suốt câu đang có tiếng."""
-
-    animator = SpeechAnimator()
-    sparse = tuple([0.0] * 10 + [0.82] + [0.0] * 9)
-    animator.start(
-        now=0.0,
-        context=SpeechContext(
-            text="Xin chào, tôi đang nói đây.",
-            audio_envelope=sparse,
-            audio_frame_ms=40,
-            audio_duration_ms=800,
-        ),
-    )
-
-    # Nếu tin envelope hỏng, 140 ms vẫn là zero. V62 phải bỏ nó và dùng cue chữ.
-    assert animator.sample(now=0.14).mouth_open_ratio > 0.20
-    assert max(animator.sample(now=index / 100.0).mouth_open_ratio for index in range(90)) > 0.45
-
-
-def test_v62_duration_mismatched_envelope_falls_back_to_text_cues() -> None:
+def test_short_audio_envelope_closes_without_inventing_missing_frames() -> None:
     animator = SpeechAnimator()
     animator.start(
         now=10.0,
@@ -295,4 +280,6 @@ def test_v62_duration_mismatched_envelope_falls_back_to_text_cues() -> None:
         ),
     )
 
-    assert animator.sample(now=10.14).mouth_open_ratio > 0.15
+    assert animator.sample(now=10.04).mouth_open_ratio > 0.65
+    assert animator.sample(now=10.14).mouth_open_ratio == 0.0
+    assert animator.sample(now=10.70).mouth_open_ratio == 0.0

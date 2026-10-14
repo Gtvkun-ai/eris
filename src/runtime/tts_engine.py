@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Mapping, Optional
 
 from runtime.prosody_director import ProsodyDirector
+from runtime.audio_lip_sync import build_lip_sync_envelope
 from runtime.speech_localizer import (
     SpeechLocalizationCancelled,
     SpeechLocalizationError,
@@ -62,6 +63,9 @@ class TtsPlaybackEvent:
     text: str = ""
     reason: str = ""
     error: str = ""
+    audio_envelope: tuple[float, ...] = ()
+    audio_frame_ms: int = 40
+    audio_duration_ms: int = 0
 
 # ── Feature flag (runtime language reload) ───────────────────────────────────
 
@@ -2139,6 +2143,8 @@ def _play_wav_winsound(
     stop_event: threading.Event,
     on_started=None,
 ) -> bool:
+    if stop_event.is_set() or not wav_bytes:
+        return True
     if os.name != "nt":
         return False
     try:
@@ -2160,11 +2166,23 @@ def _play_wav_winsound(
         return False
 
 
-def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
+def _play_wav_bytes(
+    wav_bytes: bytes, stop_event: threading.Event, on_started=None, *, volume_applied: bool = False,
+) -> None:
     """Phát WAV bytes qua backend phù hợp với đúng sample_rate và channel count."""
-    wav_bytes = _apply_output_volume(wav_bytes)
-    if not wav_bytes:
+    if not volume_applied:
+        wav_bytes = _apply_output_volume(wav_bytes)
+    if not wav_bytes or stop_event.is_set():
         return
+
+    started = False
+
+    def _mark_started() -> None:
+        nonlocal started
+        if started or stop_event.is_set():
+            return
+        started = True
+        _notify_playback_started(on_started)
 
     try:
         import sounddevice as sd
@@ -2183,29 +2201,39 @@ def _play_wav_bytes(wav_bytes: bytes, stop_event: threading.Event, on_started=No
         if channels > 1:
             arr = arr.reshape(-1, channels)
 
-        chunk_size = max(1, sr // 10)  # 100ms mỗi chunk
+        chunk_size = max(1, sr // 50)  # 20ms keeps submission/cancellation responsive.
         idx = 0
         with sd.OutputStream(samplerate=sr, channels=channels, dtype="float32") as stream:
-            _notify_playback_started(on_started)
             while idx < len(arr) and not stop_event.is_set():
                 end = min(idx + chunk_size, len(arr))
                 stream.write(arr[idx:end])
                 idx = end
+                if not started and not stop_event.is_set():
+                    _mark_started()
+            if stop_event.is_set():
+                stream.abort()
         return
     except Exception as exc:
+        if started:
+            # A device failure after submission must not replay the clip elsewhere.
+            raise
         logger.debug("[TTS] sounddevice playback unavailable: %s", exc)
 
-    if _play_wav_winsound(wav_bytes, stop_event, on_started=on_started):
+    if stop_event.is_set():
         return
+    if _play_wav_winsound(wav_bytes, stop_event, on_started=_mark_started):
+        return
+    if started:
+        raise RuntimeError("playback_failed_after_start")
 
-    _play_wav_miniaudio(wav_bytes, stop_event, on_started=on_started)
+    _play_wav_miniaudio(wav_bytes, stop_event, on_started=_mark_started)
 
 
 def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
     """Phát WAV qua miniaudio với đúng sample_rate và nchannels từ file."""
     import miniaudio
 
-    if not wav_bytes:
+    if not wav_bytes or stop_event.is_set():
         return
 
     try:
@@ -2241,8 +2269,11 @@ def _play_wav_miniaudio(wav_bytes: bytes, stop_event: threading.Event, on_starte
         sample_rate=sample_rate,
     )
     with device:
+        if stop_event.is_set():
+            return
         device.start(stream)
-        _notify_playback_started(on_started)
+        if not stop_event.is_set():
+            _notify_playback_started(on_started)
         import time
         while device.is_active() and not stop_event.is_set():
             time.sleep(0.02)
@@ -2443,7 +2474,10 @@ class _TtsWorker:
         except queue.Full:
             pass
 
-    def _emit(self, req: Optional[_SpeakRequest], event_type: str, *, reason: str = "", error: str = "") -> None:
+    def _emit(
+        self, req: Optional[_SpeakRequest], event_type: str, *, reason: str = "", error: str = "",
+        audio_envelope: tuple[float, ...] = (), audio_frame_ms: int = 40, audio_duration_ms: int = 0,
+    ) -> None:
         if req is None:
             return
         event = TtsPlaybackEvent(
@@ -2453,6 +2487,9 @@ class _TtsWorker:
             text=req.text,
             reason=reason,
             error=error,
+            audio_envelope=audio_envelope,
+            audio_frame_ms=audio_frame_ms,
+            audio_duration_ms=audio_duration_ms,
         )
         callback = getattr(req, "on_event", None)
         if callback is not None:
@@ -2828,19 +2865,30 @@ class _TtsWorker:
                     elif self._current_stop.is_set():
                         self._emit(req, "audio_cancelled", reason="cancelled_before_playback")
                     else:
+                        wav_bytes = _apply_output_volume(wav_bytes)
+                        lip_sync = build_lip_sync_envelope(wav_bytes)
                         def _mark_audio_started() -> None:
                             nonlocal callback_called
+                            if callback_called or self._current_stop.is_set() or not self._request_is_current(req):
+                                return
+                            callback_called = True
+                            self._emit(
+                                req, "audio_start", audio_envelope=lip_sync.values,
+                                audio_frame_ms=lip_sync.frame_ms, audio_duration_ms=lip_sync.duration_ms,
+                            )
                             if req.on_start_play is not None:
                                 try:
                                     req.on_start_play()
                                 except Exception as cb_exc:
                                     logger.error("[TTS] Error in on_start_play callback: %s", cb_exc)
-                            callback_called = True
-                            self._emit(req, "audio_start")
 
-                        _play_wav_bytes(wav_bytes, self._current_stop, on_started=_mark_audio_started)
-                        if self._current_stop.is_set():
+                        _play_wav_bytes(
+                            wav_bytes, self._current_stop, on_started=_mark_audio_started, volume_applied=True,
+                        )
+                        if self._current_stop.is_set() or not self._request_is_current(req):
                             self._emit(req, "audio_cancelled", reason="cancelled_during_playback")
+                        elif not callback_called:
+                            self._emit(req, "audio_failed", reason="playback_not_started")
                         else:
                             self._emit(req, "audio_done")
 
@@ -3239,6 +3287,15 @@ class TtsEngine:
         """Phát WAV và báo mốc thiết bị playback đã thật sự được khởi động."""
         if wav_bytes:
             _play_wav_bytes(wav_bytes, stop_event, on_started=on_started)
+
+    def lip_sync_audio(self, wav_bytes: bytes) -> bytes:
+        """Return PCM with the same volume transform used by playback."""
+        return _apply_output_volume(wav_bytes)
+
+    def play_prepared_audio(self, wav_bytes: bytes, stop_event: threading.Event, on_started=None) -> None:
+        """Play the volume snapshot already used to derive the lip-sync envelope."""
+        if wav_bytes:
+            _play_wav_bytes(wav_bytes, stop_event, on_started=on_started, volume_applied=True)
 
     def fallback_health_snapshot(self) -> dict[str, dict]:
         """Health của từng fallback provider để canary không coi TTS là một cục đen."""

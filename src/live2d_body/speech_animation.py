@@ -2,10 +2,10 @@
 """Nhịp nói và diễn xuất bề mặt cho Live2D Eris.
 
 Moc3 hiện chỉ cho runtime hai trục miệng: ``ParamMouthForm`` và
-``ParamMouthOpenY``. Độ mở ưu tiên envelope RMS rút trực tiếp từ WAV đang phát;
-chuỗi pseudo-viseme từ cụm nguyên âm chỉ bổ sung dáng miệng và làm fallback khi
-event cũ không có envelope. Cách này không giả vờ nhận dạng phoneme, nhưng giữ
-đúng nhịp tiếng, khoảng im lặng và dấu câu thay vì bắt môi chạy bằng sóng sin.
+``ParamMouthOpenY``. Trong playback, độ mở chỉ bám envelope RMS rút trực tiếp
+từ WAV đang phát; thiếu envelope hoặc gặp khoảng im lặng thì miệng khép.
+Chuỗi nguyên âm bổ sung dáng miệng và context diễn xuất, không thay âm thanh
+bằng một nhịp miệng đoán từ chữ hay sóng sin.
 
 Cùng context sân khấu (prosody, speech act, action, motion) còn được chiếu sang
 đầu, mí, mày và hướng nhìn. Biên cố ý nhỏ; emotion/affect vẫn là lớp chính.
@@ -220,6 +220,7 @@ class SpeechAnimator:
         self._audio_envelope: tuple[float, ...] = ()
         self._audio_frame_ms = 0
         self._audio_duration_ms = 0
+        self._audio_playback = False
 
     @property
     def active(self) -> bool:
@@ -229,7 +230,7 @@ class SpeechAnimator:
     def context(self) -> SpeechContext:
         return self._context
 
-    def start(self, *, now: float, context: SpeechContext) -> None:
+    def start(self, *, now: float, context: SpeechContext, audio_playback: bool = False) -> None:
         self._active = True
         self._started_at = float(now)
         self._context = context
@@ -239,35 +240,16 @@ class SpeechAnimator:
         raw_envelope = tuple(context.audio_envelope or ())
         self._audio_frame_ms = max(0, int(context.audio_frame_ms or 0))
         self._audio_duration_ms = max(0, int(context.audio_duration_ms or 0))
+        self._audio_playback = bool(audio_playback)
         # RMS từ vài backend có biên rất thấp dù audio nghe rõ. Chuẩn hóa chỉ khi
         # peak yếu, giữ nguyên số 0 để khoảng im vẫn khép miệng thật và không biến
         # Eris thành cá cảnh đang thở theo nhiễu nền.
         peak = max(raw_envelope, default=0.0)
-        # V62: "có một peak" chưa đủ để gọi envelope là sống. Một vài backend
-        # từng trả mảng dài gần như toàn zero nhưng có đúng một spike; code cũ
-        # tin mù quáng và giữ ParamMouthOpenY=-1 gần suốt câu dù audio đang phát.
-        # Kiểm cả tỷ lệ frame có tiếng và độ khớp duration; nếu đáng ngờ thì bỏ
-        # envelope và để pseudo-viseme theo text cứu môi.
-        voiced_floor = max(0.012, peak * 0.06)
-        voiced_frames = sum(1 for value in raw_envelope if value > voiced_floor)
-        voiced_coverage = (voiced_frames / len(raw_envelope)) if raw_envelope else 0.0
-        expected_frames = (
-            max(1, int(round(self._audio_duration_ms / self._audio_frame_ms)))
-            if self._audio_duration_ms > 0 and self._audio_frame_ms > 0
-            else 0
-        )
-        duration_ratio = (len(raw_envelope) / expected_frames) if expected_frames > 0 else 1.0
-        sparse_envelope = bool(
-            len(raw_envelope) >= 8
-            and (voiced_frames < 2 or voiced_coverage < 0.08)
-        )
-        duration_mismatch = bool(
-            expected_frames >= 4
-            and not (0.65 <= duration_ratio <= 1.35)
-        )
-        if peak <= 0.018 or sparse_envelope or duration_mismatch:
+        # Silence and sparse speech are real audio data, not a reason to invent
+        # text-driven movement. A short envelope closes naturally at its end.
+        if not raw_envelope or self._audio_frame_ms <= 0:
             self._audio_envelope = ()
-        elif peak < 0.55:
+        elif 0.0 < peak < 0.55:
             gain = min(8.0, 0.72 / peak)
             self._audio_envelope = tuple(
                 0.0 if value <= 0.003 else _clamp(value * gain, 0.0, 0.90)
@@ -455,6 +437,8 @@ class SpeechAnimator:
         )
 
     def _sample_mouth(self, elapsed: float) -> tuple[float, str]:
+        if self._audio_duration_ms > 0 and elapsed >= self._audio_duration_ms / 1000.0:
+            return (0.0, "")
         if self._audio_envelope and self._audio_frame_ms > 0:
             ratio = self._sample_audio_envelope(elapsed)
             cue_elapsed = elapsed
@@ -462,13 +446,13 @@ class SpeechAnimator:
                 cue_elapsed = elapsed * self._duration / max(0.001, self._audio_duration_ms / 1000.0)
             return (ratio, self._vowel_at(cue_elapsed))
 
+        if self._audio_playback or self._audio_duration_ms > 0 or self._audio_frame_ms > 0:
+            # Playback owns the mouth. Missing amplitude must not start a
+            # synthetic rhythm while ElevenLabs is silent or still buffering.
+            return (0.0, "")
+
         if not self._cues:
-            # Fallback cho event cũ không có text: bất quy tắc hơn hai sin bình
-            # phương và có lúc khép hẳn. Đây vẫn chỉ là phương án cứu hộ.
-            gate = max(0.0, math.sin(elapsed * 8.4 + self._phase))
-            detail = max(0.0, math.sin(elapsed * 13.7 + 1.3 + self._phase * 0.4))
-            ratio = (gate ** 1.55) * 0.46 + (detail ** 2.2) * 0.12
-            return (_clamp(ratio, 0.0, 0.62), "")
+            return (0.0, "")
 
         index = bisect.bisect_right(self._cue_starts, elapsed) - 1
         if 0 <= index < len(self._cues):
@@ -485,11 +469,7 @@ class SpeechAnimator:
         if elapsed <= self._duration + 0.16:
             return (0.0, "")
 
-        # Nếu audio thực tế dài hơn ước lượng, tiếp tục một nhịp nhỏ thay vì kẹt
-        # miệng đóng. Playback-done vẫn là nguồn sự thật để dừng hoàn toàn.
-        overrun = elapsed - self._duration
-        gate = max(0.0, math.sin(overrun * 7.1 + self._phase))
-        return (_clamp((gate ** 1.8) * 0.34, 0.0, 0.38), "")
+        return (0.0, "")
 
     def _sample_audio_envelope(self, elapsed: float) -> float:
         frame_seconds = max(0.001, self._audio_frame_ms / 1000.0)

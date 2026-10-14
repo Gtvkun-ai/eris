@@ -398,7 +398,7 @@ class Live2DStageState:
             if not emotion:
                 self._emotion = "thinking"
                 self._emotion_at = now
-        elif event_type in {"speaking", "audio_start", "audio_playback_started"}:
+        elif event_type in {"audio_start", "audio_playback_started"}:
             self._thinking = False
             self._speaking = True
             resolved_context = self._resolve_speech_context(payload, speech_context)
@@ -407,14 +407,14 @@ class Live2DStageState:
             # owner có khóa thay vì để payload rỗng xóa danh tính câu đang phát.
             if event_key[0] or not self._active_speech_key[0]:
                 self._active_speech_key = event_key
-            self._speech.start(now=now, context=resolved_context)
+            self._speech.start(now=now, context=resolved_context, audio_playback=True)
             if resolved_context.audio_duration_ms > 0:
-                expected_seconds = resolved_context.audio_duration_ms / 1000.0
+                self._speech_deadline = now + resolved_context.audio_duration_ms / 1000.0
             else:
                 # Cứu hộ cho callback thiếu audio_done. Ước lượng rộng để không
                 # cắt câu dài, nhưng không cho miệng mắc kẹt đến tận thế.
                 expected_seconds = max(1.2, min(28.0, len(resolved_context.text) * 0.085 + 0.9))
-            self._speech_deadline = now + expected_seconds + 1.8
+                self._speech_deadline = now + expected_seconds + 1.8
         elif event_type in {
             "done",
             "degraded",
@@ -553,21 +553,16 @@ class Live2DStageState:
             self._motion = motion
             self._motion_at = now
         if "should_speak" in payload:
-            self._speaking = bool(payload.get("should_speak"))
-            if self._speaking:
-                legacy_context = SpeechContext(
-                    text=str(payload.get("tts_text", payload.get("text", "")) or ""),
-                    prosody_style=str(payload.get("prosody_style", "neutral") or "neutral").strip().lower(),
-                    speech_act=str(payload.get("speech_act", "") or "").strip().lower(),
-                    actions=tuple(str(item or "").strip().lower() for item in (payload.get("actions") or ()) if str(item or "").strip()),
-                    motion=motion,
-                )
-                self._latest_speech_context = self._latest_speech_context.merged(legacy_context)
-                self._active_speech_key = ("", 0)
-                self._speech.start(now=now, context=self._latest_speech_context)
-            else:
-                self._speech.stop()
-                self._active_speech_key = ("", 0)
+            # A text decision expresses intent to speak, not device playback.
+            # It may arrive after audio_start and must not reset its clock.
+            legacy_context = SpeechContext(
+                text=str(payload.get("tts_text", payload.get("text", "")) or ""),
+                prosody_style=str(payload.get("prosody_style", "neutral") or "neutral").strip().lower(),
+                speech_act=str(payload.get("speech_act", "") or "").strip().lower(),
+                actions=tuple(str(item or "").strip().lower() for item in (payload.get("actions") or ()) if str(item or "").strip()),
+                motion=motion,
+            )
+            self._latest_speech_context = self._latest_speech_context.merged(legacy_context)
         raw_affect = payload.get("affect")
         if isinstance(raw_affect, Mapping):
             self._handle_affect_event({"data": {"affect": raw_affect, "source": "legacy"}})
@@ -649,7 +644,7 @@ class Live2DStageState:
                 freshness = 1.0
             else:
                 freshness = math.exp(-(affect_age - 75.0) / 240.0)
-            if self._speaking and timestamp > self._speech_deadline:
+            if self._speaking and timestamp >= self._speech_deadline:
                 self._speaking = False
                 self._speech.stop()
                 self._speech_deadline = -1.0e9

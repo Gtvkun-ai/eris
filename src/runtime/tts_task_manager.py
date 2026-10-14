@@ -85,6 +85,7 @@ class TtsTaskManager:
         self._executor: ThreadPoolExecutor | None = None
         self._playback_thread: threading.Thread | None = None
         self._current_task: TtsSegmentTask | None = None
+        self._current_cancel: Callable[[str], None] | None = None
         self._pending_tasks: dict[tuple[str, int], TtsSegmentTask] = {}
         self._pending_callbacks: dict[tuple[str, int], Callable[[Any, Any], None] | None] = {}
         self._cache: OrderedDict[str, bytes] = OrderedDict()
@@ -137,6 +138,7 @@ class TtsTaskManager:
             self._playback_stop = playback_stop
             self._executor = executor
             self._current_task = None
+            self._current_cancel = None
             self._pending_tasks = {task.key: task for task in tasks}
             self._pending_callbacks = {task.key: on_event for task in tasks}
 
@@ -207,10 +209,12 @@ class TtsTaskManager:
             executor = self._executor
             self._pending_tasks = {}
             self._pending_callbacks = {}
+            cancel_event.set()
+            playback_stop.set()
+            if self._current_cancel is not None:
+                self._current_cancel(reason)
 
         self.continuation.cancel(reason=reason)
-        cancel_event.set()
-        playback_stop.set()
         if executor is not None:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -324,6 +328,7 @@ class TtsTaskManager:
         first_started = False
         localization_failure_seen = False
         emotion_signature = ""
+        finish_audio = None
         try:
             # Không phát segment 0 ngay khi nó vừa xong nếu segment 1/2 vẫn còn
             # đang dịch/synth. Đây chính là pattern tạo khoảng chết trong log.
@@ -401,61 +406,80 @@ class TtsTaskManager:
                     previous_emotion=emotion_signature,
                     callback=on_event,
                 )
+                lip_sync_audio = getattr(backend, 'lip_sync_audio', None)
+                prepared_player = getattr(backend, 'play_prepared_audio', None)
+                player = None
+                playback_bytes = wav_bytes
+                if callable(lip_sync_audio) and callable(prepared_player):
+                    # Freeze output gain once: the envelope and device receive
+                    # identical PCM even if the volume changes during setup.
+                    playback_bytes = lip_sync_audio(wav_bytes)
+                    player = prepared_player
+                lip_sync = build_lip_sync_envelope(playback_bytes)
+                # Bind each callback to its segment; a late device callback must
+                # not observe state that the next loop iteration has replaced.
+                playback_state = {'started': False, 'terminal': False}
+
+                def _finish_audio(event_type: str, *, reason: str = '', error: str = '',
+                                  state=playback_state, current_task=task) -> None:
+                    with self._lock:
+                        if state['terminal'] or generation != self._generation:
+                            return
+                        state['terminal'] = True
+                        if event_type == 'audio_done' and not state['started']:
+                            event_type = 'audio_failed'
+                            reason = 'playback_not_started'
+                        self.audio_bus.emit_lifecycle(
+                            event_type, stage_frame=current_task.frame, text=current_task.text,
+                            turn_segments=turn_segments, reason=reason, error=error,
+                            callback=on_event,
+                        )
+
+                finish_audio = _finish_audio
+
+                def _mark_audio_started(*, state=playback_state, current_task=task,
+                                        envelope=lip_sync) -> None:
+                    nonlocal first_started
+                    with self._lock:
+                        if (state['started'] or state['terminal'] or generation != self._generation
+                                or cancel_event.is_set() or playback_stop.is_set()
+                                or not _speech_task_is_current(backend, current_task)):
+                            return
+                        state['started'] = True
+                        if not first_started:
+                            first_started = True
+                            _call_once(on_first_start)
+                        if state['terminal'] or cancel_event.is_set() or playback_stop.is_set():
+                            return
+                        self.audio_bus.emit_lifecycle(
+                            "audio_start", stage_frame=current_task.frame, text=current_task.text,
+                            turn_segments=turn_segments, audio_envelope=envelope.values,
+                            audio_frame_ms=envelope.frame_ms,
+                            audio_duration_ms=envelope.duration_ms, callback=on_event,
+                        )
+
                 with self._lock:
-                    if generation != self._generation:
+                    if generation != self._generation or cancel_event.is_set() or playback_stop.is_set():
                         break
                     self._current_task = task
+                    self._current_cancel = lambda reason, finish=_finish_audio: finish('audio_cancelled', reason=reason)
                     self._pending_tasks.pop(task.key, None)
                     self._pending_callbacks.pop(task.key, None)
 
-                lip_sync = build_lip_sync_envelope(wav_bytes)
-                started_lock = threading.Lock()
-                started = False
-
-                def _mark_audio_started() -> None:
-                    nonlocal started, first_started
-                    with started_lock:
-                        if started:
-                            return
-                        started = True
-                    if not first_started:
-                        first_started = True
-                        _call_once(on_first_start)
-                    self.audio_bus.emit_lifecycle(
-                        "audio_start",
-                        stage_frame=task.frame,
-                        text=task.text,
-                        turn_segments=turn_segments,
-                        audio_envelope=lip_sync.values,
-                        audio_frame_ms=lip_sync.frame_ms,
-                        audio_duration_ms=lip_sync.duration_ms,
-                        callback=on_event,
-                    )
-
                 _play_audio_with_start_callback(
-                    backend, wav_bytes, playback_stop, on_started=_mark_audio_started,
+                    backend, playback_bytes, playback_stop, on_started=_mark_audio_started,
+                    player=player,
                 )
                 if playback_stop.is_set() or cancel_event.is_set():
-                    self.audio_bus.emit_lifecycle(
-                        "audio_cancelled",
-                        stage_frame=task.frame,
-                        text=task.text,
-                        turn_segments=turn_segments,
-                        reason="cancelled_during_playback",
-                        callback=on_event,
-                    )
+                    _finish_audio('audio_cancelled', reason='cancelled_during_playback')
                 else:
-                    self.audio_bus.emit_lifecycle(
-                        "audio_done",
-                        stage_frame=task.frame,
-                        text=task.text,
-                        turn_segments=turn_segments,
-                        callback=on_event,
-                    )
+                    _finish_audio('audio_done')
 
                 with self._lock:
                     if self._current_task is task:
                         self._current_task = None
+                        self._current_cancel = None
+                finish_audio = None
 
                 # Chỉ chờ khi còn segment kế tiếp. Pause dài phát lifecycle
                 # thinking_started/thinking_finished để avatar/UI diễn đúng.
@@ -477,6 +501,10 @@ class TtsTaskManager:
                     ):
                         break
         except Exception as exc:
+            if finish_audio is not None:
+                finish_audio('audio_failed', error=str(exc))
+                logger.warning("[tts-task-manager] playback failed: %s", exc)
+                return
             if (
                 not first_started
                 and tasks
@@ -508,6 +536,7 @@ class TtsTaskManager:
             with self._lock:
                 if generation == self._generation:
                     self._current_task = None
+                    self._current_cancel = None
                     self._pending_tasks = {}
                     self._pending_callbacks = {}
             self.continuation.complete(generation)
@@ -644,10 +673,12 @@ def _play_audio_with_start_callback(
     stop_event: threading.Event,
     *,
     on_started: Callable[[], None],
+    player: Callable[..., None] | None = None,
 ) -> None:
     """Gọi backend mới tại mốc thiết bị bắt đầu phát, vẫn tương thích backend cũ."""
 
-    player = getattr(backend, "play_audio")
+    if player is None:
+        player = getattr(backend, "play_audio")
     supports_callback = False
     try:
         params = tuple(inspect.signature(player).parameters.values())
