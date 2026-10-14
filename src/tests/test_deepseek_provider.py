@@ -368,3 +368,73 @@ def test_ds2api_forces_thinking_mode_enabled(monkeypatch) -> None:
     )
 
     assert captured["json"]["thinking"] == {"type": "enabled"}
+
+
+def _capture_localhost_request(monkeypatch, *, role_context: str | None = None):
+    import llm.client as client_module
+    from llm.raw_trace import worker_role_context
+
+    captured = {}
+
+    def fake_post(**kwargs):
+        captured.update(kwargs)
+        return _Response()
+
+    monkeypatch.setattr(client_module, "_brokered_post", fake_post)
+    monkeypatch.delenv("ERIS_DEEPSEEK_THINKING", raising=False)
+
+    client = client_module.OpenAICompatibleClient(
+        base_url="http://localhost:6011/v1",
+        api_key="sk-test-key",
+        model_name="deepseek-v4-flash",
+        key_pool=None,
+    )
+
+    def _call():
+        client.create_chat_completion(
+            messages=[{"role": "user", "content": "Return JSON."}],
+            temperature=0.4,
+            frequency_penalty=0.1,
+            presence_penalty=0.2,
+            max_tokens=128,
+        )
+
+    if role_context is None:
+        _call()
+    else:
+        with worker_role_context(role_context):
+            _call()
+    return captured["json"]
+
+
+def test_ds2api_surface_role_disables_thinking_by_default(monkeypatch) -> None:
+    # Surface lane đẩy role qua ContextVar (production path). Default env unset =>
+    # ERIS_SURFACE_THINKING_DISABLED mặc định "1" => thinking tắt dù localhost force.
+    monkeypatch.delenv("ERIS_SURFACE_THINKING_DISABLED", raising=False)
+    payload = _capture_localhost_request(monkeypatch, role_context="surface")
+
+    assert payload["thinking"] == {"type": "disabled"}
+    # Disabled-mode branch giữ lại sampling controls.
+    assert payload["temperature"] == 0.4
+    assert payload["frequency_penalty"] == 0.1
+    assert payload["presence_penalty"] == 0.2
+
+
+def test_ds2api_surface_thinking_reenabled_when_flag_off(monkeypatch) -> None:
+    monkeypatch.setenv("ERIS_SURFACE_THINKING_DISABLED", "0")
+    payload = _capture_localhost_request(monkeypatch, role_context="surface")
+
+    # Opt lại vào localhost force => thinking enabled.
+    assert payload["thinking"] == {"type": "enabled"}
+
+
+def test_ds2api_executive_carveout_unchanged(monkeypatch) -> None:
+    # Carve-out executive đọc getattr(self, "worker_role") — là dead-code trên
+    # ContextVar path (production dùng active_worker_role), và change này KHÔNG
+    # chạm nó. Không có surface context + không set surface attribute => behavior
+    # byte-for-byte như trước: localhost vẫn force thinking enabled.
+    monkeypatch.setenv("ERIS_EXECUTIVE_THINKING_DISABLED", "1")
+    monkeypatch.delenv("ERIS_SURFACE_THINKING_DISABLED", raising=False)
+    payload = _capture_localhost_request(monkeypatch, role_context=None)
+
+    assert payload["thinking"] == {"type": "enabled"}

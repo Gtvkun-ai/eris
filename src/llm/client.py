@@ -803,6 +803,16 @@ class OpenAICompatibleClient:
             # trường hợp endpoint là localhost/DS2API (vốn force mode="enabled").
             if worker_role == "executive" and os.environ.get("ERIS_EXECUTIVE_THINKING_DISABLED", "0") in {"1", "true", "yes"}:
                 mode = "disabled"
+            # Surface (public writer) có thể tắt thinking để trả lời nhanh hơn.
+            # Production truyền role qua ContextVar (active_worker_role), KHÔNG qua
+            # attribute self.worker_role, nên phải đọc ContextVar để check mới fire
+            # được trên live path. Ưu tiên attribute worker_role (direct client),
+            # fallback về active_worker_role() (production). Default BẬT (thinking
+            # tắt cho surface) — env=0 để opt lại thinking. Check này sau DS2API
+            # mode để override được localhost-force (mode="enabled").
+            effective_role = (worker_role or str(active_worker_role() or "")).strip().lower()
+            if effective_role == "surface" and os.environ.get("ERIS_SURFACE_THINKING_DISABLED", "1") in {"1", "true", "yes"}:
+                mode = "disabled"
             payload["thinking"] = {"type": mode}
 
             payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)

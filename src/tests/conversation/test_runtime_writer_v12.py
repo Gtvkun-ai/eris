@@ -68,9 +68,10 @@ def test_runtime_writer_projects_exact_root_move_into_writer_context():
     assert rendered.decision_payload == _turn().move.to_dict()
 
 
-def test_runtime_writer_enables_thinking_by_default_for_public_surface():
-    # Eloquence: pha chọn chữ cuối bật thinking mặc định (giữ reasoning_effort
-    # thấp) để câu public mượt hơn mà không mở một reasoning pass dài thứ hai.
+def test_runtime_writer_disables_thinking_by_default_for_public_surface():
+    # Lane user-visible default TẮT thinking để trả lời nhanh (thinking ON làm
+    # chậm 1.5–2× và nới cửa drop). Giữ reasoning_effort thấp; caller vẫn override
+    # được qua runtime_context["thinking_mode"].
     router = _Router({"text": "Kết quả đây.", "speech_text": "Kết quả đây."})
     writer = RuntimeConversationWriter(_Host(router))
     event = ConversationEvent(event_id="user:1", session_id="s", kind="user_turn", text="xem kết quả")
@@ -83,7 +84,7 @@ def test_runtime_writer_enables_thinking_by_default_for_public_surface():
     )
 
     request = router.calls[0]
-    assert request["thinking_mode"] == "enabled"
+    assert request["thinking_mode"] == "disabled"
     assert request["reasoning_effort"] == "low"
 
 
@@ -100,6 +101,22 @@ def test_runtime_writer_thinking_mode_still_overridable():
     )
 
     assert router.calls[0]["thinking_mode"] == "disabled"
+
+
+def test_runtime_writer_thinking_mode_overridable_to_enabled():
+    # Override cả chiều ngược lại: caller ép thinking enabled vẫn phải được tôn trọng.
+    router = _Router({"text": "Kết quả đây.", "speech_text": "Kết quả đây."})
+    writer = RuntimeConversationWriter(_Host(router))
+    event = ConversationEvent(event_id="user:1", session_id="s", kind="user_turn", text="xem kết quả")
+
+    writer.realize(
+        turn=_turn(),
+        event=event,
+        recent_history=(),
+        runtime_context={"thinking_mode": "enabled"},
+    )
+
+    assert router.calls[0]["thinking_mode"] == "enabled"
 
 
 def test_runtime_writer_cannot_change_after_or_open_a_second_move():

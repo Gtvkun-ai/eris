@@ -332,10 +332,12 @@ class RuntimeConversationWriter:
             "discourse_context": discourse_context,
             "use_escalation": bool(runtime_context.get("use_escalation", False)),
             # Surface worker vẫn chỉ wording một semantic move đã khóa (không mở
-            # reasoning_effort cao để tránh một vòng cognition dài thứ hai), nhưng
-            # bật thinking để pha chọn chữ cuối cùng mượt và tự nhiên hơn.
+            # reasoning_effort cao để tránh một vòng cognition dài thứ hai).
+            # Default thinking TẮT cho lane user-visible để trả lời nhanh (thinking
+            # ON làm chậm 1.5–2× và nới cửa drop); caller vẫn có thể override qua
+            # runtime_context["thinking_mode"].
             "reasoning_effort": runtime_context.get("reasoning_effort", "low"),
-            "thinking_mode": runtime_context.get("thinking_mode", "enabled"),
+            "thinking_mode": runtime_context.get("thinking_mode", "disabled"),
             "allow_fallback": bool(runtime_context.get("allow_fallback", False)),
             "language_hint": str(runtime_context.get("language_hint", "vi") or "vi"),
             "speech_language_hint": str(runtime_context.get("speech_language_hint", "ja") or "ja"),
