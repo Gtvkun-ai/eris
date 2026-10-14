@@ -1,0 +1,7 @@
+{
+  "task_id": "task-root-loop-upgrade",
+  "task_description": "Nâng cấp RootAgent agent-loop của Eris (src/runtime/conversation/agent.py) tiến gần mô hình Kiro bằng 3 cải tiến: (1) bước self-verify trước khi finalize một move, (2) parallel non-finalize tool trong một iteration, (3) trần bước động thay cho max_root_steps cứng. Giữ bất biến ConversationDecision=NoReply|NextConversationMove, fail-soft, hợp đồng preempt still_active(), và KHÔNG đổi inference_tier='subconscious_4b'. Mỗi cải tiến một commit riêng.",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null
+}

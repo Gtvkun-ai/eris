@@ -226,11 +226,14 @@ def setup_deepseek() -> None:
     banner("3 / 6 — Setup DeepSeek (Main Brain)")
     whale_dir = ROOT / "tools" / "whale2api"
     accounts_file = whale_dir / "accounts.csv"
-    exe = whale_dir / "whale2api.exe"
+    compose_file = whale_dir / "docker-compose.yml"
 
-    if not exe.exists():
-        print(warn("whale2api.exe khong tim thay tai: " + str(whale_dir)))
-        print(info("Download tu: https://github.com/your-fork/whale2api/releases"))
+    # Gateway gio chay bang Docker compose, khong con dung whale2api.exe.
+    if compose_file.exists():
+        print(info("Whale2API gateway chay bang Docker: cd tools/whale2api && docker compose up -d"))
+        print(info("Quan ly pool tai http://127.0.0.1:5010 (poolui container)."))
+    else:
+        print(warn("Khong tim thay docker-compose.yml tai: " + str(whale_dir)))
         pause()
 
     if accounts_file.exists():
@@ -485,14 +488,15 @@ def start_all() -> None:
     whale_dir = ROOT / "tools" / "whale2api"
     webai_dir = ROOT / "tools" / "WebAI-to-API"
 
-    # whale2api
+    # whale2api gateway chay bang Docker compose (tools/whale2api), KHONG con
+    # spawn whale2api.exe nua. Neu port chua len thi nhac bat Docker.
     exe = whale_dir / "whale2api.exe"
-    if exe.exists() and not port_listening(PORTS["whale2api"]):
-        print(info("Starting whale2api..."))
-        p = subprocess.Popen([str(exe)], cwd=whale_dir,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _procs.append(p)
-        time.sleep(2)
+    if exe.exists():
+        print(warn("whale2api.exe cu van con tai " + str(whale_dir) +
+                   " -- gateway gio chay bang Docker, nen xoa exe nay de tranh spawn nham."))
+    if not port_listening(PORTS["whale2api"]):
+        print(warn("Whale2API gateway (port " + str(PORTS["whale2api"]) +
+                   ") chua chay. Bat Docker roi: cd tools/whale2api && docker compose up -d"))
 
     # cline-bridge
     bridge_js = ROOT / "cline-bridge" / "dist" / "bridge.js"

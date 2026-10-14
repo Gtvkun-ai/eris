@@ -1,0 +1,25 @@
+{
+  "project_type": "Eris — Godot (C#/GDScript) front-end + Python runtime cho conversational AI agent. Phần việc này thuần Python runtime (src/runtime/conversation).",
+  "language": "Python 3.12",
+  "build_system": "Không có bước compile cho Python runtime. Build Godot không liên quan tới task này. Chỉ cần chạy pytest.",
+  "test_framework": "pytest (pytest.ini ở gốc repo).",
+  "build_command": "Không cần build cho thay đổi Python. Chạy test là bước xác minh duy nhất.",
+  "test_command": "python -m pytest src/tests/conversation -q   (chạy từ gốc worktree c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.worktrees\\root-loop-upgrade). Cho một file: python -m pytest src/tests/conversation/<file>.py -q",
+  "verification_instructions": "1) cd vào worktree c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.worktrees\\root-loop-upgrade. 2) Chạy pytest cho test mới của FEAT + các test hồi quy liên quan (test_root_decision_v12.py, test_eris02_root_agency.py, test_root_choice_freedom_v12.py). 3) Baseline đã xác nhận: 3 file test này cho 25 passed. 4) Bước integration cuối chạy toàn bộ src/tests/conversation.",
+  "snapshot_or_generated_files": null,
+  "environment_constraints": "Windows/PowerShell; terminal echo bị nhiễu khi lệnh dài — ghi output pytest ra file rồi đọc (vd '> out.txt 2>&1' hoặc Tee-Object) nếu stdout không hiện. pytest.ini đặt pythonpath = src . nên import dạng 'from runtime.conversation import ...'. KHÔNG đổi inference_tier='subconscious_4b' (chỉ là nhãn routing tier, model nền thật là DeepSeek Whale). Dọn mọi file tạm tạo khi verify.",
+  "contribution_requirements": "Không tìm thấy AGENTS.md/CONTRIBUTING.md trong repo. Quy ước commit: mỗi cải tiến MỘT commit riêng, message rõ ràng, TUYỆT ĐỐI không đặt tên 'qq'. Commit local trên branch feat/root-loop-kiro, KHÔNG push. Dùng Conventional Commits (feat:/refactor:/test:).",
+  "key_patterns": "RuntimeModelRootAgent.decide() là vòng for trên range(max_root_steps): gọi self._root_session.ask() -> nếu None rơi về one-shot router.invoke_structured_worker(...) -> parse raw['kind'] -> finalize (move/no_reply) hoặc chạy tool rồi continue. Finalize move ở nhánh: if kind=='move' or (event.kind=='user_turn' and (raw.get('intent') or raw.get('say'))). still_active() = runtime_context['__root_run_active'] (callable, default lambda:True), check ĐẦU mỗi vòng và NGAY SAU khi model trả; trả NoReply(reason='root_turn_preempted') khi False. Dedup qua set prior_actions: 'memory:<query.casefold()>' và 'cap:<name>:<json.dumps(args,sort_keys)>'. continue_thinking tăng reflection_count, giới hạn >2. Mọi lỗi model/tool fail-soft về self._degraded(...) (= DeterministicRootAgent) hoặc NoReply, KHÔNG ném exception ra khỏi decide(). Biên public cuối LUÔN là NoReply|NextConversationMove. root_session.ask() BỊ KHÓA schema=ROOT_STEP_SCHEMA; schema khác (verify/batch) phải qua one-shot invoke_structured_worker. invoke_structured_worker signature: (client, *, system, payload, schema, name, max_tokens, reasoning_effort=None, inference_tier='subconscious_4b', priority=None, timeout_seconds=None, cognitive_lane='', temperature=None, conversation_messages=None, raw_reply_sink=None). Fake router test: class có executive_client=object() và invoke_structured_worker(_client, **kwargs) trả lần lượt từ hàng đợi; bơm still_active qua runtime_context['__root_run_active'].",
+  "relevant_files": [
+    "src/runtime/conversation/agent.py (SỬA — toàn bộ 3 cải tiến ở đây; chứa ROOT_STEP_SCHEMA, NEXT_MOVE_SCHEMA, RuntimeModelRootAgent.decide, DeterministicRootAgent, _system_prompt, _payload, _invoke_capability, _degraded, _bounded_context, _bounded_value)",
+    "src/runtime/conversation/contracts.py (ĐỌC — NextConversationMove.from_mapping, NoReply.from_mapping, ConversationAfter, ConversationDecision; KHÔNG sửa)",
+    "src/runtime/conversation/root_session.py (ĐỌC — ask() khóa ROOT_STEP_SCHEMA, _call yêu cầu len(raw)==1 + Mapping, lock blocking=False trả None; KHÔNG cần sửa)",
+    "src/runtime/conversation/kernel.py (ĐỌC — cấp __root_run_active, re-check generation/active_run_id sau decide(); KHÔNG sửa, giữ hợp đồng preempt)",
+    "src/runtime/conversation/context.py (ĐỌC — ConversationNoteTools, RootCapabilityRegistry, RootMemoryRecallTools; KHÔNG sửa)",
+    "src/tests/conversation/test_root_decision_v12.py (ĐỌC — mẫu _Router với results=[...])",
+    "src/tests/conversation/test_eris02_root_agency.py (ĐỌC — mẫu FakeRouter, preempt test, assert schema 7 kind; test này PHẢI giữ xanh)",
+    "src/tests/conversation/test_root_choice_freedom_v12.py (ĐỌC — assert len(ROOT_STEP_SCHEMA['oneOf'])==7; PHẢI giữ xanh)",
+    "src/runtime/ai_orchestrated/model_router.py (ĐỌC — def invoke_structured_worker ~dòng 1597)"
+  ],
+  "directory_structure": "src/runtime/conversation/ = toàn bộ V12 conversation runtime (agent, kernel, contracts, root_session, context, writer, delivery...). src/tests/conversation/ = test suite tương ứng (~40 file). pytest.ini + pyproject.toml ở gốc. Worktree làm việc: c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.worktrees\\root-loop-upgrade trên branch feat/root-loop-kiro (tạo từ main HEAD cb4e51dc)."
+}

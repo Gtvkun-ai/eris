@@ -841,10 +841,13 @@ elif os.path.exists(mem_core_src):
 ds2api_src = os.path.join(REPO, "tools", "whale2api")
 ds2api_dst = os.path.join(OUT, "tools", "whale2api")
 if os.path.exists(ds2api_src):
-    print("  Deploying whale2api binary and config to build...")
+    print("  Deploying whale2api config to build...")
     os.makedirs(ds2api_dst, exist_ok=True)
+    # Gateway chay bang Docker compose (tools/whale2api), KHONG con ship
+    # whale2api.exe/poolui.exe. Eris khong tu spawn exe nua; neu con exe cu
+    # trong build no se bi spawn nham va tra model "not available". Chi ship config.
     # Release khong ship accounts.csv/.env/*.db. Dev build sync DB rieng va verify ben duoi.
-    for fn in ["whale2api.exe", "poolui.exe", "accounts.example.csv"]:
+    for fn in ["accounts.example.csv"]:
         src_file = os.path.join(ds2api_src, fn)
         if os.path.exists(src_file):
             try:

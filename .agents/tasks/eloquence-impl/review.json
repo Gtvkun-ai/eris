@@ -1,0 +1,18 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "non-blocking",
+      "confidence": "possible",
+      "label": "Khoá ngôn ngữ hạ nhấn mạnh",
+      "detail": "Câu HARD DISPLAY LANGUAGE LOCK viết hoa đổi thành câu thường 'Giữ nguyên text trong tiếng Việt...'. Ý khoá còn đủ và còn chặt (cấm cả câu lẫn mẩu chen); nếu model thỉnh thoảng trộn ngôn ngữ, cân nhắc nhấn lại một cụm mạnh mà không cần khôi phục chuỗi cũ."
+    },
+    {
+      "severity": "non-blocking",
+      "confidence": "likely",
+      "label": "Deadline writer 24s cố định với thinking luôn bật",
+      "detail": "thinking_mode nay bật mặc định (provider ép max_tokens>=2048) trong khi _public_writer_deadline_seconds() giữ 24s. Theo dõi tỉ lệ time-out dưới tải; nới qua env ERIS_PUBLIC_WRITER_DEADLINE_SEC thay vì sửa code."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eloquence-impl\\eloquence-review.md"
+}
