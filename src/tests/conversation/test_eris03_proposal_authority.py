@@ -92,10 +92,9 @@ def test_root_model_may_ignore_bus_hints_and_finalizes_only_one_move():
     )
     assert isinstance(result, NextConversationMove)
     assert "Python" not in result.say  # Fake model chọn output chứ không có deterministic override.
-    # Lượt 1 là move; lượt 2 là SELF-VERIFY (router trả lại move -> kind lạ ->
-    # giữ move gốc). Chỉ Root chạy, không có điều phối ngoài.
-    assert len(router.seen) == 2
-    assert router.seen[1]["name"] == "eris_root_self_verify_v12"
+    # Chỉ MỘT lượt model: move finalize trực tiếp (không còn SELF-VERIFY). Chỉ
+    # Root chạy, không có điều phối ngoài.
+    assert len(router.seen) == 1
     assert router.seen[0]["payload"]["runtime_context"]["background_proposals"][0]["topic_hint"] == "Nói về anime"
     assert "chưa kiểm chứng" in router.seen[0]["system"]
 

@@ -8,8 +8,7 @@ KHÔNG tự finalize; move/no_reply không bao giờ nằm trong batch.
 
 Batch chỉ kích hoạt trên nhánh one-shot invoke. Với FakeRouter (không có
 root_session thật), ask() trả None nên fallback invoke được dùng → batch khả
-dụng. Để cô lập hành vi batch, các test kết thúc bằng no_reply (không kéo lượt
-SELF-VERIFY như move).
+dụng. Move finalize TRỰC TIẾP (không còn lượt SELF-VERIFY thứ hai).
 """
 from __future__ import annotations
 
@@ -284,17 +283,16 @@ def test_batch_set_note_updates_working_note_for_next_turn():
     assert router.calls[1]["payload"]["conversation_note"] == "giữ context X"
 
 
-def test_batch_then_move_still_verifies_once():
-    # Sau batch, model trả move -> vẫn chạy SELF-VERIFY (FEAT-001). Tổng 3 lượt.
+def test_batch_then_move_finalizes_directly():
+    # Sau batch, model trả move -> finalize TRỰC TIẾP (không còn SELF-VERIFY).
+    # Tổng 2 lượt: batch + move.
     memory = RootMemoryRecallTools(recall=lambda q: {"status": "found"})
     router = FakeRouter(
         {"kind": "batch", "actions": [{"kind": "recall_memory", "query": "q"}]},
         {"kind": "move", "intent": "nói", "say": "câu nói", "delivery": "tự nhiên", "after": "wait_user"},
-        {"kind": "confirm"},
     )
     result = decide(router, context={"__root_memory_recall_tools": memory})
 
     assert isinstance(result, NextConversationMove)
     assert result.say == "câu nói"
-    assert len(router.calls) == 3
-    assert router.calls[2]["name"] == "eris_root_self_verify_v12"
+    assert len(router.calls) == 2

@@ -51,14 +51,13 @@ def move(topic="một kỷ niệm rõ ràng"):
 def test_root_can_choose_topic_directly_without_another_planner_or_user_choice():
     router = FakeRouter(
         move("Eris muốn hỏi về cách vẽ pixel tóc chuyển động trong game"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     result = decide(router, text="Bạn phải tự chọn chuyện nói chứ, đừng hỏi tui chọn nữa")
     assert isinstance(result, NextConversationMove)
     assert "pixel tóc" in result.say
     assert result.after.value == "may_continue"
-    assert len(router.calls) == 2
-    assert router.calls[1]["name"] == "eris_root_self_verify_v12"
+    # Move finalize TRỰC TIẾP: chỉ một lượt model (không còn SELF-VERIFY).
+    assert len(router.calls) == 1
     prompt = router.calls[0]["system"]
     assert "CHỌN MỘT đề tài cụ thể" in prompt
     assert "KHÔNG hỏi ngược user chọn đề tài" in prompt
@@ -74,14 +73,14 @@ def test_recall_memory_is_on_demand_and_root_observes_result_before_speaking():
     router = FakeRouter(
         {"kind": "recall_memory", "query": "user thích nhân vật pixel thế nào"},
         move("Eris đề nghị thử vẽ tóc từng lớp và lắc như con lắc"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     result = decide(router, text="Tự kiếm chuyện đi", context={
         "__root_memory_recall_tools": RootMemoryRecallTools(recall=recall),
     })
     assert isinstance(result, NextConversationMove)
     assert calls == ["user thích nhân vật pixel thế nào"]
-    assert len(router.calls) == 3
+    # recall_memory + move = 2 lượt; move finalize trực tiếp (không verify).
+    assert len(router.calls) == 2
     observations = router.calls[1]["payload"]["tool_results"]
     assert observations == [{"kind": "memory_result", "query": calls[0],
                              "result": {"status": "found", "text": "User thích hình pixel tóc tách lớp", "degraded": False}}]
@@ -110,7 +109,6 @@ def test_root_repeated_memory_query_does_not_execute_recall_twice():
         {"kind": "recall_memory", "query": "khung cảnh đang nói"},
         {"kind": "recall_memory", "query": "khung cảnh đang nói"},
         move("Eris tự giới thiệu một chủ đề mới thay vì hỏi lại"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     result = decide(router, context={"__root_memory_recall_tools": tools})
     assert isinstance(result, NextConversationMove)
@@ -129,7 +127,6 @@ def test_root_repeated_side_effect_capability_is_blocked_per_event():
         {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
         {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
         move("kết quả nghiên cứu A"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     result = decide(router, context={"__root_capabilities": registry, "__conversation_run_id": "run:1"})
     assert isinstance(result, NextConversationMove)
@@ -186,7 +183,6 @@ def test_kernel_single_writer_after_root_uses_two_private_actions():
         {"kind": "continue_thinking", "focus": "Chủ đề nên cụ thể và phù hợp"},
         {"kind": "recall_memory", "query": "game user làm"},
         move("Trò chuyện về animation game pixel mà user đang làm"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     writer, delivery = Writer(), Delivery()
     kernel = ConversationKernel(RuntimeModelRootAgent(router), writer=writer, delivery=delivery)
@@ -194,7 +190,8 @@ def test_kernel_single_writer_after_root_uses_two_private_actions():
         "__root_memory_recall_tools": RootMemoryRecallTools(recall=lambda q: {"status": "found", "text": "game pixel"}),
     })
     assert result.status == "delivering"
-    assert len(router.calls) == 4
+    # continue_thinking + recall_memory + move = 3 lượt (không còn SELF-VERIFY).
+    assert len(router.calls) == 3
     assert writer.calls == 1 and delivery.calls == 1
     assert kernel.settle_delivery_id(delivery_id=result.delivery_id, successful=True)
     assert kernel.continuation.peek("session:1") is not None
@@ -212,7 +209,6 @@ def test_root_step_schema_has_internal_actions_but_public_move_contract_unmodifi
 def test_background_event_cannot_override_active_public_delivery_at_kernel_boundary():
     router = FakeRouter(
         move("Root nói câu đang phát"),
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     )
     from runtime.conversation.writer import RenderedConversationMove
     from runtime.conversation.delivery import SurfaceEnvelope
@@ -229,7 +225,8 @@ def test_background_event_cannot_override_active_public_delivery_at_kernel_bound
     after = kernel.snapshot("session:1")
     assert after.active_run_id == before.active_run_id
     assert after.active_delivery_id == before.active_delivery_id
-    assert len(router.calls) == 2
+    # Move finalize trực tiếp (không còn SELF-VERIFY) nên chỉ 1 lượt model.
+    assert len(router.calls) == 1
 
 
 def test_background_event_cannot_override_root_while_root_is_thinking():

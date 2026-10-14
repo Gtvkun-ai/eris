@@ -54,42 +54,6 @@ NEXT_MOVE_SCHEMA: dict[str, Any] = {
 }
 
 
-# Schema cho bước SELF-VERIFY: Root nhìn lại chính move vừa chọn và tự kiểm
-# chất lượng trước khi finalize. Đây KHÔNG phải public move, không mở rộng
-# ROOT_STEP_SCHEMA (giữ 7 oneOf), chỉ chạy qua one-shot invoke_structured_worker.
-VERIFY_SCHEMA: dict[str, Any] = {
-    "oneOf": [
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind"],
-            "properties": {"kind": {"type": "string", "enum": ["confirm"]}},
-        },
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind", "intent", "say", "delivery", "after"],
-            "properties": {
-                "kind": {"type": "string", "enum": ["revise"]},
-                "intent": {"type": "string"},
-                "say": {"type": "string"},
-                "delivery": {"type": "string"},
-                "after": {"type": "string", "enum": ["wait_user", "may_continue", "continue_self"]},
-            },
-        },
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind"],
-            "properties": {
-                "kind": {"type": "string", "enum": ["withdraw"]},
-                "reason": {"type": "string"},
-            },
-        },
-    ],
-}
-
-
 # Schema một *iteration* của root loop. Các action tool chỉ tồn tại ở cognition
 # boundary; writer/runtime public không bao giờ nhìn thấy chúng.
 ROOT_STEP_SCHEMA: dict[str, Any] = {
@@ -338,15 +302,14 @@ class RuntimeModelRootAgent:
             if kind == "no_reply":
                 return NoReply.from_mapping(raw)
             if kind == "move" or (event.kind == "user_turn" and (raw.get("intent") or raw.get("say"))):
-                return self._verify_move(
-                    move_raw=raw,
-                    client=client,
-                    event=event,
-                    recent_history=recent_history,
-                    runtime_context=runtime_context,
-                    still_active=still_active,
-                    step_index=step_index,
-                )
+                # Finalize TRỰC TIẾP move Root đã chọn — không chạy một vòng model
+                # thứ hai (self-verify) vốn làm phẳng personality. Anti-fabrication
+                # vẫn do claim_manifest + grounding gate + enforce_completed_action_claims
+                # ở runtime_writer lo, độc lập với self-verify. Vẫn tôn trọng preempt:
+                # user chen vào giữa chừng thì trả NoReply('root_turn_preempted').
+                if not still_active():
+                    return NoReply(reason="root_turn_preempted")
+                return NextConversationMove.from_mapping(raw)
 
             if kind == "batch":
                 # Nhiều action nội bộ ĐỘC LẬP trong một bước. Bỏ phần tử finalize
@@ -633,101 +596,6 @@ class RuntimeModelRootAgent:
             return self._degraded(event, recent_history, note, runtime_context)
         return NoReply(reason="no_progress")
 
-    def _verify_move(
-        self,
-        *,
-        move_raw: Mapping[str, Any],
-        client: Any,
-        event: ConversationEvent,
-        recent_history: Sequence[Mapping[str, Any]],
-        runtime_context: Mapping[str, Any],
-        still_active: Any,
-        step_index: int,
-    ) -> ConversationDecision:
-        """Một bước SELF-VERIFY trước khi finalize move.
-
-        Gửi lại cho model chính move vừa chọn kèm vài câu hỏi tự kiểm chất
-        lượng. Model trả confirm (giữ move gốc), revise (move mới, KHÔNG verify
-        lại) hoặc withdraw (NoReply). Bước này TỐI ĐA chạy một lần mỗi finalize
-        và luôn fail-soft: mọi lỗi/kết quả lạ đều rơi về move gốc. Verify không
-        bao giờ ném exception ra khỏi decide().
-        """
-        # Preempt trước khi tốn thêm một lượt model: user đã chen vào thì bỏ.
-        if not still_active():
-            return NoReply(reason="root_turn_preempted")
-
-        # Dựng move gốc qua contract để chuẩn hóa field dù model trả thiếu.
-        original_move = NextConversationMove.from_mapping(move_raw)
-        proposed = {
-            "intent": original_move.intent,
-            "say": original_move.say,
-            "delivery": original_move.delivery,
-            "after": original_move.after.value,
-        }
-        payload = {
-            "proposed_move": proposed,
-            "event_text": str(event.text or "")[:4000],
-            "recent_public_history": [
-                {"role": str(x.get("role", ""))[:24], "content": str(x.get("content", ""))[:4000]}
-                for x in recent_history[-8:]
-                if isinstance(x, Mapping)
-            ],
-            "self_check_questions": [
-                "Move này có thật sự đạt intent đã nêu không?",
-                "Nó có LẶP lại điều vừa nói trong recent_public_history không?",
-                "Nó có hợp affect/relationship/personality hiện tại không?",
-                "Nó có vi phạm điều user vừa yêu cầu hoặc cấm không (ví dụ hỏi ngược khi bị cấm, bắt user chọn hộ)?",
-            ],
-        }
-        verify_system = (
-            "Bạn đang TỰ KIỂM một move Eris vừa chọn trước khi phát ra public. "
-            "Chỉ kiểm chất lượng, KHÔNG viết lại dài dòng hay thêm phong cách. "
-            "Nếu move đã ổn, trả kind=confirm. Nếu cần sửa nhỏ cho đúng self_check, trả kind=revise "
-            "với intent/say/delivery/after mới (after chỉ wait_user|may_continue|continue_self). "
-            "Nếu move không nên nói ra (lặp, vi phạm điều user cấm, không đạt intent), trả kind=withdraw. "
-            "withdraw là lựa chọn hợp lệ khi im lặng tốt hơn. Không xuất chain-of-thought."
-        )
-        try:
-            verify_result = self.router.invoke_structured_worker(
-                client,
-                system=verify_system,
-                payload=payload,
-                schema=VERIFY_SCHEMA,
-                name="eris_root_self_verify_v12",
-                max_tokens=400,
-                reasoning_effort="low",
-                inference_tier="subconscious_4b",
-                cognitive_lane="root_conversation",
-                priority=70,
-                temperature=0.2,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self._log("debug", "[conversation-v12] self_verify degraded: %s", exc)
-            return original_move
-
-        if not still_active():
-            return NoReply(reason="root_turn_preempted")
-
-        if not isinstance(verify_result, Mapping):
-            return original_move
-        verify_kind = str(verify_result.get("kind", "") or "").strip().lower()
-        if verify_kind == "confirm":
-            outcome = "confirm"
-            decision: ConversationDecision = original_move
-        elif verify_kind == "revise":
-            outcome = "revise"
-            decision = NextConversationMove.from_mapping(verify_result)
-        elif verify_kind == "withdraw":
-            outcome = "withdraw"
-            decision = NoReply(reason="withdrawn_after_self_verify")
-        else:
-            # Kind lạ hoặc router trả lại chính move cũ (vd fake router single
-            # result): coi như không có tín hiệu verify hợp lệ, giữ move gốc.
-            return original_move
-
-        self._log("info", "[root-agent] self_verify step=%d outcome=%s", step_index + 1, outcome)
-        return decision
-
     @staticmethod
     def _system_prompt(capabilities: RootCapabilityRegistry) -> str:
         # Giữ system contract ổn định giữa bootstrap và các lượt bình thường.
@@ -942,7 +810,6 @@ __all__ = [
     "NEXT_MOVE_SCHEMA",
     "ROOT_BATCH_STEP_SCHEMA",
     "ROOT_STEP_SCHEMA",
-    "VERIFY_SCHEMA",
     "RootAgent",
     "RuntimeModelRootAgent",
 ]

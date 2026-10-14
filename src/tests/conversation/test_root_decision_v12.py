@@ -106,10 +106,8 @@ def test_simple_turn_finalizes_without_calling_capability():
     )
 
     assert isinstance(decision, NextConversationMove)
-    # Move finalize nay thêm một lượt SELF-VERIFY: lượt verify nhận lại chính
-    # move dict (single result) -> kind lạ với VERIFY_SCHEMA -> giữ move gốc.
-    assert len(router.requests) == 2
-    assert router.requests[1]["name"] == "eris_root_self_verify_v12"
+    # Move finalize TRỰC TIẾP: chỉ một lượt model (không còn SELF-VERIFY).
+    assert len(router.requests) == 1
     assert calls == []
 
 
@@ -130,7 +128,6 @@ def test_root_can_call_capability_then_finalize_one_move():
             "delivery": "rõ ràng",
             "after": "wait_user",
         },
-        {"kind": "confirm"},  # lượt SELF-VERIFY sau move
     ])
     decision = RuntimeModelRootAgent(router).decide(
         event=_event("user_turn", text="transaction là gì"),
@@ -141,10 +138,10 @@ def test_root_can_call_capability_then_finalize_one_move():
 
     assert isinstance(decision, NextConversationMove)
     assert len(calls) == 1
-    assert len(router.requests) == 3
+    # use_capability + move = 2 lượt model; move finalize trực tiếp (không verify).
+    assert len(router.requests) == 2
     second_payload = router.requests[1]["payload"]
     assert second_payload["tool_results"][0]["capability"] == "tutor"
-    assert router.requests[2]["name"] == "eris_root_self_verify_v12"
 
 
 def test_root_note_tool_is_optional_and_not_a_public_field():

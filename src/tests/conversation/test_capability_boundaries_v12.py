@@ -203,6 +203,6 @@ def test_v01_root_receipt_uses_runtime_run_and_real_executor_status():
     assert receipts[0].status == "started"
     assert receipts[0].result["job_id"] == "j1"
     assert capabilities.result_receipts_for("e1", run_id="run:other", generation=2) == ()
-    # Move finalize nay thêm một lượt SELF-VERIFY (lượt 3); router trả lại move
-    # dict -> kind lạ với VERIFY_SCHEMA -> giữ move gốc, fail-soft.
-    assert router.calls == 3
+    # use_capability (lượt 1) + move (lượt 2); move finalize TRỰC TIẾP, không còn
+    # lượt SELF-VERIFY thứ ba.
+    assert router.calls == 2

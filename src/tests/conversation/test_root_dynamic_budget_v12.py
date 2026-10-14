@@ -114,14 +114,13 @@ def test_progress_allows_up_to_hard_ceiling():
         {"kind": "recall_memory", "query": "q2"},
         {"kind": "recall_memory", "query": "q3"},
         move("tổng hợp các ký ức khác nhau"),
-        {"kind": "confirm"},
     )
     result = decide(router, text="kể tôi nghe",
                     context={"__root_memory_recall_tools": tools})
     assert isinstance(result, NextConversationMove)
     assert "tổng hợp" in result.say
-    # 3 recall + 1 move + 1 verify = 5 lượt; không bị cắt sớm.
-    assert len(router.calls) == 5
+    # 3 recall + 1 move = 4 lượt; move finalize trực tiếp (không còn verify).
+    assert len(router.calls) == 4
 
 
 def test_repeated_identical_recall_result_counts_as_no_progress():
@@ -151,12 +150,12 @@ def test_single_no_progress_step_does_not_cut():
         {"kind": "recall_memory", "query": "q1"},
         {"kind": "recall_memory", "query": "q2"},
         move("nói điều hữu ích"),
-        {"kind": "confirm"},
     )
     result = decide(router, text="hỏi gì đó",
                     context={"__root_memory_recall_tools": tools})
     assert isinstance(result, NextConversationMove)
-    assert len(router.calls) == 4
+    # 2 recall + 1 move = 3 lượt; move finalize trực tiếp (không còn verify).
+    assert len(router.calls) == 3
 
 
 # --- preempt vẫn hoạt động (không hồi quy) ---------------------------------
