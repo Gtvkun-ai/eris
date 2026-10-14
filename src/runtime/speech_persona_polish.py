@@ -174,7 +174,7 @@ def _signature_ending_policy(
 
     enabled = _runtime_bool("signature_ending_enabled", True)
     ending = _runtime_text("signature_ending", "desu_ne").strip().lower()
-    rate = _runtime_float("signature_ending_rate", 0.55)
+    rate = _runtime_float("signature_ending_rate", 0.25)
     clean = str(source_text or "").strip()
 
     if not enabled or ending not in {"desu_ne"} or not clean:
@@ -193,7 +193,7 @@ def _signature_ending_policy(
     if len(clean) < 8:
         rate = min(rate, 0.12)
 
-    rate = round(_clamp01(rate, 0.55), 3)
+    rate = round(_clamp01(rate, 0.25), 3)
     selected = _stable_roll(clean, profile=profile, mode=mode) < rate
     return ending, bool(selected), rate
 
