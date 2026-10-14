@@ -30,7 +30,7 @@ def test_speaking_hint_does_not_start_mouth_before_audio(monkeypatch):
 
     snapshot = state.advance(0.0, now=10.14)
     assert snapshot.speaking is False
-    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+    assert snapshot.parameters["ParamMouthOpenY"] == 0.0
 
 
 def test_playback_without_amplitude_does_not_invent_mouth_movements(monkeypatch):
@@ -41,7 +41,7 @@ def test_playback_without_amplitude_does_not_invent_mouth_movements(monkeypatch)
     snapshot = state.advance(0.0, now=10.14)
     assert snapshot.speaking is True
     assert snapshot.mouth_open_ratio == 0.0
-    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+    assert snapshot.parameters["ParamMouthOpenY"] == 0.0
 
 
 def test_silent_audio_keeps_mouth_closed():
@@ -109,7 +109,7 @@ def test_audio_terminal_event_closes_active_mouth(monkeypatch, terminal):
     snapshot = state.advance(0.0, now=10.11)
     assert snapshot.speaking is False
     assert snapshot.mouth_open_ratio == 0.0
-    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+    assert snapshot.parameters["ParamMouthOpenY"] == 0.0
 
 
 def test_audio_duration_closes_mouth_when_done_packet_is_missing(monkeypatch):
@@ -119,4 +119,4 @@ def test_audio_duration_closes_mouth_when_done_packet_is_missing(monkeypatch):
 
     snapshot = state.advance(0.0, now=10.21)
     assert snapshot.speaking is False
-    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+    assert snapshot.parameters["ParamMouthOpenY"] == 0.0

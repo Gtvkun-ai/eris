@@ -81,7 +81,7 @@ def test_empty_manifest_does_not_turn_unverified_action_into_phatic():
         'text':'Tớ đã gửi tài liệu cho cậu rồi.',
         'speech_text':'ファイルを送ったよ。', 'claim_manifest': [],
     }, verdict={'_runtime_verifier_error':'VERIFIER_PROVIDER_ERROR'})
-    assert outcome.status == 'delivering' and len(delivery.calls)==1
+    assert outcome.status == 'writer_failed' and len(delivery.calls)==0
     assert router.worker_calls == []
 
 

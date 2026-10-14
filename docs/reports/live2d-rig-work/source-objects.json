@@ -1,0 +1,1049 @@
+[
+  {
+    "id": "ArtMesh",
+    "name": "1",
+    "forms": 1,
+    "bindings": [],
+    "guid": "d137a40e-edb8-40c5-927f-005949716165"
+  },
+  {
+    "id": "ArtMesh0",
+    "name": "2",
+    "forms": 1,
+    "bindings": [],
+    "guid": "c64461ae-fb16-4189-afb1-37186312f715"
+  },
+  {
+    "id": "rangduoi",
+    "name": "rangduoi",
+    "forms": 1,
+    "bindings": [],
+    "guid": "441b3e81-6eaf-40cb-9ff8-24dd384efcd4"
+  },
+  {
+    "id": "luoi",
+    "name": "luoi",
+    "forms": 1,
+    "bindings": [],
+    "guid": "b2bf4b66-ccbb-4c30-9ad0-82603c5a1872"
+  },
+  {
+    "id": "ArtMesh22",
+    "name": "2",
+    "forms": 1,
+    "bindings": [],
+    "guid": "b6b7b0e7-0ddb-4856-a189-7f7e18eeae3c"
+  },
+  {
+    "id": "ArtMesh23",
+    "name": "1",
+    "forms": 1,
+    "bindings": [],
+    "guid": "66019675-4d08-44dc-961e-83ecfb4576f8"
+  },
+  {
+    "id": "hong",
+    "name": "hong",
+    "forms": 9,
+    "bindings": [
+      {
+        "parameter": "ParamMouthForm",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamMouthOpenY",
+        "keys": [
+          "0.0",
+          "0.5",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "8023a436-8e2a-4970-8971-d3de6808857f"
+  },
+  {
+    "id": "ArtMesh19",
+    "name": "môi trên",
+    "forms": 9,
+    "bindings": [
+      {
+        "parameter": "ParamMouthOpenY",
+        "keys": [
+          "0.0",
+          "0.5",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamMouthForm",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "f0dd7f89-46de-4a4d-a11f-9c7c3e432e7b"
+  },
+  {
+    "id": "ArtMesh20",
+    "name": "môi dưới",
+    "forms": 9,
+    "bindings": [
+      {
+        "parameter": "ParamMouthOpenY",
+        "keys": [
+          "0.0",
+          "0.5",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamMouthForm",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "e0c96064-5a7a-4dae-8f3c-1d68a7ae9f2f"
+  },
+  {
+    "id": "MAHONG",
+    "name": "MAHONG",
+    "forms": 1,
+    "bindings": [],
+    "guid": "53d78ff3-4ba7-4a55-82c1-baaf622469f4"
+  },
+  {
+    "id": "ArtMesh18",
+    "name": "mũi",
+    "forms": 1,
+    "bindings": [],
+    "guid": "4abe1a7f-2309-41df-8044-3b79a55ccf4f"
+  },
+  {
+    "id": "ArtMesh24",
+    "name": "da mặt",
+    "forms": 1,
+    "bindings": [],
+    "guid": "ae558531-6189-4755-b0be-1f1b005dcc7d"
+  },
+  {
+    "id": "ArtMesh25",
+    "name": "lỗ tai 1",
+    "forms": 1,
+    "bindings": [],
+    "guid": "3d51d41e-e436-4d71-870d-8210a9a78878"
+  },
+  {
+    "id": "ArtMesh26",
+    "name": "lỗ tai 2",
+    "forms": 1,
+    "bindings": [],
+    "guid": "91edab4a-745c-4292-962c-962d063179f6"
+  },
+  {
+    "id": "ArtMesh27",
+    "name": "cổ",
+    "forms": 1,
+    "bindings": [],
+    "guid": "82d18aa9-5bf9-48be-8a05-dd6bfda260d7"
+  },
+  {
+    "id": "ArtMesh28",
+    "name": "Layer 1",
+    "forms": 1,
+    "bindings": [],
+    "guid": "9c950156-3ead-4228-820a-24cb70fc3b77"
+  },
+  {
+    "id": "ArtMesh29",
+    "name": "tay trai",
+    "forms": 1,
+    "bindings": [],
+    "guid": "602509ad-0a9d-4bb8-b1aa-4315f6657926"
+  },
+  {
+    "id": "ArtMesh30",
+    "name": "tay phai",
+    "forms": 1,
+    "bindings": [],
+    "guid": "8e907b5c-2709-46ea-84f1-a281e0d2723f"
+  },
+  {
+    "id": "ArtMesh31",
+    "name": "tóc sau main",
+    "forms": 1,
+    "bindings": [],
+    "guid": "8f904008-32c7-4814-bc3b-3d56b50e6b15"
+  },
+  {
+    "id": "ArtMesh9",
+    "name": "1[0]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "61f5fafb-2898-4b86-a7ce-7eb2c3d8db37"
+  },
+  {
+    "id": "ArtMesh15",
+    "name": "1[1]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "62b67cc6-4e0f-4d07-a4f6-8804f9ae177b"
+  },
+  {
+    "id": "ArtMesh32",
+    "name": "1[2]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "96fd7396-17b5-4283-9cf5-7692fa79685c"
+  },
+  {
+    "id": "ArtMesh33",
+    "name": "2[0]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "4e26fe8c-507c-4198-ac40-25419dec23f5"
+  },
+  {
+    "id": "ArtMesh34",
+    "name": "2[1]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "5de7f833-053a-4484-99be-797af361e036"
+  },
+  {
+    "id": "ArtMesh35",
+    "name": "2[2]",
+    "forms": 1,
+    "bindings": [],
+    "guid": "641bf20f-363c-4664-9dd3-8d7e4c5f1ed3"
+  },
+  {
+    "id": "rangtren",
+    "name": "rangtren",
+    "forms": 1,
+    "bindings": [],
+    "guid": "883e4781-9fa7-45dd-ba55-6d3957fa032a"
+  },
+  {
+    "id": "ArtMesh10",
+    "name": "mi trên 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "5f1c80ff-e86b-4b2f-8e2c-a3696f165357"
+  },
+  {
+    "id": "ArtMesh11",
+    "name": "mi mắt trên 2",
+    "forms": 27,
+    "bindings": [
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "Param",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballyr",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "7025c923-162f-405d-bae9-f946c219688f"
+  },
+  {
+    "id": "ArtMesh12",
+    "name": "mi mắt trên 2 3",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "Param",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballyr",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "49de1a81-6d99-4d15-b056-a87ee1187e3d"
+  },
+  {
+    "id": "ArtMesh13",
+    "name": "mí 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "7fcfd38e-e5aa-4cb7-8de9-97649674acd1"
+  },
+  {
+    "id": "ArtMesh14",
+    "name": "chan mai 2",
+    "forms": 9,
+    "bindings": [
+      {
+        "parameter": "ParamBrowRAngle",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "88f9f67a-d89d-4517-ab18-5f4d4d6746fe"
+  },
+  {
+    "id": "ArtMesh16",
+    "name": "hiệu ứng 2",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "Param",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballyr",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "72ca16ee-b4d4-4b4e-b420-162f296d62d5"
+  },
+  {
+    "id": "ArtMesh17",
+    "name": "con ngươi 2",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "Param",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballyr",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "b19eff34-41fa-4597-8f94-582fe451ae85"
+  },
+  {
+    "id": "trongtrang1",
+    "name": "tròng trắng 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "59a5cfd1-61ee-408e-abfa-485f3158252c"
+  },
+  {
+    "id": "Trongtrang2",
+    "name": "tròng trắng 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "59a5cfd1-61ee-408e-abfa-485f3158252c"
+  },
+  {
+    "id": "ArtMesh8",
+    "name": "con ngươi 2",
+    "forms": 90,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballx",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyebally",
+        "keys": [
+          "-30.0",
+          "-1.0",
+          "0.0",
+          "1.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "b19eff34-41fa-4597-8f94-582fe451ae85"
+  },
+  {
+    "id": "ArtMesh7",
+    "name": "hiệu ứng 2",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyeballx",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyebally",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "72ca16ee-b4d4-4b4e-b420-162f296d62d5"
+  },
+  {
+    "id": "ArtMesh6",
+    "name": "chan mai 2",
+    "forms": 9,
+    "bindings": [
+      {
+        "parameter": "ParamBrowLAngle",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "88f9f67a-d89d-4517-ab18-5f4d4d6746fe"
+  },
+  {
+    "id": "ArtMesh5",
+    "name": "mí 2",
+    "forms": 18,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "eyeballx",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "7fcfd38e-e5aa-4cb7-8de9-97649674acd1"
+  },
+  {
+    "id": "ArtMesh4",
+    "name": "mi mắt trên 2 3",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "eyeballx",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyebally",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "49de1a81-6d99-4d15-b056-a87ee1187e3d"
+  },
+  {
+    "id": "ArtMesh3",
+    "name": "mi mắt trên 2",
+    "forms": 54,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      },
+      {
+        "parameter": "eyeballx",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "eyebally",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "7025c923-162f-405d-bae9-f946c219688f"
+  },
+  {
+    "id": "ArtMesh2",
+    "name": "mi trên 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "5f1c80ff-e86b-4b2f-8e2c-a3696f165357"
+  },
+  {
+    "id": "ArtMesh1",
+    "name": "tóc trước",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "cfef6b38-2957-43dd-9c59-69d7b81a96c7"
+  },
+  {
+    "id": "ArtMesh21",
+    "name": "luoi dung",
+    "forms": 2,
+    "bindings": [
+      {
+        "parameter": "ParamErisTongue",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "8ee7c7c6-5ed2-4c00-b3a2-5de092aa70f7"
+  },
+  {
+    "id": "Rotation",
+    "name": "tóc trước Rotation",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "ParamAngleZ",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "277e98d6-6077-4223-9d7b-858a5c413e2f"
+  },
+  {
+    "id": "Rotation2",
+    "name": "Rotation Deformer of tóc trước",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation2",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "426bf981-6fbc-4733-8dde-984724c1c4aa"
+  },
+  {
+    "id": "Rotation3",
+    "name": "Rotation Deformer of tóc trước2",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation3",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "1583c4c3-a904-4574-9bfd-07f4f7adf3d6"
+  },
+  {
+    "id": "Rotation4",
+    "name": "Rotation Deformer of tóc trước3",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation4",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "efe8cd6c-3019-4d2f-ae3a-f5a581b814ba"
+  },
+  {
+    "id": "Rotation5",
+    "name": "Rotation Deformer of tóc trước4",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation5",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "a0d69c85-28ab-45f4-93ee-7eb3808e81a2"
+  },
+  {
+    "id": "Rotation6",
+    "name": "Rotation Deformer of tóc trước5",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation6",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "5063cd59-5da2-4fd3-a708-4f00748b3d9c"
+  },
+  {
+    "id": "Rotation7",
+    "name": "Rotation Deformer of tóc trước6",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "Param_Angle_Rotation7",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "8db09a79-9f41-438f-8bea-10cb82e70f11"
+  },
+  {
+    "id": "Warp4",
+    "name": "warpbody",
+    "forms": 2,
+    "bindings": [
+      {
+        "parameter": "ParamBreath",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "03c425ed-c4e3-4f7f-acae-8e9808f5d3d3"
+  },
+  {
+    "id": "Warp5",
+    "name": "Warp Deformer of hand",
+    "forms": 2,
+    "bindings": [
+      {
+        "parameter": "ParamBreath",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "13b3ff35-21ec-41d2-80e3-88a14ff0ee3b"
+  },
+  {
+    "id": "Warp6",
+    "name": "Warp Deformer of hand2",
+    "forms": 2,
+    "bindings": [
+      {
+        "parameter": "ParamBreath",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "02285887-a937-41a2-9368-df16ab5b3015"
+  },
+  {
+    "id": "Warp7",
+    "name": "Curved Surface",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "1901c830-9192-48f4-ba92-85c8f836337e"
+  },
+  {
+    "id": "Warp2",
+    "name": "Warp Deformer of mắt 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeLOpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "8bfc9f3d-2b9d-4572-b71e-ab9b5f092fe5"
+  },
+  {
+    "id": "Warp",
+    "name": "Warp Deformer of tóc trước",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "6bbb274e-d80f-4f4f-9f0f-118c858e9eff"
+  },
+  {
+    "id": "Warp8",
+    "name": "Warp Deformer of bộ phận mặt",
+    "forms": 3,
+    "bindings": [
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "053da1bc-25c4-4320-b9a0-7fcf43635c0a"
+  },
+  {
+    "id": "Warp3",
+    "name": "Warp Deformer of mắt 2",
+    "forms": 6,
+    "bindings": [
+      {
+        "parameter": "ParamEyeROpen",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamAngleX",
+        "keys": [
+          "-30.0",
+          "0.0",
+          "30.0"
+        ]
+      }
+    ],
+    "guid": "e9c62696-e2ca-4527-9471-b2e6ae0c8a15"
+  },
+  {
+    "id": "Warp9",
+    "name": "Mouth",
+    "forms": 18,
+    "bindings": [
+      {
+        "parameter": "ParamErisMouthCornerL",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamErisMouthCornerR",
+        "keys": [
+          "-1.0",
+          "0.0",
+          "1.0"
+        ]
+      },
+      {
+        "parameter": "ParamErisLipPress",
+        "keys": [
+          "0.0",
+          "1.0"
+        ]
+      }
+    ],
+    "guid": "593e5d2f-3797-4361-8bcc-c7b48772896f"
+  }
+]

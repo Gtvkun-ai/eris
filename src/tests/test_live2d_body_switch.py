@@ -154,15 +154,15 @@ def test_parameter_profile_matches_viewer_semantics() -> None:
     profile = INFJ_PARAMETER_PROFILE
     assert profile.clamp_angle_x(-99.0) == -30.0
     assert profile.clamp_angle_x(99.0) == 30.0
-    assert profile.mouth_open_from_ratio(0.0) == -1.0
-    assert profile.mouth_open_from_ratio(0.5) == 0.0
+    assert profile.mouth_open_from_ratio(0.0) == 0.0
+    assert profile.mouth_open_from_ratio(0.5) == 0.5
     assert profile.mouth_open_from_ratio(1.0) == 1.0
 
 
-def test_stage_state_closes_custom_mouth_at_minus_one() -> None:
+def test_stage_state_closes_native_mouth_at_zero() -> None:
     state = Live2DStageState()
     snapshot = state.advance(0.0, now=0.0)
-    assert snapshot.parameters["ParamMouthOpenY"] == -1.0
+    assert snapshot.parameters["ParamMouthOpenY"] == 0.0
 
 
 def test_warm_expression_does_not_raise_both_brows() -> None:

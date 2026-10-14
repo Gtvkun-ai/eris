@@ -50,10 +50,10 @@ class Live2DBodyConfig:
     y: int | None = None
     godot_pid: int | None = None
     eye_tracking: bool = True
-    eye_strength_x: float = 0.30
-    eye_strength_y: float = 0.18
+    eye_strength_x: float = 0.44
+    eye_strength_y: float = 0.30
     eye_right_x_sign: float = -1.0
-    eye_inner_ratio: float = 0.78
+    eye_inner_ratio: float = 0.82
     head_follow_degrees: float = 2.4
     head_follow_left_degrees: float = 4.8
     head_follow_right_degrees: float = 4.8
@@ -85,10 +85,10 @@ class Live2DBodyConfig:
             y=_int_env("ERIS_LIVE2D_Y", -1) if _int_env("ERIS_LIVE2D_Y", -1) >= 0 else None,
             godot_pid=_int_env("ERIS_GODOT_PID", 0) or None,
             eye_tracking=_bool_env("ERIS_LIVE2D_EYE_TRACKING", True),
-            eye_strength_x=max(0.0, min(0.65, _float_env("ERIS_LIVE2D_EYE_STRENGTH_X", 0.30))),
-            eye_strength_y=max(0.0, min(0.65, _float_env("ERIS_LIVE2D_EYE_STRENGTH_Y", 0.18))),
+            eye_strength_x=max(0.0, min(0.65, _float_env("ERIS_LIVE2D_EYE_STRENGTH_X", 0.44))),
+            eye_strength_y=max(0.0, min(0.65, _float_env("ERIS_LIVE2D_EYE_STRENGTH_Y", 0.30))),
             eye_right_x_sign=-1.0 if _float_env("ERIS_LIVE2D_EYE_RIGHT_X_SIGN", -1.0) < 0.0 else 1.0,
-            eye_inner_ratio=max(0.55, min(1.0, _float_env("ERIS_LIVE2D_EYE_INNER_RATIO", 0.78))),
+            eye_inner_ratio=max(0.55, min(1.0, _float_env("ERIS_LIVE2D_EYE_INNER_RATIO", 0.82))),
             head_follow_degrees=max(0.0, min(8.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_DEGREES", 2.4))),
             head_follow_left_degrees=max(0.0, min(12.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_LEFT_DEGREES", 4.8))),
             head_follow_right_degrees=max(0.0, min(12.0, _float_env("ERIS_LIVE2D_HEAD_FOLLOW_RIGHT_DEGREES", 4.8))),

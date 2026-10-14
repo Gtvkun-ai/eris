@@ -1,0 +1,98 @@
+<KeyformGridSource xs.id="#1397" xs.idx="12072">
+<array_list xs.n="keyformsOnGrid" count="6">
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">0</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">0</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1401" />
+</KeyformOnGrid>
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">1</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">0</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1403" />
+</KeyformOnGrid>
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">0</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">1</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1404" />
+</KeyformOnGrid>
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">1</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">1</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1405" />
+</KeyformOnGrid>
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">0</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">2</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1406" />
+</KeyformOnGrid>
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="2">
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1398" />
+<i xs.n="keyIndex">1</i>
+</KeyOnParameter>
+<KeyOnParameter>
+<KeyformBindingSource xs.n="binding" xs.ref="#1399" />
+<i xs.n="keyIndex">2</i>
+</KeyOnParameter>
+</array_list>
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#1407" />
+</KeyformOnGrid>
+</array_list>
+<array_list xs.n="keyformBindings" count="2">
+<KeyformBindingSource xs.ref="#1398" />
+<KeyformBindingSource xs.ref="#1399" />
+</array_list>
+</KeyformGridSource>

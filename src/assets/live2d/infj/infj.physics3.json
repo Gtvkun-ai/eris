@@ -85,7 +85,7 @@
             "Target": "Parameter",
             "Id": "Param_Angle_Rotation5"
           },
-          "VertexIndex": 3,
+          "VertexIndex": 1,
           "Scale": 4.2,
           "Weight": 86,
           "Type": "Angle",
@@ -96,7 +96,7 @@
             "Target": "Parameter",
             "Id": "Param_Angle_Rotation6"
           },
-          "VertexIndex": 3,
+          "VertexIndex": 2,
           "Scale": 4.6,
           "Weight": 84,
           "Type": "Angle",
@@ -180,14 +180,14 @@
       ],
       "Normalization": {
         "Position": {
-          "Minimum": -10,
+          "Minimum": -15,
           "Default": 0,
-          "Maximum": 10
+          "Maximum": 15
         },
         "Angle": {
-          "Minimum": -10,
+          "Minimum": -15,
           "Default": 0,
-          "Maximum": 10
+          "Maximum": 15
         }
       }
     }

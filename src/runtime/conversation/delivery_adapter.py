@@ -153,6 +153,23 @@ class RuntimeConversationDeliveryAdapter:
             # Không đưa semantic grounding classifier lên critical path.
             # Báo cáo nguồn vẫn giữ trong metadata để chạy test và sửa core.
 
+        # RÀO CUỐI sau Stage/localize: writer hoặc adapter khác không được
+        # phát lời tự nhận đã hoàn tất action mà không có receipt của đúng run.
+        # Không dựa vào claim_manifest, không gọi LLM phụ kiểm duyệt cá tính.
+        from .action_claim_integrity import enforce_completed_action_claims
+        from .public_output_artifact import tts_clean
+        spoken_surfaces = ((prepared.display_text, prepared.memory_text,
+                            *(tts_clean(seg.tts_text) for seg in prepared.segments))
+                           if prepared is not None else
+                           (display_text, memory_text, str(getattr(decision, 'speech_text', '') or '')))
+        enforce_completed_action_claims(
+            surfaces=spoken_surfaces,
+            receipts=rendered.metadata.get('action_claim_receipts', ()),
+            event_id=str(rendered.metadata.get('event_id', '') or ''),
+            session_id=turn.session_id, run_id=turn.run_id,
+            generation=turn.generation,
+        )
+
         send = getattr(self.host, "_send_decision_to_body", None)
         if not callable(send):
             self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)

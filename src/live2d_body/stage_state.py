@@ -43,6 +43,7 @@ class Live2DSnapshot:
     idle_action: str = "settle"
     explicit_emotion_weight: float = 0.0
     last_event_type: str = ""
+    last_event_at: float = 0.0
     mouth_open_ratio: float = 0.0
     speech_cue: str = "silent"
 
@@ -70,20 +71,22 @@ class ExpressionTarget:
             "ParamAngleX": self.angle_x,
             "ParamAngleZ": self.angle_z,
         }
-        if self.mouth_corner_l != 0.0:
-            params["ParamErisMouthCornerL"] = self.mouth_corner_l
-        if self.mouth_corner_r != 0.0:
-            params["ParamErisMouthCornerR"] = self.mouth_corner_r
-        if self.lip_press != 0.0:
-            params["ParamErisLipPress"] = self.lip_press
-        if self.tongue != 0.0:
-            params["ParamErisTongue"] = self.tongue
+        params.update({
+            "ParamErisMouthCornerL": self.mouth_corner_l,
+            "ParamErisMouthCornerR": self.mouth_corner_r,
+            "ParamErisLipPress": self.lip_press,
+            "ParamErisTongue": self.tongue,
+        })
         return params
 
     @classmethod
     def from_affect_pose(cls, pose: AffectPose) -> "ExpressionTarget":
         return cls(
             mouth_form=pose.mouth_form,
+            mouth_corner_l=pose.mouth_corner_l,
+            mouth_corner_r=pose.mouth_corner_r,
+            lip_press=pose.lip_press,
+            tongue=pose.tongue,
             brow_left=pose.brow_left,
             brow_right=pose.brow_right,
             angle_x=pose.angle_x,
@@ -231,6 +234,13 @@ _EMOTION_TARGETS: dict[str, ExpressionTarget] = {
 }
 
 _EMOTION_ALIASES = {
+    "warm_playful": "mischief_soft",
+    "mischief": "mischief_soft",
+    "deadpan": "flat_calm",
+    "quiet_soft": "quiet_low",
+    "curious_soft": "curious",
+    "tired_soft": "quiet_low",
+    "flat_cold": "distant",
     "soft": "warm_soft",
     "soft_smile": "warm_soft",
     "playful": "mischief_soft",
@@ -242,6 +252,18 @@ _EMOTION_ALIASES = {
     "tease": "teasing",
     "tongue": "teasing",
 }
+
+# Preserve asset names so native playback can select exact expressions.
+_EMOTION_TARGETS.update({
+    "calm": _EMOTION_TARGETS["flat_calm"],
+    "warm": _EMOTION_TARGETS["warm_soft"],
+    "dry": _EMOTION_TARGETS["dry_tease"],
+    "low": _EMOTION_TARGETS["quiet_low"],
+    "amused": ExpressionTarget(mouth_form=.24, mouth_corner_l=.18, mouth_corner_r=.18, eye_open_left=.91, eye_open_right=.93),
+    "skeptical": ExpressionTarget(mouth_form=-.08, brow_left=.28, brow_right=-.16, mouth_corner_l=-.08, lip_press=.14, angle_z=-2),
+    "concerned": ExpressionTarget(mouth_form=-.18, brow_left=.22, brow_right=.16, mouth_corner_l=-.12, mouth_corner_r=-.12, lip_press=.18),
+    "surprised_soft": ExpressionTarget(mouth_form=.02, brow_left=.34, brow_right=.32, eye_open_left=1, eye_open_right=1),
+})
 
 _MOTION_OFFSETS: dict[str, dict[str, float]] = {
     "read": {"ParamAngleX": -1.8, "ParamAngleZ": 1.6},
@@ -257,9 +279,8 @@ _MOTION_OFFSETS: dict[str, dict[str, float]] = {
 }
 
 _PARAMETER_RESPONSE = {
-    # Mở nhanh để âm tiết đầu không bị smoothing giữ quanh -1. Rig này dùng
-    # -1 đóng, 0 nửa mở, +1 mở hết nên vài frame chậm là nhìn như không nói.
-    "ParamMouthOpenY": 88.0,
+    # Native opening and closing responses are 48 / 64 per second.
+    "ParamMouthOpenY": 48.0,
     "ParamMouthForm": 7.5,
     "ParamBrowLAngle": 6.5,
     "ParamBrowRAngle": 6.5,
@@ -675,6 +696,7 @@ class Live2DStageState:
                 allow_gesture=allow_idle_gesture,
                 affect=visual_affect,
                 thought_pressure=self._thought_pressure,
+                motion=self._motion,
             )
             idle_scale = 0.42 if self._thinking else 1.0
             target["ParamAngleX"] += idle_pose.angle_x * idle_scale
@@ -703,11 +725,6 @@ class Live2DStageState:
                     mood_form=target.get("ParamMouthForm", 0.0),
                     speech_ratio=speech_pose.mouth_open_ratio,
                 )
-            elif self._emotion == "surprise" and max(0.0, timestamp - self._emotion_at) < 0.8:
-                mouth_form = INFJ_PARAMETER_PROFILE.clamp_mouth_form(
-                    target.get("ParamMouthForm", 0.0)
-                )
-                mouth_open = INFJ_PARAMETER_PROFILE.mouth_open_from_ratio(0.58)
             else:
                 mouth_form = INFJ_PARAMETER_PROFILE.clamp_mouth_form(
                     target.get("ParamMouthForm", 0.0)
@@ -724,7 +741,7 @@ class Live2DStageState:
                 if key == "ParamMouthOpenY" and desired < current:
                     # Đóng nhanh hơn mở để giữa hai âm tiết thật sự có khe khép,
                     # nhưng không giật từ vùng dương về -1 chỉ trong một frame.
-                    response = 96.0
+                    response = 64.0
                 blend = 1.0 - math.exp(-response * dt) if dt > 0.0 else 1.0
                 self._current[key] = current + (desired - current) * blend
 
@@ -759,6 +776,7 @@ class Live2DStageState:
                 idle_action=idle_pose.action,
                 explicit_emotion_weight=emotion_weight,
                 last_event_type=self._last_event_type,
+                last_event_at=self._last_event_at,
                 mouth_open_ratio=(speech_pose.mouth_open_ratio if speech_pose is not None else 0.0),
                 speech_cue=(speech_pose.cue if speech_pose is not None else "silent"),
             )

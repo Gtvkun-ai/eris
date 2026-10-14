@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Quy ước parameter cho model INFJ theo góc nhìn của người dùng.
-
-Model này dùng ``ParamAngleX`` biên ±30 và ``ParamMouthOpenY`` dùng -1..1 thay vì 0..1.
-Gom mọi quy ước vào một profile giúp renderer, gaze và biểu cảm đồng bộ.
-"""
+"""Audited INFJ native parameters: head axes +/-30, mouth opening 0..1."""
 
 from __future__ import annotations
 
@@ -43,9 +39,9 @@ class InfjParameterProfile:
     mouth_neutral: float = 0.0
     mouth_happy: float = 1.0
 
-    # Rig riêng của model: -1 đóng, 0 nửa mở, +1 mở hết.
-    mouth_closed: float = -1.0
-    mouth_half: float = 0.0
+    # Native mouth: 0 closed, .5 half open, 1 fully open.
+    mouth_closed: float = 0.0
+    mouth_half: float = 0.5
     mouth_open: float = 1.0
 
     def clamp_angle_x(self, value: float) -> float:
@@ -70,28 +66,18 @@ class InfjParameterProfile:
         return _clamp(value, self.mouth_closed, self.mouth_open)
 
     def mouth_open_from_ratio(self, ratio: float) -> float:
-        """Đổi độ mở 0..1 thành miền rig -1..1 của model."""
+        """Map normalized opening into the native 0..1 mouth domain."""
         normalized = _clamp(ratio, 0.0, 1.0)
         return self.mouth_closed + (self.mouth_open - self.mouth_closed) * normalized
 
     def mouth_open_from_speech_ratio(self, ratio: float) -> float:
-        """Đổi năng lượng lời nói sang độ há nhìn thấy rõ trên rig INFJ.
-
-        Envelope vẫn giữ semantics 0..1: số 0 là khoảng im và phải đóng hẳn.
-        Khi frame đã có tiếng, rig cần đi nhanh qua vùng ``ParamMouthOpenY > 0``
-        để trông như đang nói, thay vì chỉ hé môi quanh -0.9..-0.3. Curve này
-        chỉ dùng lúc speaking; các biểu cảm như surprise vẫn dùng mapping tuyến
-        tính chuẩn ở :meth:`mouth_open_from_ratio`.
-        """
+        """Map voiced energy smoothly into .22..88; silence stays closed."""
         raw = _clamp(ratio, 0.0, 1.0)
         if raw <= 0.025:
             return self.mouth_closed
 
-        # Bỏ noise floor rồi nâng phần voiced lên vùng mở vừa. Giá trị thấp vẫn
-        # tạo phụ âm nhẹ, còn âm tiết mạnh tiến dần tới khoảng 0.7..0.8 thay vì
-        # há hết cỡ ở mọi khung hình.
         voiced = _clamp((raw - 0.025) / 0.975, 0.0, 1.0)
-        promoted_ratio = 0.51 + 0.41 * (voiced ** 0.68)
+        promoted_ratio = 0.22 + 0.66 * (voiced ** 0.68)
         return self.mouth_open_from_ratio(promoted_ratio)
 
     def compose_speaking_mouth(
@@ -125,6 +111,10 @@ class InfjParameterProfile:
             return self.clamp_eye_axis(value)
         if parameter_id in {"ParamBrowLAngle", "ParamBrowRAngle"}:
             return self.clamp_brow(value)
+        if parameter_id in {"ParamErisMouthCornerL", "ParamErisMouthCornerR"}:
+            return _clamp(value, -1.0, 1.0)
+        if parameter_id in {"ParamErisLipPress", "ParamErisTongue"}:
+            return _clamp(value, 0.0, 1.0)
         if parameter_id == "ParamMouthForm":
             return self.clamp_mouth_form(value)
         if parameter_id == "ParamMouthOpenY":

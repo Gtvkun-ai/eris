@@ -29,6 +29,10 @@ def _signed(value: Any) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AffectPose:
+    mouth_corner_l: float = 0.0
+    mouth_corner_r: float = 0.0
+    lip_press: float = 0.0
+    tongue: float = 0.0
     mouth_form: float = 0.0
     brow_left: float = 0.0
     brow_right: float = 0.0
@@ -156,7 +160,12 @@ class AffectVector:
         )
         eye_asymmetry = min(0.025, self.curiosity * 0.018 + pressure * 0.012)
 
+        corner = mouth_form * 0.65
+        asymmetry = self.curiosity * self.confidence * 0.035
         return AffectPose(
+            mouth_corner_l=_clamp(corner + asymmetry, -0.25, 0.25),
+            mouth_corner_r=_clamp(corner - asymmetry, -0.25, 0.25),
+            lip_press=_clamp(tension * 0.22 + self.irritation * 0.12, 0.0, 0.34),
             mouth_form=_clamp(mouth_form, -0.34, 0.30),
             brow_left=_clamp(brow_base + brow_asymmetry, -0.34, 0.34),
             brow_right=_clamp(brow_base - brow_asymmetry * 0.48, -0.34, 0.34),

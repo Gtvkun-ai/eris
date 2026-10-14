@@ -1,0 +1,79 @@
+<CRotationDeformerSource xs.id="#1298" xs.idx="11502">
+<ACDeformerSource xs.n="super">
+<ACParameterControllableSource xs.n="super">
+<s xs.n="localName">tóc trước Rotation</s>
+<b xs.n="isVisible">true</b>
+<b xs.n="isLocked">false</b>
+<CPartGuid xs.n="parentGuid" xs.ref="#425" />
+<KeyformGridSource xs.n="keyformGridSource" xs.ref="#1293" />
+<KeyFormMorphTargetSet xs.n="keyformMorphTargetSet">
+<carray_list xs.n="_morphTargets" count="0" />
+<MorphTargetBlendWeightConstraintSet xs.n="blendWeightConstraintSet">
+<carray_list xs.n="_constraints" count="0" />
+</MorphTargetBlendWeightConstraintSet>
+</KeyFormMorphTargetSet>
+<carray_list xs.n="_extensions" count="0" />
+<null xs.n="internalColor_direct_argb" />
+<null xs.n="internalColor_indirect_argb" />
+</ACParameterControllableSource>
+<CDeformerGuid xs.n="guid" xs.ref="#1386" />
+<CDeformerId xs.n="id" idstr="Rotation" />
+<CDeformerGuid xs.n="targetDeformerGuid" xs.ref="#1296" />
+</ACDeformerSource>
+<b xs.n="useBoneUi_testImpl">true</b>
+<carray_list xs.n="keyforms" count="3">
+<CRotationDeformerForm angle="-3.9" originX="502.03845" originY="362.29446" scale="1.0" isReflectX="false" isReflectY="false">
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1297" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CRotationDeformerSource xs.n="_source" xs.ref="#1298" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+</CRotationDeformerForm>
+<CRotationDeformerForm angle="0.0" originX="503.2642" originY="363.81332" scale="1.0" isReflectX="false" isReflectY="false">
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1299" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CRotationDeformerSource xs.n="_source" xs.ref="#1298" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType">
+<s xs.n="coordName">Canvas</s>
+</CoordType>
+</ACDeformerForm>
+</CRotationDeformerForm>
+<CRotationDeformerForm angle="5.1" originX="505.21246" originY="362.99985" scale="1.0" isReflectX="false" isReflectY="false">
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1300" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CRotationDeformerSource xs.n="_source" xs.ref="#1298" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+</CRotationDeformerForm>
+</carray_list>
+<f xs.n="handleLengthOnCanvas">102.4</f>
+<f xs.n="circleRadiusOnCanvas">34.133335</f>
+<f xs.n="baseAngle">0.0</f>
+</CRotationDeformerSource>

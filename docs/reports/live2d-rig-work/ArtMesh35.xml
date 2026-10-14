@@ -1,0 +1,105 @@
+<CArtMeshSource xs.id="#594" xs.idx="4154">
+<ACDrawableSource xs.n="super">
+<ACParameterControllableSource xs.n="super">
+<s xs.n="localName">2[2]</s>
+<b xs.n="isVisible">true</b>
+<b xs.n="isLocked">false</b>
+<CPartGuid xs.n="parentGuid" xs.ref="#589" />
+<KeyformGridSource xs.n="keyformGridSource">
+<array_list xs.n="keyformsOnGrid" count="1">
+<KeyformOnGrid>
+<KeyformGridAccessKey xs.n="accessKey">
+<array_list xs.n="_keyOnParameterList" count="0" />
+</KeyformGridAccessKey>
+<CFormGuid xs.n="keyformGuid" xs.ref="#597" />
+</KeyformOnGrid>
+</array_list>
+<array_list xs.n="keyformBindings" count="0" />
+</KeyformGridSource>
+<KeyFormMorphTargetSet xs.n="keyformMorphTargetSet">
+<carray_list xs.n="_morphTargets" count="0" />
+<MorphTargetBlendWeightConstraintSet xs.n="blendWeightConstraintSet">
+<carray_list xs.n="_constraints" count="0" />
+</MorphTargetBlendWeightConstraintSet>
+</KeyFormMorphTargetSet>
+<carray_list xs.n="_extensions" count="3">
+<CEditableMeshExtension>
+<ACExtension xs.n="super">
+<CExtensionGuid xs.n="guid" uuid="641bf20f-363c-4664-9dd3-8d7e4c5f1ed3" note="(no debug info)" />
+<CArtMeshSource xs.n="_owner" xs.ref="#594" />
+</ACExtension>
+<GEditableMesh2 xs.n="editableMesh" nextPointUid="24" useDelaunayTriangulation="true">
+<float-array xs.n="point" count="32">577.0 192.0 593.0 234.0 627.0 274.0 611.0 310.0 575.0 300.0 557.0 316.0 539.0 312.0 547.0 278.0 513.0 248.0 556.6863 224.3137 585.7366 270.26346 606.63605 294.1213 595.8284 290.34314 557.5147 297.5147 537.07104 251.92894 532.7782 220.22183</float-array>
+<byte-array xs.n="pointPriority" count="16">10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10</byte-array>
+<short-array xs.n="edge" count="68">9 10 1 9 1 10 3 12 3 4 4 12 7 10 7 14 7 13 10 14 9 14 6 13 5 6 5 13 8 15 9 15 7 8 6 7 12 13 4 13 0 9 0 1 3 11 11 12 4 5 10 13 10 12 1 2 2 10 8 14 2 11 10 11 2 3 14 15</short-array>
+<byte-array xs.n="edgePriority" count="34">30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30 30</byte-array>
+<int-array xs.n="pointUid" count="16">2 3 4 5 6 7 8 9 10 15 16 17 18 19 20 21</int-array>
+<GEditableMeshGuid xs.n="meshGuid" uuid="ca78affc-3c0b-4e33-b267-20df1d15bc1b" note="(no debug info)" />
+<CoordType xs.n="coordType" xs.ref="#576" />
+</GEditableMesh2>
+<b xs.n="isLocked">true</b>
+</CEditableMeshExtension>
+<CTextureInputExtension xs.ref="#595" />
+<CMeshGeneratorExtension>
+<ACExtension xs.n="super">
+<CExtensionGuid xs.n="guid" uuid="db316c31-2349-4bce-8a2c-9d572186f453" note="(no debug info)" />
+<CArtMeshSource xs.n="_owner" xs.ref="#594" />
+</ACExtension>
+<MeshGenerateSetting xs.n="meshGenerateSetting">
+<i xs.n="polygonDensity">100</i>
+<i xs.n="polygonMargin">20</i>
+<i xs.n="polygonInnerMargin">20</i>
+<i xs.n="polygonMinMargin">5</i>
+<i xs.n="polygonMinBoundsPt">5</i>
+<i xs.n="thresholdAlpha">0</i>
+</MeshGenerateSetting>
+</CMeshGeneratorExtension>
+</carray_list>
+<null xs.n="internalColor_direct_argb" />
+<i xs.n="internalColor_indirect_argb">-1</i>
+</ACParameterControllableSource>
+<CDrawableId xs.n="id" idstr="ArtMesh35" />
+<CDrawableGuid xs.n="guid" xs.ref="#1448" />
+<CDeformerGuid xs.n="targetDeformerGuid" xs.ref="#1342" />
+<carray_list xs.n="clipGuidList" count="0" />
+<b xs.n="invertClippingMask">false</b>
+<CImageIcon xs.n="icon32">
+<CWritableImage xs.n="image" width="32" height="32" type="INT_ARGB">
+<file xs.n="image" path="image_164.png" />
+</CWritableImage>
+</CImageIcon>
+<CImageIcon xs.n="icon16">
+<CWritableImage xs.n="image" width="16" height="16" type="INT_ARGB">
+<file xs.n="image" path="image_165.png" />
+</CWritableImage>
+</CImageIcon>
+</ACDrawableSource>
+<int-array xs.n="indices" count="48">10 1 2 9 1 10 11 10 2 11 2 3 12 10 11 3 4 12 3 12 11 13 4 5 10 13 7 12 13 10 12 4 13 6 13 5 6 7 13 14 7 8 10 7 14 10 14 9</int-array>
+<carray_list xs.n="keyforms" count="1">
+<CArtMeshForm>
+<ACDrawableForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#597" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CArtMeshSource xs.n="_source" xs.ref="#594" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<i xs.n="drawOrder">500</i>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#431" />
+</ACDrawableForm>
+<float-array xs.n="positions" count="32">-49.641323 24.632801 -28.951115 -15.26602 -21.73581 -67.26545 15.779383 -79.29084 32.282166 -45.76991 56.204304 -42.988968 65.201904 -26.894142 34.504723 -10.23035 34.751675 35.112103 -12.005301 18.28027 2.9447722 -33.98631 6.8353972 -65.46407 11.210599 -54.884045 42.067463 -31.067526 21.659555 14.534246 0.8566956 38.844948</float-array>
+</CArtMeshForm>
+</carray_list>
+<float-array xs.n="positions" count="32">577.0 192.0 593.0 234.0 627.0 274.0 611.0 310.0 575.0 300.0 557.0 316.0 539.0 312.0 547.0 278.0 513.0 248.0 556.6863 224.3137 585.7366 270.26346 606.63605 294.1213 595.8284 290.34314 557.5147 297.5147 537.07104 251.92894 532.7782 220.22183</float-array>
+<float-array xs.n="uvs" count="32">0.7883843 0.8256563 0.8013485 0.8596873 0.82889736 0.8920978 0.81593317 0.92126715 0.7867638 0.91316456 0.77217907 0.92612875 0.75759435 0.9228877 0.7640765 0.8953388 0.73652756 0.871031 0.77192485 0.8518389 0.7954632 0.88907015 0.81239724 0.90840125 0.80364025 0.90533996 0.7725961 0.9111508 0.7560314 0.8742144 0.7525531 0.8485234</float-array>
+<GTexture2D xs.n="texture" xs.ref="#424" />
+<ColorComposition xs.n="colorComposition" v="NORMAL" />
+<b xs.n="culling">false</b>
+<TextureState xs.n="textureState" v="TEXTURE_ATLAS" />
+<s xs.n="userData" />
+</CArtMeshSource>

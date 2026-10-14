@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Live2DBodyConfig
+from .asset_playback import NativeAssetPlayback
 from .gaze import GazeController, GazeSample
 from .parameter_profile import INFJ_PARAMETER_PROFILE
 from .stage_state import Live2DStageState
@@ -88,6 +89,7 @@ class Live2DRenderer:
         self._mouth_probe_times: list[float] = []
         # --- Idle sway (Neuro-like procedural animation) ---
         self._sway_t: float = 0.0  # thời gian tích luỹ riêng cho sway
+        self._asset_playback = NativeAssetPlayback(config.model_path)
 
     def run(self) -> None:
         glfw, live2d = _load_dependencies()
@@ -249,37 +251,7 @@ class Live2DRenderer:
                 geometry = self._bridge.geometry(glfw, window)
                 gaze = self._update_gaze(geometry, dt)
 
-                model.Update()
-                self._sway_t += dt
-                sway = self._compute_idle_sway(self._sway_t, snapshot.speaking)
-                parameters = dict(snapshot.parameters)
-                if "ParamAngleX" in self.available_parameters:
-                    parameters["ParamAngleX"] = (
-                        parameters.get("ParamAngleX", 0.0)
-                        + gaze.head_x_degrees
-                        + sway["angle_x"]
-                    )
-                if "ParamAngleZ" in self.available_parameters:
-                    parameters["ParamAngleZ"] = (
-                        parameters.get("ParamAngleZ", 0.0) + sway["angle_z"]
-                    )
-                for parameter_id, value in parameters.items():
-                    if parameter_id in self.available_parameters:
-                        model.SetParameterValue(
-                            parameter_id,
-                            INFJ_PARAMETER_PROFILE.sanitize(parameter_id, float(value)),
-                        )
-                self._apply_gaze(
-                    model,
-                    gaze,
-                    bias_x=snapshot.gaze_bias_x,
-                    bias_y=snapshot.gaze_bias_y,
-                )
-                self._apply_eyelids(
-                    model,
-                    left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale,
-                    right_scale=snapshot.eye_open_right * gaze.right_eye_open_scale,
-                )
+                self._update_model_frame(model, snapshot, gaze, dt)
 
                 # Đừng để cả rectangle Live2D ăn chuột. Khi cursor ở vùng alpha rỗng,
                 # click đi xuyên xuống Godot/app phía dưới; chỉ model thật mới nhận
@@ -325,6 +297,45 @@ class Live2DRenderer:
                 except Exception:
                     pass
             glfw.terminate()
+
+    def _update_model_frame(self, model: Any, snapshot: Any, gaze: GazeSample, dt: float) -> None:
+        """Seed a fresh baseline, let native assets/physics act, then apply audio ownership."""
+        self._asset_playback.advance(model, snapshot)
+        self._sway_t += dt
+        sway = self._compute_idle_sway(self._sway_t, snapshot.speaking)
+        # Reset every expression-owned channel, including absent stage values. Native
+        # Add/Multiply expressions must never reuse their own previous-frame result.
+        parameters = {
+            "ParamEyeLOpen": 1.0, "ParamEyeROpen": 1.0,
+            "ParamBrowLAngle": 0.0, "ParamBrowRAngle": 0.0,
+            "ParamMouthForm": 0.0,
+            "ParamErisMouthCornerL": 0.0, "ParamErisMouthCornerR": 0.0,
+            "ParamErisLipPress": 0.0, "ParamErisTongue": 0.0,
+            **snapshot.parameters,
+        }
+        parameters["ParamAngleX"] = parameters.get("ParamAngleX", 0.0) + gaze.head_x_degrees + sway["angle_x"]
+        parameters["ParamAngleZ"] = parameters.get("ParamAngleZ", 0.0) + sway["angle_z"]
+        for parameter_id, value in parameters.items():
+            if parameter_id in self.available_parameters:
+                model.SetParameterValue(parameter_id, INFJ_PARAMETER_PROFILE.sanitize(parameter_id, float(value)))
+        self._apply_gaze(model, gaze, bias_x=snapshot.gaze_bias_x, bias_y=snapshot.gaze_bias_y)
+        # LAppModel setters already save in this installed wrapper. Save explicitly
+        # for bindings exposing the lower-level native model too; Update loads these.
+        core = getattr(model, "_model", model)
+        save = getattr(core, "SaveParameters", None)
+        if callable(save):
+            save()
+        model.Update()
+        # Native motions temporarily override cursor gaze/head. Do not reapply them.
+        # Only the audio-driven speech channel and eyelid factors own the final layer.
+        if "ParamMouthOpenY" in self.available_parameters:
+            mouth = snapshot.parameters.get("ParamMouthOpenY", 0.0) if snapshot.speaking else 0.0
+            model.SetParameterValue("ParamMouthOpenY", INFJ_PARAMETER_PROFILE.sanitize("ParamMouthOpenY", mouth))
+        if self._asset_playback.terminal:
+            for parameter_id in ("ParamErisMouthCornerL", "ParamErisMouthCornerR", "ParamErisLipPress", "ParamErisTongue"):
+                if parameter_id in self.available_parameters:
+                    model.SetParameterValue(parameter_id, 0.0)
+        self._apply_eyelids(model, left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale, right_scale=snapshot.eye_open_right * gaze.right_eye_open_scale)
 
     def _update_gaze(self, geometry: WindowGeometry, dt: float) -> GazeSample:
         if not self.config.eye_tracking:

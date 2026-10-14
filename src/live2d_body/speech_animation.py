@@ -169,6 +169,11 @@ class _MouthCue:
 
 
 _STYLE_TEMPO = {
+    "restrained_warmth": .90,
+    "gentle_low": .84,
+    "cold_precision": .96,
+    "low_direct": .92,
+    "surprised_soft": 1.02,
     "focused": 1.08,
     "curious_soft": 1.02,
     "soft_tease": 0.98,
@@ -183,6 +188,11 @@ _STYLE_TEMPO = {
 }
 
 _STYLE_OPENNESS = {
+    "restrained_warmth": .86,
+    "gentle_low": .74,
+    "cold_precision": .80,
+    "low_direct": .84,
+    "surprised_soft": 1.0,
     "focused": 0.95,
     "curious_soft": 1.00,
     "soft_tease": 0.94,
@@ -289,10 +299,10 @@ class SpeechAnimator:
         entry = _smoothstep(elapsed / 0.22)
         living = math.sin(elapsed * 1.55 + self._phase)
         phrase_beat = math.sin(elapsed * 3.15 + self._phase * 0.37) * mouth_ratio
-        angle_x = (living * 0.52 + phrase_beat * 0.24) * entry
+        angle_x = (living * 4.2 + phrase_beat * 1.8) * entry
         angle_z = (
-            math.sin(elapsed * 1.13 + self._phase * 0.63) * 0.42
-            + math.sin(elapsed * 2.35 + self._phase) * mouth_ratio * 0.13
+            math.sin(elapsed * 1.13 + self._phase * 0.63) * 3.0
+            + math.sin(elapsed * 2.35 + self._phase) * mouth_ratio * 1.0
         ) * entry
         # Năng lượng âm tiết làm mày/đầu nhúc nhích rất nhẹ; không thay emotion,
         # chỉ giúp khuôn mặt không rơi về hai trạng thái thở và chớp mắt.
@@ -306,7 +316,7 @@ class SpeechAnimator:
         gaze_y = 0.0
         cue_names: list[str] = []
 
-        if style in {"warm_soft", "soft_tease"}:
+        if style in {"warm_soft", "soft_tease", "restrained_warmth"}:
             mouth_form_offset += 0.035 if style == "warm_soft" else 0.055
             eye_left *= 0.975
             eye_right *= 0.982
@@ -319,7 +329,7 @@ class SpeechAnimator:
             gaze_x -= 0.018
             mouth_form_offset += 0.018 if style == "dry_tease" else -0.015
             cue_names.append("dry")
-        elif style in {"annoyed_soft", "cold_boundary"}:
+        elif style in {"annoyed_soft", "cold_boundary", "cold_precision"}:
             brow_left -= 0.075
             brow_right -= 0.070
             eye_left *= 0.91
@@ -327,7 +337,7 @@ class SpeechAnimator:
             mouth_form_offset -= 0.055
             angle_x -= 0.18
             cue_names.append("firm")
-        elif style == "low_quiet":
+        elif style in {"low_quiet", "gentle_low"}:
             brow_left -= 0.025
             brow_right -= 0.020
             eye_left *= 0.92
@@ -342,12 +352,19 @@ class SpeechAnimator:
             angle_z += 0.24
             gaze_y += 0.016
             cue_names.append("curious")
-        elif style == "focused":
+        elif style in {"focused", "low_direct"}:
             brow_left -= 0.035
             brow_right -= 0.035
             eye_left *= 0.965
             eye_right *= 0.965
             cue_names.append("focused")
+        elif style == "surprised_soft":
+            brow_left += .12
+            brow_right += .10
+            eye_left *= 1.03
+            eye_right *= 1.03
+            angle_x -= .8
+            cue_names.append("surprised")
 
         if is_question:
             brow_left += 0.105
@@ -390,6 +407,15 @@ class SpeechAnimator:
             eye_left *= 0.975
             eye_right *= 0.980
             cue_names.append("near")
+        if "lean_back_small" in tags:
+            angle_x -= 1.4
+            cue_names.append("back")
+        if tags & {"focus", "still"}:
+            angle_x *= .15
+            angle_z *= .15
+            eye_left *= .97
+            eye_right *= .97
+            cue_names.append("steady")
         if tags & {"squint_soft", "scoff_soft"}:
             eye_left *= 0.88
             eye_right *= 0.90
@@ -409,11 +435,11 @@ class SpeechAnimator:
             cue_names.append("slow_blink")
         if "nod_small" in tags:
             nod = _pulse(elapsed, 0.12, 0.72, power=1.0)
-            angle_x += math.sin(elapsed * math.pi / 0.36) * 0.48 * nod
+            angle_x += math.sin(elapsed * math.pi / 0.36) * 2.2 * nod
             cue_names.append("nod")
         if "shake_head_small" in tags:
             shake = _pulse(elapsed, 0.12, 0.86, power=0.9)
-            angle_z += math.sin(elapsed * math.pi / 0.19) * 0.58 * shake
+            angle_z += math.sin(elapsed * math.pi / 0.19) * 2.4 * shake
             cue_names.append("shake")
 
         # Rig INFJ dùng một lưới hai chiều: MouthForm là mood (-1..1), còn
@@ -427,8 +453,8 @@ class SpeechAnimator:
             mouth_form_offset=_clamp(mouth_form_offset, -0.16, 0.16),
             brow_left=_clamp(brow_left, -0.20, 0.28),
             brow_right=_clamp(brow_right, -0.20, 0.24),
-            angle_x=_clamp(angle_x, -1.80, 1.45),
-            angle_z=_clamp(angle_z, -1.75, 1.85),
+            angle_x=_clamp(angle_x, -6.0, 6.0),
+            angle_z=_clamp(angle_z, -6.0, 6.0),
             eye_open_left_scale=_clamp(eye_left, 0.08, 1.04),
             eye_open_right_scale=_clamp(eye_right, 0.08, 1.04),
             gaze_bias_x=_clamp(gaze_x, -0.13, 0.13),
@@ -446,29 +472,7 @@ class SpeechAnimator:
                 cue_elapsed = elapsed * self._duration / max(0.001, self._audio_duration_ms / 1000.0)
             return (ratio, self._vowel_at(cue_elapsed))
 
-        if self._audio_playback or self._audio_duration_ms > 0 or self._audio_frame_ms > 0:
-            # Playback owns the mouth. Missing amplitude must not start a
-            # synthetic rhythm while ElevenLabs is silent or still buffering.
-            return (0.0, "")
-
-        if not self._cues:
-            return (0.0, "")
-
-        index = bisect.bisect_right(self._cue_starts, elapsed) - 1
-        if 0 <= index < len(self._cues):
-            cue = self._cues[index]
-            if elapsed <= cue.end:
-                progress = _clamp((elapsed - cue.start) / max(1e-6, cue.duration), 0.0, 1.0)
-                attack = _smoothstep(progress / 0.20)
-                release = _smoothstep((1.0 - progress) / 0.28)
-                envelope = min(attack, release)
-                # Plateau nhẹ ở giữa, attack nhanh và release rõ để có khe đóng.
-                ratio = cue.openness * envelope
-                return (_clamp(ratio, 0.0, 1.0), cue.vowel)
-
-        if elapsed <= self._duration + 0.16:
-            return (0.0, "")
-
+        # Text contributes expression context, never playback amplitude.
         return (0.0, "")
 
     def _sample_audio_envelope(self, elapsed: float) -> float:

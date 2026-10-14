@@ -13,32 +13,11 @@ from runtime.stage_audio_bus import StageAudioEvent
 from runtime.stage_protocol_adapter import playback_event
 
 
-def test_pseudo_viseme_uses_syllable_pulses_and_punctuation_closure() -> None:
+def test_text_context_without_waveform_cannot_animate_mouth() -> None:
     animator = SpeechAnimator()
-    animator.start(
-        now=100.0,
-        context=SpeechContext(
-            text="Xin chào, bạn ổn chứ?",
-            prosody_style="warm_soft",
-            speech_act="question",
-        ),
-    )
-
+    animator.start(now=100.0, context=SpeechContext(text="Xin ch?o, b?n ?n ch??", prosody_style="warm_soft"))
     ratios = [animator.sample(now=100.0 + index / 100.0).mouth_open_ratio for index in range(360)]
-    assert max(ratios) > 0.40
-    assert min(ratios) == 0.0
-
-    # Dấu phẩy và khoảng giữa từ phải tạo được một quãng khép đủ dài, thay vì
-    # miệng luôn hé như công thức sin cũ.
-    longest_closed_run = 0
-    current_run = 0
-    for value in ratios:
-        if value <= 0.01:
-            current_run += 1
-            longest_closed_run = max(longest_closed_run, current_run)
-        else:
-            current_run = 0
-    assert longest_closed_run >= 9
+    assert max(ratios) == 0.0
 
 
 def test_question_and_stage_actions_use_brows_eyes_head_and_gaze(monkeypatch) -> None:
@@ -92,7 +71,7 @@ def test_question_and_stage_actions_use_brows_eyes_head_and_gaze(monkeypatch) ->
 
     assert -30.0 <= params["ParamAngleX"] <= 30.0
     assert -1.0 <= params["ParamMouthForm"] <= 1.0
-    assert -1.0 <= params["ParamMouthOpenY"] <= 1.0
+    assert 0.0 <= params["ParamMouthOpenY"] <= 1.0
     assert 0.0 <= snapshot.eye_open_left <= 1.0
     assert 0.0 <= snapshot.eye_open_right <= 1.0
 
@@ -105,20 +84,21 @@ def test_question_and_stage_actions_use_brows_eyes_head_and_gaze(monkeypatch) ->
     })
     stopped = state.advance(0.0, now=clock["now"])
     assert stopped.speaking is False
-    assert stopped.parameters["ParamMouthOpenY"] == -1.0
+    assert stopped.parameters["ParamMouthOpenY"] == 0.0
     assert stopped.speech_cue == "silent"
 
 
-def test_mouth_profile_changes_with_prosody_without_exceeding_rig_range() -> None:
+def test_prosody_changes_face_without_changing_waveform_amplitude() -> None:
     quiet = SpeechAnimator()
     focused = SpeechAnimator()
     text = "Eris đang kiểm tra tham số."
-    quiet.start(now=0.0, context=SpeechContext(text=text, prosody_style="low_quiet"))
-    focused.start(now=0.0, context=SpeechContext(text=text, prosody_style="focused"))
+    quiet.start(now=0.0, context=SpeechContext(text=text, prosody_style="low_quiet", audio_envelope=(.72,) * 100, audio_frame_ms=40))
+    focused.start(now=0.0, context=SpeechContext(text=text, prosody_style="focused", audio_envelope=(.72,) * 100, audio_frame_ms=40))
 
     quiet_peak = max(quiet.sample(now=index / 120.0).mouth_open_ratio for index in range(360))
     focused_peak = max(focused.sample(now=index / 120.0).mouth_open_ratio for index in range(360))
-    assert 0.0 <= quiet_peak < focused_peak <= 0.88
+    assert quiet_peak == focused_peak == .72
+    assert quiet.sample(now=.4).eye_open_left_scale < focused.sample(now=.4).eye_open_left_scale
 
 
 def test_stage_cues_do_not_leak_across_turns(monkeypatch) -> None:

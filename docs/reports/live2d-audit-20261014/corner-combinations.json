@@ -1,0 +1,73 @@
+{
+  "framebuffer": [
+    512,
+    768
+  ],
+  "mouth_roi": [
+    230,
+    150,
+    275,
+    185
+  ],
+  "cases": [
+    {
+      "corner_l": -1,
+      "corner_r": -1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": -1,
+      "corner_r": 0,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": -1,
+      "corner_r": 1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": 0,
+      "corner_r": -1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": 0,
+      "corner_r": 0,
+      "lip_press_changes_mouth_pixels": true,
+      "mouth_difference_bbox": [
+        8,
+        10,
+        34,
+        25
+      ]
+    },
+    {
+      "corner_l": 0,
+      "corner_r": 1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": 1,
+      "corner_r": -1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": 1,
+      "corner_r": 0,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    },
+    {
+      "corner_l": 1,
+      "corner_r": 1,
+      "lip_press_changes_mouth_pixels": false,
+      "mouth_difference_bbox": null
+    }
+  ]
+}

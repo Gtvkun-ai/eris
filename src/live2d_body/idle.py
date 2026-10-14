@@ -41,6 +41,7 @@ class IdleDirector:
         self._template = _ZERO
         self._last_action = ""
         self._private_mind_nudge = 0.0
+        self._requested_motion = ""
 
     def notify_affect(
         self,
@@ -67,13 +68,28 @@ class IdleDirector:
         allow_gesture: bool,
         affect: AffectVector,
         thought_pressure: float,
+        motion: str = "stand",
     ) -> IdlePose:
         if not active:
             self._started_at = 0.0
             self._ends_at = 0.0
             self._template = _ZERO
+            self._requested_motion = ""
             self._next_at = max(self._next_at, now + 1.4)
             return _ZERO
+
+        requested = str(motion or "stand").lower()
+        if requested != self._requested_motion:
+            self._requested_motion = requested
+            if requested not in {"stand", "idle", "none", "settle"}:
+                duration, template = self._template_for(requested)
+                self._started_at = now
+                self._ends_at = now + duration
+                self._template = template
+                self._next_at = self._ends_at + self._next_delay(affect=affect, thought_pressure=thought_pressure)
+            else:
+                self._ends_at = 0.0
+                self._template = _ZERO
 
         if self._next_at <= 0.0:
             self._next_at = now + self._next_delay(affect=affect, thought_pressure=thought_pressure)
@@ -82,8 +98,11 @@ class IdleDirector:
             self._start_action(now=now, affect=affect, thought_pressure=thought_pressure)
 
         # Vi chuyển động nền, luôn rất nhỏ và không tác động mày/miệng.
-        living_x = 0.085 * math.sin(now * 0.41) + 0.035 * math.sin(now * 0.17 + 0.8)
-        living_z = 0.11 * math.sin(now * 0.29 + 1.2) + 0.045 * math.sin(now * 0.13)
+        living_x = 0.42 * math.sin(now * 0.41) + 0.18 * math.sin(now * 0.17 + 0.8)
+        living_z = 0.55 * math.sin(now * 0.29 + 1.2) + 0.22 * math.sin(now * 0.13)
+        if requested in {"focus", "still"}:
+            living_x *= 0.12
+            living_z *= 0.12
         living_gaze_x = 0.008 * math.sin(now * 0.19 + 0.4)
         living_gaze_y = 0.006 * math.sin(now * 0.23 + 2.0)
 
@@ -153,17 +172,47 @@ class IdleDirector:
         return "glance_left"
 
     def _template_for(self, action: str) -> tuple[float, IdlePose]:
+        label = action
+        action = {
+            "blink_slow": "slow_blink", "small_smile": "soften", "tilt_head": "tilt_right",
+            "look_away": "glance_left", "look_aside": "glance_left", "read": "ponder",
+            "thinking_small": "ponder", "ponder_left": "ponder", "ponder_right": "ponder_right",
+            "shake_head_small": "shake_small", "look_down": "look_down_soft", "sad": "look_down_soft",
+        }.get(action, action)
+        # Keep the requested planner/asset label in the observable pose.
+        if action != label:
+            duration, pose = self._template_for(action)
+            from dataclasses import replace
+            return duration, replace(pose, action=label)
+        if action in {"focus", "still"}:
+            return 1.8, IdlePose(eye_open_left_scale=.97, eye_open_right_scale=.97, action=action)
+        if action == "nod_small":
+            return .9, IdlePose(angle_x=2.4, action=action)
+        if action == "lean_back_small":
+            return 1.25, IdlePose(angle_x=-2.8, angle_z=-.5, action=action)
+        if action == "lean_in_small":
+            return 1.5, IdlePose(angle_x=1.8, angle_z=.6, action=action)
+        if action == "look_down_soft":
+            return 1.6, IdlePose(angle_x=-2.2, gaze_bias_y=-.07, action=action)
+        if action == "look_up_soft":
+            return 1.6, IdlePose(angle_x=1.8, gaze_bias_y=.07, action=action)
+        if action == "scan_short":
+            return 1.7, IdlePose(angle_x=1.6, gaze_bias_x=.05, action=action)
+        if action == "shake_small":
+            return 1.2, IdlePose(angle_z=-2.4, action=action)
+        if action == "ponder_right":
+            return 2.65, IdlePose(angle_x=2.5, angle_z=-2.4, brow_right=.075, gaze_bias_x=.026, action=action)
         if action == "glance_left":
-            return 1.7, IdlePose(angle_x=-0.72, angle_z=-0.22, gaze_bias_x=-0.065, action=action)
+            return 1.7, IdlePose(angle_x=-2.2, angle_z=-.65, gaze_bias_x=-0.065, action=action)
         if action == "glance_right":
-            return 1.55, IdlePose(angle_x=0.42, angle_z=0.20, gaze_bias_x=0.058, action=action)
+            return 1.55, IdlePose(angle_x=1.8, angle_z=.6, gaze_bias_x=0.058, action=action)
         if action == "tilt_left":
-            return 2.15, IdlePose(angle_x=-0.18, angle_z=-1.05, brow_left=0.025, brow_right=-0.012, action=action)
+            return 2.15, IdlePose(angle_x=-.55, angle_z=-3.2, brow_left=0.025, brow_right=-0.012, action=action)
         if action == "tilt_right":
-            return 2.15, IdlePose(angle_x=0.12, angle_z=1.10, brow_left=0.036, brow_right=-0.016, action=action)
+            return 2.15, IdlePose(angle_x=.4, angle_z=3.3, brow_left=0.036, brow_right=-0.016, action=action)
         if action == "soften":
             return 2.45, IdlePose(
-                angle_z=0.34,
+                angle_z=1.0,
                 mouth_form=0.045,
                 eye_open_left_scale=0.955,
                 eye_open_right_scale=0.965,
@@ -171,8 +220,8 @@ class IdleDirector:
             )
         if action == "ponder":
             return 2.65, IdlePose(
-                angle_x=-0.86,
-                angle_z=0.92,
+                angle_x=-2.6,
+                angle_z=2.8,
                 brow_left=0.075,
                 brow_right=-0.028,
                 eye_open_left_scale=0.965,

@@ -1,0 +1,130 @@
+<CWarpDeformerSource xs.id="#1378" xs.idx="11912">
+<ACDeformerSource xs.n="super">
+<ACParameterControllableSource xs.n="super">
+<s xs.n="localName">Warp Deformer of mắt 2</s>
+<b xs.n="isVisible">true</b>
+<b xs.n="isLocked">false</b>
+<CPartGuid xs.n="parentGuid" xs.ref="#916" />
+<KeyformGridSource xs.n="keyformGridSource" xs.ref="#1373" />
+<KeyFormMorphTargetSet xs.n="keyformMorphTargetSet">
+<carray_list xs.n="_morphTargets" count="0" />
+<MorphTargetBlendWeightConstraintSet xs.n="blendWeightConstraintSet">
+<carray_list xs.n="_constraints" count="0" />
+</MorphTargetBlendWeightConstraintSet>
+</KeyFormMorphTargetSet>
+<carray_list xs.n="_extensions" count="0" />
+<null xs.n="internalColor_direct_argb" />
+<i xs.n="internalColor_indirect_argb">-1</i>
+</ACParameterControllableSource>
+<CDeformerGuid xs.n="guid" xs.ref="#1376" />
+<CDeformerId xs.n="id" idstr="Warp2" />
+<CDeformerGuid xs.n="targetDeformerGuid" xs.ref="#672" />
+</ACDeformerSource>
+<i xs.n="col">4</i>
+<i xs.n="row">4</i>
+<b xs.n="isQuadTransform">true</b>
+<carray_list xs.n="keyforms" count="6">
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1377" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.45196292 0.55527145 0.5586356 0.555569 0.6631359 0.55553293 0.7663131 0.55536604 0.87081873 0.5553832 0.4517479 0.5891064 0.55864054 0.58936334 0.66314137 0.5893239 0.76631933 0.58913624 0.870824 0.5891568 0.45152536 0.62294275 0.5586459 0.62315744 0.6631468 0.6231149 0.76632386 0.62290627 0.87083244 0.6229307 0.4512998 0.65678096 0.5586512 0.6569514 0.6631514 0.6569055 0.7663323 0.65667677 0.870837 0.65670437 0.45106536 0.6906213 0.5586562 0.69074535 0.6631563 0.6906967 0.7663354 0.6904465 0.8708453 0.6904783</float-array>
+</CWarpDeformerForm>
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1379" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.46504453 0.55541605 0.56748253 0.55541605 0.66992044 0.55541605 0.77235836 0.55541605 0.8747964 0.55541605 0.46504453 0.589197 0.56748253 0.589197 0.66992044 0.589197 0.77235836 0.589197 0.8747964 0.589197 0.46504453 0.6229779 0.56748253 0.6229779 0.66992044 0.6229779 0.77235836 0.6229779 0.8747964 0.6229779 0.46504453 0.65675884 0.56748253 0.65675884 0.66992044 0.65675884 0.77235836 0.65675884 0.8747964 0.65675884 0.46504453 0.6905398 0.56748253 0.6905398 0.66992044 0.6905398 0.77235836 0.6905398 0.8747964 0.6905398</float-array>
+</CWarpDeformerForm>
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1380" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.46504453 0.55541605 0.56748253 0.55541605 0.66992044 0.55541605 0.77235836 0.55541605 0.8747964 0.55541605 0.46504453 0.589197 0.56748253 0.589197 0.66992044 0.589197 0.77235836 0.589197 0.8747964 0.589197 0.46504453 0.6229779 0.56748253 0.6229779 0.66992044 0.6229779 0.77235836 0.6229779 0.8747964 0.6229779 0.46504453 0.65675884 0.56748253 0.65675884 0.66992044 0.65675884 0.77235836 0.65675884 0.8747964 0.65675884 0.46504453 0.6905398 0.56748253 0.6905398 0.66992044 0.6905398 0.77235836 0.6905398 0.8747964 0.6905398</float-array>
+</CWarpDeformerForm>
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1381" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.46504453 0.55541605 0.56748253 0.55541605 0.66992044 0.55541605 0.77235836 0.55541605 0.8747964 0.55541605 0.46504453 0.589197 0.56748253 0.589197 0.66992044 0.589197 0.77235836 0.589197 0.8747964 0.589197 0.46504453 0.6229779 0.56748253 0.6229779 0.66992044 0.6229779 0.77235836 0.6229779 0.8747964 0.6229779 0.46504453 0.65675884 0.56748253 0.65675884 0.66992044 0.65675884 0.77235836 0.65675884 0.8747964 0.65675884 0.46504453 0.6905398 0.56748253 0.6905398 0.66992044 0.6905398 0.77235836 0.6905398 0.8747964 0.6905398</float-array>
+</CWarpDeformerForm>
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1382" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.46504453 0.55541605 0.56748253 0.55541605 0.66992044 0.55541605 0.77235836 0.55541605 0.8747964 0.55541605 0.46504453 0.589197 0.56748253 0.589197 0.66992044 0.589197 0.77235836 0.589197 0.8747964 0.589197 0.46504453 0.6229779 0.56748253 0.6229779 0.66992044 0.6229779 0.77235836 0.6229779 0.8747964 0.6229779 0.46504453 0.65675884 0.56748253 0.65675884 0.66992044 0.65675884 0.77235836 0.65675884 0.8747964 0.65675884 0.46504453 0.6905398 0.56748253 0.6905398 0.66992044 0.6905398 0.77235836 0.6905398 0.8747964 0.6905398</float-array>
+</CWarpDeformerForm>
+<CWarpDeformerForm>
+<ACDeformerForm xs.n="super">
+<ACForm xs.n="super">
+<CFormGuid xs.n="guid" xs.ref="#1383" />
+<b xs.n="isAnimatedForm">false</b>
+<b xs.n="isLocalAnimatedForm">false</b>
+<CWarpDeformerSource xs.n="_source" xs.ref="#1378" />
+<null xs.n="name" />
+<s xs.n="notes" />
+</ACForm>
+<f xs.n="opacity">1.0</f>
+<CFloatColor xs.n="multiplyColor" red="1.0" green="1.0" blue="1.0" alpha="1.0" />
+<CFloatColor xs.n="screenColor" red="0.0" green="0.0" blue="0.0" alpha="1.0" />
+<CoordType xs.n="coordType" xs.ref="#911" />
+</ACDeformerForm>
+<float-array xs.n="positions" count="50">0.49924582 0.5555776 0.59375846 0.55551225 0.68636 0.55547655 0.7787803 0.55539376 0.8713839 0.5554277 0.4991011 0.58935356 0.59376913 0.5893045 0.68637466 0.58926404 0.7787701 0.5891727 0.87137365 0.5892096 0.49895698 0.62312853 0.59378535 0.62309676 0.6863888 0.62305236 0.77875984 0.6229515 0.87135774 0.622992 0.49881244 0.6569039 0.5937986 0.6568882 0.68640083 0.6568404 0.77874786 0.65673053 0.8713475 0.656774 0.4986694 0.69067955 0.59381163 0.69068027 0.68641603 0.69062805 0.77873856 0.6905098 0.87133783 0.69055593</float-array>
+</CWarpDeformerForm>
+</carray_list>
+</CWarpDeformerSource>
