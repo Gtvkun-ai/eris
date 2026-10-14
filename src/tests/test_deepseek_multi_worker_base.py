@@ -368,11 +368,53 @@ def test_ds2api_disabled_flag_keeps_companion_key_off_main_route(monkeypatch, tm
     assert manager.build_deepseek_worker_client("companion") is None
 
 
-def test_surface_worker_drops_when_actor_is_busy_by_default(monkeypatch):
+def test_surface_worker_waits_instead_of_dropping_by_default(monkeypatch):
+    # Eloquence: surface không còn drop mặc định khi actor bận. Lượt user thà
+    # chờ actor rảnh (tối đa _actor_acquire_timeout, mặc định ~2s) còn hơn rơi
+    # fallback thô. Env override ERIS_DS_SURFACE_DROP_IF_BUSY vẫn bật lại được.
     monkeypatch.setenv("ERIS_DS_ROLE_ACTORS", "1")
     monkeypatch.delenv("ERIS_DS_SURFACE_DROP_IF_BUSY", raising=False)
     raw = _BlockingClient()
     worker = JsonlWorkerClient(raw, role="surface", jsonl_enabled=False)
+    assert worker._drop_if_busy is False
+
+    result: list[object] = []
+
+    def _first_call():
+        try:
+            result.append(_call(worker, response_format=None))
+        except Exception as exc:  # noqa: BLE001
+            result.append(exc)
+
+    thread = threading.Thread(target=_first_call)
+    thread.start()
+    assert raw.started.wait(2.0)
+
+    # Second caller does not drop; it waits for the actor, then proceeds once
+    # the first call releases.
+    def _second_call():
+        try:
+            result.append(_call(worker, response_format=None))
+        except Exception as exc:  # noqa: BLE001
+            result.append(exc)
+
+    second = threading.Thread(target=_second_call)
+    second.start()
+    raw.release.set()
+    thread.join(2.0)
+    second.join(5.0)
+
+    assert len(result) == 2
+    assert all(not isinstance(item, Exception) for item in result)
+    assert len(raw.calls) == 2
+
+
+def test_surface_worker_drop_if_busy_env_override_still_works(monkeypatch):
+    monkeypatch.setenv("ERIS_DS_ROLE_ACTORS", "1")
+    monkeypatch.setenv("ERIS_DS_SURFACE_DROP_IF_BUSY", "1")
+    raw = _BlockingClient()
+    worker = JsonlWorkerClient(raw, role="surface", jsonl_enabled=False)
+    assert worker._drop_if_busy is True
     result: list[object] = []
 
     def _first_call():

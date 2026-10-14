@@ -416,7 +416,7 @@ class JsonlWorkerClient:
         )
         self._drop_if_busy = _env_flag(
             f"ERIS_DS_{self.worker_role.upper()}_DROP_IF_BUSY",
-            self.worker_role in {"inner", "seed", "surface"},
+            self.worker_role in {"inner", "seed"},
         )
 
     def __getattr__(self, name: str) -> Any:
