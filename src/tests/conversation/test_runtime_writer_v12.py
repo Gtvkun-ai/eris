@@ -68,6 +68,40 @@ def test_runtime_writer_projects_exact_root_move_into_writer_context():
     assert rendered.decision_payload == _turn().move.to_dict()
 
 
+def test_runtime_writer_enables_thinking_by_default_for_public_surface():
+    # Eloquence: pha chọn chữ cuối bật thinking mặc định (giữ reasoning_effort
+    # thấp) để câu public mượt hơn mà không mở một reasoning pass dài thứ hai.
+    router = _Router({"text": "Kết quả đây.", "speech_text": "Kết quả đây."})
+    writer = RuntimeConversationWriter(_Host(router))
+    event = ConversationEvent(event_id="user:1", session_id="s", kind="user_turn", text="xem kết quả")
+
+    writer.realize(
+        turn=_turn(),
+        event=event,
+        recent_history=(),
+        runtime_context={},
+    )
+
+    request = router.calls[0]
+    assert request["thinking_mode"] == "enabled"
+    assert request["reasoning_effort"] == "low"
+
+
+def test_runtime_writer_thinking_mode_still_overridable():
+    router = _Router({"text": "Kết quả đây.", "speech_text": "Kết quả đây."})
+    writer = RuntimeConversationWriter(_Host(router))
+    event = ConversationEvent(event_id="user:1", session_id="s", kind="user_turn", text="xem kết quả")
+
+    writer.realize(
+        turn=_turn(),
+        event=event,
+        recent_history=(),
+        runtime_context={"thinking_mode": "disabled"},
+    )
+
+    assert router.calls[0]["thinking_mode"] == "disabled"
+
+
 def test_runtime_writer_cannot_change_after_or_open_a_second_move():
     router = _Router({
         "text": "Một câu hoàn chỉnh.",

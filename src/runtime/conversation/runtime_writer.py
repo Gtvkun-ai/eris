@@ -331,10 +331,11 @@ class RuntimeConversationWriter:
             "routing_context": str(runtime_context.get("routing_context", "") or ""),
             "discourse_context": discourse_context,
             "use_escalation": bool(runtime_context.get("use_escalation", False)),
-            # Surface worker chỉ wording một semantic move đã khóa. Mặc định
-            # không cho nó mở một reasoning pass dài thứ hai sau RootAgent.
+            # Surface worker vẫn chỉ wording một semantic move đã khóa (không mở
+            # reasoning_effort cao để tránh một vòng cognition dài thứ hai), nhưng
+            # bật thinking để pha chọn chữ cuối cùng mượt và tự nhiên hơn.
             "reasoning_effort": runtime_context.get("reasoning_effort", "low"),
-            "thinking_mode": runtime_context.get("thinking_mode", "disabled"),
+            "thinking_mode": runtime_context.get("thinking_mode", "enabled"),
             "allow_fallback": bool(runtime_context.get("allow_fallback", False)),
             "language_hint": str(runtime_context.get("language_hint", "vi") or "vi"),
             "speech_language_hint": str(runtime_context.get("speech_language_hint", "ja") or "ja"),
