@@ -131,7 +131,10 @@ class UserProfileExtractor:
             }
             try:
                 response = adapter.propose_profile_operations(payload)
-            except Exception:
+            except Exception as exc:
+                from .runtime_adapter import CuratorInferenceError
+                if isinstance(exc, CuratorInferenceError):
+                    raise  # Không xóa dấu lỗi; envelope phải được retry.
                 response = None
             ops.extend(self._parse_model_operations(response, ids=ids, default_scope=scope))
         return tuple(_dedupe_operations(ops)[: self.config.max_operations_per_turn])

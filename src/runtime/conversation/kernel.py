@@ -25,6 +25,8 @@ from .delivery import ConversationDelivery
 from .receipts import DeliveryReceiptLedger
 from .session_store import ConversationSessionStore
 from .writer import ConversationWriter, RenderedConversationMove
+from .delivery import SurfaceEnvelope
+from llm.provider_errors import ProviderUnavailable, provider_failure
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,12 +230,24 @@ class ConversationKernel:
                 # Deferred continuation có event_id riêng. Tuyệt đối không đem
                 # sources của wake signal khác sang chứng minh lời đang nói.
                 agent_context["__evidence_registry"] = None
-        decision = self.agent.decide(
-            event=normalized_event,
-            recent_history=recent_history,
-            note=state.note,
-            runtime_context=agent_context,
-        )
+        try:
+            decision = self.agent.decide(
+                event=normalized_event,
+                recent_history=recent_history,
+                note=state.note,
+                runtime_context=agent_context,
+            )
+        except ProviderUnavailable as exc:
+            # Root không phát được quyết định => Kernel chỉ phát status kỹ thuật
+            # cho user turn, không ngụy trang nó thành phát ngôn của Root.
+            _record_run_failure(status="root_provider_failed", reason=exc.kind.value,
+                                run_id=run_id, generation=state.generation)
+            if normalized_event.kind == "user_turn":
+                return self._deliver_runtime_failure(normalized_event, state.generation, run_id,
+                                                     reason=f"root:{exc.kind.value}")
+            self._fail_current_run(sid, state.generation, run_id)
+            return ConversationRunResult(event=normalized_event, decision=None,
+                                         status="root_provider_failed", failure_reason=exc.kind.value)
         current = self.store.load(sid)
         if current.generation != state.generation or current.active_run_id != run_id:
             return ConversationRunResult(
@@ -308,6 +322,10 @@ class ConversationKernel:
                       normalized_event.event_id, run_id, turn.generation, reason)
             _record_run_failure(status='writer_failed', reason=reason,
                                 run_id=run_id, generation=turn.generation)
+            failure = provider_failure(exc, role="writer")
+            if normalized_event.kind == "user_turn" and failure is not None:
+                return self._deliver_runtime_failure(normalized_event, turn.generation, run_id,
+                                                     reason=f"writer:{failure.kind.value}")
             self._fail_run(turn)
             return ConversationRunResult(
                 event=normalized_event,
@@ -369,6 +387,63 @@ class ConversationKernel:
             delivery_id=delivery_id,
             status="delivering",
         )
+
+    def _fail_current_run(self, sid: str, generation: int, run_id: str) -> None:
+        """Không để lỗi provider ở background chiếm governor vô thời hạn."""
+        state = self.store.load(sid)
+        if state.generation == generation and state.active_run_id == run_id:
+            self.store.mutate(sid, lambda prior, now: replace(
+                prior, phase=RunPhase.FAILED, active_run_id="", active_move_id="", active_delivery_id=""))
+
+    def _deliver_runtime_failure(self, event: ConversationEvent, generation: int,
+                                 run_id: str, *, reason: str) -> ConversationRunResult:
+        """Thông báo offline không gọi Root/Writer/localizer, chỉ qua delivery chuẩn.
+
+        Không dùng cho autonomous/continuation. Generation + run-id được kiểm
+        tra cả trước chuẩn bị lẫn trước transport để không nói thay lượt cũ.
+        """
+        sid = event.session_id
+        state = self.store.load(sid)
+        if (event.kind != "user_turn" or state.generation != generation
+                or state.active_run_id != run_id):
+            return ConversationRunResult(event=event, decision=None, status="stale")
+        move = NextConversationMove(
+            intent="runtime_status_only", say="Provider tạm thời không trả lời",
+            delivery="gentle", after=ConversationAfter.WAIT_USER,
+        )
+        turn = KernelTurn(session_id=sid, generation=generation, run_id=run_id,
+                          move=move, note=state.note,
+                          delivery_id=f"delivery:{uuid.uuid4().hex}")
+        self.store.mutate(sid, lambda prior, now: replace(
+            prior, active_move_id=move.move_id, phase=RunPhase.WRITING))
+        rendered = RenderedConversationMove(
+            surface=SurfaceEnvelope(
+                display_text="Ư… tớ đang gặp trục trặc nên chưa trả lời được. Cậu thử lại sau một chút nhé.",
+                speech_text="うぅ……今ちょっと調子が悪くて、返事ができないみたい。また少ししてから試してね。",
+                language="vi", alignment_safe=False,
+            ),
+            metadata={"runtime_status_only": True, "event_kind": "user_turn",
+                      "user_text": "", "provider_payload": {"display_language": "vi"}},
+        )
+        # Cố ý không chạy Writer: khi LLM chết đường này vẫn hoạt động.
+        if self.delivery is None or not self.mark_delivery_started(turn, delivery_id=turn.delivery_id):
+            self._fail_current_run(sid, generation, run_id)
+            return ConversationRunResult(event=event, decision=None, turn=turn,
+                                         status="runtime_status_unavailable", failure_reason=reason)
+        with self._delivery_lock:
+            self._delivery_turns[turn.delivery_id] = turn
+        try:
+            # Từ đây đi qua đúng transport/Stage/TTS hiện hành.
+            self.delivery.deliver(turn=turn, rendered=rendered, delivery_id=turn.delivery_id)
+        except Exception as exc:
+            self.settle_delivery_id(session_id=sid, delivery_id=turn.delivery_id, successful=False)
+            _record_run_failure(status="runtime_status_delivery_failed", reason=type(exc).__name__,
+                                run_id=run_id, generation=generation)
+            return ConversationRunResult(event=event, decision=None, turn=turn,
+                                         status="runtime_status_delivery_failed", failure_reason=reason)
+        return ConversationRunResult(event=event, decision=None, turn=turn, rendered=rendered,
+                                     delivery_id=turn.delivery_id, status="runtime_status_delivering",
+                                     failure_reason=reason)
 
     def handle_due_continuation(
         self,

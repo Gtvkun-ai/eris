@@ -33,6 +33,7 @@ class RuntimeConversationDeliveryAdapter:
                 return
             self._started.add(did)
 
+        status_only = bool(rendered.metadata.get("runtime_status_only"))
         prepared = rendered.metadata.get("prepared_public_output")
         if prepared is not None:
             from .public_output_artifact import (
@@ -101,7 +102,7 @@ class RuntimeConversationDeliveryAdapter:
                 # Cùng một id phải đi xuyên public commit -> TTS -> outcome để trace
                 # không còn kết thúc bằng semantic/trigger=unknown.
                 "event_trace_id": did,
-                "public_intent_owner": "conversation_root_agent_v12",
+                "public_intent_owner": "runtime_status" if status_only else "conversation_root_agent_v12",
                 "semantic_owner": semantic_owner,
                 "trigger_owner": trigger_owner,
             })
@@ -170,6 +171,14 @@ class RuntimeConversationDeliveryAdapter:
             generation=turn.generation,
         )
 
+        kernel = getattr(self.host, "conversation_kernel", None) or getattr(self.host, "_conversation_kernel", None)
+        store = getattr(kernel, "store", None)
+        if store is not None:
+            state = store.load(turn.session_id)
+            if (state.generation != turn.generation or state.active_run_id != turn.run_id
+                    or state.active_delivery_id != did):
+                raise RuntimeError("v03_preempted_before_dispatch" if prepared is not None
+                                   else "public_preempted_before_dispatch")
         send = getattr(self.host, "_send_decision_to_body", None)
         if not callable(send):
             self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
@@ -195,6 +204,13 @@ class RuntimeConversationDeliveryAdapter:
         apply_position = getattr(self.host, "_apply_position_update", None)
         if callable(apply_position):
             apply_position(decision)
+
+        # Status kỹ thuật không phải ký ức, belief hoặc speech-act của Eris.
+        # Chỉ đăng ký receipt để TTS settle; không ghi history/Self.
+        if status_only:
+            from .speech_outcome import register_public_surface
+            register_public_surface(self.host, delivery_id=did, on_delivered=lambda: None)
+            return
 
         # Chỉ từ đây trở xuống mới là PUBLIC COMMIT thật. Trước điểm này tuyệt
         # đối không append history/ledger hay update self-state.

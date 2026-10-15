@@ -16,6 +16,7 @@ import json
 import uuid
 
 from .root_session import RootConversationSession
+from llm.provider_errors import provider_failure
 
 from .context import ConversationNoteTools, RootCapabilityRegistry, RootMemoryRecallTools
 from .contracts import (
@@ -286,7 +287,12 @@ class RuntimeModelRootAgent:
                         temperature=0.3,
                     )
             except Exception as exc:  # noqa: BLE001
-                self._log("debug", "[conversation-v12] root model degraded: %s", exc)
+                failure = provider_failure(exc, role="root")
+                if failure is not None:
+                    # Kernel chịu trách nhiệm status-only. Không ngụy tạo
+                    # quyết định của Root và không gọi lại Writer đang lỗi.
+                    raise failure from exc
+                self._log("debug", "[conversation-v12] root model degraded: %s", type(exc).__name__)
                 return self._degraded(event, recent_history, current_note, runtime_context)
 
             if not still_active():

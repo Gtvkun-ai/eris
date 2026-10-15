@@ -18,6 +18,7 @@ letting each one become a tiny sovereign state.
 
 import itertools
 import os
+from runtime.curator_inbox import CuratorInbox
 import queue
 import threading
 import time
@@ -174,6 +175,14 @@ class TurnMemoryPipeline:
             maxsize=max(1, int(self.config.mutation_max_queue))
         )
         self._mutation_sequence = itertools.count()
+        # Inbox SQLite nằm cùng vùng dữ liệu MemoryCore; với fake kernel trong
+        # test không có base_dir thì chạy queue RAM như hành vi cũ.
+        core = getattr(memory_kernel, "core", None)
+        base_dir = str(getattr(core, "base_dir", "") or "").strip()
+        db_path = os.getenv("ERIS_CURATOR_INBOX_DB", "").strip()
+        self._curator_inbox = CuratorInbox(db_path or os.path.join(base_dir, "curator_inbox.sqlite3")) if (db_path or base_dir) else None
+        self._queued_profile_ops: set[str] = set()
+        self._proposal_lock = threading.RLock()
         self._stop = threading.Event()
         self._curator_thread: threading.Thread | None = None
         self._mutation_thread: threading.Thread | None = None
@@ -321,32 +330,46 @@ class TurnMemoryPipeline:
     def _enqueue_curator(self, envelope: TurnMemoryEnvelope) -> bool:
         if not self.curator_enabled:
             return False
+        inbox = self._curator_inbox
+        if inbox is not None:
+            try:
+                inbox.put(envelope)  # Write-ahead trước khi trả accepted.
+            except Exception as exc:
+                self._log("warning", "living_user_curator_inbox_write_failed:%s:%s",
+                          envelope.envelope_id, type(exc).__name__)
+                return False
         try:
             self._curator_queue.put_nowait(envelope)
             self.stats.curator_enqueued += 1
             return True
         except queue.Full:
+            # Inbox durable giữ envelope. Background polling sẽ xử lý khi hết tắc.
             self._log("warning", "living_user_curator_queue_full:%s", envelope.envelope_id)
-            return False
+            return inbox is not None
 
     @staticmethod
     def _priority_rank(priority: str) -> int:
         return {"high": 0, "normal": 1, "low": 2}.get(str(priority or "normal"), 1)
 
     def _enqueue_mutation(self, mutation: TurnMemoryMutation) -> bool:
-        try:
-            self._mutation_queue.put_nowait((
-                self._priority_rank(mutation.priority),
-                next(self._mutation_sequence),
-                mutation,
-            ))
-            self.stats.mutation_enqueued += 1
-            return True
-        except queue.Full:
-            self.stats.mutation_failed += 1
-            self.stats.last_error = f"mutation_queue_full:{mutation.kind}:{mutation.envelope_id}"
-            self._log("warning", "turn_memory_mutation_queue_full:%s:%s", mutation.kind, mutation.envelope_id)
-            return False
+        with self._proposal_lock:
+            if mutation.kind == "profile_ops" and mutation.envelope_id in self._queued_profile_ops:
+                return True
+            try:
+                self._mutation_queue.put_nowait((
+                    self._priority_rank(mutation.priority),
+                    next(self._mutation_sequence),
+                    mutation,
+                ))
+                if mutation.kind == "profile_ops":
+                    self._queued_profile_ops.add(mutation.envelope_id)
+                self.stats.mutation_enqueued += 1
+                return True
+            except queue.Full:
+                self.stats.mutation_failed += 1
+                self.stats.last_error = f"mutation_queue_full:{mutation.kind}:{mutation.envelope_id}"
+                self._log("warning", "turn_memory_mutation_queue_full:%s:%s", mutation.kind, mutation.envelope_id)
+                return False
 
     def _submit_semantic_plan(self, plan: Any, job: MemoryDigestKernelJob) -> bool:
         context = dict(getattr(plan, "context", {}) or {})
@@ -361,18 +384,47 @@ class TurnMemoryPipeline:
 
     def _run_curator(self) -> None:
         while not self._stop.is_set():
+            queued = True
             try:
                 envelope = self._curator_queue.get(timeout=0.20)
             except queue.Empty:
-                continue
+                queued = False
+                due = self._curator_inbox.due() if self._curator_inbox is not None else None
+                if due is None:
+                    continue
+                envelope_id, data, status, serialized_ops = due
+                if status == "proposed":
+                    # Mutation đã được gửi reducer: không enqueue lại trong RAM
+                    # trong khi reducer vẫn đang áp dụng nó.
+                    with self._proposal_lock:
+                        waiting = envelope_id in self._queued_profile_ops
+                    if waiting:
+                        time.sleep(0.20)
+                        continue
+                    # Có proposal đã lưu nhưng mutation reducer chưa ACK (restart
+                    # hoặc queue đầy). Khôi phục ops, KHÔNG gọi lại DeepSeek.
+                    from memory.living_user.models import ProfileOperation
+                    operations = tuple(ProfileOperation.from_dict(op) for op in serialized_ops)
+                    self._enqueue_mutation(TurnMemoryMutation(
+                        kind="profile_ops", envelope_id=envelope_id, payload=operations,
+                        priority=data.get("priority", "normal"), context=data.get("context", {})))
+                    continue
+                envelope = TurnMemoryEnvelope(
+                    text=data["text"], turn_id=data["turn_id"], evidence_ids=tuple(data["evidence_ids"]),
+                    source=data.get("source", "chat_turn"), priority=data.get("priority", "normal"),
+                    context=data.get("context", {}), created_at=data.get("created_at", time.time()),
+                    envelope_id=envelope_id)
             try:
                 self._process_curator(envelope)
-            except Exception as exc:  # pragma: no cover - background must not kill runtime
+            except Exception as exc:  # background tuyệt đối không chết
                 self.stats.curator_failed += 1
-                self.stats.last_error = f"curator:{type(exc).__name__}:{exc}"
-                self._log("exception", "living_user_curator_failed:%s", envelope.envelope_id, exc_info=exc)
+                self.stats.last_error = f"curator:{type(exc).__name__}"
+                if self._curator_inbox is not None:
+                    self._curator_inbox.retry(envelope.envelope_id)
+                self._log("warning", "living_user_curator_deferred:%s:%s", envelope.envelope_id, type(exc).__name__)
             finally:
-                self._curator_queue.task_done()
+                if queued:
+                    self._curator_queue.task_done()
 
     def _process_curator(self, envelope: TurnMemoryEnvelope) -> None:
         if self.living_user is None:
@@ -397,6 +449,13 @@ class TurnMemoryPipeline:
         self.stats.last_curator_latency_s = max(0.0, time.perf_counter() - started)
 
         submitted = True
+        if self._curator_inbox is not None:
+            if operations:
+                # Durable outbox trước reducer: sau restart không gọi lại model.
+                self._curator_inbox.proposed(envelope.envelope_id, [op.to_dict() for op in operations])
+            else:
+                # success_empty khác hoàn toàn timeout/parse_error.
+                self._curator_inbox.done(envelope.envelope_id)
         if operations:
             submitted = self._enqueue_mutation(TurnMemoryMutation(
                 kind="profile_ops",
@@ -422,7 +481,12 @@ class TurnMemoryPipeline:
                 continue
             try:
                 self._apply_mutation(mutation)
-            except Exception as exc:  # pragma: no cover - reducer degrades, never kills runtime
+            except Exception as exc:  # reducer lỗi vẫn giữ durable proposal chờ retry
+                if mutation.kind == "profile_ops":
+                    with self._proposal_lock:
+                        self._queued_profile_ops.discard(mutation.envelope_id)
+                    if self._curator_inbox is not None:
+                        self._curator_inbox.retry(mutation.envelope_id)
                 self.stats.mutation_failed += 1
                 self.stats.last_error = f"reducer:{type(exc).__name__}:{exc}"
                 self._log(
@@ -464,6 +528,10 @@ class TurnMemoryPipeline:
             result = applier(mutation.payload, trace_context=mutation.context)
             applied = int(getattr(result, "applied", 0) or 0)
             self.stats.curator_applied += applied
+            if self._curator_inbox is not None:
+                self._curator_inbox.done(mutation.envelope_id)
+            with self._proposal_lock:
+                self._queued_profile_ops.discard(mutation.envelope_id)
             self._log(
                 "debug",
                 "turn_memory_reducer_profile:%s:applied=%s",
@@ -512,6 +580,7 @@ class TurnMemoryPipeline:
             to_dict = getattr(semantic.stats, "to_dict", None)
             payload["semantic"] = to_dict() if callable(to_dict) else {}
         payload["curator_queue_depth"] = self._curator_queue.qsize()
+        payload["curator_durable_backlog"] = self._curator_inbox.count() if self._curator_inbox is not None else None
         payload["mutation_queue_depth"] = self._mutation_queue.qsize()
         payload["curator_enabled"] = self.curator_enabled
         payload["mutation_owner"] = "turn_memory_reducer"

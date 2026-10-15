@@ -3,6 +3,7 @@ import re
 import os
 import logging
 import hashlib
+import threading
 import math
 import time
 
@@ -880,15 +881,18 @@ class OpenAICompatibleClient:
         last_error = None
         attempted_indices: set[int] = set()
         for attempt in range(max(1, max_attempts)):
-            lease = None
+            key_lease = None
+            attempt_key = self.api_key
             if self.key_pool is not None:
-                lease = self.key_pool.acquire(exclude_indices=attempted_indices)
-                if lease is None:
+                key_lease = self.key_pool.acquire(exclude_indices=attempted_indices)
+                if key_lease is None:
                     wait_s = self.key_pool.next_available_in()
-                    raise RuntimeError(f"API key pool đang cooldown; thử lại sau khoảng {wait_s:.1f}s")
-                attempted_indices.add(lease.index)
-                self.api_key = self._normalize_api_key(lease.key)
-                headers["Authorization"] = f"Bearer {self.api_key}"
+                    from llm.provider_errors import ProviderUnavailable, ProviderErrorKind
+                    raise ProviderUnavailable(ProviderErrorKind.RATE_LIMIT, role="key_pool")
+                attempted_indices.add(key_lease.index)
+                attempt_key = self._normalize_api_key(key_lease.key)
+            # Header thuộc riêng HTTP attempt, không chia sẻ trạng thái giữa thread.
+            attempt_headers = {**headers, "Authorization": f"Bearer {attempt_key}"}
 
             rate_limited = False
             auth_failed = False
@@ -903,14 +907,14 @@ class OpenAICompatibleClient:
                 # Mỗi variant/retry là một HTTP attempt riêng. Một HTTP 400,
                 # timeout hoặc 429 cũng có thể đã chạm remote session, vì thế
                 # attempt tiếp theo không được tái sử dụng phiên chưa commit.
-                lease = None
-                request_headers = dict(headers)
+                session_lease = None
+                request_headers = dict(attempt_headers)
                 if session_base and web_session_mode not in {"legacy", "off", "disabled", "none", "0"}:
-                    lease = GLOBAL_WEB_SESSION_GUARD.reserve(
+                    session_lease = GLOBAL_WEB_SESSION_GUARD.reserve(
                         base_session_id=session_base,
                         base_url=self.base_url,
                         model=self.model_name,
-                        credential=self.api_key,
+                        credential=attempt_key,
                         messages=messages,
                         request_contract={
                             **{key: value for key, value in candidate.items() if key != "messages"},
@@ -919,7 +923,7 @@ class OpenAICompatibleClient:
                             "original_response_format": response_format,
                         },
                     )
-                    request_headers["X-Session-ID"] = lease.session_id
+                    request_headers["X-Session-ID"] = session_lease.session_id
                     # Chat-only account affinity (FEAT-001 contract). Under the
                     # SAME web_session_mode gate as X-Session-ID, pin consecutive
                     # turns of one conversation to a single gateway account. Set
@@ -944,18 +948,42 @@ class OpenAICompatibleClient:
                     try:
                         payload_json = response.json()
                     except ValueError as exc:
-                        if lease is not None:
-                            GLOBAL_WEB_SESSION_GUARD.abort(lease)
+                        if session_lease is not None:
+                            GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                         last_error = exc
                         continue
 
                     if isinstance(payload_json, dict) and "error" in payload_json:
                         err_detail = payload_json["error"]
-                        err_msg = err_detail.get("message") if isinstance(err_detail, dict) else str(err_detail)
-                        last_error = RuntimeError(f"API error response: {err_msg}")
-                        raise last_error
+                        err_msg = str(err_detail.get("message", "") if isinstance(err_detail, dict) else err_detail)
+                        err_code = (err_detail.get("status_code", err_detail.get("status", err_detail.get("code")))
+                                    if isinstance(err_detail, dict) else None)
+                        try:
+                            code = int(err_code)
+                        except (ValueError, TypeError):
+                            from llm.provider_errors import classify_provider_error, ProviderErrorKind
+                            kind = classify_provider_error(err_msg)
+                            code = (429 if kind == ProviderErrorKind.RATE_LIMIT else
+                                    401 if kind == ProviderErrorKind.KEY_REVOKED else
+                                    403 if kind == ProviderErrorKind.PROJECT_PERMISSION else 0)
+                        if code in (401, 403, 429, 500, 502, 503, 504):
+                            # Gateway 200 + JSON error vẫn là HTTP failure logic.
+                            # Đưa qua đúng nhánh đánh dấu key/Retry-After hiện có.
+                            synthetic = requests.Response()
+                            synthetic.status_code = code
+                            synthetic.reason = "gateway_error"
+                            synthetic.url = url
+                            synthetic.headers = dict(getattr(response, "headers", {}) or {})
+                            synthetic._content = b'{"error":"gateway_error"}'
+                            raise requests.HTTPError("gateway_error_envelope", response=synthetic)
+                        # Không trả raw message có thể chứa key/user text lên log.
+                        from llm.provider_errors import ProviderUnavailable, ProviderErrorKind
+                        raise ProviderUnavailable(ProviderErrorKind.INVALID_RESPONSE_SHAPE, role="gateway_envelope")
 
                     choices = payload_json.get("choices") if isinstance(payload_json, dict) else None
+                    if not isinstance(choices, list) or not choices:
+                        from llm.provider_errors import ProviderUnavailable, ProviderErrorKind
+                        raise ProviderUnavailable(ProviderErrorKind.INVALID_RESPONSE_SHAPE, role="empty_choices")
                     if isinstance(choices, list) and choices:
                         first_choice = choices[0] if isinstance(choices[0], dict) else {}
                         message = first_choice.get("message") if isinstance(first_choice, dict) else {}
@@ -966,23 +994,23 @@ class OpenAICompatibleClient:
 
                     # Chỉ lời trả thành công mới là bằng chứng server đã thêm
                     # turn vào session. Không dùng response lỗi hoặc output rỗng.
-                    if lease is not None:
+                    if session_lease is not None:
                         first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
                         reply = first.get("message") if isinstance(first.get("message"), dict) else {}
                         # Khi output bị cắt (length) hoặc kết thúc không rõ,
                         # transcript không thể xem là đã đồng bộ hoàn chỉnh.
                         if first.get("finish_reason") == "stop":
-                            GLOBAL_WEB_SESSION_GUARD.commit(lease, reply.get("content", ""))
+                            GLOBAL_WEB_SESSION_GUARD.commit(session_lease, reply.get("content", ""))
                         else:
-                            GLOBAL_WEB_SESSION_GUARD.abort(lease)
+                            GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                     self._provider_circuit.record_success()
                     _record_pressure_success(pressure_provider)
-                    if self.key_pool is not None and lease is not None:
-                        self.key_pool.mark_success(lease=lease)
+                    if self.key_pool is not None and key_lease is not None:
+                        self.key_pool.mark_success(lease=key_lease)
                     return payload_json
                 except requests.HTTPError as exc:
-                    if lease is not None:
-                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
+                    if session_lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
                     status_code = exc.response.status_code if exc.response is not None else None
                     if status_code == 429:
@@ -999,21 +1027,21 @@ class OpenAICompatibleClient:
                         continue  # thử biến thể payload kế (vd bỏ grammar/response_format)
                     raise last_error
                 except (requests.Timeout, requests.ConnectionError) as exc:
-                    if lease is not None:
-                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
+                    if session_lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                     last_error = exc
                     self._provider_circuit.record_failure(provider=self.provider_circuit_id, status=None)
                     break
                 except Exception as exc:
-                    if lease is not None:
-                        GLOBAL_WEB_SESSION_GUARD.abort(lease)
+                    if session_lease is not None:
+                        GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                     last_error = exc
                     raise
 
             if rate_limited and self.key_pool is not None:
                 retry_s = _retry_after_seconds(getattr(last_error, "response", None), 60.0)
                 may_rotate = self.key_pool.mark_rate_limited(
-                    retry_s, lease=lease, reason=f"http_429:{self.model_name}"
+                    retry_s, lease=key_lease, reason=f"http_429:{self.model_name}"
                 )
                 if may_rotate and attempt < max_attempts - 1:
                     continue
@@ -1024,9 +1052,9 @@ class OpenAICompatibleClient:
                 except Exception:
                     kind = None
                 if str(kind) == "key_revoked":
-                    self.key_pool.mark_permanently_dead(lease=lease, reason="http_auth_key_revoked")
+                    self.key_pool.mark_permanently_dead(lease=key_lease, reason="http_auth_key_revoked")
                 else:
-                    self.key_pool.mark_dead(3600.0, lease=lease, reason="http_auth_or_permission")
+                    self.key_pool.mark_dead(3600.0, lease=key_lease, reason="http_auth_or_permission")
                 if attempt < max_attempts - 1:
                     continue
             if server_error:
@@ -1068,6 +1096,10 @@ class ChainedFallbackClient:
         worker_role = str(getattr(first, "worker_role", "") or "").strip().lower()
         derived_health_key = f"remote_llm:{worker_role}" if worker_role else "remote_llm"
         self._provider_health_key = explicit_health_key or derived_health_key
+        # Credential 401 bị thu hồi không được thử lại ở mỗi user turn.
+        # Chỉ lưu fingerprint, không lưu key trong cache trạng thái.
+        self._auth_disabled_tiers: dict[int, str] = {}
+        self._auth_lock = threading.Lock()
 
     def create_chat_completion(self, **kwargs):
         from runtime.provider_health import ProviderUnavailableFast
@@ -1107,6 +1139,20 @@ class ChainedFallbackClient:
             if remaining_budget is not None and remaining_budget <= 0.051:
                 last_error = TimeoutError("foreground provider chain deadline exhausted")
                 break
+
+            # Quarantine riêng tier không có pool (tier có pool tự cách ly
+            # theo ApiKeyLease). Credential thay đổi => tier được thử trở lại.
+            credential = str(getattr(client, "api_key", "") or "")
+            credential_id = hashlib.sha256(credential.encode("utf-8")).hexdigest()[:16]
+            with self._auth_lock:
+                blocked_id = self._auth_disabled_tiers.get(idx)
+                if blocked_id and blocked_id != credential_id:
+                    self._auth_disabled_tiers.pop(idx, None)
+                    blocked_id = None
+            if blocked_id and getattr(client, "key_pool", None) is None:
+                from llm.provider_errors import ProviderUnavailable, ProviderErrorKind
+                last_error = ProviderUnavailable(ProviderErrorKind.KEY_REVOKED, role="credential")
+                continue
 
             client_url = str(getattr(client, "base_url", "") or "")
             is_ds2api = "api.deepseek.com" not in client_url.lower() and (
@@ -1200,6 +1246,11 @@ class ChainedFallbackClient:
                     raise
 
                 last_error = exc
+                if getattr(client, "key_pool", None) is None:
+                    from llm.provider_errors import classify_provider_error, ProviderErrorKind
+                    if isinstance(exc, requests.HTTPError) and classify_provider_error(exc) == ProviderErrorKind.KEY_REVOKED:
+                        with self._auth_lock:
+                            self._auth_disabled_tiers[idx] = credential_id
                 if is_ds2api:
                     self._logger.warning(
                         "WARNING: local DeepSeek Web proxy (Whale2API/DS2API) failed (%s), falling back to Official API.",

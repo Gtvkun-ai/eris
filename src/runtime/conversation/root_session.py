@@ -14,6 +14,7 @@ import threading
 from typing import Any, Mapping, Sequence
 
 from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider
+from llm.provider_errors import provider_failure
 
 
 def _jsonable(value: Any) -> Any:
@@ -339,6 +340,11 @@ class RootConversationSession:
             # Unknown provider state: ở lượt sau phải full-bootstrap lại.
             self._clear()
             self._log("warning", "[root-session] resync needed: %s", type(exc).__name__)
+            # Lỗi mạng/auth không được đổi thành None rồi gọi lại cùng provider
+            # theo one-shot. None chỉ dành cho session contention/warm-up.
+            failure = provider_failure(exc, role="root")
+            if failure is not None:
+                raise failure from exc
             return None
         finally:
             self._lock.release()
