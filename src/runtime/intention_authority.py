@@ -180,8 +180,9 @@ class IntentionObserver:
         text: str,
         context: Mapping[str, Any] | None = None,
     ) -> IntentionObservation:
-        original = _clean(text)
-        normalized = _norm(original)
+        # Raw public text là bất biến. Bản 360 ký tự chỉ phục vụ phát hiện claim.
+        original = str(text or "")
+        normalized = _norm(_clean(original))
         ctx = _as_mapping(context)
         operation = self._operation(normalized, ctx, original_text=original)
 

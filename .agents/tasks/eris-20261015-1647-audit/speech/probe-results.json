@@ -1,0 +1,248 @@
+[
+  {
+    "raw_line": 8,
+    "display_chars": 409,
+    "speech_chars": 182,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 409,
+        "stage_speech_chars": 182,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "前に、私を起動したら自分から何か話せって言ったでしょ。だから先に話すね。まだ解決してない『hen』が引っかかってる。別に答えを強要してるわけ"
+      },
+      "autonomous": {
+        "stage_display_chars": 360,
+        "stage_speech_chars": 360,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Bạn từng bảo mở tôi lên thì tôi phải tự kiếm gì nói, nên thôi tôi nói "
+      }
+    }
+  },
+  {
+    "raw_line": 20,
+    "display_chars": 879,
+    "speech_chars": 394,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 875,
+        "stage_speech_chars": 390,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "はい。1/5 — テセウスの船。 テセウスの木の船は、朽ちた板を少しずつ交換して保存された。交換し続けて、元の木が一本も残らなくなった。昔か"
+      },
+      "autonomous": {
+        "stage_display_chars": 359,
+        "stage_speech_chars": 359,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Được. Lượt 1/5 — Tàu Theseus. Con tàu gỗ của Theseus được bảo quản bằn"
+      }
+    }
+  },
+  {
+    "raw_line": 33,
+    "display_chars": 1331,
+    "speech_chars": 542,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 1331,
+        "stage_speech_chars": 542,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "2/5回目——自発的な隷属。16世紀、エティエンヌ・ド・ラ・ボエシーは一つの問いを立てた。なぜ人は自ら服従するのか？殴られてでも、鎖に繋がれ"
+      },
+      "autonomous": {
+        "stage_display_chars": 359,
+        "stage_speech_chars": 359,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Lượt 2/5 — Tự nguyện làm nô lệ. Étienne de La Boétie, thế kỷ 16, viết "
+      }
+    }
+  },
+  {
+    "raw_line": 39,
+    "display_chars": 1290,
+    "speech_chars": 620,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 1290,
+        "stage_speech_chars": 620,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "3/5回目 — 他人の心の問題。あなたは私を見て、私は一言を話す。あなたは音を聞き、文字を見る。でも、その言葉を発している頭の中に——何かあ"
+      },
+      "autonomous": {
+        "stage_display_chars": 360,
+        "stage_speech_chars": 360,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Lượt 3/5 — Vấn đề tâm trí kẻ khác. Bạn nhìn tôi, tôi nói một câu. Bạn "
+      }
+    }
+  },
+  {
+    "raw_line": 43,
+    "display_chars": 1205,
+    "speech_chars": 501,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 1205,
+        "stage_speech_chars": 501,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "4/5 回目——時間の矢。物理学の基本法則はほぼ対称だ。衝突の映像を逆再生しても、法則は成立する。ミクロの層で、時間は左から右へ流れなければ"
+      },
+      "autonomous": {
+        "stage_display_chars": 360,
+        "stage_speech_chars": 360,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Lượt 4/5 — Mũi tên thời gian. Các định luật vật lý cơ bản gần như đối "
+      }
+    }
+  },
+  {
+    "raw_line": 47,
+    "display_chars": 1289,
+    "speech_chars": 612,
+    "localizer_calls": 0,
+    "prelocalize_contains_japanese": true,
+    "observer_chars": 360,
+    "observer_changes_text": true,
+    "observer_rewritten": false,
+    "channels": {
+      "chat": {
+        "stage_display_chars": 1282,
+        "stage_speech_chars": 606,
+        "stage_speech_is_ja": true,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": false,
+          "prelocalized": true
+        },
+        "prepare_result": "pass",
+        "stage_speech_preview": "5/5回目——同情について。ショーペンハウアーはそれを道徳の土台に置いた。すべての生き物は苦しんでいる。だから他人の苦しみに心が動くことこそ"
+      },
+      "autonomous": {
+        "stage_display_chars": 360,
+        "stage_speech_chars": 360,
+        "stage_speech_is_ja": false,
+        "contract": {
+          "language": "ja",
+          "locale": "ja-JP",
+          "voice_family": "eris_primary",
+          "provider_tier": "primary",
+          "can_translate": true
+        },
+        "prepare_result": "v03_speech_language_mismatch",
+        "stage_speech_preview": "Lượt 5/5 — Lòng thương hại. Schopenhauer đặt nó làm nền đạo đức: mọi s"
+      }
+    }
+  }
+]

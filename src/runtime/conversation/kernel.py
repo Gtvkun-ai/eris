@@ -23,6 +23,7 @@ from .continuation import ContinuationLeaseScheduler
 from .context import ConversationNoteTools
 from .delivery import ConversationDelivery
 from .receipts import DeliveryReceiptLedger
+from .move_outcomes import MoveOutcomeLedger
 from .session_store import ConversationSessionStore
 from .writer import ConversationWriter, RenderedConversationMove
 from .delivery import SurfaceEnvelope
@@ -101,6 +102,7 @@ class ConversationKernel:
     def __init__(self, agent: RootAgent, *, store: ConversationSessionStore | None = None,
                  continuation: ContinuationLeaseScheduler | None = None,
                  receipts: DeliveryReceiptLedger | None = None,
+                 outcomes: MoveOutcomeLedger | None = None,
                  writer: ConversationWriter | None = None,
                  delivery: ConversationDelivery | None = None,
                  logger: Any = None) -> None:
@@ -108,6 +110,7 @@ class ConversationKernel:
         self.store = store or ConversationSessionStore(logger=logger)
         self.continuation = continuation or ContinuationLeaseScheduler(logger=logger)
         self.receipts = receipts or DeliveryReceiptLedger(logger=logger)
+        self.outcomes = outcomes or MoveOutcomeLedger(logger=logger)
         self.writer = writer
         self.delivery = delivery
         self.logger = logger
@@ -116,6 +119,8 @@ class ConversationKernel:
         self._event_condition = threading.Condition(threading.RLock())
         self._event_results: dict[str, ConversationRunResult] = {}
         self._events_inflight: set[str] = set()
+        self._recovered_outcome_sessions: set[str] = set()
+        self._outcome_recovery_lock = threading.RLock()
 
     def handle_event(
         self,
@@ -167,8 +172,8 @@ class ConversationKernel:
         sid = str(event.session_id or "default")[:180]
         run_id = f"run:{uuid.uuid4().hex}"
         if event.kind == "user_turn":
-            self.continuation.cancel_session(sid)
-            self._discard_session_deliveries(sid)
+            # Đổi generation TRƯỚC: callback TTS cũ tới đồng thời sẽ bị loại
+            # ngay cả khi chưa kịp lấy delivery lock để discard.
             state = self.store.mutate(
                 sid,
                 lambda prior, now: replace(
@@ -180,6 +185,8 @@ class ConversationKernel:
                     phase=RunPhase.THINKING,
                 ),
             )
+            self.continuation.cancel_session(sid)
+            self._discard_session_deliveries(sid)
         else:
             state = self.store.load(sid)
             if event.generation not in {0, state.generation}:
@@ -205,6 +212,12 @@ class ConversationKernel:
                     event=event, decision=None,
                     status="stale" if event.generation not in {0, state.generation} else "busy",
                 )
+
+        # Hai background move liên tiếp cùng lỗi trong 90s => circuit breaker
+        # cơ học, không chạy Root/Writer thêm theo timer. User turn vẫn tự do.
+        if event.kind != 'user_turn' and self._background_failure_cooldown(sid):
+            self._fail_current_run(sid, state.generation, run_id)
+            return ConversationRunResult(event=event, decision=None, status='background_failure_cooldown')
 
         normalized_event = replace(event, session_id=sid, generation=state.generation)
         agent_context = self._agent_runtime_context(sid, runtime_context)
@@ -294,7 +307,9 @@ class ConversationKernel:
                 phase=RunPhase.WRITING,
             ),
         )
+        self._move_outcome(turn, 'preparing', event_id=normalized_event.event_id)
         if self.writer is None:
+            self._move_outcome(turn, 'failed_before_delivery', reason='WRITER_UNAVAILABLE')
             self._fail_run(turn)
             return ConversationRunResult(
                 event=normalized_event,
@@ -322,6 +337,7 @@ class ConversationKernel:
                       normalized_event.event_id, run_id, turn.generation, reason)
             _record_run_failure(status='writer_failed', reason=reason,
                                 run_id=run_id, generation=turn.generation)
+            self._move_outcome(turn, 'failed_before_delivery', reason=reason)
             failure = provider_failure(exc, role="writer")
             if normalized_event.kind == "user_turn" and failure is not None:
                 return self._deliver_runtime_failure(normalized_event, turn.generation, run_id,
@@ -337,6 +353,7 @@ class ConversationKernel:
 
         current = self.store.load(sid)
         if current.generation != turn.generation or current.active_run_id != turn.run_id:
+            self._move_outcome(turn, 'cancelled', reason='stale_after_prepare')
             return ConversationRunResult(
                 event=normalized_event,
                 decision=decision,
@@ -346,6 +363,8 @@ class ConversationKernel:
             )
         delivery_id = turn.delivery_id
         if self.delivery is None or not self.mark_delivery_started(turn, delivery_id=delivery_id):
+            self._move_outcome(turn, 'failed_before_delivery' if self.delivery is None else 'cancelled',
+                               reason='DELIVERY_UNAVAILABLE' if self.delivery is None else 'PREEMPTED_BEFORE_DELIVERY')
             self._fail_run(turn)
             return ConversationRunResult(
                 event=normalized_event,
@@ -481,9 +500,9 @@ class ConversationKernel:
             if self.store.load(sid).generation == lease.generation:
                 self.continuation.release(lease)
             raise
-        if result.status in {"writer_failed", "writer_unavailable", "busy"}:
-            # Một run khác vừa chiếm governor thì KHÔNG được nuốt mất lease.
-            # Trả lease về pending để Root đánh giá lại sau khi run kia kết thúc.
+        if result.status == "busy":
+            # Chỉ busy mới nhả lại lease; lỗi writer là thất bại, không phải
+            # tín hiệu timer tự viết lại. Không replay câu chưa nói.
             if self.store.load(sid).generation == lease.generation:
                 self.continuation.release(lease)
             else:
@@ -498,6 +517,7 @@ class ConversationKernel:
         session_id: str = "",
         delivery_id: str,
         successful: bool,
+        cancelled: bool = False,
     ) -> bool:
         did = str(delivery_id or "")[:180]
         with self._delivery_lock:
@@ -507,13 +527,16 @@ class ConversationKernel:
         sid = str(session_id or turn.session_id)[:180]
         if sid != turn.session_id:
             return False
-        settled = self.settle_delivery(turn, delivery_id=did, successful=successful)
+        settled = self.settle_delivery(turn, delivery_id=did, successful=successful, cancelled=cancelled)
         if settled:
             with self._delivery_lock:
                 self._delivery_turns.pop(did, None)
         return settled
 
     def _discard_session_deliveries(self, session_id: str) -> None:
+        # Callback TTS cũ đến muộn phải bị loại, và receipt cho Root phải ghi
+        # cancellation thay vì giữ vĩnh viễn trạng thái 'delivering'.
+        self.outcomes.cancel_inflight(session_id, reason='preempted_by_user')
         with self._delivery_lock:
             stale = [
                 delivery_id
@@ -548,7 +571,6 @@ class ConversationKernel:
                         recent_history: Sequence[Mapping[str, Any]] = (),
                         runtime_context: Mapping[str, Any] | None = None) -> KernelTurn:
         sid = str(session_id or "default")[:180]
-        self.continuation.cancel_session(sid)
         run_id = f"run:{uuid.uuid4().hex}"
         state = self.store.mutate(
             sid,
@@ -561,6 +583,8 @@ class ConversationKernel:
                 phase=RunPhase.THINKING,
             ),
         )
+        self.continuation.cancel_session(sid)
+        self._discard_session_deliveries(sid)
         event = ConversationEvent.user_turn(
             session_id=sid,
             text=str(user_text or ""),
@@ -641,6 +665,29 @@ class ConversationKernel:
             self.continuation.release(lease)
             raise
 
+    def _move_outcome(self, turn: KernelTurn, status: str, *, event_id: str = '',
+                      delivery_id: str = '', reason: str = '') -> None:
+        self.outcomes.update(
+            session_id=turn.session_id, generation=turn.generation,
+            run_id=turn.run_id, move_id=turn.move.move_id, status=status,
+            delivery_id=delivery_id or turn.delivery_id, event_id=event_id,
+            intent=turn.move.intent, say=turn.move.say, reason=reason,
+        )
+
+    def _background_failure_cooldown(self, session_id: str) -> bool:
+        """Tối đa hai lần hỏng gần nhau từ timer, không tự chạy lại câu cũ.
+
+        Đây là circuit breaker tài nguyên, không phải semantic scheduler.
+        """
+        rows = self.outcomes.list(session_id)
+        if len(rows) < 2:
+            return False
+        last_two = rows[-2:]
+        now = time.time()
+        return bool(all(row.get('status') in {'failed_before_delivery', 'delivery_failed'}
+                        and now - float(row.get('updated_at', 0)) < 90
+                        for row in last_two))
+
     def _agent_runtime_context(
         self,
         session_id: str,
@@ -655,6 +702,15 @@ class ConversationKernel:
 
         sid = str(session_id or "default")[:180]
         context = dict(runtime_context or {})
+        with self._outcome_recovery_lock:
+            if sid not in self._recovered_outcome_sessions:
+                self._recovered_outcome_sessions.add(sid)
+                # Không có public commit khi process crash ở giai đoạn TTS.
+                # Chỉ chạy một lần khi session được kernel instance mới dùng.
+                self.outcomes.recover_inflight_on_restart(sid)
+        # Không đi qua model session transcript hay public history: dù Writer
+        # chưa từng commit, Root vẫn được biết outcome trước đó.
+        context['conversation_move_receipts'] = self.outcomes.feedback(sid)
         context["__conversation_note_tools"] = ConversationNoteTools(
             set_note=lambda text: self.store.set_note(sid, text),
             clear_note=lambda: self.store.clear_note(sid),
@@ -668,16 +724,37 @@ class ConversationKernel:
         self.store.clear_note(session_id)
 
     def mark_delivery_started(self, turn: KernelTurn, *, delivery_id: str) -> bool:
-        state = self.store.load(turn.session_id)
-        if state.generation != turn.generation or state.active_run_id != turn.run_id:
-            return False
-        self.store.mutate(
+        did = str(delivery_id or '')[:180]
+        state = self.store.mutate(
             turn.session_id,
-            lambda prior, now: replace(prior, active_delivery_id=str(delivery_id or "")[:180], phase=RunPhase.DELIVERING),
+            lambda prior, now: replace(prior, active_delivery_id=did, phase=RunPhase.DELIVERING)
+            if prior.generation == turn.generation and prior.active_run_id == turn.run_id
+            and prior.active_move_id == turn.move.move_id and prior.phase == RunPhase.WRITING
+            else prior,
         )
+        if state.generation != turn.generation or state.active_run_id != turn.run_id \
+                or state.active_delivery_id != did or state.phase != RunPhase.DELIVERING:
+            return False
+        # Handoff tới delivery không chứng minh TTS đã bắt đầu phát.
+        # Chỉ audio_start thực tế mới chuyển thành trạng thái 'delivering'.
+        self._move_outcome(turn, 'queued_for_audio', delivery_id=delivery_id)
         return True
 
-    def settle_delivery(self, turn: KernelTurn, *, delivery_id: str, successful: bool) -> bool:
+    def mark_audio_started(self, *, delivery_id: str) -> bool:
+        did = str(delivery_id or '')[:180]
+        with self._delivery_lock:
+            turn = self._delivery_turns.get(did)
+        if turn is None:
+            return False
+        state = self.store.load(turn.session_id)
+        if (state.generation != turn.generation or state.active_run_id != turn.run_id
+                or state.active_delivery_id != did or state.phase != RunPhase.DELIVERING):
+            return False
+        self._move_outcome(turn, 'delivering', delivery_id=did)
+        return True
+
+    def settle_delivery(self, turn: KernelTurn, *, delivery_id: str,
+                        successful: bool, cancelled: bool = False) -> bool:
         state = self.store.load(turn.session_id)
         if state.generation != turn.generation:
             return False
@@ -688,8 +765,12 @@ class ConversationKernel:
         if not self.receipts.commit_once(receipt):
             return False
         if not successful:
+            self._move_outcome(turn, 'cancelled' if cancelled else 'delivery_failed',
+                               delivery_id=delivery_id,
+                               reason='tts_cancelled' if cancelled else 'delivery_terminal_failure')
             self.store.mutate(turn.session_id, lambda prior, now: replace(prior, phase=RunPhase.FAILED, active_delivery_id=""))
             return True
+        self._move_outcome(turn, 'delivered', delivery_id=delivery_id)
         lease = self.continuation.schedule(
             session_id=turn.session_id,
             generation=turn.generation,
@@ -713,8 +794,7 @@ class ConversationKernel:
 
     def preempt_for_user(self, session_id: str) -> ConversationSessionState:
         sid = str(session_id or "default")[:180]
-        self.continuation.cancel_session(sid)
-        return self.store.mutate(
+        state = self.store.mutate(
             sid,
             lambda prior, now: replace(
                 prior,
@@ -725,6 +805,10 @@ class ConversationKernel:
                 phase=RunPhase.CANCELLED,
             ),
         )
+        # Callbacks cũ không thể thắng vì generation đã đổi.
+        self.continuation.cancel_session(sid)
+        self._discard_session_deliveries(sid)
+        return state
 
     def snapshot(self, session_id: str) -> ConversationSessionState:
         return self.store.load(session_id)

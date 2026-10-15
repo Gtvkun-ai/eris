@@ -274,3 +274,39 @@ trong image. Smoke container với `--network none` trả `/healthz` status `ok`
 Hai container Compose `whale2api`/`poolui` đã được tạo lại với image mới và giữ
 dừng như trước; chưa thử hội thoại live upstream. Image cũ được giữ tại tag
 `eris-whale2api-backup:before-plain-text-20261015` để có thể khôi phục.
+
+## 10. Bằng chứng mới: phiên 16:47–16:54 ngày 15/10/2026
+
+Đối chiếu run log `eris_run_20261015_164726.txt`, 350 record observability
+(dòng 494361–494710) và raw HTTP PID 6980. Chi tiết:
+[điều tra agent loop phiên 16:47](2026-10-15-1647-agent-loop-audit.md).
+
+- **Xác nhận lỗi tiến độ trong phiên này:** user yêu cầu năm chủ đề/năm lượt;
+  chỉ lượt 1/5 delivered. Root vẫn sinh lần lượt 2/5, 3/5, 4/5, 5/5 dù cả bốn
+  writer candidate đều bị prepare từ chối. Câu “Hết 5 lượt” nằm trong bản
+  định nói, không phải lời đã phát thành công.
+- **Xác định thêm đường gây câm sau localization:** cả sáu raw writer reply
+  đã có speech Nhật. `IntentionObserver` gộp whitespace/cắt display còn 360
+  ký tự nhưng trả `rewritten=False`. Stage nhánh autonomous thấy text khác
+  và ghi đè speech bằng bản Việt; prepare sau đó chặn language mismatch.
+  Lời chào cũng hỏng cùng cách; lượt chat bỏ qua nhánh đó nên thành công.
+  Probe offline với sáu payload thật: chat qua 6/6, autonomous bị chặn 6/6;
+  source liên quan đã đối chiếu trùng byte bản portable.
+- Root session lưu quyết định move trước writer/delivery, nhưng các request
+  tiếp theo không có feedback về lỗi prepare vừa xảy ra. Delta delivery lấy
+  từ public history nên không bao phủ lỗi trước dispatch. Cần phân biệt
+  quyết định định nói với lượt delivered khi theo dõi kế hoạch nhiều lượt.
+- Đây là các `autonomous_signal` từ timer với `step=1`, tất cả move dùng
+  `after=wait_user`; không phải chuỗi `continuation_due` hay nhiều step
+  runaway trong một run. `wait_user` hủy continuation lease, không tự chứng
+  minh autonomous timer bị dừng. Ba timer đầu chọn chờ, rồi Root tự đổi sang
+  nói tiếp dù không có user turn mới.
+- Format `attempt=1/2` còn sót; writer hiện chỉ generate một lần. Không dùng
+  dòng này làm bằng chứng có retry writer. Retry localization là cơ chế khác.
+
+**Kết luận được bổ sung/thu hẹp:** không áp nguyên nhân cancellation/429 của
+phiên 00:19 lên phiên mới, và không coi fail-soft localizer là bảo đảm toàn
+pipeline có tiếng. Phiên này có Root/surface HTTP 200, một audio phát xong;
+năm failure nằm trước delivery. Không có bằng chứng process crash hoặc
+gateway plain-text gây lỗi này. Đây vẫn là cập nhật chẩn đoán, chưa sửa hay
+triển khai runtime.

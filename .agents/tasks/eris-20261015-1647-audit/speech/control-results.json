@@ -1,0 +1,92 @@
+[
+  {
+    "case": "short",
+    "nested_utterance": false,
+    "chars": 9,
+    "observer_changes": false,
+    "observer_rewritten": false,
+    "direct_stage_ja": true,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "short",
+    "nested_utterance": true,
+    "chars": 9,
+    "observer_changes": false,
+    "observer_rewritten": false,
+    "direct_stage_ja": true,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "double_space",
+    "nested_utterance": false,
+    "chars": 10,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "double_space",
+    "nested_utterance": true,
+    "chars": 10,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "v03_speech_language_mismatch"
+  },
+  {
+    "case": "newline",
+    "nested_utterance": false,
+    "chars": 9,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "newline",
+    "nested_utterance": true,
+    "chars": 9,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "v03_speech_language_mismatch"
+  },
+  {
+    "case": "len360",
+    "nested_utterance": false,
+    "chars": 360,
+    "observer_changes": false,
+    "observer_rewritten": false,
+    "direct_stage_ja": true,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "len360",
+    "nested_utterance": true,
+    "chars": 360,
+    "observer_changes": false,
+    "observer_rewritten": false,
+    "direct_stage_ja": true,
+    "prepare_result": "pass"
+  },
+  {
+    "case": "len361",
+    "nested_utterance": false,
+    "chars": 361,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "v03_speech_language_mismatch"
+  },
+  {
+    "case": "len361",
+    "nested_utterance": true,
+    "chars": 361,
+    "observer_changes": true,
+    "observer_rewritten": false,
+    "direct_stage_ja": false,
+    "prepare_result": "v03_speech_language_mismatch"
+  }
+]

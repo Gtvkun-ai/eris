@@ -633,6 +633,14 @@ class RuntimeModelRootAgent:
             "thay đổi hướng/hành động một cách có ý nghĩa, đừng chỉ bảo user nói tiếp. "
             "Khi user đùa bằng câu lặp/ít chữ, bạn có thể bắt nhịp, đổi trò chơi hay tự mở tình huống; "
             "đừng biến nó thành đòi user phải trả lời câu hỏi còn treo. "
+            "conversation_move_receipts là bằng chứng THỰC THI: preparing/queued_for_audio "
+            "không chứng minh đã phát tiếng; delivering nghĩa audio_start đã xảy ra, "
+            "chỉ delivered xác nhận phát hoàn tất. "
+            "failed_before_delivery, delivery_failed, cancelled hoặc unconfirmed_after_restart "
+            "không được tính là một lượt đã phát hoàn tất. "
+            "Khi kế hoạch nhiều lượt bị lỗi, dựa trên receipt cùng move_id để tự quyết "
+            "tiếp tục, nói lại có chọn lọc hay im; không tự đếm move dự định thành lượt hoàn thành. "
+            "Không yêu cầu runtime chọn chủ đề thay bạn và không phát lại nguyên câu bị user ngắt. "
             "Khi continuation_due trở lại sau phát ngôn, đánh giá hiệu quả tương tác từ lịch sử/receipt mới; "
             "nếu chưa có điều gì cần nói thêm, chọn no_reply thay vì lặp lại ý cũ. "
             "Nếu cần giữ working context cho lượt sau, dùng set_note; nếu note cũ không còn giá trị, dùng clear_note. "
@@ -772,6 +780,7 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "teaching_active",
         "explicit_tool_route",
         "conversation_status",
+        "conversation_move_receipts",
         "private_cognition_context",
         "background_proposals",
         "autonomous_self_context",

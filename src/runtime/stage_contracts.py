@@ -250,12 +250,10 @@ class StageFrameBuilder:
             observation_payload = intention_observation.to_payload()
             payload["intention_observation"] = observation_payload
             payload["intention_authority"] = observation_payload
-            if intention_observation.text != display_raw:
-                # Safety observer changed the committed claim. Do not let an old
-                # translated speech surface contradict the corrected public text.
-                display_raw = intention_observation.text
-                speech_raw = display_raw
-                has_utterance_commit = False
+            # Observer chỉ tạo observation; KHÔNG được viết ngược vào display_raw,
+            # speech_raw hay utterance đã commit. Kể cả bản phân tích bị cắt,
+            # chuẩn hóa khoảng trắng hoặc lỗi schema, vẫn giữ bản JP gốc để
+            # language guard kiểm tra độc lập ở public_output_artifact.
 
         display_surfaces = self.transformers.transform(display_raw)
         user_text = str(payload.get("user_text", "") or "")

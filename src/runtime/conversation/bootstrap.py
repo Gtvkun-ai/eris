@@ -10,6 +10,7 @@ from runtime.ai_orchestrated.atomic_state import atomic_store_from_env
 from .continuation import ContinuationLeaseScheduler
 from .delivery_adapter import RuntimeConversationDeliveryAdapter
 from .receipts import DeliveryReceiptLedger
+from .move_outcomes import MoveOutcomeLedger
 from .kernel import ConversationKernel
 from .runtime_writer import RuntimeConversationWriter
 from .session_store import ConversationSessionStore
@@ -40,6 +41,7 @@ def ensure_conversation_kernel(host: Any) -> ConversationKernel:
         store=ConversationSessionStore(atomic_store=atomic_store, logger=logger),
         continuation=ContinuationLeaseScheduler(atomic_store=atomic_store, logger=logger),
         receipts=DeliveryReceiptLedger(atomic_store=atomic_store, logger=logger),
+        outcomes=MoveOutcomeLedger(atomic_store=atomic_store, logger=logger),
         writer=RuntimeConversationWriter(host),
         delivery=RuntimeConversationDeliveryAdapter(host),
         logger=logger,

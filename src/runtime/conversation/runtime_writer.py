@@ -201,7 +201,7 @@ class RuntimeConversationWriter:
             try:
                 method(
                     '[character-v03] writer_candidate run=%s generation=%s '
-                    'attempt=%s/2 stage=%s status=%s code=%s duration_ms=%s',
+                    'attempt=%s/1 stage=%s status=%s code=%s duration_ms=%s',
                     turn.run_id, turn.generation, attempt, stage, status, code,
                     duration_ms,
                 )

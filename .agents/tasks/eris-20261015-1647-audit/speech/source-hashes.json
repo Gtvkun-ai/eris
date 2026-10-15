@@ -1,0 +1,56 @@
+[
+  {
+    "path": "src/runtime/conversation/runtime_writer.py",
+    "dev_sha256": "0b2b6aec295b902051e558c26aebc5c2aa273a162439a7e00630548bc6bca1f9",
+    "portable_sha256": "0b2b6aec295b902051e558c26aebc5c2aa273a162439a7e00630548bc6bca1f9",
+    "match": true
+  },
+  {
+    "path": "src/runtime/conversation/public_output_artifact.py",
+    "dev_sha256": "27f4baa46a05413b5ff5b455dfffbe7c3625620ec42ccad632c8747440acda9f",
+    "portable_sha256": "27f4baa46a05413b5ff5b455dfffbe7c3625620ec42ccad632c8747440acda9f",
+    "match": true
+  },
+  {
+    "path": "src/runtime/conversation/delivery_adapter.py",
+    "dev_sha256": "35c07e1410dd0823d0bef1a759e480fe4e37ec9a43a98d24e43064b92b1bd52e",
+    "portable_sha256": "35c07e1410dd0823d0bef1a759e480fe4e37ec9a43a98d24e43064b92b1bd52e",
+    "match": true
+  },
+  {
+    "path": "src/runtime/stage_contracts.py",
+    "dev_sha256": "da1f729ae96577791c0932bb9f2a289ada65a71c8ca0fde50c131a937ba4612d",
+    "portable_sha256": "da1f729ae96577791c0932bb9f2a289ada65a71c8ca0fde50c131a937ba4612d",
+    "match": true
+  },
+  {
+    "path": "src/runtime/utterance_spec.py",
+    "dev_sha256": "42508dfb1d315a09fd1cce899dd0af5a53b63ed193843d56674c6839cfc63298",
+    "portable_sha256": "42508dfb1d315a09fd1cce899dd0af5a53b63ed193843d56674c6839cfc63298",
+    "match": true
+  },
+  {
+    "path": "src/runtime/speech_contract.py",
+    "dev_sha256": "db5fb7a54bb01f1d83b12a758c15e2dafe57fa6b5e88a2ff80ae153533e9cf69",
+    "portable_sha256": "db5fb7a54bb01f1d83b12a758c15e2dafe57fa6b5e88a2ff80ae153533e9cf69",
+    "match": true
+  },
+  {
+    "path": "src/runtime/speech_localizer.py",
+    "dev_sha256": "cd01c8d044ef209e39959705f5d6152ef841e41bceeef38e0a602e7d9bcad5b5",
+    "portable_sha256": "cd01c8d044ef209e39959705f5d6152ef841e41bceeef38e0a602e7d9bcad5b5",
+    "match": true
+  },
+  {
+    "path": "src/runtime/speech_delivery_planner.py",
+    "dev_sha256": "e4dc56fd2c2e9e802f5b73d08e0d0d486c65e99cd848cb1e654f65dcdf52895d",
+    "portable_sha256": "e4dc56fd2c2e9e802f5b73d08e0d0d486c65e99cd848cb1e654f65dcdf52895d",
+    "match": true
+  },
+  {
+    "path": "src/runtime/intention_authority.py",
+    "dev_sha256": "e875e9d350438620c8dea5b9447bec23431fa8110c47eefdabb80060836fc57f",
+    "portable_sha256": "e875e9d350438620c8dea5b9447bec23431fa8110c47eefdabb80060836fc57f",
+    "match": true
+  }
+]

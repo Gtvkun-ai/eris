@@ -116,7 +116,8 @@ def _settle_pedagogical_delivery_event(
         return False
 
 
-def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool) -> bool:
+def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool,
+                                        cancelled: bool = False) -> bool:
     """Settle V12 delivery và fan-out receipt đúng capability của chính lượt đó."""
 
     did = str(turn_id or "")[:180]
@@ -128,7 +129,7 @@ def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool)
     try:
         from runtime.conversation.speech_outcome import note_public_delivery_outcome
         note_public_delivery_outcome(
-            host, delivery_id=did, status="delivered" if successful else "failed",
+            host, delivery_id=did, status="delivered" if successful else ("cancelled" if cancelled else "failed"),
         )
     except Exception:
         pass
@@ -137,7 +138,7 @@ def _settle_conversation_delivery_event(host, *, turn_id: str, successful: bool)
         from runtime.conversation.contracts import DeliveryReceipt
 
         kernel = ensure_conversation_kernel(host)
-        settled = bool(kernel.settle_delivery_id(delivery_id=did, successful=bool(successful)))
+        settled = bool(kernel.settle_delivery_id(delivery_id=did, successful=bool(successful), cancelled=cancelled))
         if not settled:
             return False
         pending = getattr(host, "_v12_delivery_capabilities", None)
@@ -1105,6 +1106,14 @@ class PublicOutputRuntimeMixin:
         except Exception:
             pass
         if event_type == "audio_start":
+            # Đây mới là mốc playback bắt đầu, không phải lúc enqueue audio.
+            # Delivery ID buộc khớp active generation trước khi cập nhật receipt.
+            try:
+                from runtime.conversation.bootstrap import ensure_conversation_kernel
+                ensure_conversation_kernel(self).mark_audio_started(
+                    delivery_id=str(record.get('turn_id', '') or ''))
+            except Exception:
+                pass
             self.logger.info(
                 "[TTS:event] audio_start turn=%s segment=%s text=%r",
                 record["turn_id"],
@@ -1166,7 +1175,8 @@ class PublicOutputRuntimeMixin:
             # đã preempt, Kernel tự bỏ receipt cũ, status history vẫn được ghi
             # độc lập ở phía trên theo đúng delivery_id.
             _settle_conversation_delivery_event(
-                self, turn_id=str(record.get("turn_id", "") or ""), successful=False
+                self, turn_id=str(record.get("turn_id", "") or ""),
+                successful=False, cancelled=True
             )
         elif event_type == "audio_failed":
             self.logger.warning(
