@@ -689,7 +689,14 @@ class RuntimeModelRootAgent:
                 "metadata": _bounded_value(dict(event.metadata), depth=0),
             },
             "recent_public_history": [
-                {"role": str(x.get("role", ""))[:24], "content": str(x.get("content", ""))[:12000]}
+                {
+                    "role": str(x.get("role", ""))[:24],
+                    # Khi history TTS đổi trạng thái, nội dung Root nhận vẫn
+                    # là lời gốc, không chèn lại nhãn âm thanh vào đầu câu.
+                    "content": str(x.get("raw_content", x.get("content", "")))[:12000],
+                    **{key: str(x[key])[:180] for key in
+                       ("history_id", "delivery_id", "delivery_status") if x.get(key)},
+                }
                 for x in recent_history[-32:]
                 if isinstance(x, Mapping)
             ],

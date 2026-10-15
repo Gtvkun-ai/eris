@@ -96,6 +96,7 @@ class RootConversationSession:
         self._messages: list[dict[str, str]] = []
         self._self: dict[str, Any] = {}
         self._last_history: list[dict[str, str]] = []
+        self._last_delivery_status: dict[str, str] = {}
         self._last_context: dict[str, Any] = {}
         self._system = ""
         self._started = False
@@ -159,6 +160,7 @@ class RootConversationSession:
         self._messages = []
         self._self = {}
         self._last_history = []
+        self._last_delivery_status = {}
         self._last_context = {}
         self._system = ""
         self._started = False
@@ -249,8 +251,29 @@ class RootConversationSession:
                     return None
             self_now = _read_self(self._host)
             self_delta = _changed(self._self, self_now) or {}
-            history = [{"role": str(x.get("role", "")), "content": str(x.get("content", ""))}
-                       for x in recent_history if isinstance(x, Mapping)]
+            history: list[dict[str, str]] = []
+            statuses: dict[str, str] = {}
+            for item in recent_history:
+                if not isinstance(item, Mapping):
+                    continue
+                row = {
+                    "role": str(item.get("role", "")),
+                    "content": str(item.get("raw_content", item.get("content", ""))),
+                }
+                if item.get("history_id"):
+                    row["history_id"] = str(item["history_id"])[:180]
+                if item.get("delivery_id"):
+                    did = str(item["delivery_id"])[:180]
+                    row["delivery_id"] = did
+                    status = str(item.get("delivery_status", "pending"))
+                    if status in {"pending", "cancelled", "delivered", "failed"}:
+                        statuses[did] = status
+                history.append(row)
+            delivery_updates = [
+                {"delivery_id": did, "status": status}
+                for did, status in statuses.items()
+                if self._last_delivery_status.get(did) != status
+            ]
             previous = self._last_history
             # Caller thường cung cấp cửa sổ history[-32:]; sau 32 lượt,
             # tiền tố cũ bị đẩy ra. Tìm suffix/prefix overlap để chỉ gửi lượt
@@ -278,6 +301,9 @@ class RootConversationSession:
             step_payload["self_changes_since_last_step"] = self_delta
             if new_history:
                 step_payload[history_key] = new_history
+            if delivery_updates:
+                # Delta cơ học, không replay/đổi ID của hội thoại đã nói.
+                step_payload["recent_public_delivery_updates"] = delivery_updates
             messages = self._messages + [{"role": "user", "content": json.dumps(step_payload, ensure_ascii=False, default=str, separators=(",", ":"))}]
             if not self._fits(client, messages):
                 # Đóng phiên dài; nạp Self *mới* từ owner. Không tóm tắt cuộc
@@ -291,6 +317,11 @@ class RootConversationSession:
                 step_payload["recent_public_history_reconcile"] = history
                 step_payload["runtime_context_delta"] = current_ctx
                 step_payload["self_changes_since_last_step"] = {}
+                # Session mới không nhớ những status đã gửi trong session cũ.
+                step_payload["recent_public_delivery_updates"] = [
+                    {"delivery_id": did, "status": status}
+                    for did, status in statuses.items()
+                ]
                 messages = self._messages + [{"role": "user", "content": json.dumps(step_payload, ensure_ascii=False, default=str, separators=(",", ":"))}]
                 if not self._fits(client, messages):
                     self._clear()
@@ -299,6 +330,7 @@ class RootConversationSession:
             self._messages = messages + [{"role": "assistant", "content": original}]
             self._self = self_now
             self._last_history = history
+            self._last_delivery_status = statuses
             self._last_context = current_ctx
             self._log("info", "[root-session] root_delta_sent steps=%d self_fields=%d public_turns=%d",
                       (len(self._messages) - 1) // 2, len(self_delta), len(new_history))

@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from runtime.interrupt_ledger import InterruptEvent, InterruptLedger
+from runtime.conversation.interrupts import classify_interrupt
+from runtime.conversation.contracts import InterruptKind
 
 
 _CORRECTION_RE = re.compile(
     r"^(?:không|khoan|chờ|dừng|ý tôi là|không phải|no|wait|stop|hold on)\b",
     re.I,
 )
-_BACKCHANNEL_RE = re.compile(r"^(?:ừ|uh|uhm|ừm|à|ờ|hmm|mhm|hm|ok|oke|được|rồi|đúng|đúng rồi|yeah|yep)[.!… ]*$", re.I)
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 
@@ -206,10 +207,12 @@ class VoiceManager:
             self._partial_text = ""
 
     def _strategy_for_text(self, text: str) -> str:
+        # Chung classifier với UDP Chat; không tồn tại whitelist thứ hai.
+        decision = classify_interrupt(text, final=True)
+        if decision.kind == InterruptKind.BACKCHANNEL:
+            return "continue_short"
         if _CORRECTION_RE.search(text):
             return "yield_repair"
-        if _BACKCHANNEL_RE.search(text):
-            return "continue_short"
         return "yield"
 
     def _cancel_audio(self, *, reason: str) -> bool:

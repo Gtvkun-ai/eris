@@ -256,3 +256,29 @@ def test_sliding_public_history_only_sends_unseen_turns(monkeypatch):
 def test_nullable_self_delta_not_lost():
     assert _changed({"belief": {"confidence": 0.5}}, {"belief": {"confidence": None}}) == {
         "belief": {"confidence": {"__value_now_null": True}}}
+
+
+def test_delivery_status_changes_are_sent_as_delta_not_replayed_history(monkeypatch):
+    """pending -> cancelled không được làm session tưởng lịch sử bị rewrite."""
+    monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
+    monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
+    router, session = FakeRouter(), RootConversationSession()
+    session._host = FakeHost()
+    assert session._prime(router=router, client=router.executive_client, system="system", schema=ROOT_STEP_SCHEMA)
+    history_pending = [
+        {"role": "user", "content": "ô", "raw_content": "ô", "history_id": "turn:u1"},
+        {"role": "assistant", "content": "[Đã hiển thị; TTS chưa xác nhận phát xong] xin chào",
+         "raw_content": "xin chào", "history_id": "turn:a1", "delivery_id": "audio:1", "delivery_status": "pending"},
+    ]
+    assert ask(session, router, history=history_pending)["kind"] == "move"
+    first = json.loads(router.calls[-1]["conversation_messages"][-1]["content"])
+    assert first["recent_public_history_delta"][-1]["content"] == "xin chào"
+    assert first["recent_public_delivery_updates"] == [{"delivery_id": "audio:1", "status": "pending"}]
+    history_cancelled = [dict(x) for x in history_pending]
+    history_cancelled[-1]["content"] = "[Đã hiển thị; âm thanh bị ngắt giữa chừng] xin chào"
+    history_cancelled[-1]["delivery_status"] = "cancelled"
+    assert ask(session, router, history=history_cancelled)["kind"] == "move"
+    second = json.loads(router.calls[-1]["conversation_messages"][-1]["content"])
+    assert "recent_public_history_delta" not in second
+    assert "recent_public_history_reconcile" not in second
+    assert second["recent_public_delivery_updates"] == [{"delivery_id": "audio:1", "status": "cancelled"}]

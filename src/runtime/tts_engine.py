@@ -906,6 +906,7 @@ def _synthesize_elevenlabs_wav(
         str(voice or ""),
         _same_language_locale(lang),
     )
+    permit = None
     if _tts_breaker_enabled():
         permit = GLOBAL_TTS_BREAKER.allow(breaker_key)
         if not permit.allowed:
@@ -1056,7 +1057,7 @@ def _synthesize_elevenlabs_wav(
         if not pcm:
             raise RuntimeError("ElevenLabs returned empty audio")
         if _tts_breaker_enabled():
-            GLOBAL_TTS_BREAKER.record_success(breaker_key)
+            GLOBAL_TTS_BREAKER.record_success(breaker_key, probe_id=getattr(permit, "probe_id", ""))
 
         if pool_account_id > 0:
             try:
@@ -1071,11 +1072,20 @@ def _synthesize_elevenlabs_wav(
 
         return _pcm24_to_wav_bytes(pcm)
     except Exception as exc:
+        if _tts_request_cancelled(cancel_event, authority_check) or str(exc) == "tts_cancelled":
+            raise TtsCancelledError() from None
         if (
             pool_account_id > 0
             and _is_elevenlabs_quota_error(exc)
             and _rotation_depth < 32
         ):
+            # Đây là lỗi quota của account cũ thật, không phải cancel.
+            # Ghi đúng provider failure trước khi thử account kế tiếp.
+            if _tts_breaker_enabled():
+                GLOBAL_TTS_BREAKER.record_failure(
+                    breaker_key, kind="provider_rate_limited",
+                    probe_id=getattr(permit, "probe_id", ""),
+                )
             excluded = set(_excluded_pool_account_ids or set())
             excluded.add(pool_account_id)
             logger.warning(
@@ -1099,8 +1109,14 @@ def _synthesize_elevenlabs_wav(
             GLOBAL_TTS_BREAKER.record_failure(
                 breaker_key,
                 kind=_tts_failure_reason(exc),
+                probe_id=getattr(permit, "probe_id", ""),
             )
         raise
+    finally:
+        # Mọi đường return/exception/quota rotation đều kết thúc lease này.
+        # Nếu đã record_success/failure, slot đã là 0 hoặc breaker đã OPEN.
+        if _tts_breaker_enabled() and getattr(getattr(permit, "state", None), "value", "") == "half_open":
+            GLOBAL_TTS_BREAKER.record_cancelled(breaker_key, probe_id=getattr(permit, "probe_id", ""))
 
 
 # ── Gemini TTS call ───────────────────────────────────────────────────────────
@@ -1592,6 +1608,16 @@ def _tts_failure_reason(exc: Exception) -> str:
         return "fallback_unavailable"
     return "provider_error"
 
+class TtsCancelledError(RuntimeError):
+    """Request bị mất quyền phát, KHÔNG phải lỗi nhà cung cấp TTS.
+
+    Giữ message cũ để tương thích các backend/TtsTaskManager vẫn so str(exc),
+    đồng thời cung cấp loại exception riêng cho code và regression mới.
+    """
+    def __init__(self) -> None:
+        super().__init__("tts_cancelled")
+
+
 def _tts_request_cancelled(cancel_event=None, authority_check=None) -> bool:
     if cancel_event is not None:
         try:
@@ -1610,7 +1636,7 @@ def _tts_request_cancelled(cancel_event=None, authority_check=None) -> bool:
 
 def _raise_if_tts_cancelled(cancel_event=None, authority_check=None) -> None:
     if _tts_request_cancelled(cancel_event, authority_check):
-        raise RuntimeError("tts_cancelled")
+        raise TtsCancelledError()
 
 
 def _cancel_aware_sleep(seconds: float, cancel_event=None, authority_check=None) -> None:
@@ -1620,7 +1646,7 @@ def _cancel_aware_sleep(seconds: float, cancel_event=None, authority_check=None)
         return
     if cancel_event is not None and callable(getattr(cancel_event, "wait", None)):
         if cancel_event.wait(delay):
-            raise RuntimeError("tts_cancelled")
+            raise TtsCancelledError()
     else:
         time.sleep(delay)
     _raise_if_tts_cancelled(cancel_event, authority_check)
@@ -1675,269 +1701,284 @@ def _synthesize_wav(
                 return fallback
             raise exc
 
-    last_exc = None
-    pcm_data = None
-    from runtime.tts_key_health import GLOBAL_TTS_KEY_LANE_HEALTH
-    attempted_indices: set[int] = set(GLOBAL_TTS_KEY_LANE_HEALTH.excluded_indices())
-    for attempt in range(max_attempts):
-        _raise_if_tts_cancelled(cancel_event, authority_check)
-        lease = None
-        reserved_index = None
-        if pool is not None and pool.size > 0:
-            # Task manager cho turn mới synth song song với request cũ đang hấp hối.
-            # Không dùng lại đúng key còn in-flight, nếu không cải thiện latency bằng
-            # cách tự tạo thêm 429 là một màn ảo thuật khá vô ích.
-            while True:
-                lease = pool.acquire(exclude_indices=attempted_indices)
+    try:
+        last_exc = None
+        pcm_data = None
+        from runtime.tts_key_health import GLOBAL_TTS_KEY_LANE_HEALTH
+        attempted_indices: set[int] = set(GLOBAL_TTS_KEY_LANE_HEALTH.excluded_indices())
+        for attempt in range(max_attempts):
+            _raise_if_tts_cancelled(cancel_event, authority_check)
+            lease = None
+            reserved_index = None
+            if pool is not None and pool.size > 0:
+                # Task manager cho turn mới synth song song với request cũ đang hấp hối.
+                # Không dùng lại đúng key còn in-flight, nếu không cải thiện latency bằng
+                # cách tự tạo thêm 429 là một màn ảo thuật khá vô ích.
+                while True:
+                    lease = pool.acquire(exclude_indices=attempted_indices)
+                    if lease is None:
+                        break
+                    attempted_indices.add(lease.index)
+                    if GLOBAL_TTS_KEY_LANE_HEALTH.try_reserve(lease.index):
+                        reserved_index = lease.index
+                        break
+                    lease = None
                 if lease is None:
-                    break
-                attempted_indices.add(lease.index)
-                if GLOBAL_TTS_KEY_LANE_HEALTH.try_reserve(lease.index):
-                    reserved_index = lease.index
-                    break
-                lease = None
-            if lease is None:
-                wait_s = pool.next_available_in()
-                exc = RuntimeError(
-                    f"Gemini TTS key pool đang cooldown hoặc bận; thử lại sau khoảng {wait_s:.1f}s"
+                    wait_s = pool.next_available_in()
+                    exc = RuntimeError(
+                        f"Gemini TTS key pool đang cooldown hoặc bận; thử lại sau khoảng {wait_s:.1f}s"
+                    )
+                    fallback = _try_local_tts_fallback(
+                        exc,
+                        fallback_text=fallback_text,
+                        language_hint=language_hint,
+                    )
+                    if fallback:
+                        return fallback
+                    raise exc
+                api_key = lease.key
+            else:
+                api_key = _get_api_key()
+            if not api_key:
+                raise RuntimeError("Không tìm thấy Gemini API key cho TTS.")
+
+            try:
+                client = genai.Client(api_key=api_key)
+
+                # PDF annotation, pages 6-9 and 15: Gemini TTS is remote work too.
+                # The SDK bypasses llm/client.py, so reserve it explicitly through
+                # the same broker instead of letting audio compete invisibly with
+                # the next chat request.
+                from llm.token_budget import estimate_tokens
+                from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
+
+                prompt_tokens = estimate_tokens([{"role": "user", "content": prompt}])
+                output_reserve = int(getattr(tts_budget_plan, "output_tokens", 768) or 768)
+                broker_provider = _tts_broker_provider_name(lease)
+                broker_timeout = _tts_broker_timeout_seconds()
+                with inference_context(
+                    "tts_current_turn",
+                    optional=False,
+                    timeout_seconds=broker_timeout,
+                    cancel_scope=f"tts:{threading.get_ident()}",
+                    metadata={"voice": voice, "tts_model": model, "broker_provider": broker_provider},
+                ):
+                    broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
+                        provider=broker_provider,
+                        model=model,
+                        estimated_input_tokens=prompt_tokens,
+                        reserved_output_tokens=output_reserve,
+                        timeout_seconds=broker_timeout,
+                        metadata={"transport": "google.genai"},
+                    )
+
+                    def call_tts_provider(*, cancel_token=None):
+                        if cancel_token is not None:
+                            cancel_token.raise_if_cancelled(broker_request)
+                        result = client.models.generate_content(
+                            model=model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_modalities=["AUDIO"],
+                                speech_config=types.SpeechConfig(
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name=voice,
+                                        )
+                                    )
+                                ),
+                            ),
+                        )
+                        if cancel_token is not None:
+                            cancel_token.raise_if_cancelled(broker_request)
+                        return result
+
+                    response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
+                _raise_if_tts_cancelled(cancel_event, authority_check)
+                pcm_data = _extract_gemini_tts_pcm(response)
+                if tts_budget_plan is not None:
+                    try:
+                        from llm.token_budget import estimate_tokens
+                        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
+                            "gemini", lane="tts",
+                            prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
+                            output_tokens=tts_budget_plan.output_tokens,
+                        )
+                    except Exception as exc:
+                        logger.debug("[TTS] token request accounting failed: %s", _short_error(exc))
+                if pool is not None and lease is not None:
+                    pool.mark_success(lease=lease)
+                    GLOBAL_TTS_KEY_LANE_HEALTH.record_success(getattr(lease, "index", None))
+                if _tts_breaker_enabled():
+                    GLOBAL_TTS_BREAKER.record_success(breaker_key, probe_id=getattr(permit, "probe_id", ""))
+                try:
+                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+                except Exception as exc:
+                    logger.debug("[TTS] token pressure success record failed: %s", _short_error(exc))
+                break
+            except Exception as exc:
+                if _tts_request_cancelled(cancel_event, authority_check) or str(exc) == "tts_cancelled":
+                    raise TtsCancelledError() from None
+                last_exc = exc
+                try:
+                    from llm.provider_errors import ProviderErrorKind, classify_provider_error
+                    error_kind = classify_provider_error(exc)
+                except Exception:
+                    ProviderErrorKind = None  # type: ignore
+                    error_kind = None
+                is_rate_limit = str(error_kind) == "rate_limit" or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+                is_revoked = str(error_kind) == "key_revoked"
+                is_project_permission = str(error_kind) == "project_permission"
+                if lease is not None:
+                    error_kind = GLOBAL_TTS_KEY_LANE_HEALTH.record_error(getattr(lease, "index", None), exc)
+                    is_rate_limit = str(error_kind) == "rate_limit" or is_rate_limit
+                    is_revoked = str(error_kind) == "key_revoked" or is_revoked
+                    is_project_permission = str(error_kind) == "project_permission" or is_project_permission
+                try:
+                    from google.genai.errors import ClientError
+                    if isinstance(exc, ClientError) and exc.code == 429:
+                        is_rate_limit = True
+                    if isinstance(exc, ClientError) and exc.code in (401, 403) and "reported as leaked" in str(exc).lower():
+                        is_revoked = True
+                except Exception as classify_exc:
+                    logger.debug("[TTS] google ClientError classification unavailable: %s", _short_error(classify_exc))
+
+                error_text = str(exc).lower()
+                is_invalid_shape = "audio parts" in error_text or "parts hợp lệ" in error_text or "nonetype" in error_text
+                is_transient = bool(
+                    str(error_kind) == "transient_server"
+                    or any(code in error_text for code in ("500", "502", "503", "504", "temporarily unavailable"))
                 )
-                fallback = _try_local_tts_fallback(
-                    exc,
-                    fallback_text=fallback_text,
-                    language_hint=language_hint,
+                breaker_failure = ""
+                if is_rate_limit:
+                    breaker_failure = "rate_limit"
+                elif is_invalid_shape:
+                    breaker_failure = "invalid_shape"
+                elif is_transient:
+                    breaker_failure = "transient_server"
+                # Ở HALF_OPEN, bất kỳ probe nào lỗi cũng phải mở breaker lại.
+                # Nếu chỉ tính 429/5xx, một lỗi auth/shape lạ sẽ giữ probes_in_flight
+                # mãi mãi và breaker kẹt ở half-open.
+                is_half_open_probe = bool(
+                    permit is not None and getattr(getattr(permit, "state", None), "value", "") == "half_open"
                 )
+                if _tts_breaker_enabled() and (breaker_failure or is_half_open_probe):
+                    GLOBAL_TTS_BREAKER.record_failure(
+                        breaker_key,
+                        kind=breaker_failure or str(error_kind or "provider_error"),
+                        probe_id=getattr(permit, "probe_id", ""),
+                    )
+                if is_half_open_probe:
+                    # Một trial HALF_OPEN chỉ được ghi một kết quả thực: lỗi
+                    # thật -> OPEN. Retry cùng permit có thể giả khỏi bệnh.
+                    fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
+                    if fallback:
+                        return fallback
+                    raise
+                if is_rate_limit:
+                    try:
+                        from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
+                        GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="tts")
+                    except Exception as pressure_exc:
+                        logger.debug("[TTS] rate-limit pressure record failed: %s", _short_error(pressure_exc))
+
+                if is_project_permission and lease is not None:
+                    logger.warning(
+                        "[TTS] Key index %s không có quyền TTS cho project/model; hard-disable riêng lane TTS.",
+                        getattr(lease, "index", "?"),
+                    )
+                    if attempt < max_attempts - 1:
+                        _cancel_aware_sleep(
+                            min(0.8, 0.15 * (2 ** attempt) + random.uniform(0.0, 0.12)),
+                            cancel_event, authority_check,
+                        )
+                        continue
+
+                if is_revoked and pool is not None and lease is not None:
+                    pool.mark_permanently_dead(lease=lease, reason="tts_key_reported_leaked")
+                    logger.warning(
+                        "[TTS] Key index %s bị provider báo leaked/revoked; quarantine, không thử lại trong lượt sau.",
+                        getattr(lease, "index", "?"),
+                    )
+                    if attempt < max_attempts - 1:
+                        _cancel_aware_sleep(
+                            min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                            cancel_event, authority_check,
+                        )
+                        continue
+
+                if is_rate_limit and pool is not None:
+                    may_rotate = pool.mark_rate_limited(seconds=60.0, lease=lease, reason="tts_http_429")
+                    logger.warning(
+                        "[TTS] Key index %s bị rate limit/hết quota (lượt %d/%d).",
+                        getattr(lease, "index", "?"),
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    if may_rotate and attempt < max_attempts - 1:
+                        _cancel_aware_sleep(
+                            min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                            cancel_event, authority_check,
+                        )
+                        continue
+                elif (is_invalid_shape or is_transient) and attempt < max_attempts - 1:
+                    _cancel_aware_sleep(
+                        min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
+                        cancel_event, authority_check,
+                    )
+                    continue
+                fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
                 if fallback:
                     return fallback
-                raise exc
-            api_key = lease.key
-        else:
-            api_key = _get_api_key()
-        if not api_key:
-            raise RuntimeError("Không tìm thấy Gemini API key cho TTS.")
+                raise
+            finally:
+                GLOBAL_TTS_KEY_LANE_HEALTH.release(reserved_index)
 
-        try:
-            client = genai.Client(api_key=api_key)
+        _raise_if_tts_cancelled(cancel_event, authority_check)
+        if pcm_data is None:
+            if last_exc:
+                fallback = _try_local_tts_fallback(last_exc, fallback_text=fallback_text, language_hint=language_hint)
+                if fallback:
+                    return fallback
+                raise last_exc
+            raise RuntimeError("Không thể tổng hợp giọng nói từ Gemini API.")
 
-            # PDF annotation, pages 6-9 and 15: Gemini TTS is remote work too.
-            # The SDK bypasses llm/client.py, so reserve it explicitly through
-            # the same broker instead of letting audio compete invisibly with
-            # the next chat request.
-            from llm.token_budget import estimate_tokens
-            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER, inference_context
-
-            prompt_tokens = estimate_tokens([{"role": "user", "content": prompt}])
-            output_reserve = int(getattr(tts_budget_plan, "output_tokens", 768) or 768)
-            broker_provider = _tts_broker_provider_name(lease)
-            broker_timeout = _tts_broker_timeout_seconds()
-            with inference_context(
-                "tts_current_turn",
-                optional=False,
-                timeout_seconds=broker_timeout,
-                cancel_scope=f"tts:{threading.get_ident()}",
-                metadata={"voice": voice, "tts_model": model, "broker_provider": broker_provider},
-            ):
-                broker_request = GLOBAL_INFERENCE_BROKER.request_from_context(
-                    provider=broker_provider,
-                    model=model,
-                    estimated_input_tokens=prompt_tokens,
-                    reserved_output_tokens=output_reserve,
-                    timeout_seconds=broker_timeout,
-                    metadata={"transport": "google.genai"},
-                )
-
-                def call_tts_provider(*, cancel_token=None):
-                    if cancel_token is not None:
-                        cancel_token.raise_if_cancelled(broker_request)
-                    result = client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_modalities=["AUDIO"],
-                            speech_config=types.SpeechConfig(
-                                voice_config=types.VoiceConfig(
-                                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                        voice_name=voice,
-                                    )
-                                )
-                            ),
-                        ),
-                    )
-                    if cancel_token is not None:
-                        cancel_token.raise_if_cancelled(broker_request)
-                    return result
-
-                response = GLOBAL_INFERENCE_BROKER.run(broker_request, call_tts_provider)
-            _raise_if_tts_cancelled(cancel_event, authority_check)
-            pcm_data = _extract_gemini_tts_pcm(response)
-            if tts_budget_plan is not None:
-                try:
-                    from llm.token_budget import estimate_tokens
-                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_request(
-                        "gemini", lane="tts",
-                        prompt_tokens=estimate_tokens([{"role": "user", "content": prompt}]),
-                        output_tokens=tts_budget_plan.output_tokens,
-                    )
-                except Exception as exc:
-                    logger.debug("[TTS] token request accounting failed: %s", _short_error(exc))
-            if pool is not None and lease is not None:
-                pool.mark_success(lease=lease)
-                GLOBAL_TTS_KEY_LANE_HEALTH.record_success(getattr(lease, "index", None))
-            if _tts_breaker_enabled():
-                GLOBAL_TTS_BREAKER.record_success(breaker_key)
+        if audio_polish_enabled():
             try:
-                from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_success("gemini")
+                polished = polish_pcm16_mono(pcm_data, sample_rate=24000)
+                pcm_data = polished.pcm or pcm_data
+                stats = polished.stats
+                if stats.trimmed_head_ms or stats.trimmed_tail_ms or stats.compressed_pause_ms:
+                    logger.debug(
+                        "[TTS] Audio polish: %dms → %dms, trim=%d/%dms, compressed_pause=%dms, peak=%d→%d",
+                        stats.original_ms,
+                        stats.polished_ms,
+                        stats.trimmed_head_ms,
+                        stats.trimmed_tail_ms,
+                        stats.compressed_pause_ms,
+                        stats.peak_before,
+                        stats.peak_after,
+                    )
             except Exception as exc:
-                logger.debug("[TTS] token pressure success record failed: %s", _short_error(exc))
-            break
-        except Exception as exc:
-            if _tts_request_cancelled(cancel_event, authority_check) or str(exc) == "tts_cancelled":
-                raise RuntimeError("tts_cancelled") from None
-            last_exc = exc
-            try:
-                from llm.provider_errors import ProviderErrorKind, classify_provider_error
-                error_kind = classify_provider_error(exc)
-            except Exception:
-                ProviderErrorKind = None  # type: ignore
-                error_kind = None
-            is_rate_limit = str(error_kind) == "rate_limit" or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
-            is_revoked = str(error_kind) == "key_revoked"
-            is_project_permission = str(error_kind) == "project_permission"
-            if lease is not None:
-                error_kind = GLOBAL_TTS_KEY_LANE_HEALTH.record_error(getattr(lease, "index", None), exc)
-                is_rate_limit = str(error_kind) == "rate_limit" or is_rate_limit
-                is_revoked = str(error_kind) == "key_revoked" or is_revoked
-                is_project_permission = str(error_kind) == "project_permission" or is_project_permission
-            try:
-                from google.genai.errors import ClientError
-                if isinstance(exc, ClientError) and exc.code == 429:
-                    is_rate_limit = True
-                if isinstance(exc, ClientError) and exc.code in (401, 403) and "reported as leaked" in str(exc).lower():
-                    is_revoked = True
-            except Exception as classify_exc:
-                logger.debug("[TTS] google ClientError classification unavailable: %s", _short_error(classify_exc))
+                # Hậu xử lý chỉ là lớp polish. Nếu lỗi, dùng PCM gốc để không làm TTS câm.
+                logger.warning("[TTS] Audio polish lỗi, dùng audio gốc: %s", exc)
 
-            error_text = str(exc).lower()
-            is_invalid_shape = "audio parts" in error_text or "parts hợp lệ" in error_text or "nonetype" in error_text
-            is_transient = bool(
-                str(error_kind) == "transient_server"
-                or any(code in error_text for code in ("500", "502", "503", "504", "temporarily unavailable"))
-            )
-            breaker_failure = ""
-            if is_rate_limit:
-                breaker_failure = "rate_limit"
-            elif is_invalid_shape:
-                breaker_failure = "invalid_shape"
-            elif is_transient:
-                breaker_failure = "transient_server"
-            # Ở HALF_OPEN, bất kỳ probe nào lỗi cũng phải mở breaker lại.
-            # Nếu chỉ tính 429/5xx, một lỗi auth/shape lạ sẽ giữ probes_in_flight
-            # mãi mãi và breaker kẹt ở half-open.
-            is_half_open_probe = bool(
-                permit is not None and getattr(getattr(permit, "state", None), "value", "") == "half_open"
-            )
-            if _tts_breaker_enabled() and (breaker_failure or is_half_open_probe):
-                GLOBAL_TTS_BREAKER.record_failure(
-                    breaker_key,
-                    kind=breaker_failure or str(error_kind or "provider_error"),
-                )
-            if is_rate_limit:
-                try:
-                    from llm.token_pressure import GLOBAL_TOKEN_PRESSURE_GOVERNOR
-                    GLOBAL_TOKEN_PRESSURE_GOVERNOR.record_rate_limit("gemini", retry_after_s=60.0, lane="tts")
-                except Exception as pressure_exc:
-                    logger.debug("[TTS] rate-limit pressure record failed: %s", _short_error(pressure_exc))
+        # Wrap vào WAV để miniaudio hiểu
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)       # 16-bit
+            wf.setframerate(24000)   # 24kHz
+            wf.writeframes(pcm_data)
+        return buf.getvalue()
 
-            if is_project_permission and lease is not None:
-                logger.warning(
-                    "[TTS] Key index %s không có quyền TTS cho project/model; hard-disable riêng lane TTS.",
-                    getattr(lease, "index", "?"),
-                )
-                if attempt < max_attempts - 1:
-                    _cancel_aware_sleep(
-                        min(0.8, 0.15 * (2 ** attempt) + random.uniform(0.0, 0.12)),
-                        cancel_event, authority_check,
-                    )
-                    continue
-
-            if is_revoked and pool is not None and lease is not None:
-                pool.mark_permanently_dead(lease=lease, reason="tts_key_reported_leaked")
-                logger.warning(
-                    "[TTS] Key index %s bị provider báo leaked/revoked; quarantine, không thử lại trong lượt sau.",
-                    getattr(lease, "index", "?"),
-                )
-                if attempt < max_attempts - 1:
-                    _cancel_aware_sleep(
-                        min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
-                        cancel_event, authority_check,
-                    )
-                    continue
-
-            if is_rate_limit and pool is not None:
-                may_rotate = pool.mark_rate_limited(seconds=60.0, lease=lease, reason="tts_http_429")
-                logger.warning(
-                    "[TTS] Key index %s bị rate limit/hết quota (lượt %d/%d).",
-                    getattr(lease, "index", "?"),
-                    attempt + 1,
-                    max_attempts,
-                )
-                if may_rotate and attempt < max_attempts - 1:
-                    _cancel_aware_sleep(
-                        min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
-                        cancel_event, authority_check,
-                    )
-                    continue
-            elif (is_invalid_shape or is_transient) and attempt < max_attempts - 1:
-                _cancel_aware_sleep(
-                    min(1.5, 0.20 * (2 ** attempt) + random.uniform(0.0, 0.20)),
-                    cancel_event, authority_check,
-                )
-                continue
-            fallback = _try_local_tts_fallback(exc, fallback_text=fallback_text, language_hint=language_hint)
-            if fallback:
-                return fallback
-            raise
-        finally:
-            GLOBAL_TTS_KEY_LANE_HEALTH.release(reserved_index)
-
-    _raise_if_tts_cancelled(cancel_event, authority_check)
-    if pcm_data is None:
-        if last_exc:
-            fallback = _try_local_tts_fallback(last_exc, fallback_text=fallback_text, language_hint=language_hint)
-            if fallback:
-                return fallback
-            raise last_exc
-        raise RuntimeError("Không thể tổng hợp giọng nói từ Gemini API.")
-
-    if audio_polish_enabled():
-        try:
-            polished = polish_pcm16_mono(pcm_data, sample_rate=24000)
-            pcm_data = polished.pcm or pcm_data
-            stats = polished.stats
-            if stats.trimmed_head_ms or stats.trimmed_tail_ms or stats.compressed_pause_ms:
-                logger.debug(
-                    "[TTS] Audio polish: %dms → %dms, trim=%d/%dms, compressed_pause=%dms, peak=%d→%d",
-                    stats.original_ms,
-                    stats.polished_ms,
-                    stats.trimmed_head_ms,
-                    stats.trimmed_tail_ms,
-                    stats.compressed_pause_ms,
-                    stats.peak_before,
-                    stats.peak_after,
-                )
-        except Exception as exc:
-            # Hậu xử lý chỉ là lớp polish. Nếu lỗi, dùng PCM gốc để không làm TTS câm.
-            logger.warning("[TTS] Audio polish lỗi, dùng audio gốc: %s", exc)
-
-    # Wrap vào WAV để miniaudio hiểu
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)       # 16-bit
-        wf.setframerate(24000)   # 24kHz
-        wf.writeframes(pcm_data)
-    return buf.getvalue()
+    finally:
+        # Cancel có thể xảy ra ở đầu retry, trong sleep, hoặc sau SDK.
+        # Không ghi giả success và không giữ slot HALF_OPEN bị kẹt.
+        if _tts_breaker_enabled() and getattr(getattr(permit, "state", None), "value", "") == "half_open":
+            GLOBAL_TTS_BREAKER.record_cancelled(breaker_key, probe_id=getattr(permit, "probe_id", ""))
 
 
 def _invoke_synthesize_wav(

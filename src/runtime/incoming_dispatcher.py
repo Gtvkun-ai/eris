@@ -131,7 +131,8 @@ class IncomingMessageDispatcher:
         # Dù client bỏ quên chat_start, message chat vẫn tự mở chat mode.
         if not bool(getattr(owner, "chat_mode", False)):
             owner._enter_chat_cycle()
-        cancel_audio = True  # Fail-safe nếu bộ phân loại bị lỗi.
+        cancel_audio = True  # Fail-safe: chưa biết nghĩa thì user được quyền chen ngang.
+        cancel_generation = True
         try:
             from runtime.conversation import InterruptKind, classify_interrupt
             interrupt = classify_interrupt(user_text, final=True)
@@ -148,6 +149,7 @@ class IncomingMessageDispatcher:
                     finish()
                 return
             cancel_audio = bool(interrupt.cancel_audio)
+            cancel_generation = bool(interrupt.cancel_generation)
         except Exception as exc:
             logger = getattr(owner, "logger", None)
             if callable(getattr(logger, "debug", None)):
@@ -155,7 +157,8 @@ class IncomingMessageDispatcher:
         owner._capture_speech_interrupt_for_user(user_text, timestamp=timestamp)
         preempt = getattr(owner, "_preempt_for_classified_user_turn", None)
         if callable(preempt):
-            preempt(cancel_audio=cancel_audio)
+            # Gửi hai cờ riêng, không suy ra cancel_generation từ cancel_audio.
+            preempt(cancel_audio=cancel_audio, cancel_generation=cancel_generation)
         elif cancel_audio:
             # Adapter test/host cũ chưa có ChatCycleMixin: vẫn giữ barge-in.
             supersede = getattr(owner, "_supersede_tts_for_new_user_turn", None)

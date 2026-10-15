@@ -4,6 +4,7 @@ import json
 import os
 import time
 import traceback
+import uuid
 from typing import Any, Mapping
 
 from cortex.contracts import (
@@ -323,6 +324,10 @@ class PromptContextBuilderMixin:
                 if ts > 0.0 and (now - ts) > ttl:
                     continue
             content = str(item.get("content", ""))
+            # ID cố định cho một turn, kể cả khi đây là history từ process cũ.
+            # Trạng thái phát TTS không được làm đổi định danh/nội dung.
+            if not item.get("history_id"):
+                item["history_id"] = f"history:{uuid.uuid4().hex}"
             # Câu đã đưa lên màn hình có thể bị cắt trước khi giọng nói xong.
             # Khi gửi lại model phải thể hiện rõ sự khác biệt ấy; không biến
             # một phát ngôn bị ngắt thành bằng chứng Eris đã nói trọn câu.
@@ -334,7 +339,15 @@ class PromptContextBuilderMixin:
                     "failed": "[Đã hiển thị; phát âm thanh thất bại]",
                 }[status]
                 content = f"{context_note} {content}"
-            valid_entries.append({"role": str(item.get("role", "")), "content": content})
+            entry = {
+                "role": str(item.get("role", "")), "content": content,
+                "raw_content": str(item.get("content", "")),
+                "history_id": str(item["history_id"]),
+            }
+            if item.get("delivery_id"):
+                entry["delivery_id"] = str(item["delivery_id"])
+                entry["delivery_status"] = str(item.get("delivery_status", "pending"))
+            valid_entries.append(entry)
         return valid_entries[-limit:]
 
     def _user_addressing_snapshot(self) -> dict[str, object]:
@@ -378,7 +391,8 @@ class PromptContextBuilderMixin:
             except Exception as exc:
                 safe_log(getattr(self, "logger", None), "warning", "[user-addressing] update failed: %s", exc)
 
-        entry = {"role": role, "content": content, "ts": time.time()}
+        entry = {"role": role, "content": content, "ts": time.time(),
+                 "history_id": f"history:{uuid.uuid4().hex}"}
         if invalid:
             entry["invalid"] = True
         if role == "assistant" and pending_delivery_id:

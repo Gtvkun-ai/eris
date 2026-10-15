@@ -34,7 +34,7 @@ class ChatCycleMixin:
         self.last_user_text_for_semantics = ""
         self.logger.info("Entered chat mode; pending user input, audio kept until interrupt classification.")
 
-    def _preempt_for_classified_user_turn(self, *, cancel_audio: bool) -> None:
+    def _preempt_for_classified_user_turn(self, *, cancel_audio: bool, cancel_generation: bool = True) -> None:
         """Một nơi duy nhất áp quyết định interrupt cho user turn đã rõ nội dung."""
         if cancel_audio:
             try:
@@ -48,19 +48,22 @@ class ChatCycleMixin:
                     supersede_tts("user_chat_supersede")
                 except Exception as exc:
                     self.logger.debug("TTS classified barge-in cancel failed: %s", exc)
-        discovery = getattr(self, "ai_discovery_runtime", None)
-        preempt_discovery = getattr(discovery, "preempt_for_chat", None)
-        if callable(preempt_discovery):
-            try:
-                preempt_discovery(reason="enter_chat_mode")
-            except Exception as exc:
-                self.logger.debug("Discovery cooperative cancel failed: %s", exc)
-        cancel_generation = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
-        if callable(cancel_generation):
-            try:
-                cancel_generation(reason="enter_chat_mode")
-            except Exception as exc:
-                self.logger.debug("LLM cooperative cancel failed: %s", exc)
+        # Âm thanh và generation là hai quyền riêng. Backchannel không được
+        # giết request Root/Writer đang suy nghĩ hoặc discovery đang chạy.
+        if cancel_generation:
+            discovery = getattr(self, "ai_discovery_runtime", None)
+            preempt_discovery = getattr(discovery, "preempt_for_chat", None)
+            if callable(preempt_discovery):
+                try:
+                    preempt_discovery(reason="enter_chat_mode")
+                except Exception as exc:
+                    self.logger.debug("Discovery cooperative cancel failed: %s", exc)
+            cancel_pending = getattr(getattr(self, "llm_service", None), "cancel_pending_requests", None)
+            if callable(cancel_pending):
+                try:
+                    cancel_pending(reason="enter_chat_mode")
+                except Exception as exc:
+                    self.logger.debug("LLM cooperative cancel failed: %s", exc)
 
     def _end_chat_cycle(self) -> None:
         if not getattr(self, "chat_mode", False):
