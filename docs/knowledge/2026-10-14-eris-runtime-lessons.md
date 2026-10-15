@@ -245,3 +245,32 @@ Chi tiết nằm trong mục 6 của báo cáo điều tra. Các nhận định 
 hạn của hướng sửa, chưa thay thế quan sát live bằng test hoặc phỏng đoán.
 
 Đây là cập nhật tri thức/chẩn đoán; chưa sửa hoặc triển khai runtime mới.
+
+## 9. Thay đổi transport/prompt DeepSeek ngày 15/10/2026
+
+Theo yêu cầu mới của user, source gateway `tools/whale2api` đã bỏ hai hành vi:
+
+- Tự đưa context hội thoại vào file `.txt`, rồi thay phần chat bằng câu tiếp tục
+  tổng quát. Chat Completions và Responses nay giữ toàn bộ system, user,
+  assistant và tool history trong `prompt` dạng text trực tiếp, kể cả khi
+  cấu hình cũ `current_input_file.enabled=true`. Bỏ cả upload lại context khi
+  đổi account và khoản token dự phòng cho file context tự tạo. File do caller
+  chủ động gửi vẫn theo đường upload riêng. Kết quả tool trong prompt giữ
+  `name`/`tool_call_id` nếu có, để kết quả liền nhau vẫn nhận diện được.
+- Tự chèn toàn bộ `Output integrity note`, gồm câu yêu cầu detector bỏ qua kiểm
+  tra và đoạn hướng dẫn output đi kèm. System prompt của caller và định dạng
+  role/tool vẫn được giữ; không lọc/xóa các câu tương tự do caller tự gửi.
+
+Nguồn: diff source gateway và regression test trực tiếp payload upstream.
+Đây là quyết định sản phẩm mới, thay thế hành vi transport/prefix trước đó;
+không phải bằng chứng các chẩn đoán về cá tính, latency hoặc TTS đã được sửa.
+Test giả lập không xác nhận phản hồi live của DeepSeek.
+
+Kiểm chứng sau sửa: `go test ./... -count=1` trong `tools/whale2api` qua toàn bộ;
+regression bao gồm stream/nonstream, legacy config bật, file caller chủ động
+gửi và nhiều kết quả tool khác thứ tự. Đã biên dịch mới hai binary Linux từ
+source này, đóng gói trên base image local cũ và kiểm SHA-256 trùng binary
+trong image. Smoke container với `--network none` trả `/healthz` status `ok`.
+Hai container Compose `whale2api`/`poolui` đã được tạo lại với image mới và giữ
+dừng như trước; chưa thử hội thoại live upstream. Image cũ được giữ tại tag
+`eris-whale2api-backup:before-plain-text-20261015` để có thể khôi phục.
