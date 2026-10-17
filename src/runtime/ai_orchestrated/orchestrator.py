@@ -767,8 +767,14 @@ class AIChatOrchestrator:
             tutor_capability = TutorCapability(
                 getattr(host, "tutor_executive", None),
                 logger=getattr(host, "logger", None),
+                living_user_source=lambda: getattr(getattr(host, "memory_kernel", None), "living_user", None),
             )
             host.tutor_capability = tutor_capability
+        else:
+            # Hot reload/bootstrap: giữ capability nhưng cập nhật nguồn profile.
+            tutor_capability.living_user_source = lambda: getattr(
+                getattr(host, "memory_kernel", None), "living_user", None
+            )
 
         work_capability = getattr(host, "work_capability", None)
         if not isinstance(work_capability, WorkCapability):

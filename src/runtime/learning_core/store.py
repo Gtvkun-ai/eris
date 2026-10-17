@@ -468,6 +468,28 @@ class LearningStore:
                 db.rollback()
                 raise
 
+    def repeated_error_patterns(self, kp_id: str, *, min_independent: int = 2, limit: int = 4) -> list[dict[str, Any]]:
+        """Thống kê lỗi tái diễn qua các câu hỏi; không xem nhãn lỗi là chẩn đoán.
+
+        Nhóm theo interaction/turn để 3 retries hay 3 evidence cùng câu hỏi
+        KHÔNG biến thành 3 lần người học mắc sai lầm độc lập.
+        """
+        with self._lock:
+            rows = self._db().execute(
+                """SELECT error_code,
+                    COUNT(DISTINCT COALESCE(NULLIF(interaction_id, ''),
+                                            NULLIF(turn_id, ''), evidence_id)) AS independent_count
+                   FROM learning_evidence
+                   WHERE kp_id = ? AND correct = 0 AND error_code <> ''
+                   GROUP BY error_code
+                   HAVING independent_count >= ?
+                   ORDER BY independent_count DESC, error_code ASC LIMIT ?""",
+                (kp_id, max(2, min(10, int(min_independent))), max(1, min(8, int(limit)))),
+            ).fetchall()
+        return [{"error_code": str(row["error_code"])[:80],
+                 "independent_count": int(row["independent_count"]),
+                 "status": "repeat_observed_not_diagnosis"} for row in rows]
+
     def load_evidence(self, kp_id: str, *, limit: int = 100) -> list[LearningEvidence]:
         with self._lock:
             rows = self._db().execute(

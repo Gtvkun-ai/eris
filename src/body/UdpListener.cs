@@ -386,7 +386,6 @@ public partial class UdpListener : Node2D
 		GetNode<Control>("CanvasLayer/Control").AddChild(_settingsPanel);
 		BuildSettingsPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
-		BuildChatPanelUi();
 		BuildConversationUi();
 	_chatSendButton.Pressed += OnSendPressed;
 	_chatCloseButton.Pressed += CloseChatPanel;
@@ -796,7 +795,8 @@ public partial class UdpListener : Node2D
 			|| TryGetVisibleControlMouseRect(_settingsPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_memoryPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_capabilityPanel, mouse, out rect)
-			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect))
+			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_plannerReminderToast, mouse, out rect))
 			return true;
 
 		// Tutor panel là decoration (MouseFilter.Ignore); chỉ nút Ẩn cần nhận click.
@@ -821,6 +821,7 @@ public partial class UdpListener : Node2D
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _plannerReminderToast, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, ActiveSpeechBubble(), 4f);
 	}
 
@@ -966,6 +967,14 @@ public partial class UdpListener : Node2D
 
 	public override void _Input(InputEvent @event)
 	{
+		if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape }
+			&& _conversationHistoryPanel?.Visible == true)
+		{
+			if (_plannerEditor.Visible) _plannerEditor.Visible = false;
+			else CloseConversationHistoryPanel();
+			GetViewport().SetInputAsHandled();
+			return;
+		}
 		// Đang kéo một panel: xử lý di chuyển + thả tại đây để kéo mượt kể cả khi
 		// con trỏ rời khỏi vùng panel (GuiInput không nhận motion khi ra ngoài).
 		if (_draggingPanel != null)
@@ -996,6 +1005,8 @@ public partial class UdpListener : Node2D
 
 		if (@event is not InputEventMouseButton mouseEvent)
 			return;
+		if (_plannerReminderToast?.Visible == true && IsMouseOverControl(_plannerReminderToast, mouseEvent.Position))
+			return; // Let the toast's own controls receive the click.
 
 		// Full-screen transparent overlay có thể còn giữ hit-test của frame trước.
 		// Nếu một mouse-down lọt vào Eris ở vùng không tương tác, chuyển nó ngay
@@ -1540,41 +1551,25 @@ public partial class UdpListener : Node2D
 	private void ToggleChatPanel()
 	{
 		CloseCharacterContextMenu();
-		if (_chatPanel.Visible)
-			CloseChatPanel();
+		if (_conversationHistoryPanel?.Visible == true)
+			CloseConversationHistoryPanel();
 		else
-		{
-			_bodyAutonomy?.RecordUserInteraction();
-			MarkChatActivity();
-			HideAllSpeechBubbles();
-			_bubbleHideAtMs = 0;
-			UpdateChatPanelLayout();
-			_chatPanel.Visible = true;
-			UpdateMousePassthrough();
-			_chatInput.GrabFocus();
-			SendChatSignal("chat_start");
-		}
+			OnContextChatPressed();
 	}
 
 	private void CloseChatPanel()
 	{
-		_bodyAutonomy?.RecordUserInteraction();
 		_chatPanel.Visible = false;
-		_chatInput.Text = "";
-		UpdateMousePassthrough();
-		SendChatSignal("chat_end");
+		CloseConversationHistoryPanel();
 	}
 
 	private void OnContextChatPressed()
 	{
-		CloseCharacterContextMenu();
-		if (!_chatPanel.Visible)
-			ToggleChatPanel();
-		else
-		{
-			MarkChatActivity();
-			_chatInput.GrabFocus();
-		}
+		_bodyAutonomy?.RecordUserInteraction();
+		ShowConversationHistoryPanel();
+		_workspaceShowPlanner = false;
+		SelectConversationDate(DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+		_chatInput.GrabFocus();
 	}
 
 	private void OnContextTouchPressed()
@@ -1720,6 +1715,7 @@ public partial class UdpListener : Node2D
 
 	private void UpdateChatPanelLayout()
 	{
+		if (_workspaceChatColumn != null) return;
 		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null || _chatFrameTexture == null)
 			return;
 
@@ -1987,11 +1983,12 @@ public partial class UdpListener : Node2D
 			EnsureLive2DContextButton(container);
 		}
 
-		ConfigureContextMenuButton(_contextChatButton, "Chat", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextChatButton, "Hội thoại & học tập", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextTouchButton, "Chạm / kéo / thả", "res://asset/Resource/tought.png");
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Nói ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Khí sắc & hiện diện", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextConversationHistoryButton, "Lịch sử hội thoại", "res://asset/Resource/chat.png");
+		_contextConversationHistoryButton.Visible = false; // Chat và lịch sử dùng chung cửa sổ.
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn", "res://asset/Resource/emotion.png");
@@ -4131,9 +4128,9 @@ public partial class UdpListener : Node2D
 		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
-		ApplyTypewriterEffect($"[Chủ nhân]: {msg}");
-		// Gửi xong là ẩn khung chat + báo chat_end để backend nối lại nhịp autonomous.
-		CloseChatPanel();
+		// Preserve chat -> chat_end independently of window visibility.
+		SendChatSignal("chat_end");
+		_chatInput.GrabFocus();
 	}
 
 	private void SendChatSignal(string type)

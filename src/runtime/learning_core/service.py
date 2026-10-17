@@ -420,6 +420,14 @@ class LearningService:
 
         return self._store.commit_evidence_bundle(evidence, project, now=ts)
 
+    def repeated_error_patterns(self, kp_id: str, *, min_independent: int = 2) -> list[dict[str, Any]]:
+        """Bằng chứng lỗi tái diễn, chưa phải nhãn tâm lý hay chứng minh hiểu sai.
+
+        Đọc từ ledger SQLite nguyên bản, không từ nhận định tự thuật của model.
+        """
+        with self._lock:
+            return self._store.repeated_error_patterns(kp_id, min_independent=min_independent)
+
     def learner_belief(self, kp_id: str) -> LearnerBeliefState:
         """Read-model cho Root/Tutor: belief chưa hiệu chỉnh, không được ghi trực tiếp."""
         with self._lock:

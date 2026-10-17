@@ -31,17 +31,17 @@ public partial class UdpListener
     private const string ConversationHistoryStatePath = "user://eris_conversation_history.json";
     private const string ConversationLegacyTodayStatePath = "user://eris_conversation_today.json";
     private const int ConversationHistoryLimit = 400;
-    private static readonly Vector2 ConversationHistoryPreferredSize = new(1040f, 680f);
+    private static readonly Vector2 ConversationHistoryPreferredSize = new(1380f, 820f);
     private static readonly Vector2 ConversationHistoryCompactSize = new(620f, 480f);
 
     // Hồng chỉ giữ vai trò điểm nhấn; phần còn lại dùng nền trung tính để lịch sử dễ đọc hơn.
-    private static readonly Color ErisAccent = new(0.91f, 0.29f, 0.56f, 1f);
-    private static readonly Color ErisSurface = new(1.00f, 0.985f, 0.992f, 0.995f);
+    private static readonly Color ErisAccent = new("ed408e");
+    private static readonly Color ErisSurface = new("fdfcfe");
     private static readonly Color ErisCard = new(1.00f, 1.00f, 1.00f, 0.985f);
     private static readonly Color ErisUserCard = new(1.00f, 0.925f, 0.963f, 0.995f);
-    private static readonly Color ErisText = new(0.30f, 0.15f, 0.22f, 1f);
-    private static readonly Color ErisMuted = new(0.57f, 0.42f, 0.49f, 1f);
-    private static readonly Color ErisBorder = new(0.94f, 0.86f, 0.90f, 0.92f);
+    private static readonly Color ErisText = new("302c46");
+    private static readonly Color ErisMuted = new("797288");
+    private static readonly Color ErisBorder = new("eeeaf2");
 
     private readonly List<ConversationEntry> _conversationEntries = new();
     private Panel _conversationHistoryPanel;
@@ -91,10 +91,11 @@ public partial class UdpListener
             Visible = false,
             CustomMinimumSize = Vector2.Zero,
             Size = ConversationHistoryPreferredSize,
-            ZIndex = 99,
+            ZIndex = 1010,
             ClipContents = true,
         };
         GetNode<Control>("CanvasLayer/Control").AddChild(_conversationHistoryPanel);
+        _conversationHistoryPanel.Theme = new Theme { DefaultFont = WorkspaceFont(), DefaultFontSize = 13 };
         BuildConversationPanelTree();
         RebuildConversationMessages();
         RefreshConversationHeaderDate();
@@ -122,7 +123,8 @@ public partial class UdpListener
         EnsureConversationDateCurrent();
         CloseCharacterContextMenu();
         _conversationHistoryPanel.Visible = true;
-        _conversationHistoryPanel.ZIndex = 99;
+        _chatPanel.Visible = false;
+        _conversationHistoryPanel.ZIndex = 1010;
         _conversationHistoryPanel.MoveToFront();
         UpdateConversationUiLayout(force: true);
         RefreshConversationPresenceFromRuntime();
@@ -139,125 +141,18 @@ public partial class UdpListener
         if (_draggingPanel == _conversationHistoryPanel)
             _draggingPanel = null;
         _conversationHistoryPanel.Visible = false;
+        _plannerEditor.Visible = false;
+        // A visible history window does not own the runtime turn. Drafts survive closing.
         ResetConversationDeleteConfirmation();
         UpdateMousePassthrough();
     }
 
     private void BuildConversationPanelTree()
     {
-        _conversationHistoryPanel.AddThemeStyleboxOverride("panel", MakeFlatStyle(
-            ErisSurface,
-            ErisBorder,
-            20,
-            1,
-            0f,
-            shadow: true));
-
-        var outerMargin = new MarginContainer
-        {
-            Name = "ConversationHistoryMargin",
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        outerMargin.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        outerMargin.AddThemeConstantOverride("margin_left", 16);
-        outerMargin.AddThemeConstantOverride("margin_right", 16);
-        outerMargin.AddThemeConstantOverride("margin_top", 16);
-        outerMargin.AddThemeConstantOverride("margin_bottom", 16);
-        _conversationHistoryPanel.AddChild(outerMargin);
-
-        // Sidebar chỉ làm một việc có ích: điều hướng lịch sử theo từng ngày.
-        // Nội dung hội thoại vẫn giữ một mặt phẳng, không quay lại kiểu hộp lồng hộp.
-        PanelContainer main = BuildConversationMainCard();
-        outerMargin.AddChild(main);
+        BuildCompanionWorkspace();
     }
 
-    private PanelContainer BuildConversationMainCard()
-    {
-        var card = new PanelContainer
-        {
-            Name = "ConversationHistoryMainCard",
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        // Khung ngoài đã có nền, viền và bo góc. Không bọc thêm một “hộp trong hộp”.
-        card.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
 
-        var root = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        root.AddThemeConstantOverride("separation", 0);
-        card.AddChild(root);
-
-        root.AddChild(BuildConversationHeader());
-        root.AddChild(BuildConversationBody());
-        return card;
-    }
-
-    private Control BuildConversationHeader()
-    {
-        var margin = new MarginContainer
-        {
-            CustomMinimumSize = new Vector2(0f, 74f),
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        margin.AddThemeConstantOverride("margin_left", 20);
-        margin.AddThemeConstantOverride("margin_right", 12);
-        margin.AddThemeConstantOverride("margin_top", 10);
-        margin.AddThemeConstantOverride("margin_bottom", 9);
-
-        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        row.AddThemeConstantOverride("separation", 8);
-        margin.AddChild(row);
-
-        var titles = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        titles.AddThemeConstantOverride("separation", 2);
-        row.AddChild(titles);
-
-        Label title = ConversationLabel("Lịch sử hội thoại", 23, ErisText);
-        title.ClipText = true;
-        title.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        titles.AddChild(title);
-
-        // Ngày và số tin nhắn là ngữ cảnh phụ, không cần chiếm một cột riêng trong header.
-        _conversationHeaderDate = ConversationLabel("Chưa có tin nhắn", 12, ErisMuted);
-        _conversationHeaderDate.ClipText = true;
-        _conversationHeaderDate.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        titles.AddChild(_conversationHeaderDate);
-
-        _conversationDeleteButton = new Button
-        {
-            Name = "ConversationHistoryDeleteButton",
-            Text = "Xoá",
-            CustomMinimumSize = new Vector2(54f, 32f),
-            FocusMode = Control.FocusModeEnum.None,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
-            TooltipText = "Xoá toàn bộ lịch sử hội thoại trên máy này",
-        };
-        StyleConversationDeleteButton(armed: false);
-        _conversationDeleteButton.Pressed += OnDeleteConversationHistoryPressed;
-        row.AddChild(_conversationDeleteButton);
-
-        _conversationHistoryCloseButton = CreateWindowControlButton(
-            "x",
-            CloseConversationHistoryPanel,
-            32f,
-            13);
-        _conversationHistoryCloseButton.Name = "ConversationHistoryCloseButton";
-        _conversationHistoryCloseButton.FocusMode = Control.FocusModeEnum.None;
-        _conversationHistoryCloseButton.TooltipText = "Đóng lịch sử hội thoại";
-        row.AddChild(_conversationHistoryCloseButton);
-
-        return margin;
-    }
 
     private void StyleConversationDeleteButton(bool armed)
     {
@@ -325,7 +220,7 @@ public partial class UdpListener
         _conversationDeleteArmedAtMs = 0;
         if (_conversationDeleteButton == null)
             return;
-        _conversationDeleteButton.Text = "Xoá";
+        _conversationDeleteButton.Text = "Xóa lịch sử trên máy";
         _conversationDeleteButton.TooltipText = "Xoá toàn bộ lịch sử hội thoại trên máy này";
         StyleConversationDeleteButton(armed: false);
     }
@@ -335,11 +230,14 @@ public partial class UdpListener
         _conversationEntries.Clear();
         _lastAssistantConversationText = "";
         _lastAssistantConversationAtMs = 0;
-        _conversationStoreDate = DateTime.Now.ToString("yyyy-MM-dd");
+        _conversationStoreDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         _conversationSelectedDate = "";
         _conversationDateSelectionInitialized = false;
-        DeleteConversationStoreFile(ConversationHistoryStatePath);
-        DeleteConversationStoreFile(ConversationLegacyTodayStatePath);
+        if (!_companionPreview)
+        {
+            DeleteConversationStoreFile(ConversationHistoryStatePath);
+            DeleteConversationStoreFile(ConversationLegacyTodayStatePath);
+        }
         ResetConversationDeleteConfirmation();
         RebuildConversationMessages();
         RefreshConversationHeaderDate();
@@ -382,17 +280,6 @@ public partial class UdpListener
         };
         contentRow.AddThemeConstantOverride("separation", 0);
         body.AddChild(contentRow);
-
-        contentRow.AddChild(BuildConversationDaySidebar());
-
-        var divider = new ColorRect
-        {
-            Color = new Color(0.94f, 0.86f, 0.90f, 0.82f),
-            CustomMinimumSize = new Vector2(1f, 0f),
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        contentRow.AddChild(divider);
 
         var conversationArea = new VBoxContainer
         {
@@ -457,78 +344,59 @@ public partial class UdpListener
         _conversationDaySidebar = new PanelContainer
         {
             Name = "ConversationHistoryDaySidebar",
-            CustomMinimumSize = new Vector2(190f, 0f),
+            CustomMinimumSize = new Vector2(252, 0),
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        _conversationDaySidebar.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(1.00f, 0.985f, 0.992f, 0.54f),
-            ContentMarginLeft = 0,
-            ContentMarginTop = 0,
-            ContentMarginRight = 0,
-            ContentMarginBottom = 0,
-        });
-
-        var margin = new MarginContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        margin.AddThemeConstantOverride("margin_left", 12);
-        margin.AddThemeConstantOverride("margin_right", 10);
-        margin.AddThemeConstantOverride("margin_top", 15);
-        margin.AddThemeConstantOverride("margin_bottom", 14);
+        var style = MakeFlatStyle(new Color("faf8fc"), ErisBorder, 0, 0, 0);
+        style.BorderWidthRight = 1;
+        _conversationDaySidebar.AddThemeStyleboxOverride("panel", style);
+        var margin = WorkspaceMargin(16, 20, 16, 18);
         _conversationDaySidebar.AddChild(margin);
-
-        var root = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        root.AddThemeConstantOverride("separation", 7);
+        var root = WorkspaceColumn();
+        root.AddThemeConstantOverride("separation", 12);
         margin.AddChild(root);
-
-        Label heading = ConversationLabel("THEO NGÀY", 10, ErisAccent);
+        var heading = ConversationLabel("Hội thoại", 17, ErisText);
+        heading.AddThemeFontOverride("font", WorkspaceFont(true));
         root.AddChild(heading);
-
-        _conversationDayCountLabel = ConversationLabel("Chưa có dữ liệu", 11, ErisMuted);
-        _conversationDayCountLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _conversationDayCountLabel = ConversationLabel("Những câu chuyện của mình", 11, ErisMuted);
         root.AddChild(_conversationDayCountLabel);
-
-        var smallDivider = new ColorRect
+        _workspaceHistorySearch = new LineEdit { PlaceholderText = "Tìm trong hội thoại…", ClearButtonEnabled = true };
+        StyleWorkspaceInput(_workspaceHistorySearch);
+        root.AddChild(_workspaceHistorySearch);
+        _workspaceHistorySearch.TextChanged += text =>
         {
-            Color = new Color(0.94f, 0.86f, 0.90f, 0.80f),
-            CustomMinimumSize = new Vector2(0f, 1f),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
+            _conversationSearchQuery = text.Trim();
+            _conversationSelectedDate = "";
+            _conversationDateSelectionInitialized = true;
+            RebuildConversationMessages();
+            RefreshConversationHeaderDate();
         };
-        root.AddChild(smallDivider);
-
+        root.AddChild(WorkspaceButton("Trở về hôm nay", "history", () =>
+        {
+            _conversationSearchQuery = "";
+            _workspaceHistorySearch.Text = "";
+            SelectConversationDate(DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            _chatInput.GrabFocus();
+        }, primary: true));
+        root.AddChild(ConversationLabel("LỊCH SỬ THEO NGÀY", 10, ErisMuted));
         _conversationDayScroll = new ScrollContainer
         {
-            Name = "ConversationHistoryDayScroll",
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-            ClipContents = true,
         };
-        _conversationDayScroll.AddThemeConstantOverride("v_scrollbar_separation", 2);
         root.AddChild(_conversationDayScroll);
-
-        _conversationDayList = new VBoxContainer
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        _conversationDayList.AddThemeConstantOverride("separation", 4);
+        _conversationDayList = WorkspaceColumn();
+        _conversationDayList.SizeFlagsVertical = Control.SizeFlags.ShrinkBegin;
+        _conversationDayList.AddThemeConstantOverride("separation", 6);
         _conversationDayScroll.AddChild(_conversationDayList);
         ApplyConversationScrollBarTheme(_conversationDayScroll.GetVScrollBar(), compact: true);
+        root.AddChild(MakeSeparator());
+        root.AddChild(WorkspaceWrap("Một nơi để tiếp nối\nnhững điều còn dang dở.", 11, ErisMuted));
+        _conversationDeleteButton = WorkspaceButton("Xóa lịch sử trên máy", "trash", OnDeleteConversationHistoryPressed);
+        _conversationDeleteButton.Name = "ConversationHistoryDeleteButton";
+        StyleConversationDeleteButton(false);
+        root.AddChild(_conversationDeleteButton);
         return _conversationDaySidebar;
     }
 
@@ -544,14 +412,17 @@ public partial class UdpListener
         }
 
         List<IGrouping<string, ConversationEntry>> groups = _conversationEntries
+            .Where(ConversationSearchMatches)
             .GroupBy(entry => NormalizeConversationDate(entry.Date, _conversationStoreDate), StringComparer.Ordinal)
             .OrderByDescending(group => group.Key, StringComparer.Ordinal)
             .ToList();
 
-        EnsureConversationSelectedDate(groups.Select(group => group.Key).ToList());
+        EnsureConversationSelectedDate(_conversationEntries.Select(entry => NormalizeConversationDate(entry.Date, _conversationStoreDate)).Distinct().OrderByDescending(date => date).ToList());
         if (_conversationDayCountLabel != null)
         {
-            _conversationDayCountLabel.Text = groups.Count == 0
+            _conversationDayCountLabel.Text = !string.IsNullOrWhiteSpace(_conversationSearchQuery)
+                ? $"{_conversationEntries.Count(ConversationSearchMatches)} kết quả · {groups.Count} ngày"
+                : groups.Count == 0
                 ? "Chưa có dữ liệu"
                 : groups.Count == 1
                     ? $"1 ngày · {_conversationEntries.Count} tin nhắn"
@@ -562,17 +433,18 @@ public partial class UdpListener
             "",
             "Tất cả",
             groups.Count == 0 ? "Chưa có dữ liệu" : $"{groups.Count} ngày",
-            _conversationEntries.Count,
+            _conversationEntries.Count(ConversationSearchMatches),
             string.IsNullOrWhiteSpace(_conversationSelectedDate)));
 
         foreach (IGrouping<string, ConversationEntry> group in groups)
         {
             string date = group.Key;
             int count = group.Count();
+            string preview = group.Last().Text.Replace("\n", " ");
             _conversationDayList.AddChild(BuildConversationDayButton(
                 date,
                 ConversationDaySidebarTitle(date),
-                DisplayConversationDate(date),
+                preview,
                 count,
                 string.Equals(_conversationSelectedDate, date, StringComparison.Ordinal)));
         }
@@ -588,7 +460,7 @@ public partial class UdpListener
         var button = new Button
         {
             Text = "",
-            CustomMinimumSize = new Vector2(0f, 52f),
+            CustomMinimumSize = new Vector2(0f, 68f),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
@@ -641,18 +513,18 @@ public partial class UdpListener
         labels.AddThemeConstantOverride("separation", 0);
         row.AddChild(labels);
 
-        Label titleLabel = ConversationLabel(title, 12, selected ? ErisText : new Color(0.39f, 0.25f, 0.31f, 1f));
+        Label titleLabel = ConversationLabel(title, 13, selected ? ErisText : new Color(0.39f, 0.25f, 0.31f, 1f));
         titleLabel.ClipText = true;
         titleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         labels.AddChild(titleLabel);
 
-        Label subtitleLabel = ConversationLabel(subtitle, 10, ErisMuted);
+        Label subtitleLabel = ConversationLabel(subtitle, 11, ErisMuted);
         subtitleLabel.ClipText = true;
         subtitleLabel.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         labels.AddChild(subtitleLabel);
 
         Label countLabel = ConversationLabel(count.ToString(CultureInfo.InvariantCulture), 11, selected ? ErisAccent : ErisMuted);
-        countLabel.CustomMinimumSize = new Vector2(26f, 0f);
+        countLabel.CustomMinimumSize = new Vector2(24f, 0f);
         countLabel.HorizontalAlignment = HorizontalAlignment.Right;
         countLabel.VerticalAlignment = VerticalAlignment.Center;
         row.AddChild(countLabel);
@@ -672,7 +544,7 @@ public partial class UdpListener
 
         if (!_conversationDateSelectionInitialized)
         {
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
+            string today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             _conversationSelectedDate = datesDescending.Contains(today, StringComparer.Ordinal)
                 ? today
                 : datesDescending[0];
@@ -681,6 +553,7 @@ public partial class UdpListener
         }
 
         if (!string.IsNullOrWhiteSpace(_conversationSelectedDate)
+            && _conversationSelectedDate != DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
             && !datesDescending.Contains(_conversationSelectedDate, StringComparer.Ordinal))
             _conversationSelectedDate = datesDescending[0];
     }
@@ -691,6 +564,8 @@ public partial class UdpListener
         _conversationSelectedDate = string.IsNullOrWhiteSpace(date)
             ? ""
             : NormalizeConversationDate(date, _conversationStoreDate);
+        _workspaceShowHistory = false;
+        UpdateCompanionColumns();
         RebuildConversationDayList();
         RebuildConversationMessages(rebuildDayList: false);
         RefreshConversationHeaderDate();
@@ -700,7 +575,7 @@ public partial class UdpListener
 
     private static string ConversationDaySidebarTitle(string date)
     {
-        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd"));
+        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         if (!DateTime.TryParseExact(normalized, "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out DateTime parsed))
             return DisplayConversationDate(normalized);
@@ -811,33 +686,30 @@ public partial class UdpListener
         var panel = new PanelContainer
         {
             Name = "ConversationHistoryEmptyState",
-            CustomMinimumSize = new Vector2(0f, 126f),
+            CustomMinimumSize = new Vector2(0, 260),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        panel.AddThemeStyleboxOverride("panel", MakeFlatStyle(
-            new Color(1.00f, 0.97f, 0.985f, 0.82f),
-            new Color(0.94f, 0.86f, 0.90f, 0.86f),
-            12,
-            1,
-            18f));
-
-        var box = new VBoxContainer
-        {
-            Alignment = BoxContainer.AlignmentMode.Center,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        box.AddThemeConstantOverride("separation", 5);
+        panel.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
+        var box = WorkspaceColumn();
+        box.Alignment = BoxContainer.AlignmentMode.Center;
+        box.AddThemeConstantOverride("separation", 12);
         panel.AddChild(box);
-
-        Label title = ConversationLabel("Chưa có lịch sử trò chuyện", 16, ErisText);
+        var avatar = WorkspaceAvatar(72);
+        avatar.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        box.AddChild(avatar);
+        var title = WorkspaceWrap("Hôm nay của bạn thế nào?", 22, ErisText);
+        title.Name = "EmptyTitle";
         title.HorizontalAlignment = HorizontalAlignment.Center;
+        title.AddThemeFontOverride("font", WorkspaceFont(true));
         box.AddChild(title);
-
-        Label hint = ConversationLabel("Tin nhắn sẽ xuất hiện ở đây và được nhóm theo ngày.", 12, ErisMuted);
+        var hint = WorkspaceWrap("Kể Eris nghe một câu chuyện, một ý tưởng,\nhoặc cùng dành chút thời gian học điều mới.", 13, ErisMuted);
+        hint.Name = "EmptyHint";
         hint.HorizontalAlignment = HorizontalAlignment.Center;
-        hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         box.AddChild(hint);
+        var start = WorkspaceButton("Cùng học một chút", "arrow", () => StartLearningWithEris());
+        start.Name = "EmptyStart";
+        start.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        box.AddChild(start);
         return panel;
     }
 
@@ -895,8 +767,7 @@ public partial class UdpListener
 
         if (_conversationHeaderDate != null)
             _conversationHeaderDate.Visible = target.X >= 560f;
-        if (_conversationDaySidebar != null)
-            _conversationDaySidebar.CustomMinimumSize = new Vector2(target.X < 760f ? 166f : 190f, 0f);
+        UpdateCompanionColumns();
         Callable.From(UpdateConversationScrollDecor).CallDeferred();
     }
 
@@ -913,6 +784,10 @@ public partial class UdpListener
 
     private void RecordConversationUserMessage(string text)
     {
+        _conversationSelectedDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        _conversationDateSelectionInitialized = true;
+        _conversationSearchQuery = "";
+        if (_workspaceHistorySearch != null) _workspaceHistorySearch.Text = "";
         ConversationAppendMessage("user", text);
         ConversationSetState("thinking", "Eris đang suy nghĩ...");
     }
@@ -946,8 +821,8 @@ public partial class UdpListener
         {
             Role = role == "user" ? "user" : "assistant",
             Text = cleaned,
-            Date = now.ToString("yyyy-MM-dd"),
-            Time = now.ToString("HH:mm"),
+            Date = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            Time = now.ToString("HH:mm", CultureInfo.InvariantCulture),
         };
         _conversationEntries.Add(entry);
         while (_conversationEntries.Count > ConversationHistoryLimit)
@@ -987,7 +862,16 @@ public partial class UdpListener
         Label meta = ConversationLabel(user ? $"Bạn · {entry.Time}" : $"Eris · {entry.Time}", 11,
             user ? new Color(0.61f, 0.24f, 0.42f, 1f) : ErisAccent);
         meta.HorizontalAlignment = user ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-        cluster.AddChild(meta);
+        var metaRow = new HBoxContainer();
+        meta.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        metaRow.AddChild(meta);
+        var copy = WorkspaceButton("", "copy", () => DisplayServer.ClipboardSet(entry.Text));
+        copy.CustomMinimumSize = new Vector2(24, 24);
+        copy.TooltipText = "Sao chép tin nhắn";
+        copy.AddThemeStyleboxOverride("normal", new StyleBoxEmpty());
+        copy.AddThemeStyleboxOverride("hover", MakeFlatStyle(new Color("f8edf5"), Colors.Transparent, 6, 0, 0));
+        metaRow.AddChild(copy);
+        cluster.AddChild(metaRow);
 
         var bubble = new PanelContainer
         {
@@ -1001,8 +885,9 @@ public partial class UdpListener
             user ? 0 : 1,
             12f));
 
-        Label message = ConversationLabel(entry.Text, 14, ErisText);
+        Label message = ConversationLabel(entry.Text, 15, ErisText);
         message.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        message.AddThemeConstantOverride("line_spacing", 4);
         message.CustomMinimumSize = new Vector2(EstimateConversationBubbleWidth(entry.Text), 0f);
         bubble.AddChild(message);
         cluster.AddChild(bubble);
@@ -1061,18 +946,18 @@ public partial class UdpListener
     private IEnumerable<ConversationEntry> ConversationVisibleEntries()
     {
         if (string.IsNullOrWhiteSpace(_conversationSelectedDate))
-            return _conversationEntries;
+            return _conversationEntries.Where(ConversationSearchMatches);
 
         return _conversationEntries.Where(entry => string.Equals(
             NormalizeConversationDate(entry.Date, _conversationStoreDate),
             _conversationSelectedDate,
-            StringComparison.Ordinal));
+            StringComparison.Ordinal) && ConversationSearchMatches(entry));
     }
 
     private bool ConversationShowsLiveDay()
     {
         return string.IsNullOrWhiteSpace(_conversationSelectedDate)
-            || string.Equals(_conversationSelectedDate, DateTime.Now.ToString("yyyy-MM-dd"), StringComparison.Ordinal);
+            || string.Equals(_conversationSelectedDate, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     private Control BuildConversationDateSeparator(string date)
@@ -1118,7 +1003,16 @@ public partial class UdpListener
         bool historyEmpty = _conversationEntries.Count == 0;
         bool visibleEmpty = !ConversationVisibleEntries().Any();
         if (_conversationEmptyState != null)
+        {
             _conversationEmptyState.Visible = visibleEmpty;
+            var content = _conversationEmptyState.GetChild<VBoxContainer>(0);
+            bool searching = !string.IsNullOrWhiteSpace(_conversationSearchQuery);
+            content.GetNode<Label>("EmptyTitle").Text = searching ? "Chưa tìm thấy tin nhắn" : "Hôm nay của bạn thế nào?";
+            content.GetNode<Label>("EmptyHint").Text = searching
+                ? "Thử một từ khóa khác hoặc chọn Tất cả trong lịch sử."
+                : "Kể Eris nghe một câu chuyện, một ý tưởng,\nhoặc cùng dành chút thời gian học điều mới.";
+            content.GetNode<Button>("EmptyStart").Visible = !searching;
+        }
         if (_conversationDeleteButton != null)
             _conversationDeleteButton.Disabled = historyEmpty;
     }
@@ -1133,6 +1027,8 @@ public partial class UdpListener
 
     private void RefreshConversationPresence()
     {
+        if (_workspacePresence != null)
+            _workspacePresence.Text = _conversationStateLabel;
         bool thinking = _conversationState is "thinking" or "preparing" or "buffering";
         if (_conversationThinkingRow != null)
             _conversationThinkingRow.Visible = thinking && ConversationShowsLiveDay();
@@ -1170,6 +1066,7 @@ public partial class UdpListener
 
     private void TickConversationUi()
     {
+        TickPersonalPlanner();
         EnsureConversationDateCurrent();
         if (_conversationHistoryPanel?.Visible ?? false)
             UpdateConversationUiLayout();
@@ -1227,9 +1124,12 @@ public partial class UdpListener
         if (clean.Length > 84)
             ideal = Mathf.Max(ideal, 320f);
 
-        float panelWidth = _conversationHistoryPanel?.Size.X ?? ConversationHistoryPreferredSize.X;
-        float sidebarWidth = _conversationDaySidebar?.CustomMinimumSize.X ?? 190f;
-        float available = Mathf.Clamp(panelWidth - sidebarWidth - 140f, 230f, 560f);
+        // Derive from the target layout: old bubble minimum widths must not keep
+        // the container wider than a newly narrowed viewport.
+        float chatWidth = _conversationHistoryPanel?.Size.X ?? 600f;
+        if (_conversationDaySidebar?.Visible == true) chatWidth -= _conversationDaySidebar.CustomMinimumSize.X;
+        if (_workspacePlannerRail?.Visible == true) chatWidth -= _workspacePlannerRail.CustomMinimumSize.X;
+        float available = Mathf.Clamp(chatWidth - 100f, 80f, 560f);
         return Mathf.Min(ideal, available);
     }
 
@@ -1360,7 +1260,7 @@ public partial class UdpListener
 
     private void EnsureConversationDateCurrent()
     {
-        string today = DateTime.Now.ToString("yyyy-MM-dd");
+        string today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (string.Equals(_conversationStoreDate, today, StringComparison.Ordinal))
             return;
 
@@ -1375,8 +1275,9 @@ public partial class UdpListener
 
     private void LoadConversationHistory()
     {
+        if (_companionPreview) return;
         _conversationEntries.Clear();
-        _conversationStoreDate = DateTime.Now.ToString("yyyy-MM-dd");
+        _conversationStoreDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         bool loaded = TryLoadConversationHistoryFile();
         if (!loaded)
@@ -1455,6 +1356,7 @@ public partial class UdpListener
 
     private void SaveConversationHistory()
     {
+        if (_companionPreview) return;
         string path = ProjectSettings.GlobalizePath(ConversationHistoryStatePath);
         try
         {
@@ -1517,14 +1419,14 @@ public partial class UdpListener
         string candidate = (date ?? "").Trim();
         if (DateTime.TryParseExact(candidate, "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out DateTime parsed))
-            return parsed.ToString("yyyy-MM-dd");
+            return parsed.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         string fallback = (fallbackDate ?? "").Trim();
         if (DateTime.TryParseExact(fallback, "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out parsed))
-            return parsed.ToString("yyyy-MM-dd");
+            return parsed.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        return DateTime.Now.ToString("yyyy-MM-dd");
+        return DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     }
 
     private static string NormalizeConversationTime(string time)
@@ -1532,34 +1434,34 @@ public partial class UdpListener
         string candidate = (time ?? "").Trim();
         if (DateTime.TryParseExact(candidate, new[] { "HH:mm", "H:mm", "HH:mm:ss", "H:mm:ss" },
                 CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
-            return parsed.ToString("HH:mm");
+            return parsed.ToString("HH:mm", CultureInfo.InvariantCulture);
         return "--:--";
     }
 
     private static string DisplayConversationDate(string date)
     {
-        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd"));
+        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         if (DateTime.TryParseExact(normalized, "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out DateTime parsed))
-            return parsed.ToString("dd/MM/yyyy");
+            return parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         return normalized;
     }
 
     private static string ConversationDateHeading(string date)
     {
-        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd"));
+        string normalized = NormalizeConversationDate(date, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         DateTime today = DateTime.Today;
         if (DateTime.TryParseExact(normalized, "yyyy-MM-dd", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out DateTime parsed))
         {
             if (parsed.Date == today)
-                return $"Hôm nay · {parsed:dd/MM/yyyy}";
+                return $"Hôm nay · {parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
             if (parsed.Date == today.AddDays(-1))
-                return $"Hôm qua · {parsed:dd/MM/yyyy}";
+                return $"Hôm qua · {parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
             string weekday = parsed.ToString("dddd", new CultureInfo("vi-VN"));
             if (!string.IsNullOrWhiteSpace(weekday))
                 weekday = char.ToUpperInvariant(weekday[0]) + weekday.Substring(1);
-            return $"{weekday} · {parsed:dd/MM/yyyy}";
+            return $"{weekday} · {parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
         }
         return DisplayConversationDate(normalized);
     }

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from runtime.conversation.contracts import DeliveryReceipt
+from runtime.tutor.learner_context import learner_profile_from_living_user, learner_continuity_snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,7 @@ class TutorAdvice:
     teaching_move: Mapping[str, Any] | None = None
     expects_learner_response: bool = False
     learner_belief: Mapping[str, Any] | None = None
+    learner_state: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,13 +33,15 @@ class TutorAdvice:
             "teaching_move": dict(self.teaching_move or {}),
             "expects_learner_response": self.expects_learner_response,
             "learner_belief": dict(self.learner_belief or {}),
+            "learner_state": dict(self.learner_state or {}),
         }
 
 
 class TutorCapability:
-    def __init__(self, executive: Any | None, *, logger: Any = None) -> None:
+    def __init__(self, executive: Any | None, *, logger: Any = None, living_user_source: Any = None) -> None:
         self.executive = executive
         self.logger = logger
+        self.living_user_source = living_user_source
         self._last_decision = None
         # Đây là state *domain* của learning interaction, không phải public
         # conversation lifecycle. RootAgent vẫn có quyền bỏ qua tutor nếu user
@@ -58,14 +62,17 @@ class TutorCapability:
         if response_to_previous is None:
             response_to_previous = self._waiting_for_response
         assessment = None
+        # Mỗi invocation đọc profile hiện hành. Không cache để correction/forget có hiệu lực.
+        learner = learner_profile_from_living_user(self.living_user_source)
+        learner_kwargs = {"learner": learner} if self.living_user_source is not None else {}
         try:
             if response_to_previous:
                 assessment_obj = self.executive.observe_response(
-                    user_text, turn_id=turn_id, recent_history=recent_history
+                    user_text, turn_id=turn_id, recent_history=recent_history, **learner_kwargs
                 )
                 assessment = assessment_obj.to_dict() if assessment_obj is not None else None
             decision = self.executive.plan_next_move(
-                user_text, turn_id=turn_id, recent_history=recent_history
+                user_text, turn_id=turn_id, recent_history=recent_history, **learner_kwargs
             )
             self._last_decision = decision
             belief = {}
@@ -79,7 +86,9 @@ class TutorCapability:
             if decision is None:
                 self._waiting_for_response = False
                 self._pending_expects = False
-                return TutorAdvice(active=bool(assessment), assessment=assessment)
+                return TutorAdvice(active=bool(assessment), assessment=assessment,
+                                   learner_state=learner_continuity_snapshot(
+                                       getattr(self.executive, "learning", None), source=self.living_user_source))
             writer_context = decision.to_writer_context()
             move = writer_context.get("move") if isinstance(writer_context, Mapping) else None
             constraints = writer_context.get("delivery_constraints") if isinstance(writer_context, Mapping) else None
@@ -94,6 +103,8 @@ class TutorCapability:
                 teaching_move=dict(move or {}) if isinstance(move, Mapping) else {},
                 expects_learner_response=expects,
                 learner_belief=belief,
+                learner_state=learner_continuity_snapshot(
+                    getattr(self.executive, "learning", None), source=self.living_user_source),
             )
         except Exception as exc:  # noqa: BLE001
             self._log("debug", "[tutor-capability-v12] degraded: %s", exc)
