@@ -203,11 +203,14 @@ class ProfileContextCompiler:
             return [0.0] * len(documents)
         try:
             vectors = embed_many(documents)
+            # Giữ len() TRONG biên fail-soft: provider trả None/giá trị không
+            # len() được thì rơi về lexical thay vì raise làm sập recall.
+            if len(vectors) != len(documents):
+                return [0.0] * len(documents)
+            # Vật chất hoá trước khi tính cosine để một row hỏng cũng bị bắt ở đây.
+            return [self._cosine_vec(query_vector, vector) for vector in vectors]
         except Exception:
             return [0.0] * len(documents)
-        if len(vectors) != len(documents):
-            return [0.0] * len(documents)
-        return [self._cosine_vec(query_vector, vector) for vector in vectors]
 
     def _cosine_vec(self, query_vector: tuple[float, ...], raw_vector: Iterable[float]) -> float:
         try:

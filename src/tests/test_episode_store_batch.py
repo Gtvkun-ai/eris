@@ -117,3 +117,45 @@ def test_search_batch_length_mismatch_drops_dense(tmp_path):
     # Không crash, vẫn recall bằng lexical.
     assert results
     assert results[0].title == "Refactor python memory"
+
+
+def test_search_empty_vector_batch_falls_back_to_lexical(tmp_path):
+    """Finding 3: provider callable TRẢ vector rỗng (độ dài khớp) -> dense=0.0.
+
+    Đây là trạng thái embedding load-fail thật (embed_documents -> [(), ()]). Phải
+    đi xuyên tới recall consumer: không crash, vẫn recall bằng lexical.
+    """
+    store = _store_with_episodes(tmp_path)
+
+    class _EmptyVecIndex:
+        def __init__(self):
+            self.embed_documents_calls = 0
+
+        def embed_query(self, text):
+            return (1.0, 0.0, 0.0)
+
+        def embed_documents(self, texts):
+            self.embed_documents_calls += 1
+            return [() for _ in texts]  # độ dài khớp, vector rỗng
+
+    index = _EmptyVecIndex()
+    results = store.search("python embedding", limit=5, embedding_index=index)
+    assert index.embed_documents_calls == 1  # batch vẫn chạy một lần
+    assert results  # dense=0.0, lexical vẫn chọn được
+    assert results[0].title == "Refactor python memory"
+
+
+def test_search_malformed_row_is_fail_soft(tmp_path):
+    """Finding 1: một row hỏng (None) không được raise, coi như dense=0.0."""
+    store = _store_with_episodes(tmp_path)
+
+    class _BadRowIndex:
+        def embed_query(self, text):
+            return (1.0, 0.0, 0.0)
+
+        def embed_documents(self, texts):
+            return [None for _ in texts]  # độ dài khớp nhưng row hỏng
+
+    results = store.search("python embedding", limit=5, embedding_index=_BadRowIndex())
+    assert results  # không crash, lexical vẫn recall
+    assert results[0].title == "Refactor python memory"

@@ -207,8 +207,14 @@ class UserEpisodeStore:
 
 
 def _cosine(left: Iterable[float], right: Iterable[float]) -> float:
-    a = tuple(float(x) for x in left)
-    b = tuple(float(x) for x in right)
+    # Fail-soft: row hỏng (None, giá trị không iterate/float được) rơi về 0.0 thay
+    # vì raise. Batch provider thật luôn trả tuple float, nhưng dense chỉ là tín
+    # hiệu phụ nên không được phép làm sập recall.
+    try:
+        a = tuple(float(x) for x in left)
+        b = tuple(float(x) for x in right)
+    except (TypeError, ValueError):
+        return 0.0
     if not a or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))

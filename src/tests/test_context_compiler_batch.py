@@ -97,6 +97,44 @@ def test_compile_bad_length_index_drops_dense(tmp_path):
     assert packet.items  # không crash, dense=0.0
 
 
+def test_compile_empty_vector_batch_falls_back_to_lexical(tmp_path):
+    """Finding 3: provider callable TRẢ vector rỗng (độ dài khớp) -> dense=0.0.
+
+    Mô phỏng embedding load-fail thật (embed_documents -> [(), ...]). Recall consumer
+    vẫn chạy: không crash, điểm dồn về trust/domain/lexical/recency.
+    """
+    class _EmptyVecIndex:
+        def __init__(self):
+            self.embed_documents_calls = 0
+
+        def embed_query(self, text):
+            return (1.0, 0.0, 0.0)
+
+        def embed_documents(self, texts):
+            self.embed_documents_calls += 1
+            return [() for _ in texts]  # độ dài khớp, vector rỗng
+
+    index = _EmptyVecIndex()
+    compiler = _compiler(tmp_path, index)
+    packet = compiler.compile("python embedding")
+    assert index.embed_documents_calls == 1
+    assert packet.items  # dense=0.0, vẫn chọn được
+
+
+def test_compile_malformed_row_is_fail_soft(tmp_path):
+    """Finding 1: một row hỏng (None) không được raise, coi như dense=0.0."""
+    class _BadRowIndex:
+        def embed_query(self, text):
+            return (1.0, 0.0, 0.0)
+
+        def embed_documents(self, texts):
+            return [None for _ in texts]  # độ dài khớp nhưng row hỏng
+
+    compiler = _compiler(tmp_path, _BadRowIndex())
+    packet = compiler.compile("python embedding")
+    assert packet.items  # không crash
+
+
 def test_compile_no_batch_index_uses_zero_dense(tmp_path):
     class _NoBatchIndex:
         def __init__(self):
