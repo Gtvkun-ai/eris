@@ -98,6 +98,7 @@ class EmbeddingIndex:
         self._tokenizer: Any = None
         self._loaded = False
         self._load_error = ""
+        self._load_failed_signaled = False
         self._vector_cache: dict[str, np.ndarray] = {}
 
     # ------------------------------------------------------------------
@@ -180,6 +181,7 @@ class EmbeddingIndex:
             "min_cosine": self.min_cosine,
             "query_instruction_enabled": bool(self.query_instruction),
             "cache_size": len(self._vector_cache),
+            "load_failed_signaled": self._load_failed_signaled,
         }
 
     # ------------------------------------------------------------------
@@ -220,11 +222,21 @@ class EmbeddingIndex:
             return True
         except Exception as exc:
             self._load_error = f"{type(exc).__name__}: {exc}"
-            logger.warning(
-                "EmbeddingIndex model load failed (%s): %s — recall dùng lexical only.",
-                self.model_name,
-                exc,
-            )
+            # Fail-soft: recall vẫn chạy lexical, vector rỗng, KHÔNG raise. Nhưng lỗi
+            # không được im lặng: phát một health signal rõ ràng ĐÚNG MỘT LẦN
+            # (logger.error) rồi set cờ để các lượt sau không spam log.
+            if not self._load_failed_signaled:
+                self._load_failed_signaled = True
+                logger.error(
+                    "EmbeddingIndex model load failed (%s): %s — recall rơi về lexical only, "
+                    "dense=0.0. Lỗi này chỉ báo một lần; theo dõi debug_status().load_failed_signaled.",
+                    self.model_name,
+                    exc,
+                )
+            else:
+                logger.debug(
+                    "EmbeddingIndex model load vẫn fail (%s): %s", self.model_name, exc
+                )
             return False
 
     def _load_model(self) -> None:

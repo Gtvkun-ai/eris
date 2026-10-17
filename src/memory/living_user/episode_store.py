@@ -75,21 +75,33 @@ class UserEpisodeStore:
                 q_vec = embedding_index.embed_query(query)
             except Exception:
                 q_vec = None
+        texts = [
+            " ".join((episode.title, episode.summary, episode.outcome, *episode.topics, *episode.entities, *episode.open_loops))
+            for episode in items
+        ]
+        # Batch hóa recall: gom hết candidate rồi gọi embed_documents MỘT LẦN thay vì
+        # embed_document từng cái trong vòng lặp. Giữ nguyên fallback: khi
+        # embedding_index=None, q_vec rỗng, hoặc không có embed_documents callable
+        # thì dense=0.0 toàn bộ (lexical only), KHÔNG crash.
+        d_vecs: list[Any] | None = None
+        embed_documents = getattr(embedding_index, "embed_documents", None)
+        if q_vec is not None and callable(embed_documents):
+            try:
+                candidate_vecs = embed_documents(texts)
+                if len(candidate_vecs) == len(items):
+                    d_vecs = list(candidate_vecs)
+            except Exception:
+                d_vecs = None
         scored: list[tuple[float, UserEpisode]] = []
-        for episode in items:
-            text = " ".join((episode.title, episode.summary, episode.outcome, *episode.topics, *episode.entities, *episode.open_loops))
+        for idx, episode in enumerate(items):
+            text = texts[idx]
             e_norm = normalize_text(text)
             e_tokens = set(e_norm.split())
             lexical = len(q_tokens & e_tokens) / max(1, len(q_tokens))
             phrase = 1.0 if len(norm) >= 8 and norm in e_norm else 0.0
             dense = 0.0
-            if q_vec is not None and callable(getattr(embedding_index, "embed_document", None)):
-                try:
-                    d_vec = embedding_index.embed_document(text)
-                    dense = _cosine(q_vec, d_vec)
-                    dense = max(0.0, dense)
-                except Exception:
-                    dense = 0.0
+            if d_vecs is not None:
+                dense = max(0.0, _cosine(q_vec, d_vecs[idx]))
             score = lexical * 0.50 + phrase * 0.20 + dense * 0.20 + episode.importance * 0.08 + _recency(episode.ended_at) * 0.02
             if score >= 0.08:
                 scored.append((score, episode))

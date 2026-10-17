@@ -84,9 +84,17 @@ class ProfileContextCompiler:
                 continue
             records.append(record)
         q_vec = self._query_vector(query)
+        # Batch hóa recall: gom hết document candidate rồi gọi embed_documents MỘT
+        # LẦN (qua _dense_similarities) thay vì embed_document từng cái trong _score.
+        if q_vec:
+            docs = [f"{record.path}: {record.value}" for record in records]
+            dense_scores = self._dense_similarities(q_vec, docs)
+        else:
+            dense_scores = [0.0] * len(records)
         scored: list[tuple[float, ProfileRecord, str]] = []
-        for record in records:
-            score, reason = self._score(record, query=query, domain=resolved_domain, q_vec=q_vec, active_scope=active_scope)
+        for i, record in enumerate(records):
+            dense = dense_scores[i] if q_vec else 0.0
+            score, reason = self._score(record, query=query, domain=resolved_domain, dense=dense, active_scope=active_scope)
             if score >= self.config.min_score:
                 scored.append((score, record, reason))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -153,13 +161,12 @@ class ProfileContextCompiler:
         *,
         query: str,
         domain: str,
-        q_vec: tuple[float, ...] | None,
+        dense: float,
         active_scope: UserMemoryScope,
     ) -> tuple[float, str]:
         path_domain = record.path.split(".", 1)[0]
         domain_score = 1.0 if path_domain == domain else _domain_affinity(domain, record.path)
         lexical = _lexical_similarity(query, f"{record.path} {record.value}")
-        dense = self._dense_similarity(q_vec, f"{record.path}: {record.value}") if q_vec else 0.0
         scope_score = 1.0 if record.scope.identity == active_scope.identity else (0.78 if record.scope.kind == "global" else 0.0)
         recency = _recency(record.last_confirmed_at)
         trust = record.trust_weight
@@ -180,12 +187,31 @@ class ProfileContextCompiler:
         except Exception:
             return None
 
-    def _dense_similarity(self, query_vector: tuple[float, ...], document: str) -> float:
-        embed = getattr(self.embedding_index, "embed_document", None)
-        if not callable(embed):
-            return 0.0
+    def _dense_similarities(self, query_vector: tuple[float, ...], documents: list[str]) -> list[float]:
+        """Batch dense similarity: gọi embed_documents MỘT LẦN cho cả list document.
+
+        Giữ nguyên công thức cosine của ``_dense_similarity`` (chỉ đổi cách lấy vector
+        từ từng-cái sang gom-một-lần). Fallback: embedding_index None, không có
+        embed_documents callable, embed lỗi, hoặc độ dài vector không khớp số document
+        → tất cả 0.0 (recall dùng lexical, KHÔNG crash). Cache vẫn nằm trong
+        EmbeddingIndex.embed_documents (_encode_with_cache), nên document cũ vẫn cache-hit.
+        """
+        if not documents:
+            return []
+        embed_many = getattr(self.embedding_index, "embed_documents", None)
+        if self.embedding_index is None or not callable(embed_many):
+            return [0.0] * len(documents)
         try:
-            vector = tuple(float(x) for x in embed(document))
+            vectors = embed_many(documents)
+        except Exception:
+            return [0.0] * len(documents)
+        if len(vectors) != len(documents):
+            return [0.0] * len(documents)
+        return [self._cosine_vec(query_vector, vector) for vector in vectors]
+
+    def _cosine_vec(self, query_vector: tuple[float, ...], raw_vector: Iterable[float]) -> float:
+        try:
+            vector = tuple(float(x) for x in raw_vector)
         except Exception:
             return 0.0
         if not vector or len(vector) != len(query_vector):
@@ -194,6 +220,17 @@ class ProfileContextCompiler:
         na = math.sqrt(sum(a * a for a in query_vector))
         nb = math.sqrt(sum(b * b for b in vector))
         return max(0.0, dot / (na * nb)) if na and nb else 0.0
+
+    def _dense_similarity(self, query_vector: tuple[float, ...], document: str) -> float:
+        """Dense similarity cho một document (giữ cho tương thích/caller cũ)."""
+        embed = getattr(self.embedding_index, "embed_document", None)
+        if not callable(embed):
+            return 0.0
+        try:
+            vector = embed(document)
+        except Exception:
+            return 0.0
+        return self._cosine_vec(query_vector, vector)
 
 
 def infer_domain(query: str) -> str:
