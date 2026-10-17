@@ -104,11 +104,8 @@ class PrivateMindModelAdapterConfig:
     temperature: float = field(default_factory=lambda: _as_float(os.getenv("ERIS_PRIVATE_MIND_TEMPERATURE", "0.5"), 0.5))
     max_tokens_fragment: int = field(default_factory=lambda: max(128, int(os.getenv("ERIS_PRIVATE_MIND_FRAGMENT_TOKENS", "700") or 700)))
     max_tokens_judgment: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_MIND_JUDGMENT_TOKENS", "900") or 900)))
-    # V80: DeepSeek diary lane không còn viết 5 ô. Token này dành cho deep reflection.
-    max_tokens_diary: int = field(default_factory=lambda: max(384, int(os.getenv("ERIS_INNER_DIARY_DEEP_REFLECTION_TOKENS", os.getenv("ERIS_INNER_DIARY_AI_TOKENS", "900")) or 900)))
-    # Gemma vừa curate residue vừa nuôi 5 thought-shard. Hai tác vụ đều ngắn, có schema chặt.
+    # Gemma Residue Curator gom/dedupe/nén residue. Tác vụ ngắn, có schema chặt.
     max_tokens_residue: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_TOKENS", "700") or 700)))
-    max_tokens_thought_shards: int = field(default_factory=lambda: max(256, int(os.getenv("ERIS_INNER_DIARY_SHARD_TOKENS", "620") or 620)))
     transient_max_retries: int = field(default_factory=lambda: max(0, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_RETRIES", "1") or 1)))
     transient_backoff_base: float = field(default_factory=lambda: max(0.1, _as_float(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_BACKOFF", "0.5"), 0.5)))
     transient_cooldown_threshold: int = field(default_factory=lambda: max(1, int(os.getenv("ERIS_PRIVATE_MIND_TRANSIENT_THRESHOLD", "2") or 2)))
@@ -226,40 +223,6 @@ class RuntimePrivateMindModelAdapter:
             return None
         adapter = cls(config=config, llm_service=llm_service, logger=logger)
         adapter._log("info", "[PrivateMind API] ready provider=%s model=%s", config.provider, config.model)
-        return adapter
-
-    @classmethod
-    def diary_fallback_from_env(cls, *, logger: Any = None) -> "RuntimePrivateMindModelAdapter | None":
-        """Adapter DỰ PHÒNG riêng cho Inner Diary.
-
-        Dùng khi provider chính (Gemini open-model) chết / lỗi JSON: diary nhảy sang một
-        model DeepSeek hoặc OpenAI-compatible riêng để
-        không bị câm. Trả None nếu chưa khai đủ (model + base_url + key) → khi đó
-        InnerDiaryWriter chạy y như cũ (không regression).
-        """
-        apply_secrets_to_environ()
-        if not _env_flag("ERIS_INNER_DIARY_FALLBACK", False):
-            return None
-        provider = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_PROVIDER", "deepseek") or "deepseek").strip().lower()
-        if provider == "deepseek":
-            model = normalize_deepseek_model(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", DEEPSEEK_DEFAULT_MODEL))
-            base_url = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", DEEPSEEK_BASE_URL) or DEEPSEEK_BASE_URL).strip()
-            api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
-        else:
-            model = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_MODEL", "") or "").strip()
-            base_url = str(os.getenv("ERIS_INNER_DIARY_FALLBACK_BASE_URL", "") or "").strip()
-            api_key = get_secret("ERIS_INNER_DIARY_FALLBACK_API_KEY")
-        if not (model and base_url and api_key):
-            return None
-        config = PrivateMindModelAdapterConfig(
-            enabled=True,
-            provider=provider,
-            model=model,
-            base_url=base_url,
-            api_key=api_key,
-        )
-        adapter = cls(config=config, llm_service=None, logger=logger)
-        adapter._log("info", "[InnerDiary fallback] ready provider=%s model=%s", provider, model)
         return adapter
 
     @property
@@ -613,170 +576,6 @@ class RuntimePrivateMindModelAdapter:
             },
             "propertyOrdering": ["is_comfort", "on_topic", "substance"],
             "required": ["is_comfort"],
-        }
-
-    def write_thought_shards(self, packet: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        """Gemma cập nhật 5 micro-thought của Inner Diary.
-
-        Output là partial update. Mỗi shard phải cite ``atom_ids`` có thật trong
-        packet; validation cuối vẫn nằm ở ThoughtShardStore. Gemma được phép suy
-        ra *micro-thought* từ state/evidence đã cấp, nhưng không thêm sự kiện/fact.
-        """
-        messages = self._thought_shard_messages(packet)
-        result = self._tracked_chat_json(
-            messages,
-            max_tokens=self.config.max_tokens_thought_shards,
-            response_schema=self._thought_shard_response_schema(),
-        )
-        if not result.ok:
-            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
-                self._log("warning", "[Thought Shards] Gemma failed error=%s", result.error)
-            return None
-        parsed = dict(result.parsed)
-        updates = parsed.get("updates")
-        if not isinstance(updates, list):
-            return None
-        payload: dict[str, Any] = {"updates": updates[:10]}
-        # V82: dùng cùng lượt Gemma micro-cognition để viết một lời bình ngắn
-        # cho Identity panel. Không mở thêm model call, không tăng một lane latency.
-        observer_comment = parsed.get("observer_comment")
-        if isinstance(observer_comment, Mapping):
-            payload["observer_comment"] = dict(observer_comment)
-        return payload
-
-    def _thought_shard_messages(self, packet: Mapping[str, Any]) -> list[dict[str, str]]:
-        user_content = json.dumps(to_plain(dict(packet)), ensure_ascii=False)
-        if len(user_content) > 14000:
-            user_content = user_content[:14000]
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Bạn là Gemma Micro-Thought Worker của ERIS. Bạn nuôi đúng 5 mảnh suy nghĩ sống cho Inner Diary: "
-                    "now, next, concern, reflection, want. Đây là micro-cognition ngắn, KHÔNG phải deep analysis và KHÔNG phải public reply. "
-                    "Chỉ dùng atoms/state trong input; không thêm sự kiện, ký ức hay hành động chưa có. "
-                    "Mỗi update PHẢI cite ít nhất một atom_ids có thật. Không cần cập nhật đủ 5 slot mỗi lần; slot không đổi thì bỏ qua. "
-                    "text viết ngôi thứ nhất tự nhiên, tiếng Việt, tối đa khoảng 160 ký tự, không văn vẻ cưỡng bức, không hỏi user trừ khi WANT thật sự là một câu muốn hỏi. "
-                    "now = điều đang hiện hữu trong đầu; next = hướng nghiêng sắp tới; concern = điều đang bận tâm; "
-                    "reflection = nhận xét nhỏ vừa hình thành; want = điều muốn nói/làm nhưng chưa chắc sẽ public. "
-                    "Ngoài updates, hãy viết observer_comment cho Identity panel: 1-2 câu ngắn ở ngôi thứ ba, như một biên tập viên đang nhìn Eris từ bên ngoài; "
-                    "diễn giải pattern nổi bật, không đọc số, không văn vẻ quá tay, không chẩn đoán, và PHẢI cite atom_ids thật. "
-                    "Nếu chưa đủ vật liệu thì để text rỗng và atom_ids rỗng. Trả đúng JSON object."
-                ),
-            },
-            {"role": "user", "content": user_content},
-        ]
-
-    def _thought_shard_response_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "updates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "slot": {"type": "string", "enum": ["now", "next", "concern", "reflection", "want"]},
-                            "text": {"type": "string"},
-                            "atom_ids": {"type": "array", "items": {"type": "string"}},
-                            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                            "salience": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                        },
-                        "required": ["slot", "text", "atom_ids"],
-                    },
-                },
-                "observer_comment": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                        "atom_ids": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["text", "atom_ids"],
-                },
-            },
-            "required": ["updates"],
-        }
-
-    def deep_reflect_inner_diary(self, packet: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        """DeepSeek tổng hợp lịch sử shard thành một episode suy ngẫm sâu.
-
-        Lane này không còn nhiệm vụ điền 5 ô. Nó tìm quan hệ nhân quả, tension,
-        lesson và candidate tự-model. Candidate chỉ được lưu để review, không apply.
-        """
-        messages = self._deep_reflection_messages(packet)
-        result = self._tracked_chat_json(
-            messages,
-            max_tokens=self.config.max_tokens_diary,
-            response_schema=self._deep_reflection_response_schema(),
-        )
-        if not result.ok:
-            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
-                self._log("warning", "[Deep Reflection] DeepSeek failed error=%s", result.error)
-            return None
-        return dict(result.parsed)
-
-    def _deep_reflection_messages(self, packet: Mapping[str, Any]) -> list[dict[str, str]]:
-        user_content = json.dumps(to_plain(dict(packet)), ensure_ascii=False)
-        if len(user_content) > 18000:
-            user_content = user_content[:18000]
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Bạn là Deep Reflection lane của ERIS. Không điền NOW/NEXT/CONCERN/WANT và không viết status ngắn. "
-                    "Hãy nhìn chuỗi thought-shard thật theo thời gian để tìm một điều *đáng hiểu sâu hơn*: quan hệ nhân quả, mâu thuẫn kéo dài, "
-                    "pattern trong cách ERIS phản ứng, lesson quan hệ, hoặc hướng tự điều chỉnh. Nếu material chưa đủ, insight để chuỗi rỗng. "
-                    "Không bịa sự kiện/fact ngoài input. insight viết ngôi thứ nhất, tiếng Việt, 1-3 câu gọn nhưng có substance. "
-                    "evidence_refs PHẢI chọn từ evidence_refs được cấp. self_model_candidate chỉ là candidate, không phải thay đổi đã được áp dụng. "
-                    "Nếu không đủ bằng chứng cho candidate thì để object rỗng. Trả đúng JSON object."
-                ),
-            },
-            {"role": "user", "content": user_content},
-        ]
-
-    def _deep_reflection_response_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "insight": {"type": "string"},
-                "unresolved_tension": {"type": "string"},
-                "hypothesis": {"type": "string"},
-                "relational_lesson": {"type": "string"},
-                "future_direction": {"type": "string"},
-                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "evidence_refs": {"type": "array", "items": {"type": "string"}},
-                "self_model_candidate": {
-                    "type": "object",
-                    "properties": {
-                        "trait": {"type": "string"},
-                        "direction": {"type": "string"},
-                        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                        "evidence_refs": {"type": "array", "items": {"type": "string"}},
-                    },
-                },
-            },
-            "required": ["insight", "evidence_refs"],
-        }
-
-    def write_inner_diary(self, facts: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        """Compat V79: diary lane giờ là deep reflection, không còn viết 5 slot.
-
-        Các caller cũ nhận ``phan_tich`` để không gãy ngay, nhưng runtime V80 dùng
-        ``deep_reflect_inner_diary`` và Gemma thought-shard lane riêng.
-        """
-        packet = dict(facts)
-        if "evidence_refs" not in packet:
-            refs: list[str] = []
-            for row in packet.get("retained_entries", []) if isinstance(packet.get("retained_entries"), list) else []:
-                if isinstance(row, Mapping):
-                    refs.extend(str(x) for x in (row.get("provenance") or []) if str(x))
-            packet["evidence_refs"] = list(dict.fromkeys(refs))
-        result = self.deep_reflect_inner_diary(packet)
-        if not isinstance(result, Mapping):
-            return None
-        return {
-            "phan_tich": str(result.get("insight") or ""),
-            "_deep_reflection": dict(result),
         }
 
     def curate_residue(self, packet: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -1870,31 +1669,9 @@ class PrivateMindAdapterPool:
             config=self._config, llm_service=llm_service, logger=logger
         )
 
-        # V80: diary_client là DeepSeek Deep Reflection lane. Nó KHÔNG điền 5 ô
-        # live nữa; nhiệm vụ là tổng hợp causal pattern/lesson từ lịch sử shard.
-        # Adapter strict để không mượn companion/critic/style khi worker vắng.
-        diary_client = getattr(llm_service, "diary_client", None) if llm_service is not None else None
-        diary_config = self._config
-        if diary_client is not None:
-            diary_config = replace(
-                self._config,
-                enabled=True,
-                provider="deepseek",
-                model=str(getattr(diary_client, "model_name", self._config.model) or self._config.model),
-                base_url=str(getattr(diary_client, "base_url", self._config.base_url) or self._config.base_url),
-                api_key="worker-managed",
-            )
-        self._diary_adapter = RuntimePrivateMindModelAdapter(
-            config=diary_config,
-            llm_service=llm_service,
-            logger=logger,
-            client_attr="diary_client",
-            strict_client_attr=True,
-        )
-
-        # Gemma private lane dùng chung client cho 2 việc nhẹ: curate residue và
-        # cập nhật 5 thought-shard. Nó không có quyền public speech hay apply identity.
-        # Thiếu credential: residue vẫn deterministic, shard renderer fallback state thô.
+        # Gemma Residue Curator: gom/dedupe/nén private residue. Nó không có quyền
+        # public speech hay apply identity. Thiếu credential: residue vẫn giữ
+        # retention theo deterministic fallback.
         residue_client = getattr(llm_service, "residue_curator_client", None) if llm_service is not None else None
         residue_config = self._config
         if residue_client is not None:
@@ -1939,18 +1716,14 @@ class PrivateMindAdapterPool:
             # synthesis. In RÕ cả hai để nhìn log là biết vai trò nào chạy ở đâu,
             # tránh hiểu nhầm "fragment×5" đi cùng provider với synthesis.
             frag_cfg = PrivateMindModelAdapterConfig.fragment_overlay_from_env(config)
-            diary_meta = pool.diary_metadata()
             residue_meta = pool.residue_metadata()
             fn(
-                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + deep-reflection(role=%s model=%s configured=%d)×1 + gemma-shards/residue(model=%s configured=%d)×1",
+                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + gemma-residue(model=%s configured=%d)×1",
                 frag_cfg.provider,
                 frag_cfg.model,
                 len(_EVALUATOR_ROLES),
                 config.provider,
                 config.model,
-                diary_meta.get("role", ""),
-                diary_meta.get("model", ""),
-                int(bool(diary_meta.get("configured", False))),
                 residue_meta.get("model", ""),
                 int(bool(residue_meta.get("configured", False))),
             )
@@ -1965,28 +1738,14 @@ class PrivateMindAdapterPool:
         return self._synthesis_adapter
 
     @property
-    def diary_adapter(self) -> RuntimePrivateMindModelAdapter:
-        return self._diary_adapter
-
-    @property
     def residue_adapter(self) -> RuntimePrivateMindModelAdapter:
         return self._residue_adapter
-
-    def diary_metadata(self) -> dict[str, Any]:
-        client = getattr(self._llm_service, "diary_client", None) if self._llm_service is not None else None
-        return {
-            "owner": "deepseek_worker",
-            "role": str(getattr(client, "worker_role", "") or ""),
-            "provider": "deepseek" if client is not None else "",
-            "model": str(getattr(client, "model_name", "") or ""),
-            "configured": bool(client is not None),
-        }
 
     def residue_metadata(self) -> dict[str, Any]:
         client = getattr(self._llm_service, "residue_curator_client", None) if self._llm_service is not None else None
         return {
             "owner": "gemma_micro_cognition",
-            "role": "thought_shards_and_residue",
+            "role": "residue_curator",
             "provider": str(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower() if client is not None else "",
             "model": str(getattr(client, "model_name", "") or ""),
             "configured": bool(client is not None),
@@ -2001,31 +1760,6 @@ class PrivateMindAdapterPool:
     def synthesize_judgment(self, dossier: EvidenceDossier, fragments: Any) -> Any:
         return self._synthesis_adapter.synthesize_judgment(dossier, fragments)
 
-    def write_thought_shards(self, packet: Mapping[str, Any]) -> Any:
-        result = self._residue_adapter.write_thought_shards(packet)
-        if not isinstance(result, Mapping):
-            return result
-        payload = dict(result)
-        payload["_writer"] = self.residue_metadata()
-        return payload
-
-    def deep_reflect_inner_diary(self, packet: Mapping[str, Any]) -> Any:
-        result = self._diary_adapter.deep_reflect_inner_diary(packet)
-        if not isinstance(result, Mapping):
-            return result
-        payload = dict(result)
-        payload["_writer"] = self.diary_metadata()
-        return payload
-
-    def write_inner_diary(self, facts: Mapping[str, Any]) -> Any:
-        # Compat caller V79. Runtime V80 dùng deep_reflect_inner_diary trực tiếp.
-        result = self._diary_adapter.write_inner_diary(facts)
-        if not isinstance(result, Mapping):
-            return result
-        payload = dict(result)
-        payload["_writer"] = self.diary_metadata()
-        return payload
-
     def curate_residue(self, packet: Mapping[str, Any]) -> Any:
         return self._residue_adapter.curate_residue(packet)
 
@@ -2036,15 +1770,13 @@ class PrivateMindAdapterPool:
             for role, adapter in self._fragment_adapters.items()
         }
         synthesis_status = self._synthesis_adapter.debug_status()
-        diary_status = self._diary_adapter.debug_status()
         residue_status = self._residue_adapter.debug_status()
         # Tổng hợp calls/tokens
-        total_calls = synthesis_status.get("calls", 0) + diary_status.get("calls", 0) + residue_status.get("calls", 0) + sum(
+        total_calls = synthesis_status.get("calls", 0) + residue_status.get("calls", 0) + sum(
             s.get("calls", 0) for s in fragment_statuses.values()
         )
         total_tokens = (
             synthesis_status.get("usage", {}).get("total_tokens", 0)
-            + diary_status.get("usage", {}).get("total_tokens", 0)
             + residue_status.get("usage", {}).get("total_tokens", 0)
             + sum(
                 s.get("usage", {}).get("total_tokens", 0) for s in fragment_statuses.values()
@@ -2066,8 +1798,6 @@ class PrivateMindAdapterPool:
             "synthesis_invalid_json_streak": synthesis_status.get("synthesis_invalid_json_streak", 0),
             "synthesis_json_cooldown_until": synthesis_status.get("synthesis_json_cooldown_until", 0.0),
             "synthesis": synthesis_status,
-            "deep_reflection": {**diary_status, **self.diary_metadata()},
-            "thought_shards": {**residue_status, **self.residue_metadata()},
             "residue_curator": {**residue_status, **self.residue_metadata()},
             "fragments": fragment_statuses,
             "usage": {

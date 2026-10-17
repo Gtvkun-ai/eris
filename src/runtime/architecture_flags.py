@@ -42,11 +42,6 @@ def inner_diary_model_enabled() -> bool:
     return _flag("inner_diary_model_enabled", "ERIS_INNER_DIARY_MODEL_ENABLED", True)
 
 
-def inner_diary_thought_shards_enabled() -> bool:
-    """Cho Gemma nuôi 5 micro-thought live của Inner Diary."""
-    return _flag("inner_diary_thought_shards_enabled", "ERIS_INNER_DIARY_THOUGHT_SHARDS_ENABLED", True)
-
-
 def inner_diary_deep_reflection_enabled() -> bool:
     """Cho DeepSeek chạy reflection episode thưa, không điền 5 ô live."""
     return _flag("inner_diary_deep_reflection_enabled", "ERIS_INNER_DIARY_DEEP_REFLECTION_ENABLED", True)
@@ -77,7 +72,7 @@ def is_public_intent_owner(owner: object) -> bool:
 __all__ = [
     "PUBLIC_INTENT_OWNERS", "is_public_intent_owner",
     "private_cognition_surface_export_enabled", "surface_cross_worker_fallback_enabled",
-    "legacy_model_lanes_enabled", "inner_diary_model_enabled", "inner_diary_thought_shards_enabled",
+    "legacy_model_lanes_enabled", "inner_diary_model_enabled",
     "inner_diary_deep_reflection_enabled", "private_residue_curator_enabled", "background_tutor_enabled",
     "event_trace_enabled",
 ]

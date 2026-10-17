@@ -503,11 +503,11 @@ class RemoteModelProcessManager:
         return client
 
     def build_residue_curator_client(self):
-        """Dựng Gemma private lane cho Thought Shards + Residue Curator.
+        """Dựng Gemma private lane cho Residue Curator.
 
-        Gemma nuôi 5 micro-thought live và gom/dedupe residue. Nó không có quyền
-        public speech hay apply identity. Thiếu key thì residue vẫn retention theo
-        deterministic fallback, còn 5 shard dùng raw-state fallback ở renderer.
+        Gemma gom/dedupe/nén residue nội tâm. Nó không có quyền public speech hay
+        apply identity. Thiếu key thì residue vẫn retention theo deterministic
+        fallback.
         """
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "1"):

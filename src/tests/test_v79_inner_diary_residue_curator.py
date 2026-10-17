@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
-from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from cortex.private_mind.residue_curator import DiaryResidueStore, ResidueStoreConfig
 from llm.process_manager import RemoteModelProcessManager
 from runtime.private_mind_model_adapter import PrivateMindAdapterPool, PrivateMindModelAdapterConfig
@@ -115,40 +114,6 @@ def test_renderer_uses_retained_residue_when_current_tick_is_empty():
     section = next(item for item in rendered["sections"] if item["title"] == "Phân tích gần đây")
     assert "không chắc" in section["items"][0]["text"]
     assert rendered["residue"]["retained_count"] == 1
-
-
-def test_writer_feeds_retained_entries_back_to_dedicated_diary_writer():
-    class Adapter:
-        def __init__(self):
-            self.facts = None
-
-        def write_inner_diary(self, facts):
-            self.facts = facts
-            return {"phan_tich": "Tôi đang giữ lại một điều vừa nhận ra."}
-
-    adapter = Adapter()
-    writer = InnerDiaryWriter(adapter=adapter, throttle_seconds=0.0)
-    writer.startup_grace_seconds = 0.0
-    writer._created_at = 0.0
-    voice = writer.maybe_write(
-        {
-            "retained": {
-                "diary_entries": [
-                    {
-                        "kind": "reflection",
-                        "text": "Tôi thường muốn lấp khoảng im bằng câu hỏi.",
-                        "state": "active",
-                        "provenance": ["inner_synthesis"],
-                    }
-                ]
-            }
-        },
-        now=50.0,
-    )
-    assert voice is not None
-    assert adapter.facts is not None
-    assert any("lấp khoảng im" in text for text in adapter.facts["phan_tich"])
-    assert adapter.facts["retained_entries"][0]["kind"] == "reflection"
 
 
 class _FakeResidueClient:

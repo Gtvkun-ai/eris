@@ -15,7 +15,7 @@ from domain import Decision
 from llm import LlmService
 from llm.process_manager import RemoteModelProcessManager
 from runtime.architecture_flags import (
-    background_tutor_enabled, inner_diary_model_enabled, inner_diary_thought_shards_enabled,
+    background_tutor_enabled, inner_diary_model_enabled,
     inner_diary_deep_reflection_enabled, legacy_model_lanes_enabled, private_residue_curator_enabled,
 )
 from memory.memory_cognition import MemoryCognitionCore
@@ -164,7 +164,7 @@ class AttentionOverseer:
         )
         residue_curator_client = (
             self.process_manager.build_residue_curator_client()
-            if private_residue_curator_enabled() or inner_diary_thought_shards_enabled() else None
+            if private_residue_curator_enabled() else None
         )
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()

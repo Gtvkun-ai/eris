@@ -18,7 +18,6 @@ public thì đó không phải chiều sâu, đó là logcat có trang điểm.
 from __future__ import annotations
 from core.di import resolve_dependency
 
-import hashlib
 import json
 import logging
 import os
@@ -44,11 +43,9 @@ from cortex.private_mind import (
 from cortex.existential_anchor import AnchorSystem
 from cortex.private_mind.contracts import SurfaceCandidate, ThoughtFragment, to_plain
 from cortex.private_mind.inner_diary_renderer import InnerDiaryRenderer
-from cortex.private_mind.inner_diary_writer import InnerDiaryWriter
 from cortex.private_mind.residue_curator import DiaryResidueStore
-from cortex.private_mind.thought_shards import ThoughtShardStore
 from eris_secrets import apply_secrets_to_environ
-from runtime.private_mind_model_adapter import PrivateMindAdapterPool, RuntimePrivateMindModelAdapter
+from runtime.private_mind_model_adapter import PrivateMindAdapterPool
 from runtime.live2d_affect_bridge import emit_runtime_affect
 
 
@@ -126,9 +123,6 @@ class PrivateMindLoop:
         # V79: spool riêng cho mảnh cognition bị suppress/packed và stimulus bị
         # coalesce. Nó tồn tại qua restart để Inner Diary không phụ thuộc tick cuối.
         self.residue_store = DiaryResidueStore.from_env(logger=logger)
-        # V80: Gemma sở hữu 5 micro-thought live; DeepSeek chỉ làm deep reflection.
-        # Store này giữ cả shard history lẫn reflection episode qua restart.
-        self.thought_shards = ThoughtShardStore.from_env(logger=logger)
         self._last_individual_projection: dict[str, Any] = {}
         self.last_tick_at = 0.0
         self.last_result: PrivateMindTickResult | None = None
@@ -137,33 +131,9 @@ class PrivateMindLoop:
         # Snapshot cảm xúc liên tục thật (valence/arousal/...) chụp ở tick gần nhất,
         # để Inner Diary vẽ bảng cảm xúc theo state thật thay vì hằng số gán cứng.
         self._affect_snapshot: dict[str, Any] = {}
-        # Inner Diary có owner riêng. Với PrivateMindAdapterPool, diary_adapter chỉ
-        # gọi LlmService.diary_client (một DeepSeek worker role được chọn rõ ràng).
-        # Không fallback sang lane khác theo mặc định; thiếu worker thì renderer dùng
-        # dữ kiện thô, trung thực hơn việc companion âm thầm giả làm nhật ký.
-        from runtime.architecture_flags import inner_diary_deep_reflection_enabled, inner_diary_model_enabled
-        # V80: DeepSeek diary worker được giữ làm deep-reflection owner. Ưu tiên
-        # pool để metadata owner/model đi kèm output; fallback về adapter con chỉ
-        # khi caller inject một adapter đơn trong test/harness.
-        diary_adapter = None
-        if inner_diary_model_enabled() and inner_diary_deep_reflection_enabled():
-            if callable(getattr(model_adapter, "deep_reflect_inner_diary", None)):
-                diary_adapter = model_adapter
-            else:
-                diary_adapter = getattr(model_adapter, "diary_adapter", None)
-            if diary_adapter is None and callable(getattr(model_adapter, "write_inner_diary", None)):
-                diary_adapter = model_adapter
-        diary_fallback = (
-            RuntimePrivateMindModelAdapter.diary_fallback_from_env(logger=logger)
-            if _env_flag("ERIS_INNER_DIARY_ALLOW_FALLBACK", False)
-            else None
-        )
-        self.diary_writer = InnerDiaryWriter(
-            adapter=diary_adapter,
-            fallback_adapter=diary_fallback,
-            state_store=self.thought_shards,
-            logger=logger,
-        )
+        # Inner Diary renderer dựng panel từ dữ kiện thô (bảng cảm xúc, concern,
+        # residue, memory_echo). Thiếu model thì renderer vẫn trung thực với state
+        # thật thay vì để một lane khác âm thầm giả làm nhật ký.
         self._gemini_background_lock = threading.Lock()
         self._gemini_background_active: set[str] = set()
 
@@ -432,19 +402,6 @@ class PrivateMindLoop:
             "private_residue_curator",
             lambda: self._maybe_consolidate_residue(now=now),
         )
-        # V80: sau khi raw cognition/state đã ổn định, Gemma cập nhật 5 shard ngắn.
-        # Đây là private-only state; không enqueue public candidate.
-        self._run_gemini_background(
-            "private_thought_shards",
-            lambda: self._maybe_refresh_thought_shards(
-                dossier=dossier,
-                fragments=fragments,
-                judgment=judgment,
-                filtered_candidate=candidate,
-                runtime_owner=runtime_owner,
-                now=now,
-            ),
-        )
 
         result = PrivateMindTickResult(
             dossier=dossier,
@@ -658,241 +615,6 @@ class PrivateMindLoop:
         # tuyệt đối không biến unprocessed stimulus thành diary.
         self.residue_store.deterministic_consolidate(now=now)
 
-    def _maybe_refresh_thought_shards(
-        self,
-        *,
-        dossier: Any,
-        fragments: Iterable[Any],
-        judgment: Any,
-        filtered_candidate: Any,
-        runtime_owner: Any,
-        now: float,
-    ) -> None:
-        """Cho Gemma cập nhật 5 live shard, hoàn toàn tách khỏi public speech."""
-        from runtime.architecture_flags import inner_diary_thought_shards_enabled
-        if not inner_diary_thought_shards_enabled():
-            return
-        packet = self._thought_shard_packet(
-            dossier=dossier,
-            fragments=fragments,
-            judgment=judgment,
-            filtered_candidate=filtered_candidate,
-            runtime_owner=runtime_owner,
-            now=now,
-        )
-        atoms = list(packet.get("atoms") or [])
-        if not atoms:
-            return
-        signature_blob = json.dumps(
-            [(str(x.get("id") or ""), str(x.get("text") or "")) for x in atoms if isinstance(x, Mapping)],
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        signature = hashlib.sha1(signature_blob.encode("utf-8")).hexdigest()
-        urgent = max((float(x.get("salience", 0.0) or 0.0) for x in atoms if isinstance(x, Mapping)), default=0.0) >= 0.80
-        if not self.thought_shards.should_refresh(signature=signature, now=now, urgent=urgent):
-            return
-
-        write_fn = getattr(self.model_adapter, "write_thought_shards", None)
-        meta_fn = getattr(self.model_adapter, "residue_metadata", None)
-        writer_meta = meta_fn() if callable(meta_fn) else {"configured": False, "model": ""}
-        if not callable(write_fn) or not bool(writer_meta.get("configured", False)):
-            # Không fake micro-thought bằng rule. Renderer vẫn có raw fallback và
-            # lần sau sẽ thử lại ngay khi Gemma được cấu hình.
-            return
-        try:
-            from runtime.inference_broker import inference_context
-            with inference_context(
-                "private_thought_shards",
-                optional=True,
-                timeout_seconds=_gemini_background_timeout_seconds(),
-                cancel_scope="background:private_thought_shards",
-                coalesce_key="private_thought_shards:latest_state",
-                metadata={"atoms": len(atoms), "urgent": urgent},
-            ):
-                output = write_fn(packet)
-        except Exception as exc:
-            self._boundary_note("thought_shards.gemma", exc)
-            return
-        if not isinstance(output, Mapping):
-            return
-        try:
-            applied = self.thought_shards.apply_shard_output(
-                output,
-                packet=packet,
-                writer_meta=writer_meta,
-                signature=signature,
-                now=now,
-            )
-            if applied:
-                fn = getattr(self.logger, "info", None)
-                if callable(fn):
-                    fn("[InnerDiary V80] Gemma thought-shards updated=%d", applied)
-        except Exception as exc:
-            self._boundary_note("thought_shards.apply", exc)
-
-    def _thought_shard_packet(
-        self,
-        *,
-        dossier: Any,
-        fragments: Iterable[Any],
-        judgment: Any,
-        filtered_candidate: Any,
-        runtime_owner: Any,
-        now: float,
-    ) -> dict[str, Any]:
-        """Nén private state thành atom có id để Gemma cite, tránh sáng tác vô neo."""
-        atoms: list[dict[str, Any]] = []
-
-        def add_atom(
-            atom_id: str,
-            kind: str,
-            text: Any,
-            *,
-            salience: float = 0.5,
-            source_ids: Iterable[Any] = (),
-        ) -> None:
-            clean = " ".join(str(text or "").replace("\x00", " ").split()).strip()
-            if not clean:
-                return
-            atoms.append({
-                "id": str(atom_id or f"atom:{len(atoms)}")[:160],
-                "kind": str(kind or "state")[:64],
-                "text": clean[:520],
-                "salience": round(max(0.0, min(1.0, float(salience or 0.0))), 3),
-                "source_ids": list(dict.fromkeys(str(x) for x in tuple(source_ids or ()) if str(x)))[:16],
-            })
-
-        for fragment in tuple(fragments or ())[:8]:
-            fid = str(getattr(fragment, "id", "") or f"fragment:{len(atoms)}")
-            add_atom(
-                fid,
-                "private_fragment",
-                getattr(fragment, "claim", ""),
-                salience=max(float(getattr(fragment, "score", 0.0) or 0.0), float(getattr(fragment, "pressure", 0.0) or 0.0)),
-                source_ids=getattr(fragment, "evidence_ids", ()) or (),
-            )
-
-        if judgment is not None:
-            add_atom(
-                f"judgment:{str(getattr(judgment, 'source', '') or 'inner')}",
-                "private_judgment",
-                getattr(judgment, "dominant_judgment", ""),
-                salience=max(float(getattr(judgment, "confidence", 0.0) or 0.0), float(getattr(judgment, "pressure", 0.0) or 0.0)),
-                source_ids=getattr(judgment, "evidence_ids", ()) or (),
-            )
-
-        for raw in list(self.concern_store.snapshots(limit=5)):
-            if not isinstance(raw, Mapping):
-                continue
-            cid = str(raw.get("id") or raw.get("concern_id") or f"concern:{len(atoms)}")
-            add_atom(
-                cid,
-                "active_concern",
-                raw.get("theme") or raw.get("summary"),
-                salience=float(raw.get("pressure", raw.get("activation", 0.5)) or 0.5),
-                source_ids=raw.get("evidence_ids") or (),
-            )
-
-        bias = getattr(self.mutation_bus, "bias_state", None)
-        speech_bias = to_plain(getattr(bias, "speech_bias", {})) if bias is not None else {}
-        if isinstance(speech_bias, Mapping):
-            for key in ("intent", "next_move", "stance", "tone"):
-                value = str(speech_bias.get(key) or "").strip()
-                if value:
-                    add_atom(f"future_bias:{key}", "future_bias", value, salience=0.48)
-                    break
-        for index, raw in enumerate(to_plain(getattr(bias, "inquiry_plan", [])[-3:]) if bias is not None else []):
-            if isinstance(raw, Mapping):
-                text = raw.get("question") or raw.get("text") or raw.get("topic")
-            else:
-                text = raw
-            add_atom(f"inquiry_plan:{index}", "future_bias", text, salience=0.45)
-
-        if filtered_candidate is not None:
-            payload = filtered_candidate.to_dict() if callable(getattr(filtered_candidate, "to_dict", None)) else {}
-            if not isinstance(payload, Mapping):
-                payload = {}
-            add_atom(
-                str(payload.get("id") or f"surface_candidate:{len(atoms)}"),
-                "private_want_candidate",
-                payload.get("topic_seed") or payload.get("text") or getattr(filtered_candidate, "topic_seed", ""),
-                salience=float(payload.get("confidence", getattr(filtered_candidate, "confidence", 0.55)) or 0.55),
-                source_ids=payload.get("evidence_ids") or payload.get("evidence_refs") or (),
-            )
-
-        for item in self.residue_store.diary_entries(now=now, limit=6):
-            if not isinstance(item, Mapping):
-                continue
-            add_atom(
-                str(item.get("id") or f"residue_entry:{len(atoms)}"),
-                f"retained_{str(item.get('kind') or 'reflection')}",
-                item.get("text"),
-                salience=float(item.get("salience", 0.5) or 0.5),
-                source_ids=item.get("source_ids") or (),
-            )
-
-        # V77 continuous self là state causal rất giá trị cho 5 mảnh. Chỉ lấy
-        # projection gọn; không đưa raw prompt/chain-of-thought xuống Gemma.
-        individual: dict[str, Any] = {}
-        try:
-            persistent = getattr(runtime_owner, "persistent_individual_runtime", None)
-            project_fn = getattr(persistent, "projection_for_host", None)
-            if callable(project_fn):
-                individual = dict(project_fn(runtime_owner, now=now, context_key="inner_diary") or {})
-        except Exception as exc:
-            self._boundary_note("thought_shards.persistent_projection", exc)
-            individual = {}
-        self._last_individual_projection = individual
-        continuous = individual.get("continuous_self") if isinstance(individual.get("continuous_self"), Mapping) else {}
-        if isinstance(continuous, Mapping):
-            add_atom("self:orientation", "continuous_self", continuous.get("orientation"), salience=0.45)
-            add_atom("self:dominant_motive", "continuous_self", continuous.get("dominant_motive"), salience=0.55)
-            top_concern = continuous.get("top_concern") if isinstance(continuous.get("top_concern"), Mapping) else {}
-            add_atom("self:top_concern", "continuous_self", top_concern.get("theme") or top_concern.get("summary") or top_concern.get("content"), salience=float(top_concern.get("pressure", 0.6) or 0.6))
-            commitment = continuous.get("active_commitment") if isinstance(continuous.get("active_commitment"), Mapping) else {}
-            add_atom("self:commitment", "continuous_self", commitment.get("objective") or commitment.get("goal_kind"), salience=float(commitment.get("strength", 0.6) or 0.6))
-            for idx, tension in enumerate((continuous.get("tensions") or [])[:3]):
-                if isinstance(tension, Mapping):
-                    add_atom(f"self:tension:{idx}", "continuous_self_tension", tension.get("summary") or tension.get("left") or tension.get("left_pull"), salience=float(tension.get("pressure", tension.get("strength", 0.65)) or 0.65))
-
-        # Recent user turn là stimulus thật, được phép làm context cho micro-cognition.
-        turns = tuple(getattr(dossier, "recent_user_turns", ()) or ()) if dossier is not None else ()
-        for idx, turn in enumerate(turns[-2:]):
-            if isinstance(turn, Mapping):
-                add_atom(
-                    f"user_context:{idx}:{str(turn.get('id') or '')}"[:160],
-                    "recent_user_context",
-                    turn.get("text"),
-                    salience=0.62,
-                    source_ids=(turn.get("id"),),
-                )
-
-        # Dedupe atom text, ưu tiên salience cao hơn.
-        dedup: dict[tuple[str, str], dict[str, Any]] = {}
-        for atom in atoms:
-            key = (str(atom.get("kind") or ""), " ".join(str(atom.get("text") or "").casefold().split()))
-            prev = dedup.get(key)
-            if prev is None or float(atom.get("salience", 0.0) or 0.0) > float(prev.get("salience", 0.0) or 0.0):
-                dedup[key] = atom
-        atoms = sorted(dedup.values(), key=lambda x: float(x.get("salience", 0.0) or 0.0), reverse=True)[:28]
-
-        return {
-            "schema": "eris.inner_diary.thought_shard.packet.v80",
-            "rule": (
-                "Gemma owns five short private thought shards only. It may infer a micro-thought from supplied atoms, "
-                "but must cite atom_ids and must not invent external facts or public actions."
-            ),
-            "slots": list((self.thought_shards.snapshot(now=now).get("slots") or {}).values()),
-            "atoms": atoms,
-            "context": {
-                "channel": str(getattr(dossier, "channel", "") or "") if dossier is not None else "",
-                "continuous_self": continuous if isinstance(continuous, Mapping) else {},
-                "relational_plan": individual.get("relational_plan", {}) if isinstance(individual, Mapping) else {},
-                "interaction_ecology": individual.get("interaction_ecology", {}) if isinstance(individual, Mapping) else {},
-            },
-        }
-
     @staticmethod
     def _dossier_residue_text(dossier: Any) -> str:
         if dossier is None:
@@ -1050,7 +772,6 @@ class PrivateMindLoop:
             ),
         }
         residue_snapshot = self.residue_store.snapshot()
-        thought_snapshot = self.thought_shards.snapshot()
         retained = {
             "concerns": list(self.concern_store.snapshots(limit=8)),
             "diary_entries": list(residue_snapshot.get("diary_entries", [])),
@@ -1117,7 +838,6 @@ class PrivateMindLoop:
             "surface_queue": surface_queue_payload,
             "speech_silence_reason": {},
             "diary_residue": residue_snapshot,
-            "thought_shards": thought_snapshot,
             "persistent_individual": dict(getattr(self, "_last_individual_projection", {}) or {}),
             "debug_api": debug_api,
         }
@@ -1131,25 +851,17 @@ class PrivateMindLoop:
             **menu,
             "affect": dict(getattr(self, "_affect_snapshot", {}) or {}),
             "diary_residue": residue_snapshot,
-            "thought_shards": thought_snapshot,
             "persistent_individual": dict(getattr(self, "_last_individual_projection", {}) or {}),
             "debug": to_plain(getattr(result, "debug", {}) if result is not None else {}),
         }
         digest["generated_at"] = round(time.time(), 3)
-        # DeepSeek có thể vừa tạo một reflection mới và ghi vào ThoughtShardStore.
-        # Refresh snapshot trước render để UI thấy ngay episode vừa sinh.
-        voice = self._diary_voice(digest)
-        thought_snapshot = self.thought_shards.snapshot()
-        digest["thought_shards"] = thought_snapshot
-        digest["menu"]["thought_shards"] = thought_snapshot
-        digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=voice)
+        # Renderer dựng panel từ state thô (bảng cảm xúc, concern, residue,
+        # memory_echo). Không còn 5 thought-shard/deep-reflection để nuôi panel.
+        digest["inner_diary"] = InnerDiaryRenderer().render(digest, voice=None)
         digest["inner_diary_contract"] = {
             "schema": "eris.inner_diary.v80",
             "owner": "private_mind.inner_diary",
-            "micro_thought_owner": "gemma",
-            "deep_reflection_owner": "deepseek",
             "writer": to_plain(digest["inner_diary"].get("writer", {})),
-            "shard_writer": to_plain(thought_snapshot.get("shard_writer", {})),
         }
         try:
             anchor_block = self._build_anchor_block()
@@ -1158,20 +870,6 @@ class PrivateMindLoop:
         except Exception:
             digest["anchor"] = {}
         return digest
-
-    def _diary_voice(self, digest: Mapping[str, Any]) -> dict[str, Any] | None:
-        """V80: DeepSeek chỉ trả deep reflection; 5 live shard thuộc Gemma."""
-        from runtime.architecture_flags import inner_diary_deep_reflection_enabled, inner_diary_model_enabled
-        if not inner_diary_model_enabled() or not inner_diary_deep_reflection_enabled():
-            return None
-        writer = getattr(self, "diary_writer", None)
-        if writer is None:
-            return None
-        try:
-            return writer.maybe_write(digest)
-        except Exception as exc:
-            self._boundary_note("inner_diary.deep_reflection", exc)
-            return None
 
     def drain_surface_impulses(self, queue: list[Any], *, limit: int = 4) -> tuple[Any, ...]:
         items: list[Any] = []

@@ -286,11 +286,6 @@ class InnerDiaryRenderer:
         resolved = _as_list(menu.get("recently_resolved") or digest.get("recently_resolved"))
         residue = _as_dict(menu.get("diary_residue") or digest.get("diary_residue"))
         diary_entries = _as_list(retained.get("diary_entries") or residue.get("diary_entries"))
-        # V80: 5 ô live thuộc Gemma thought-shard store. DeepSeek chỉ cung cấp
-        # deep reflection riêng và không còn phải viết lại toàn bộ panel.
-        shard_state = _as_dict(menu.get("thought_shards") or digest.get("thought_shards"))
-        shard_slots = _as_dict(shard_state.get("slots"))
-        deep_reflection = _as_dict(shard_state.get("deep_reflection"))
         retained_by_kind: dict[str, list[dict[str, Any]]] = {}
         for raw in diary_entries[:12]:
             item = _as_dict(raw)
@@ -305,9 +300,6 @@ class InnerDiaryRenderer:
 
         def _voice(key: str) -> str:
             return _short(voice.get(key), 700 if key == "phan_tich" else 240)
-
-        def _shard(slot: str) -> str:
-            return _short(_as_dict(shard_slots.get(slot)).get("text"), 260)
 
         sections: list[dict[str, Any]] = []
         emotion_board = self._emotion_board(digest)
@@ -327,8 +319,7 @@ class InnerDiaryRenderer:
         # Suy nghĩ hiện tại — ưu tiên giọng Eris, fallback judgment thô.
         retained_current = retained_by_kind.get("current", [])
         hien_tai = (
-            _shard("now")
-            or _voice("hien_tai")  # compat V79 cache only
+            _voice("hien_tai")  # compat V79 cache only
             or _short(current.get("dominant_judgment"), 160)
             or (_short(retained_current[0].get("text"), 180) if retained_current else "")
         )
@@ -342,8 +333,7 @@ class InnerDiaryRenderer:
         # Suy nghĩ tương lai
         retained_future = retained_by_kind.get("future", [])
         tuong_lai = (
-            _shard("next")
-            or _voice("tuong_lai")  # compat V79 cache only
+            _voice("tuong_lai")  # compat V79 cache only
             or future_text
             or (_short(retained_future[0].get("text"), 180) if retained_future else "")
         )
@@ -355,7 +345,7 @@ class InnerDiaryRenderer:
             })
 
         # Đang bận tâm
-        ban_tam_voice = _shard("concern") or _voice("ban_tam")
+        ban_tam_voice = _voice("ban_tam")
         if ban_tam_voice:
             sections.append({
                 "title": "Đang bận tâm",
@@ -385,10 +375,9 @@ class InnerDiaryRenderer:
                     "lines": [f"- {item['text']}" for item in concern_items],
                 })
 
-        # Phân tích gần đây
-        # DeepSeek reflection được spotlight khi có; Gemma reflection là micro
-        # observation bình thường giữa hai episode DeepSeek.
-        phan_tich_voice = _voice("phan_tich") or _short(deep_reflection.get("insight"), 700) or _shard("reflection")
+        # Phân tích gần đây — ưu tiên giọng nếu có; nếu không thì rơi về
+        # fragment/retained raw-state ở nhánh else.
+        phan_tich_voice = _voice("phan_tich")
         if phan_tich_voice:
             sections.append({
                 "title": "Phân tích gần đây",
@@ -419,7 +408,7 @@ class InnerDiaryRenderer:
                 })
 
         # Muốn nói
-        muon_noi = _shard("want") or _voice("muon_noi")
+        muon_noi = _voice("muon_noi")
         if not muon_noi and surface_queue:
             muon_noi = _short(
                 _as_dict(surface_queue[0]).get("topic_seed")
@@ -467,7 +456,6 @@ class InnerDiaryRenderer:
 
         memory_echo = self._memory_echo(digest, voice)
         writer = _as_dict(voice.get("_writer"))
-        shard_writer = _as_dict(shard_state.get("shard_writer"))
 
         return {
             "mode": "debug_private",
@@ -477,12 +465,6 @@ class InnerDiaryRenderer:
             "emotion_board": emotion_board,
             "memory_echo": memory_echo,
             "writer": writer,
-            "thought_shards": {
-                "schema": shard_state.get("schema", ""),
-                "slots": shard_slots,
-                "writer": shard_writer,
-                "deep_reflection": deep_reflection,
-            },
             "residue": {
                 "retained_count": len(diary_entries),
                 "pending_count": int(residue.get("pending_count", 0) or 0),

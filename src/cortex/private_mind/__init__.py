@@ -32,7 +32,6 @@ from .mini_evaluators import (
 from .state_mutation_bus import StateMutationBus
 from .surface_valve import SurfaceValve
 from .thought_continuity import ThoughtContinuityStore, ThoughtEntry
-from .thought_shards import SHARD_SLOTS, ThoughtShardConfig, ThoughtShardStore
 from .user_model import (
     UserBelief,
     UserModelConfig,
@@ -63,9 +62,6 @@ __all__ = [
     "ThoughtContinuityStore",
     "ThoughtEntry",
     "ThoughtFragment",
-    "SHARD_SLOTS",
-    "ThoughtShardConfig",
-    "ThoughtShardStore",
     "USER_MODEL_EVALUATOR_NAME",
     "UserBelief",
     "UserModelConfig",

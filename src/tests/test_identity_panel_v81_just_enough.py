@@ -32,9 +32,9 @@ def test_v83_normal_identity_ui_avoids_metric_bar_dashboard() -> None:
 
 
 def test_v83_identity_uses_gemma_observer_without_extra_identity_model_lane() -> None:
+    # Body Godot (C#) vẫn giữ code đọc observer_comment; sau khi gỡ thought-shards
+    # phía Python, panel chỉ nhận chuỗi rỗng (degrade mềm). Không còn assert adapter
+    # vì write_thought_shards/observer_comment đã bị xóa cùng thought-shards.
     text = _body()
     assert "ReadGemmaObserverCommentV82" in text
     assert "observer_comment" in text
-    adapter = (Path(__file__).parents[1] / "runtime" / "private_mind_model_adapter.py").read_text(encoding="utf-8")
-    assert 'observer_comment' in adapter
-    assert 'write_thought_shards' in adapter
