@@ -741,6 +741,17 @@ public partial class UdpListener : Node2D
 		_settingsElevenLabsVoiceId = ReadJsonNodeString(tts["elevenlabs_voice_id"], _settingsElevenLabsVoiceId);
 		_settingsElevenLabsModel = ReadJsonNodeString(tts["elevenlabs_model"], _settingsElevenLabsModel);
 		_settingsTtsLanguage = ReadJsonNodeString(tts["language"], _settingsTtsLanguage);
+		if (GodotObject.IsInstanceValid(_settingsLanguageSelect))
+		{
+			for (int i = 0; i < _settingsLanguageSelect.ItemCount; i++)
+			{
+				if (_settingsLanguageSelect.GetItemMetadata(i).AsString() == NormalizeSettingsTtsLanguage(_settingsTtsLanguage))
+				{
+					_settingsLanguageSelect.Select(i);
+					break;
+				}
+			}
+		}
 		_settingsTtsQuality = ReadJsonNodeString(tts["quality"], _settingsTtsQuality);
 		_settingsTtsVolume = (float)ReadJsonNodeDouble(tts["volume"], _settingsTtsVolume);
 		_settingsTtsSpeed = (float)ReadJsonNodeDouble(tts["speed"], _settingsTtsSpeed);

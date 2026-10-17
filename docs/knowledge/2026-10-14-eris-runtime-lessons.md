@@ -310,3 +310,57 @@ pipeline có tiếng. Phiên này có Root/surface HTTP 200, một audio phát x
 năm failure nằm trước delivery. Không có bằng chứng process crash hoặc
 gateway plain-text gây lỗi này. Đây vẫn là cập nhật chẩn đoán, chưa sửa hay
 triển khai runtime.
+
+## 11. Yêu cầu mới: đổi giọng Việt/Nhật live ngày 16/10/2026
+
+User yêu cầu chọn ngôn ngữ ngay trong settings bubble và nhấn mạnh **bản Việt
+phải bỏ các tiếng đệm/đuôi câu Nhật**. Điều này mở rộng yêu cầu ở mục 1: bubble
+Việt + voice Nhật vẫn là mặc định, nhưng voice Nhật không còn là ngôn ngữ bắt
+buộc cho mọi cấu hình. Filler Nhật fail-soft của rescue chỉ áp dụng mode Nhật.
+
+Source đã bổ sung voice Việt `0ggMuQ1r9f9jqBu50nJn`, profile riêng theo ngôn ngữ,
+dropdown live ở Basic, đồng bộ ACK và chặn audio/candidate thuộc ngôn ngữ cũ.
+Mode Việt dùng public surface Việt, không gọi localizer Nhật; prefix Nhật bị
+loại trước cả tra cache. Lựa chọn đã lưu thắng env bootstrap `ERIS_TTS_LANGUAGE`.
+
+Kiểm chứng: 178 test speech/TTS liên quan qua; Godot export và dev fast build
+exit 0. Không khẳng định toàn suite xanh: lượt rộng dừng ở test OCR khóa capture;
+53 failure khác tái hiện với cùng tập tên khi nạp lại các module Python trước
+thay đổi. Chưa gọi synthesis live để xác nhận quyền dùng voice và chất âm.
+Chi tiết, phạm vi đối chứng và tên test:
+[báo cáo đổi giọng live](2026-10-16-tts-vi-ja-live-switch.md).
+
+Ngày 17/10/2026, user yêu cầu thay voice Việt bằng `CQAD6iKxS73fEAGjSwt5`.
+ID này thay thế `0ggMuQ1r9f9jqBu50nJn` trong mặc định source và cấu hình
+runtime cục bộ; profile Nhật và quy tắc bỏ tiếng đệm Nhật ở mode Việt giữ nguyên.
+Đây là thay đổi cấu hình theo link user gửi, chưa xác nhận bằng synthesis live.
+
+Cùng ngày 17/10, user chọn tiếp `aHC3XZOMg3HZuXVYK6hy`, thay thế
+`CQAD6iKxS73fEAGjSwt5` cho profile Việt trong source và cấu hình cục bộ.
+Không thay đổi profile Nhật hay cơ chế speech; chưa nghe synthesis live.
+
+## 12. Đối chiếu lớp biểu cảm Việt/Nhật ngày 17/10/2026
+
+Theo yêu cầu đọc code của user, đã lần theo `prepare_public_output` →
+`compile_voice_plan_from_payload` → `StageOutputPipeline` → ElevenLabs renderer.
+Tám module liên quan trong bản portable trùng SHA-256 source hiện tại.
+
+- **Không đúng nếu coi tiếng Việt chỉ gửi text thuần:** compiler preset và
+  renderer dùng chung cho VI/JA, có `[warmly]`, `[mischievously]`, `[laughs]`,
+  `[sighs]` và cue nội địa hóa (VI `Ừm…`, JA `ん…`). Probe offline xác nhận
+  cùng preset sinh cùng tag cho cả hai ngôn ngữ; 36 test voice-director/switch qua.
+- `DeepSeekVoiceDirector` cũ không có caller production trong source hiện tại;
+  env và cấu hình lưu đều tắt. Compiler deterministic vẫn hoạt động độc lập.
+  Không suy từ tên class/comment cũ rằng lane STYLE đang được gọi trước mỗi câu.
+- Nhánh Việt trong `_prelocalize_v03_speech` ghi đè speech bằng public `text`,
+  giữ metadata performance nhưng bỏ bản `speech_text` riêng writer đã soạn.
+  Nhánh Nhật giữ speech Nhật có sẵn; chỉ khi cần dịch mới qua localizer với
+  persona/cadence/signature policy. Không khẳng định mọi câu Nhật đều qua policy.
+- Renderer ElevenLabs chọn tối đa một style tag; `pitch` và `director_notes`
+  chưa được chuyển thành chỉ dẫn trong request ElevenLabs. Nhánh API key có
+  style/speed/similarity, nhánh Bearer text-to-dialogue chỉ gửi stability và
+  speaker boost trong settings. Đây là giới hạn chung, không riêng tiếng Việt.
+
+Các kết quả này bổ sung giải thích trước đó thiên về chất lượng voice mẫu:
+pipeline cũng có bất đối xứng lời đọc VI/JA cần tính đến. Chưa có A/B audio live
+để quy khoảng cách chất âm cho một nguyên nhân, chưa thay đổi hành vi runtime.

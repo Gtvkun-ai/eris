@@ -184,6 +184,13 @@ class RuntimeConversationDeliveryAdapter:
             self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
             raise RuntimeError("public_transport_unavailable")
         if prepared is not None:
+            from runtime.speech_contract import configured_speech_language, normalize_language
+            language = configured_speech_language()
+            if any(
+                normalize_language(str(frame.speech_contract.get("language", language))) != language
+                for frame in prepared.segments
+            ):
+                raise RuntimeError("v03_speech_configuration_changed_before_dispatch")
             kernel = getattr(self.host, "conversation_kernel", None) or getattr(self.host, "_conversation_kernel", None)
             store = getattr(kernel, "store", None)
             if store is not None:

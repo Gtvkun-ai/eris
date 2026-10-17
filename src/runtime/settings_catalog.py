@@ -228,6 +228,8 @@ LABELS: dict[str, str] = {
     "volume": "Âm lượng",
     "speed": "Tốc độ",
     "elevenlabs_voice_id": "ElevenLabs Voice ID",
+    "elevenlabs_voice_id_vi": "Giọng ElevenLabs tiếng Việt",
+    "elevenlabs_voice_id_ja": "Giọng ElevenLabs tiếng Nhật (trống: dùng giọng cũ)",
     "elevenlabs_model": "ElevenLabs model",
     "voice_director_enabled": "Voice director từ xa (legacy)",
     "reasoning_effort": "Mức suy luận",

@@ -100,7 +100,7 @@ def test_full_self_bootstrap_without_top_k():
     assert session._prime(router=router, client=router.executive_client, system="system", schema=ROOT_STEP_SCHEMA)
     bootstrap = json.loads(router.calls[0]["conversation_messages"][1]["content"])
     assert len(bootstrap["eris_self_full"]["mind_state"]["identity"]["beliefs"]) == 25
-    assert session._messages[-1]["content"] == '{ "kind" : "no_reply" , "reason" : "self_loaded" }'
+    assert session._state.self_ref.ack_reply_raw == '{ "kind" : "no_reply" , "reason" : "self_loaded" }'
 
 
 def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
@@ -113,13 +113,14 @@ def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
     first = ask(session, router, history=({"role": "user", "content": "hi"},))
     assert first["kind"] == "move"
     messages = router.calls[1]["conversation_messages"]
-    assert len(messages) == 4
+    assert len(messages) == 5  # prefix 3 + user history 1 + step 1
     first_delta = json.loads(messages[-1]["content"])
     assert "eris_self_full" not in first_delta
     assert "personality_context" not in str(first_delta)
-    assert first_delta["recent_public_history_delta"] == [{"role": "user", "content": "hi"}]
+    assert "recent_public_history_delta" not in first_delta
+    assert messages[3] == {"role": "user", "content": "hi"}
     assert first_delta["self_changes_since_last_step"] == {}
-    assert session._messages[-1]["content"] == '{ "kind" : "move" , "intent":"live", "say":"reply", "delivery":"tự nhiên", "after":"wait_user" }'
+    assert session._state.last_reply_raw == '{ "kind" : "move" , "intent":"live", "say":"reply", "delivery":"tự nhiên", "after":"wait_user" }'
 
     host.mind.data["identity"]["beliefs"]["belief_0"]["strength"] = 0.9
     second = ask(session, router, payload=root_payload("new"), history=(
@@ -129,8 +130,9 @@ def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
     assert second["kind"] == "move"
     new_delta = json.loads(router.calls[2]["conversation_messages"][-1]["content"])
     assert new_delta["self_changes_since_last_step"] == {"mind_state": {"identity": {"beliefs": {"belief_0": {"strength": .9}}}}}
-    assert new_delta["recent_public_history_delta"][-1]["content"] == "new"
-    assert len(router.calls[2]["conversation_messages"]) == 6
+    assert "recent_public_history_delta" not in new_delta
+    assert router.calls[2]["conversation_messages"][-2] == {"role": "user", "content": "new"}
+    assert len(router.calls[2]["conversation_messages"]) == 7
     assert "eris_self_full" not in new_delta
 
 
@@ -231,14 +233,24 @@ def test_real_client_gateway_session_continuation_for_root(monkeypatch):
     assert session._prime(router=router, client=client, system=system, schema=ROOT_STEP_SCHEMA)
     assert ask(session, router, system=system) is not None
     assert len(calls) == 2
+    # Lượt đầu (chưa có public history) vẫn append đúng 1 user vào transcript
+    # bootstrap, nên SessionGuard cho tiếp nối. Khi window đổi sẽ mở generation.
     assert calls[0]["headers"]["X-Session-ID"] == calls[1]["headers"]["X-Session-ID"]
     assert len(calls[0]["json"]["messages"]) == 2
-    assert len(calls[1]["json"]["messages"]) == 4
+    assert len(calls[1]["json"]["messages"]) == 4  # không có history ở lượt này
     assert "eris_self_full" in calls[0]["json"]["messages"][1]["content"]
     assert "eris_self_full" not in calls[1]["json"]["messages"][-1]["content"]
+    # Khi có history thật, projector không còn nối đúng transcript cũ.
+    # SessionGuard V3 PHẢI mở generation mới thay vì nuốt phần window khác.
+    assert ask(session, router, system=system, history=(
+        {"role": "user", "history_id": "u:1", "raw_content": "xin chào"},
+    )) is not None
+    assert len(calls) == 3
+    assert calls[2]["headers"]["X-Session-ID"] != calls[1]["headers"]["X-Session-ID"]
+    assert calls[2]["json"]["messages"][3] == {"role": "user", "content": "xin chào"}
 
 
-def test_sliding_public_history_only_sends_unseen_turns(monkeypatch):
+def test_sliding_public_history_has_bounded_projection(monkeypatch):
     monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
     monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
     router, session = FakeRouter(), RootConversationSession()
@@ -248,9 +260,12 @@ def test_sliding_public_history_only_sends_unseen_turns(monkeypatch):
     assert ask(session, router, history=old)
     nxt = old[1:] + ({"role": "user", "content": "turn32"},)
     assert ask(session, router, history=nxt)
-    packet = json.loads(router.calls[-1]["conversation_messages"][-1]["content"])
-    assert packet["recent_public_history_delta"] == [{"role": "user", "content": "turn32"}]
+    messages = router.calls[-1]["conversation_messages"]
+    packet = json.loads(messages[-1]["content"])
+    assert "recent_public_history_delta" not in packet
     assert "recent_public_history_reconcile" not in packet
+    assert len(messages) == 3 + 24 + 1 + 1  # 24 turn raw + 1 carry
+    assert messages[-2]["content"] == "turn32"
 
 
 def test_nullable_self_delta_not_lost():
@@ -258,8 +273,8 @@ def test_nullable_self_delta_not_lost():
         "belief": {"confidence": {"__value_now_null": True}}}
 
 
-def test_delivery_status_changes_are_sent_as_delta_not_replayed_history(monkeypatch):
-    """pending -> cancelled không được làm session tưởng lịch sử bị rewrite."""
+def test_delivery_status_flip_only_changes_window_note(monkeypatch):
+    """pending -> cancelled chỉ đổi nhãn, không đổi turn_id/content hay resend."""
     monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
     monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
     router, session = FakeRouter(), RootConversationSession()
@@ -271,14 +286,23 @@ def test_delivery_status_changes_are_sent_as_delta_not_replayed_history(monkeypa
          "raw_content": "xin chào", "history_id": "turn:a1", "delivery_id": "audio:1", "delivery_status": "pending"},
     ]
     assert ask(session, router, history=history_pending)["kind"] == "move"
-    first = json.loads(router.calls[-1]["conversation_messages"][-1]["content"])
-    assert first["recent_public_history_delta"][-1]["content"] == "xin chào"
-    assert first["recent_public_delivery_updates"] == [{"delivery_id": "audio:1", "status": "pending"}]
+    first_messages = router.calls[-1]["conversation_messages"]
+    first = json.loads(first_messages[-1]["content"])
+    assert "recent_public_history_delta" not in first
+    assert "recent_public_delivery_updates" not in first
+    assert first_messages[-2]["content"] == "xin chào\n[Đã hiển thị; TTS chưa xác nhận phát xong]"
+    original_record = session._state.turns[-1]
     history_cancelled = [dict(x) for x in history_pending]
     history_cancelled[-1]["content"] = "[Đã hiển thị; âm thanh bị ngắt giữa chừng] xin chào"
     history_cancelled[-1]["delivery_status"] = "cancelled"
     assert ask(session, router, history=history_cancelled)["kind"] == "move"
-    second = json.loads(router.calls[-1]["conversation_messages"][-1]["content"])
+    second_messages = router.calls[-1]["conversation_messages"]
+    second = json.loads(second_messages[-1]["content"])
+    assert len(second_messages) == len(first_messages)
     assert "recent_public_history_delta" not in second
     assert "recent_public_history_reconcile" not in second
-    assert second["recent_public_delivery_updates"] == [{"delivery_id": "audio:1", "status": "cancelled"}]
+    assert "recent_public_delivery_updates" not in second
+    assert second_messages[-2]["content"] == "xin chào\n[Đã hiển thị; âm thanh bị ngắt giữa chừng]"
+    assert session._state.turns[-1] is original_record
+    assert original_record.turn_id == "turn:a1"
+    assert original_record.content == "xin chào"

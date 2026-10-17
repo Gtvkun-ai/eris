@@ -552,16 +552,10 @@ public partial class UdpListener : Node2D
 		tts.Size = new Vector2(180f, 24f);
 		parent.AddChild(tts);
 
-		string voiceSummary = string.Equals(_settingsTtsProvider, "elevenlabs", StringComparison.OrdinalIgnoreCase)
-			? $"ElevenLabs · {(string.IsNullOrWhiteSpace(_settingsElevenLabsVoiceId) ? "chưa có Voice ID" : CompactSettingsKey(_settingsElevenLabsVoiceId))}"
-			: $"Gemini · {_settingsTtsVoice} · {NormalizeSettingsTtsLanguage(_settingsTtsLanguage)}";
-		var voiceValue = CreateUiLabel(voiceSummary, 10, SettingsInkSoft);
-		voiceValue.Position = new Vector2(20f, 78f);
-		voiceValue.Size = new Vector2(parent.Size.X - 40f, 20f);
-		StyleSettingsSingleLineLabel(voiceValue);
-		parent.AddChild(voiceValue);
+		_settingsLanguageSelect = AddSettingsSpeechLanguageRow(parent, 78f);
+		_settingsLanguageSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("ngôn ngữ");
 
-		_settingsTtsVolumeSlider = AddSettingsSliderRow(parent, 104f, "Âm lượng", 0d, 100d, 1d, _settingsTtsVolume * 100d,
+		_settingsTtsVolumeSlider = AddSettingsSliderRow(parent, 126f, "Âm lượng", 0d, 100d, 1d, _settingsTtsVolume * 100d,
 			v => $"{Mathf.RoundToInt((float)v)}%", out _settingsTtsVolumeValueLabel);
 		_settingsTtsVolumeSlider.ValueChanged += value =>
 		{
@@ -571,43 +565,43 @@ public partial class UdpListener : Node2D
 		};
 
 		var voiceSettings = CreateSettingsButton("Mở cài đặt giọng nói", () => SwitchSettingsMode(SettingsModePage.Voice), primary: false);
-		voiceSettings.Position = new Vector2(18f, 140f);
+		voiceSettings.Position = new Vector2(18f, 162f);
 		voiceSettings.Size = new Vector2(parent.Size.X - 36f, 32f);
 		parent.AddChild(voiceSettings);
 
 		var line = new ColorRect
 		{
 			Color = new Color(0.96f, 0.72f, 0.84f, 0.42f),
-			Position = new Vector2(18f, 184f),
+			Position = new Vector2(18f, 206f),
 			Size = new Vector2(parent.Size.X - 36f, 1.2f),
 			MouseFilter = Control.MouseFilterEnum.Ignore,
 		};
 		parent.AddChild(line);
 
 		var windowTitle = CreateUiLabel("Cửa sổ nhân vật", 13, SettingsInk);
-		windowTitle.Position = new Vector2(18f, 198f);
+		windowTitle.Position = new Vector2(18f, 220f);
 		windowTitle.Size = new Vector2(parent.Size.X - 36f, 24f);
 		parent.AddChild(windowTitle);
 
-		AddSettingsMiniToggle(parent, new Vector2(18f, 230f), "Luôn nổi", KeepWindowAlwaysOnTop, ref _settingsAlwaysOnTopSwitch, () =>
+		AddSettingsMiniToggle(parent, new Vector2(18f, 252f), "Luôn nổi", KeepWindowAlwaysOnTop, ref _settingsAlwaysOnTopSwitch, () =>
 		{
 			KeepWindowAlwaysOnTop = !KeepWindowAlwaysOnTop;
 			ApplySettingsSwitch(_settingsAlwaysOnTopSwitch, KeepWindowAlwaysOnTop);
 			ConfigureDesktopOverlayWindow();
 		});
-		AddSettingsMiniToggle(parent, new Vector2(172f, 230f), "Trong suốt", UseTransparentWindow, ref _settingsTransparentSwitch, () =>
+		AddSettingsMiniToggle(parent, new Vector2(172f, 252f), "Trong suốt", UseTransparentWindow, ref _settingsTransparentSwitch, () =>
 		{
 			UseTransparentWindow = !UseTransparentWindow;
 			ApplySettingsSwitch(_settingsTransparentSwitch, UseTransparentWindow);
 			ConfigureDesktopOverlayWindow();
 		});
-		AddSettingsMiniToggle(parent, new Vector2(18f, 266f), "Click xuyên", EnableMousePassthrough, ref _settingsPassthroughSwitch, () =>
+		AddSettingsMiniToggle(parent, new Vector2(18f, 288f), "Click xuyên", EnableMousePassthrough, ref _settingsPassthroughSwitch, () =>
 		{
 			EnableMousePassthrough = !EnableMousePassthrough;
 			ApplySettingsSwitch(_settingsPassthroughSwitch, EnableMousePassthrough);
 			ConfigureDesktopOverlayWindow();
 		});
-		AddSettingsMiniToggle(parent, new Vector2(172f, 266f), "Khóa vị trí", LockCharacterPosition, ref _settingsPositionLockSwitch, () =>
+		AddSettingsMiniToggle(parent, new Vector2(172f, 288f), "Khóa vị trí", LockCharacterPosition, ref _settingsPositionLockSwitch, () =>
 		{
 			LockCharacterPosition = !LockCharacterPosition;
 			ApplySettingsSwitch(_settingsPositionLockSwitch, LockCharacterPosition);
@@ -615,9 +609,9 @@ public partial class UdpListener : Node2D
 				CancelGrabMode();
 		});
 
-		var hint = CreateUiLabel("Các thay đổi cửa sổ áp dụng ngay. Cấu hình model/key chỉ đổi sau khi restart Brain.", 9, SettingsInkSoft);
-		hint.Position = new Vector2(18f, 316f);
-		hint.Size = new Vector2(parent.Size.X - 36f, 42f);
+		var hint = CreateUiLabel("Ngôn ngữ và cửa sổ áp dụng ngay. Đổi ngôn ngữ sẽ dừng tiếng đang phát.", 9, SettingsInkSoft);
+		hint.Position = new Vector2(18f, 326f);
+		hint.Size = new Vector2(parent.Size.X - 36f, 30f);
 		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		parent.AddChild(hint);
 
@@ -1373,7 +1367,7 @@ public partial class UdpListener : Node2D
 		parent.AddChild(tts);
 
 		_settingsVoiceSelect = AddSettingsOptionRow(parent, 78f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
-		_settingsLanguageSelect = AddSettingsOptionRow(parent, 118f, "Ngôn ngữ giọng", new[] { "ja", "vi", "en" }, _settingsTtsLanguage);
+		_settingsLanguageSelect = AddSettingsSpeechLanguageRow(parent, 118f);
 		_settingsQualitySelect = AddSettingsOptionRow(parent, 158f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
 		_settingsVoiceSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("giọng");
 		_settingsLanguageSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("ngôn ngữ");
@@ -1535,6 +1529,19 @@ public partial class UdpListener : Node2D
 		};
 		row.AddChild(input);
 		return input;
+	}
+
+	private OptionButton AddSettingsSpeechLanguageRow(Control parent, float y)
+	{
+		string[] codes = { "vi", "ja", "en" };
+		string[] labels = { "Tiếng Việt", "日本語", "English" };
+		var option = AddSettingsOptionRow(parent, y, "Ngôn ngữ giọng", codes, NormalizeSettingsTtsLanguage(_settingsTtsLanguage));
+		for (int i = 0; i < codes.Length; i++)
+		{
+			option.SetItemMetadata(i, codes[i]);
+			option.SetItemText(i, labels[i]);
+		}
+		return option;
 	}
 
 	private OptionButton AddSettingsOptionRow(Control parent, float y, string label, string[] values, string selected)
@@ -2167,16 +2174,19 @@ public partial class UdpListener : Node2D
 	{
 		SyncSettingsInputsToFields();
 		SaveSettingsState(false, writeSecrets: false);
-		SendTtsRuntimeSettingsUpdate();
+		SendTtsRuntimeSettingsUpdate(languageOnly: string.Equals(changedField, "ngôn ngữ", StringComparison.Ordinal));
 		SetSettingsStatus($"Đã gửi {changedField} TTS xuống Brain runtime.");
 	}
 
-	private void SendTtsRuntimeSettingsUpdate()
+	private void SendTtsRuntimeSettingsUpdate(bool languageOnly = false)
 	{
 		if (_chatSend == null)
 			return;
 
-		var tts = new JsonObject
+		var tts = languageOnly ? new JsonObject
+		{
+			["language"] = NormalizeSettingsTtsLanguage(_settingsTtsLanguage),
+		} : new JsonObject
 		{
 			["enabled"] = _settingsTtsEnabled,
 			["provider"] = string.IsNullOrWhiteSpace(_settingsTtsProvider) ? "elevenlabs" : _settingsTtsProvider.Trim().ToLowerInvariant(),
@@ -2478,7 +2488,7 @@ public partial class UdpListener : Node2D
 		if (_settingsVoiceSelect != null && _settingsVoiceSelect.Selected >= 0)
 			_settingsTtsVoice = _settingsVoiceSelect.GetItemText(_settingsVoiceSelect.Selected);
 		if (_settingsLanguageSelect != null && _settingsLanguageSelect.Selected >= 0)
-			_settingsTtsLanguage = _settingsLanguageSelect.GetItemText(_settingsLanguageSelect.Selected);
+			_settingsTtsLanguage = _settingsLanguageSelect.GetItemMetadata(_settingsLanguageSelect.Selected).AsString();
 		if (_settingsQualitySelect != null && _settingsQualitySelect.Selected >= 0)
 			_settingsTtsQuality = _settingsQualitySelect.GetItemText(_settingsQualitySelect.Selected);
 	}

@@ -18,6 +18,14 @@ _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 _LOCALES = {"vi": "vi-VN", "ja": "ja-JP", "en": "en-US"}
 
 
+def configured_speech_language() -> str:
+    """Live voice selection; independent from the public/chat language."""
+    from runtime.runtime_settings_store import runtime_text
+
+    raw = runtime_text("tts", "language", default="ja").strip().lower()
+    return normalize_language(raw) if raw not in {"", "auto"} else "ja"
+
+
 def normalize_language(value: str, *, text: str = "") -> str:
     raw = str(value or "").strip().lower().replace("_", "-")
     if raw in {"ja", "jp", "japanese"} or raw.startswith("ja-"):
@@ -96,4 +104,4 @@ class SpeechContractResolver:
         return SpeechContract(language, locale, voice_family, provider_tier, can_translate)
 
 
-__all__ = ["SpeechContract", "SpeechContractResolver", "normalize_language"]
+__all__ = ["SpeechContract", "SpeechContractResolver", "normalize_language", "configured_speech_language"]

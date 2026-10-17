@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1456 816" width="1456" height="816" font-family="'Segoe UI', Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0b7f7a"/>
+    </marker>
+  </defs>
+
+  <rect width="1456" height="816" fill="#f8fafc"/>
+  <rect width="1456" height="14" fill="#0b7f7a"/>
+
+  <text x="70" y="68" font-size="14" font-weight="700" fill="#0b7f7a" letter-spacing="1.5">LUỒNG CHẠY · TRIẾT LÝ 01: CHIA QUYỀN</text>
+  <text x="70" y="126" font-size="38" font-weight="700" fill="#0f172a">Mỗi câu Eris nói đi qua 8 trạm. Và chỉ có một cửa ra.</text>
+  <text x="72" y="168" font-size="19" fill="#64748b">Root quyết ý · Writer viết lời · chỉ một cửa được phát tiếng · biên nhận quay về Root</text>
+
+  <!-- HÀNG TRÊN: trái sang phải -->
+  <!-- 01 NGÕ VÀO -->
+  <rect x="70" y="210" width="299" height="175" rx="20" fill="#ffffff" stroke="#dbe3ea" stroke-width="1.5"/>
+  <rect x="90" y="230" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="112" y="249" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">01</text>
+  <text x="146" y="251" font-size="20" font-weight="700" fill="#0f172a">NGÕ VÀO</text>
+  <text x="92" y="288" font-size="15" fill="#334155">Chat hoặc giọng nói</text>
+  <text x="92" y="310" font-size="15" fill="#334155">“ừ, à” lúc Eris nói → giữ audio</text>
+  <text x="92" y="332" font-size="15" fill="#334155">câu mới → ngắt lời</text>
+  <rect x="90" y="346" width="132" height="26" rx="13" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="156" y="364" font-size="13" font-weight="600" fill="#475569" text-anchor="middle">không gọi LLM</text>
+
+  <!-- 02 KERNEL -->
+  <rect x="409" y="210" width="299" height="175" rx="20" fill="#ffffff" stroke="#dbe3ea" stroke-width="1.5"/>
+  <rect x="429" y="230" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="451" y="249" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">02</text>
+  <text x="485" y="251" font-size="20" font-weight="700" fill="#0f172a">KERNEL</text>
+  <text x="431" y="288" font-size="15" fill="#334155">generation + 1 ngay lập tức</text>
+  <text x="431" y="310" font-size="15" fill="#334155">mọi thứ của lượt cũ hết hiệu lực</text>
+  <text x="431" y="332" font-size="15" fill="#334155">hủy nói tiếp · cấp run_id</text>
+  <rect x="429" y="346" width="132" height="26" rx="13" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="495" y="364" font-size="13" font-weight="600" fill="#475569" text-anchor="middle">không gọi LLM</text>
+
+  <!-- 03 NGỮ CẢNH -->
+  <rect x="748" y="210" width="299" height="175" rx="20" fill="#ffffff" stroke="#dbe3ea" stroke-width="1.5"/>
+  <rect x="768" y="230" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="790" y="249" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">03</text>
+  <text x="824" y="251" font-size="20" font-weight="700" fill="#0f172a">NGỮ CẢNH</text>
+  <text x="770" y="288" font-size="15" fill="#334155">danh tính · quan hệ · cảm xúc</text>
+  <text x="770" y="310" font-size="15" fill="#334155">trí nhớ · bằng chứng</text>
+  <text x="770" y="332" font-size="15" fill="#334155">chỉ chiếu dữ liệu, không quyết</text>
+  <rect x="768" y="346" width="132" height="26" rx="13" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="834" y="364" font-size="13" font-weight="600" fill="#475569" text-anchor="middle">không gọi LLM</text>
+
+  <!-- 04 ROOT (làn bắt buộc) -->
+  <rect x="1087" y="210" width="299" height="175" rx="20" fill="#ffffff" stroke="#0b7f7a" stroke-width="2.5"/>
+  <rect x="1107" y="230" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="1129" y="249" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">04</text>
+  <text x="1163" y="251" font-size="20" font-weight="700" fill="#0f172a">ROOT</text>
+  <text x="1109" y="288" font-size="15" fill="#334155">vòng nhiều bước, mỗi bước 1 việc</text>
+  <text x="1109" y="310" font-size="15" fill="#334155">nhớ lại · gọi gia sư · nghĩ thêm</text>
+  <text x="1109" y="332" font-size="15" fill="#334155">chốt ý định, không viết câu</text>
+  <rect x="1107" y="346" width="200" height="26" rx="13" fill="#0b7f7a"/>
+  <text x="1207" y="364" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">làn bắt buộc · nghĩ sâu</text>
+
+  <!-- Mũi tên hàng trên -->
+  <line x1="373" y1="297" x2="402" y2="297" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+  <line x1="712" y1="297" x2="741" y2="297" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+  <line x1="1051" y1="297" x2="1080" y2="297" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+  <!-- Xuống hàng dưới -->
+  <line x1="1236" y1="389" x2="1236" y2="433" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- HÀNG DƯỚI: phải sang trái -->
+  <!-- 05 WRITER (làn bắt buộc) -->
+  <rect x="1087" y="440" width="299" height="175" rx="20" fill="#ffffff" stroke="#0b7f7a" stroke-width="2.5"/>
+  <rect x="1107" y="460" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="1129" y="479" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">05</text>
+  <text x="1163" y="481" font-size="20" font-weight="700" fill="#0f172a">WRITER</text>
+  <text x="1109" y="518" font-size="15" fill="#334155">viết ý của Root thành lời</text>
+  <text x="1109" y="540" font-size="15" fill="#334155">chữ tiếng Việt + giọng tiếng Nhật</text>
+  <text x="1109" y="562" font-size="15" fill="#334155">guard: grounding · ngôn ngữ</text>
+  <rect x="1107" y="576" width="214" height="26" rx="13" fill="#0b7f7a"/>
+  <text x="1214" y="594" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">làn bắt buộc · không nghĩ</text>
+
+  <!-- 06 KIỂM CUỐI -->
+  <rect x="748" y="440" width="299" height="175" rx="20" fill="#ffffff" stroke="#dbe3ea" stroke-width="1.5"/>
+  <rect x="768" y="460" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="790" y="479" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">06</text>
+  <text x="824" y="481" font-size="20" font-weight="700" fill="#0f172a">KIỂM CUỐI</text>
+  <text x="770" y="518" font-size="15" fill="#334155">còn đúng lượt này không?</text>
+  <text x="770" y="540" font-size="15" fill="#334155">user chen lời → hủy</text>
+  <text x="770" y="562" font-size="15" fill="#334155">không phát lại câu cũ</text>
+  <rect x="768" y="576" width="132" height="26" rx="13" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="834" y="594" font-size="13" font-weight="600" fill="#475569" text-anchor="middle">không gọi LLM</text>
+
+  <!-- 07 CỬA PHÁT (duy nhất) -->
+  <rect x="409" y="440" width="299" height="175" rx="20" fill="#fff7ed" stroke="#f59e0b" stroke-width="2.5"/>
+  <rect x="429" y="460" width="44" height="28" rx="14" fill="#fde7c7"/>
+  <text x="451" y="479" font-size="15" font-weight="700" fill="#b45309" text-anchor="middle">07</text>
+  <text x="485" y="481" font-size="20" font-weight="700" fill="#0f172a">CỬA PHÁT</text>
+  <text x="431" y="518" font-size="15" fill="#334155">TTS → audio + Live2D + phụ đề</text>
+  <text x="431" y="540" font-size="15" fill="#334155">câu “đã làm” phải có biên nhận</text>
+  <text x="431" y="562" font-size="15" fill="#334155">cửa duy nhất được phát lời</text>
+  <rect x="429" y="576" width="150" height="26" rx="13" fill="#f59e0b"/>
+  <text x="504" y="594" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">một cửa duy nhất</text>
+
+  <!-- 08 BIÊN NHẬN -->
+  <rect x="70" y="440" width="299" height="175" rx="20" fill="#ffffff" stroke="#dbe3ea" stroke-width="1.5"/>
+  <rect x="90" y="460" width="44" height="28" rx="14" fill="#dff3ef"/>
+  <text x="112" y="479" font-size="15" font-weight="700" fill="#0b7f7a" text-anchor="middle">08</text>
+  <text x="146" y="481" font-size="20" font-weight="700" fill="#0f172a">BIÊN NHẬN</text>
+  <text x="92" y="518" font-size="15" fill="#334155">quay về Root ở bước/lượt sau</text>
+  <text x="92" y="540" font-size="15" fill="#334155">Tutor ghi “đã dạy” khi phát xong</text>
+  <text x="92" y="562" font-size="15" fill="#334155">observer học lại lượt vừa rồi</text>
+  <rect x="90" y="576" width="150" height="26" rx="13" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <text x="165" y="594" font-size="13" font-weight="600" fill="#64748b" text-anchor="middle">observer: làn nền</text>
+
+  <!-- Mũi tên hàng dưới (sang trái) -->
+  <line x1="1083" y1="527" x2="1054" y2="527" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+  <line x1="744" y1="527" x2="715" y2="527" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+  <line x1="405" y1="527" x2="376" y2="527" stroke="#0b7f7a" stroke-width="2.5" marker-end="url(#ah)"/>
+
+  <!-- Vòng quay lại: 08 -> 02 -->
+  <path d="M219,437 L219,412 L558,412 L558,393" fill="none" stroke="#0b7f7a" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#ah)"/>
+  <text x="578" y="417" font-size="13" font-weight="600" fill="#0b7f7a">Root chọn nói tiếp → continuation_due quay lại Kernel</text>
+
+  <!-- Chú thích màu -->
+  <rect x="70" y="652" width="34" height="18" rx="9" fill="#0b7f7a"/>
+  <text x="114" y="666" font-size="14" fill="#334155">làn bắt buộc: không bao giờ bị cắt khi máy bận</text>
+  <rect x="70" y="682" width="34" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="114" y="696" font-size="14" fill="#334155">không gọi LLM: luật cứng bằng code</text>
+  <rect x="70" y="712" width="34" height="18" rx="9" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <text x="114" y="726" font-size="14" fill="#334155">làn nền: hoãn, gộp hoặc bỏ được</text>
+
+  <!-- Fail-soft -->
+  <rect x="820" y="645" width="566" height="100" rx="18" fill="#fff7ed" stroke="#f59e0b" stroke-width="2"/>
+  <text x="846" y="680" font-size="16" font-weight="700" fill="#b45309">FAIL-SOFT · khi model lỗi, Eris không im</text>
+  <text x="846" y="708" font-size="14.5" fill="#7c2d12">Root hoặc Writer lỗi provider → câu báo cố định (chữ Việt + giọng Nhật)</text>
+  <text x="846" y="730" font-size="14.5" fill="#7c2d12">đi thẳng tới cửa phát, không qua LLM, vẫn kiểm đúng lượt</text>
+
+  <!-- Footer -->
+  <line x1="70" y1="772" x2="1386" y2="772" stroke="#dbe3ea"/>
+  <text x="70" y="797" font-size="12" font-weight="700" fill="#64748b">ERIS / GIA SƯ AI ĐỒNG HÀNH</text>
+  <text x="1386" y="797" font-size="12" font-weight="700" fill="#64748b" text-anchor="end">05</text>
+</svg>

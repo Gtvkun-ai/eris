@@ -170,6 +170,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "enabled": True,
         "provider": "elevenlabs",
         "elevenlabs_voice_id": "",
+        "elevenlabs_voice_id_vi": "aHC3XZOMg3HZuXVYK6hy",
+        "elevenlabs_voice_id_ja": "",
         "elevenlabs_model": "eleven_v3",
         "voice_director_enabled": False,
         # Project Eris dùng bubble Việt + voice Nhật theo mặc định.
@@ -578,9 +580,13 @@ class RuntimeSettingsStore:
             elif self.path.exists():
                 try:
                     payload = json.loads(self.path.read_text(encoding="utf-8"))
+                    persisted_tts = payload.get("tts", {}) if isinstance(payload, Mapping) else {}
+                    has_saved_language = isinstance(persisted_tts, Mapping) and self._normalize_tts_language(
+                        persisted_tts.get("language", "")
+                    ) in {"vi", "ja", "en"}
                     payload, migrated = self._migrate_payload(payload)
                     settings = self._validate_full(payload)
-                    reconciled = self._apply_bootstrap_tts_language(settings)
+                    reconciled = not has_saved_language and self._apply_bootstrap_tts_language(settings)
                     if migrated or reconciled:
                         self._atomic_save(settings)
                 except Exception as exc:

@@ -102,10 +102,15 @@ def _gemini_model() -> str:
     return os.environ.get("ERIS_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip()
 
 
-def _voice() -> str:
+def _voice(language_hint: str = "") -> str:
     from runtime.runtime_settings_store import runtime_text
 
     if _tts_provider() == "elevenlabs":
+        language = _normalize_language_hint(language_hint or _language_hint())
+        if language in {"vi", "ja"}:
+            selected = runtime_text("tts", f"elevenlabs_voice_id_{language}", default="").strip()
+            if selected:
+                return selected
         return (
             os.environ.get("ERIS_ELEVENLABS_VOICE_ID", "").strip()
             or runtime_text("tts", "elevenlabs_voice_id", default="fUjY9K2nAIwlALOwSiwc").strip()
@@ -2467,6 +2472,13 @@ class _TtsWorker:
 
 
     def _request_is_current(self, req: _SpeakRequest) -> bool:
+        stopped = getattr(self, "_stop_event", None)
+        if stopped is not None and stopped.is_set():
+            return False
+        if req.verified_transcript_hash and req.language_hint:
+            configured = _normalize_language_hint(self._language_hint)
+            if _normalize_language_hint(req.language_hint) != configured:
+                return False
         validator = self._epoch_validator
         if not callable(validator):
             return True
@@ -2583,7 +2595,7 @@ class _TtsWorker:
 
     def _request_voice(self, req: _SpeakRequest) -> str:
         if _tts_provider() == "elevenlabs":
-            return _voice()
+            return _voice(self._request_language(req))
         requested = str(req.voice_family or "").strip()
         if not requested or requested.lower() in {"eris_primary", "primary", "default"}:
             return self._voice
@@ -2700,11 +2712,15 @@ class _TtsWorker:
         prefix = str(prefix or "").strip()
         if not prefix or not vocal_cache_enabled():
             return b""
+        language_hint = self._request_language(req)
+        # A Japanese embellishment is not permission to switch a Vietnamese
+        # utterance to Japanese, including when the old clip is already cached.
+        if language_hint != "ja" and _contains_japanese_chars(prefix):
+            return b""
         kind = str(getattr(req, "vocal_cache_kind", "") or "vocal_prefix")
         if authority_check is None:
             authority_check = lambda: self._request_is_current(req)
         _raise_if_tts_cancelled(cancel_event, authority_check)
-        language_hint = self._request_language(req)
         voice = self._request_voice(req)
         locale = self._request_locale(req)
         if _contains_japanese_chars(prefix):
@@ -3138,6 +3154,7 @@ class TtsEngine:
             if signature == self._config_signature:
                 return False
             old_signature = self._config_signature or "<none>"
+            self.supersede_all(reason="tts_configuration_changed")
             manager = getattr(self, "task_manager", None)
             if manager is not None and callable(getattr(manager, "shutdown", None)):
                 try:

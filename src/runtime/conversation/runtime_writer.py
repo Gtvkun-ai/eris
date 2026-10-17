@@ -49,6 +49,32 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     from runtime.stage_contracts import _contains_japanese_script
     from runtime.utterance_spec import UtteranceSpec
 
+    if str(language_hint or '').lower() in ('vi', 'vi-vn', 'vietnamese'):
+        # The Vietnamese public surface is already canonical. Do not reuse a
+        # translated Japanese surface, signature ending or fail-soft JA filler.
+        vietnamese = str(result.get('text', '') or '').strip()
+        if vietnamese:
+            result.update(speech_text=vietnamese, speech_language='vi', tts_language='vi')
+            contract = result.get('speech_contract')
+            result['speech_contract'] = {
+                **(dict(contract) if isinstance(contract, Mapping) else {}),
+                'language': 'vi', 'locale': 'vi-VN',
+            }
+            speech = result.get('speech')
+            if isinstance(speech, Mapping):
+                result['speech'] = {**dict(speech), 'text': vietnamese, 'language': 'vi'}
+            elif isinstance(speech, str):
+                result['speech'] = vietnamese
+            nested = result.get('utterance')
+            if isinstance(nested, Mapping):
+                revised = dict(nested)
+                previous = revised.get('speech')
+                revised['speech'] = {
+                    **(dict(previous) if isinstance(previous, Mapping) else {}),
+                    'text': vietnamese, 'language': 'vi',
+                }
+                result['utterance'] = revised
+        return result
     if str(language_hint or '').lower() not in ('ja', 'jp', 'japanese'):
         return result
     display_text = str(result.get('text', '') or '').strip()
@@ -240,8 +266,13 @@ class RuntimeConversationWriter:
         stage = 'generate'
         base = dict(kwargs)
         base['allow_language_repair'] = False
+        from runtime.speech_contract import configured_speech_language
+        speech_language = configured_speech_language()
+        base['speech_language_hint'] = speech_language
         try:
             payload = generate(**base)
+            if configured_speech_language() != speech_language:
+                raise RuntimeError('v03_speech_configuration_changed')
             if not isinstance(payload, Mapping):
                 raise RuntimeError('v03_writer_invalid_payload')
             # Manifest chỉ là thông tin chẩn đoán khi model cung cấp hợp lệ;
@@ -254,10 +285,6 @@ class RuntimeConversationWriter:
             if _public_display_language_mismatch(
                     display, str(base.get('language_hint', 'vi') or 'vi')):
                 raise RuntimeError('v03_display_language_mismatch')
-            from runtime.runtime_settings_store import runtime_text
-            speech_language = runtime_text('tts', 'language', default='ja').strip().lower() or 'ja'
-            if speech_language == 'auto':
-                speech_language = 'ja'
             stage = 'localize'
             payload = _prelocalize_v03_speech(
                 payload, host=self.host, language_hint=speech_language,
@@ -267,6 +294,8 @@ class RuntimeConversationWriter:
             engine = runtime_context.get('__source_grounding_engine')
             report = runtime_context.get('__source_grounding_report')
             stage = 'prepare'
+            if configured_speech_language() != speech_language:
+                raise RuntimeError('v03_speech_configuration_changed')
             prepared = RuntimeConversationDeliveryAdapter(self.host).prepare_candidate(
                 turn=turn, event=event, payload=dict(payload),
                 source_fingerprint=getattr(evidence_registry, 'fingerprint', ''),

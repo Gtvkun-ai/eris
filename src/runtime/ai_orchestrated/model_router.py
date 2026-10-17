@@ -2020,6 +2020,7 @@ class AIRuntimeModelRouter:
             payload,
             tool_intent=planned_intention.tool_intent if planned_intention is not None else "",
             tool_input=planned_intention.tool_input if planned_intention is not None else "",
+            speech_language_hint=speech_code,
         )
 
     def _compat_public_envelope(
@@ -2028,6 +2029,7 @@ class AIRuntimeModelRouter:
         *,
         tool_intent: str = "",
         tool_input: str = "",
+        speech_language_hint: str = "",
     ) -> dict[str, Any]:
         """Bọc payload model cũ mà không để JSON sai kiểu làm sập chat loop."""
 
@@ -2081,12 +2083,13 @@ class AIRuntimeModelRouter:
                 safe_log(self.logger, "debug", "Semantic validation metric failed: %s", exc)
         from runtime.utterance_spec import UtteranceSpec
         from runtime.capability_claim_guard import normalize_self_capability_claims
+        from runtime.speech_contract import configured_speech_language
 
         utterance = UtteranceSpec.from_mapping(
             data,
             fallback_text=public_text,
             default_display_language="vi",
-            default_speech_language="ja",
+            default_speech_language=speech_language_hint or configured_speech_language(),
             fallback_preset=str(data.get("performance_hint", "neutral") or "neutral"),
         )
         flattened = utterance.to_flat_payload()

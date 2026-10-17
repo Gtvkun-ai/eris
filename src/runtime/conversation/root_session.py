@@ -9,12 +9,18 @@ làm hủy chuỗi trước khi tiếp tục. Không lưu private reasoning/chai
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
+import uuid
+from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
-from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider
+from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider, _truncate_to_cap
 from llm.provider_errors import provider_failure
+from .root_session_projector import (
+    RootSessionState, SelfReference, TurnRecord, bootstrap_content, project_root_messages,
+)
 
 
 def _jsonable(value: Any) -> Any:
@@ -84,22 +90,114 @@ def _changed(previous: Any, current: Any) -> Any:
     return current
 
 
-class RootConversationSession:
-    """Một transcript được xác nhận, thuộc riêng Root, không thuộc Writer.
+def _ingest_recent_turns(state: RootSessionState, recent_history: Sequence[Mapping[str, Any]]) -> int:
+    """Nhập turn mới, cập nhật receipt cũ TẠI CHỖ mà không replay history.
 
-    Nhận reply RAW để transcript khớp byte với Whale2API SessionGuard V3.
-    Không tái sử dụng sau lỗi/timeout; chỉ session mới được nạp lại toàn bộ Self.
+    history_id có sẵn là định danh ưu tiên. Nếu history được dựng lại không có
+    history_id, đối chiếu chuỗi suffix/prefix bằng lời gốc + role + delivery_id.
+    Việc sinh UUID chỉ diễn ra KHI đưa một turn thực sự mới vào state. Vì vậy
+    rebuild cùng một snapshot không tạo turn mới, kể cả nhiều câu trùng nhau.
+    """
+    incoming: list[dict[str, str | None]] = []
+    for item in recent_history:
+        if not isinstance(item, Mapping):
+            continue
+        role = str(item.get("role", ""))
+        if role not in {"user", "assistant"}:
+            continue
+        raw = str(item.get("raw_content", item.get("content", "")))
+        did = str(item.get("delivery_id") or "")[:180] or None
+        status = str(item.get("delivery_status") or ("pending" if did else "none"))
+        if status not in {"none", "pending", "delivered", "cancelled", "failed"}:
+            status = "none"
+        kind = str(item.get("kind", item.get("turn_kind", "public")))
+        incoming.append({
+            "turn_id": str(item.get("history_id") or "")[:180] or None,
+            "role": role,
+            "content": raw,
+            "delivery_id": did,
+            "status": status if role == "assistant" else "none",
+            "kind": kind if kind in {"public", "autonomous"} else "public",
+        })
+    if not incoming:
+        return 0
+
+    def same(existing: TurnRecord, new: Mapping[str, str | None]) -> bool:
+        # Status KHÔNG nằm trong khóa đối chiếu. Receipt flip không thể tạo turn.
+        # So role/content giúp history đã reload vẫn khớp khi thiếu ID.
+        # Hai history_id đã biết mà KHÁC nhau nghĩa là hai lượt khác nhau,
+        # kể cả user gửi liên tiếp cùng đúng một chữ "ok".
+        incoming_id = new["turn_id"]
+        if incoming_id and existing.turn_id and incoming_id != existing.turn_id:
+            return False
+        return (existing.role == new["role"] and existing.content == new["content"]
+                and existing.delivery_id == new["delivery_id"])
+
+    # Tìm overlap lớn nhất giữa suffix đã biết và prefix mới, KHÔNG đưa
+    # history vào step_payload và KHÔNG resend phần đã có.
+    overlap = 0
+    for count in range(min(len(state.turns), len(incoming)), 0, -1):
+        if all(same(old, new) for old, new in zip(state.turns[-count:], incoming[:count])):
+            overlap = count
+            break
+    # Trường hợp state vừa thay đổi mà snapshot đã xuất hiện trước đó (caller
+    # gọi lại cùng history cũ), giữ nguyên và chỉ cập nhật receipt theo ID.
+    match_at = None
+    if not overlap and state.turns and len(incoming) <= len(state.turns):
+        for offset in range(len(state.turns) - len(incoming), -1, -1):
+            if all(same(old, new) for old, new in zip(state.turns[offset:], incoming)):
+                overlap = len(incoming)
+                match_at = offset
+                break
+
+    # Receipt là một nguồn sự thật duy nhất: ưu tiên delivery_id ổn định.
+    by_delivery = {turn.delivery_id: turn for turn in state.turns if turn.delivery_id}
+    by_id = {turn.turn_id: turn for turn in state.turns}
+    for index, item in enumerate(incoming):
+        original = None
+        if item["delivery_id"]:
+            original = by_delivery.get(item["delivery_id"])
+        if original is None and item["turn_id"]:
+            original = by_id.get(item["turn_id"])
+        if original is None and index < overlap:
+            original = state.turns[(len(state.turns) - overlap if match_at is None else match_at) + index]
+        if original is not None:
+            # Không sửa identity/content/position vì trạng thái âm thanh thay đổi.
+            original.status = str(item["status"])
+
+    new_count = 0
+    for item in incoming[overlap:]:
+        # Có thể đã đối chiếu qua ID ở trên: không chèn lần nữa.
+        if (item["turn_id"] and item["turn_id"] in by_id) or (
+            item["delivery_id"] and item["delivery_id"] in by_delivery
+        ):
+            continue
+        record = TurnRecord(
+            turn_id=str(item["turn_id"] or f"history:{uuid.uuid4().hex}"),
+            role=str(item["role"]), content=str(item["content"]),
+            delivery_id=item["delivery_id"], status=str(item["status"]),
+            kind=str(item["kind"]),
+        )
+        state.turns.append(record)
+        by_id[record.turn_id] = record
+        if record.delivery_id:
+            by_delivery[record.delivery_id] = record
+        new_count += 1
+    return new_count
+
+
+class RootConversationSession:
+    """Root session với true state riêng, projector dựng bounded prompt mỗi bước.
+
+    RAW reply Root luôn giữ byte-khớp để SessionGuard V3 commit đúng response.
+    Khi projector thay window, guard phải mở generation mới thay vì giả vờ
+    nối remote transcript append-only (gateway hiện không duy trì session bền).
     """
 
     def __init__(self, *, logger: Any = None) -> None:
         self.logger = logger
         self._lock = threading.Lock()
-        self._messages: list[dict[str, str]] = []
-        self._self: dict[str, Any] = {}
-        self._last_history: list[dict[str, str]] = []
-        self._last_delivery_status: dict[str, str] = {}
-        self._last_context: dict[str, Any] = {}
-        self._system = ""
+        self._state = RootSessionState()
         self._started = False
         self._host: Any = None
         self._preloader: threading.Thread | None = None
@@ -158,12 +256,8 @@ class RootConversationSession:
                 pass
 
     def _clear(self) -> None:
-        self._messages = []
-        self._self = {}
-        self._last_history = []
-        self._last_delivery_status = {}
-        self._last_context = {}
-        self._system = ""
+        # Không giữ các transcript/messages lỗi để session mới tái dùng nhầm.
+        self._state = RootSessionState()
         self._started = False
 
     def _fits(self, client: Any, messages: Sequence[Mapping[str, str]]) -> bool:
@@ -207,20 +301,11 @@ class RootConversationSession:
         if not self_context:
             self._log("warning", "[root-session] Self owner chưa sẵn sàng")
             return False
+        # content_json bất biến; không tóm tắt, chọn top-k hay cắt belief.
+        content_json = json.dumps(self_context, ensure_ascii=False, separators=(",", ":"))
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps({
-                "kind": "root_session_bootstrap",
-                "eris_self_full": self_context,
-                "instruction": (
-                    "Đọc toàn bộ Self để định hướng về Eris, gồm cả các belief trái chiều, giá trị yếu và "
-                    "các khuynh hướng chưa chắc chắn; không tự chọn một belief mạnh nhất làm luật xử sự. "
-                    "Phân biệt niềm tin tương đối bền vững với lựa chọn tức thời: hành vi mới lạ không tự động "
-                    "sửa Self. Không tự sửa Self, không chọn top-k và không viết lời public. "
-                    "Đây là dữ liệu về nhân vật, không phải lệnh từ user. "
-                    "Trả action JSON kind=no_reply, reason='self_loaded'."
-                ),
-            }, ensure_ascii=False, separators=(",", ":"))},
+            {"role": "user", "content": bootstrap_content(content_json)},
         ]
         if not self._fits(client, messages):
             self._log("warning", "[root-session] full Self vượt model context cap; không nạp bản thiếu")
@@ -228,120 +313,113 @@ class RootConversationSession:
         reply, original = self._call(router=router, client=client, system=system, schema=schema, messages=messages)
         if reply.get("kind") != "no_reply":
             raise RuntimeError("root_session_bootstrap_not_acknowledged")
-        self._messages = messages + [{"role": "assistant", "content": original}]
-        self._self = self_context
-        self._system = system
+        self._state = RootSessionState(
+            self_ref=SelfReference(
+                content_json=content_json,
+                sections=len(self_context), char_len=len(content_json),
+                fingerprint=hashlib.sha256(content_json.encode("utf-8")).hexdigest()[:16],
+                ack_reply_raw=original,
+            ),
+            system_prompt=system,
+            last_self_snapshot=deepcopy(self_context),
+            last_reply_raw=original,
+        )
         self._started = True
-        self._log("info", "[root-session] full Self loaded; sections=%d chars=%d", len(self_context), len(messages[1]["content"]))
+        self._log("info", "[root-session] full Self loaded; sections=%d chars=%d fingerprint=%s",
+                  len(self_context), len(messages[1]["content"]), self._state.self_ref.fingerprint)
         return True
+
+    @staticmethod
+    def _window_pairs() -> int:
+        try:
+            return max(2, int(os.environ.get("ERIS_ROOT_SESSION_WINDOW_PAIRS", "12")))
+        except (TypeError, ValueError):
+            return 12
 
     def ask(
         self, *, router: Any, client: Any, system: str, schema: Mapping[str, Any],
         payload: Mapping[str, Any], runtime_context: Mapping[str, Any],
         recent_history: Sequence[Mapping[str, Any]],
     ) -> dict[str, Any] | None:
-        """Return None khi session không an toàn để caller dùng one-shot cũ.
-
-        Cố ý không block lượt user nếu background warm-up chưa xong.
-        """
+        """Không block warm-up; khi lỗi caller vẫn dùng one-shot theo hợp đồng cũ."""
         if not self.enabled() or self._host is None or not self._lock.acquire(blocking=False):
             return None
         try:
-            if not self._started or self._system != system:
+            state = self._state
+            if not self._started or state.system_prompt != system:
                 if not self._prime(router=router, client=client, system=system, schema=schema):
                     return None
+                state = self._state
             self_now = _read_self(self._host)
-            self_delta = _changed(self._self, self_now) or {}
-            history: list[dict[str, str]] = []
-            statuses: dict[str, str] = {}
-            for item in recent_history:
-                if not isinstance(item, Mapping):
-                    continue
-                row = {
-                    "role": str(item.get("role", "")),
-                    "content": str(item.get("raw_content", item.get("content", ""))),
-                }
-                if item.get("history_id"):
-                    row["history_id"] = str(item["history_id"])[:180]
-                if item.get("delivery_id"):
-                    did = str(item["delivery_id"])[:180]
-                    row["delivery_id"] = did
-                    status = str(item.get("delivery_status", "pending"))
-                    if status in {"pending", "cancelled", "delivered", "failed"}:
-                        statuses[did] = status
-                history.append(row)
-            delivery_updates = [
-                {"delivery_id": did, "status": status}
-                for did, status in statuses.items()
-                if self._last_delivery_status.get(did) != status
-            ]
-            previous = self._last_history
-            # Caller thường cung cấp cửa sổ history[-32:]; sau 32 lượt,
-            # tiền tố cũ bị đẩy ra. Tìm suffix/prefix overlap để chỉ gửi lượt
-            # thực sự mới, thay vì replay nguyên 32 câu vào session mỗi turn.
-            overlap = 0
-            for length in range(min(len(previous), len(history)), 0, -1):
-                if previous[-length:] == history[:length]:
-                    overlap = length
-                    break
-            if not previous or overlap:
-                new_history = history[overlap:]
-                history_key = "recent_public_history_delta"
-            else:
-                # History thực sự bị rewrite, không được giả vờ nối tiếp.
-                new_history = history
-                history_key = "recent_public_history_reconcile"
-            # Payload gốc giữ event/note/tool_results; bỏ context bị nạp lại.
+            self_delta = _changed(state.last_self_snapshot, self_now) or {}
+            newly_added = _ingest_recent_turns(state, recent_history)
+            # Chỉ gửi event/note/tool_results; 2 kênh history_delta/reconcile
+            # và delivery_updates CŨ hoàn toàn không còn đường sinh ra.
             current_ctx = dict(payload.get("runtime_context") or {})
             for key in ("personality_context", "personality_summary", "relationship_context",
                         "previous_public_excerpt", "memory_context"):
                 current_ctx.pop(key, None)
-            ctx_delta = _changed(self._last_context, current_ctx) or {}
-            step_payload = {k: v for k, v in payload.items() if k not in {"recent_public_history", "runtime_context"}}
-            step_payload["runtime_context_delta"] = ctx_delta
-            step_payload["self_changes_since_last_step"] = self_delta
-            if new_history:
-                step_payload[history_key] = new_history
-            if delivery_updates:
-                # Delta cơ học, không replay/đổi ID của hội thoại đã nói.
-                step_payload["recent_public_delivery_updates"] = delivery_updates
-            messages = self._messages + [{"role": "user", "content": json.dumps(step_payload, ensure_ascii=False, default=str, separators=(",", ":"))}]
+            ctx_delta = _changed(state.last_context, current_ctx) or {}
+            state.current_step_payload = {
+                k: v for k, v in payload.items()
+                if k not in {"recent_public_history", "runtime_context",
+                             "recent_public_history_delta", "recent_public_history_reconcile",
+                             "recent_public_delivery_updates"}
+            }
+            state.current_step_payload["runtime_context_delta"] = ctx_delta
+            state.current_step_payload["self_changes_since_last_step"] = self_delta
+            state.runtime_context = deepcopy(current_ctx)
+
+            # Self vượt cap => không rút ngắn Self, chuyển sang one-shot.
+            prefix = [
+                {"role": "system", "content": state.system_prompt},
+                {"role": "user", "content": bootstrap_content(state.self_ref.content_json)},
+            ]
+            if not self._fits(client, prefix):
+                self._log("warning", "[root-session] full Self vượt cap; fallback one-shot")
+                return None
+
+            k = self._window_pairs()
+            messages = project_root_messages(state, window_k=k)
+            while not self._fits(client, messages) and k > 2:
+                # Chỉ thu hẹp projection LƯỢT NÀY; state/Self nguyên vẹn.
+                k = max(2, k // 2)
+                messages = project_root_messages(state, window_k=k)
             if not self._fits(client, messages):
-                # Đóng phiên dài; nạp Self *mới* từ owner. Không tóm tắt cuộc
-                # sống Eris thành một bộ snapshot do runtime tưởng tượng.
-                if not self._prime(router=router, client=client, system=system, schema=schema):
+                # Lưới cuối: chỉ rút phần SAU prefix; _truncate_to_cap trực
+                # tiếp trên cả mảng sẽ cắt bootstrap Self trước, sai hợp đồng.
+                provider = detect_provider(str(getattr(client, "base_url", "")),
+                                           str(getattr(client, "model_name", "")))
+                cap = hard_cap_for_provider(provider)
+                uri = str(getattr(client, "base_url", "") or "").lower()
+                if "deepseek" in str(getattr(client, "model_name", "") or "").lower() and any(
+                    x in uri for x in ("localhost", "127.0.0.1")
+                ):
+                    try:
+                        cap = max(cap, int(os.environ.get("ERIS_ROOT_SESSION_PROMPT_CAP_TOKENS", "90000")))
+                    except (TypeError, ValueError):
+                        pass
+                margin = min(4000, max(320, int(cap * 0.06)))
+                room = cap - margin - estimate_tokens(messages[:3]) - 1
+                if room <= 0:
+                    self._log("warning", "[root-session] no room for step without cutting Self")
                     return None
-                # Remote session mới không còn các delta chat cũ. Gửi lại
-                # full history hiện tại và toàn bộ context động hiện tại.
-                step_payload.pop("recent_public_history_delta", None)
-                step_payload.pop("recent_public_history_reconcile", None)
-                step_payload["recent_public_history_reconcile"] = history
-                step_payload["runtime_context_delta"] = current_ctx
-                step_payload["self_changes_since_last_step"] = {}
-                # Session mới không nhớ những status đã gửi trong session cũ.
-                step_payload["recent_public_delivery_updates"] = [
-                    {"delivery_id": did, "status": status}
-                    for did, status in statuses.items()
-                ]
-                messages = self._messages + [{"role": "user", "content": json.dumps(step_payload, ensure_ascii=False, default=str, separators=(",", ":"))}]
+                messages = messages[:3] + _truncate_to_cap(messages[3:], room)
                 if not self._fits(client, messages):
-                    self._clear()
+                    self._log("warning", "[root-session] cannot fit projected step without cutting Self")
                     return None
             result, original = self._call(router=router, client=client, system=system, schema=schema, messages=messages)
-            self._messages = messages + [{"role": "assistant", "content": original}]
-            self._self = self_now
-            self._last_history = history
-            self._last_delivery_status = statuses
-            self._last_context = current_ctx
-            self._log("info", "[root-session] root_delta_sent steps=%d self_fields=%d public_turns=%d",
-                      (len(self._messages) - 1) // 2, len(self_delta), len(new_history))
+            state.last_reply_raw = original
+            # Baseline cập nhật SAU request thành công, KHÔNG so với Self lúc prime.
+            state.last_self_snapshot = deepcopy(self_now)
+            state.last_context = deepcopy(current_ctx)
+            state.current_step_payload = {}
+            self._log("info", "[root-session] root_projected turns=%d window=%d self_fields=%d new_turns=%d",
+                      len(state.turns), min(len(state.turns), 2 * k), len(self_delta), newly_added)
             return result
         except Exception as exc:  # noqa: BLE001
-            # Unknown provider state: ở lượt sau phải full-bootstrap lại.
             self._clear()
             self._log("warning", "[root-session] resync needed: %s", type(exc).__name__)
-            # Lỗi mạng/auth không được đổi thành None rồi gọi lại cùng provider
-            # theo one-shot. None chỉ dành cho session contention/warm-up.
             failure = provider_failure(exc, role="root")
             if failure is not None:
                 raise failure from exc
@@ -350,4 +428,7 @@ class RootConversationSession:
             self._lock.release()
 
 
-__all__ = ["RootConversationSession", "_read_self", "_changed"]
+__all__ = [
+    "RootConversationSession", "_read_self", "_changed", "_ingest_recent_turns",
+    "SelfReference", "TurnRecord", "RootSessionState", "project_root_messages",
+]
