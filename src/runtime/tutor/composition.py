@@ -26,12 +26,13 @@ def build_tutor_runtime(
     model_router: Any = None,
     store: LearningStore | None = None,
     logger: Any = None,
+    learner_client: Any = None,
 ) -> TutorRuntimeBundle:
     """Tạo đúng một learning truth + tutor executive cho process hiện tại."""
     learning = LearningService(store=store or LearningStore(), logger=logger)
     reasoner = None
     if callable(getattr(model_router, "invoke_structured_worker", None)):
-        reasoner = RuntimeTutorReasoner(model_router, logger=logger)
+        reasoner = RuntimeTutorReasoner(model_router, learner_client=learner_client, logger=logger)
     atomic_store = None
     try:
         from runtime.ai_orchestrated.atomic_state import atomic_store_from_env

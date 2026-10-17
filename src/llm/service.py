@@ -146,6 +146,7 @@ class LlmService:
         residue_curator_client=None,
         research_client=None,
         tutor_client=None,
+        learner_client=None,
         curator_client=None,
         seed_client=None,
         surface_client=None,
@@ -182,6 +183,8 @@ class LlmService:
         # Worker tutor chỉ phân rã scene thành shared semantic context; không có
         # quyền viết câu public và không fallback ngầm sang companion.
         self.tutor_client = tutor_client
+        # Assessment chuyên dụng: Root -> Tutor mới được gọi; không có agent loop riêng.
+        self.learner_client = learner_client
         # Dedicated memory/profile worker. No implicit fallback here: if the
         # curator credential is absent, living-user enrichment simply remains
         # deterministic rather than borrowing the conversational identity.

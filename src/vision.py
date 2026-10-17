@@ -170,6 +170,9 @@ class AttentionOverseer:
         surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None
         tutor_client = None
+        # Opt-in để không tự mượn account từ key DS2API chung.
+        learner_enabled = os.environ.get("ERIS_DS_LEARNER_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        learner_client = self.process_manager.build_deepseek_worker_client("learner") if learner_enabled else None
         curator_client = self.process_manager.build_curator_client()
         if escalation_client is not None:
             provider_label = getattr(escalation_client, "base_url", "") or escalation_client.__class__.__name__
@@ -194,6 +197,7 @@ class AttentionOverseer:
             executive_client=executive_client,
             research_client=research_client,
             tutor_client=tutor_client,
+            learner_client=learner_client,
             curator_client=curator_client,
             logger=self.logger,
         )
@@ -212,6 +216,7 @@ class AttentionOverseer:
                 ("executive", getattr(self.llm_service, "executive_client", None)),
                 ("style", getattr(self.llm_service, "style_client", None)),
                 ("research", getattr(self.llm_service, "research_client", None)),
+                ("learner", getattr(self.llm_service, "learner_client", None)),
                 ("curator", getattr(self.llm_service, "curator_client", None)),
             )
             if worker is not None

@@ -137,10 +137,11 @@ ASSESSMENT_SCHEMA: dict[str, Any] = {
 class RuntimeTutorReasoner:
     """Structured semantic brain của tutor, chạy trên model router hiện có."""
 
-    def __init__(self, router: Any, *, logger: Any = None) -> None:
+    def __init__(self, router: Any, *, learner_client: Any = None, logger: Any = None) -> None:
         if not callable(getattr(router, "invoke_structured_worker", None)):
             raise TypeError("router must expose invoke_structured_worker")
         self.router = router
+        self.learner_client = learner_client
         self.logger = logger
         self.fallback = ConservativeTutorReasoner()
 
@@ -249,8 +250,11 @@ class RuntimeTutorReasoner:
         max_tokens: int,
         priority: int,
     ) -> dict[str, Any]:
+        # Phần chấm semantic được đưa cho role learner riêng khi được cấu hình.
+        # Root vẫn quyết định gọi Tutor; Learner không được tự chạy Root loop.
         client = (
-            getattr(self.router, "deep_client", None)
+            (self.learner_client if name in {"eris_tutor_diagnosis_deep", "eris_tutor_semantic_assessor_deep"} else None)
+            or getattr(self.router, "deep_client", None)
             or getattr(self.router, "observer_client", None)
             or getattr(self.router, "surface_client", None)
             or getattr(getattr(self.router, "llm_service", None), "client", None)

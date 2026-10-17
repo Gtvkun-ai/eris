@@ -42,6 +42,7 @@ mot instance/process va inject xuong cac adapter thay vi tu tao service moi.
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 import uuid
@@ -56,6 +57,7 @@ from runtime.learning_core.contracts import (
     PendingInteraction,
     ReviewItem,
 )
+from runtime.learning_core.belief_model import LearnerBeliefState, compute_belief
 from runtime.learning_core.grading import GradingResult, grade_choice, quality_from_evidence_type
 from runtime.learning_core.mastery import (
     DEFAULT_POLICY,
@@ -237,7 +239,7 @@ class LearningService:
 
             # Commit evidence for deterministically graded items
             if result.interaction.interaction_type in {"multiple_choice", "true_false"}:
-                evidence_id = f"ev:{interaction_id}:{turn_id[:20]}:{int(ts)}"
+                evidence_id = f"ev:interaction:{hashlib.sha256((interaction_id + chr(124) + turn_id).encode()).hexdigest()[:32]}"
                 evidence = LearningEvidence(
                     evidence_id=evidence_id,
                     kp_id=result.interaction.kp_id,
@@ -275,7 +277,15 @@ class LearningService:
     ) -> LearningEvidence | None:
         """Commit one piece of evidence from the caller (semantic assessor, etc.)."""
         ts = float(now if now is not None else time.time())
-        evidence_id = f"ev:{kp_id}:{evidence_type}:{turn_id[:20]}:{int(ts)}"
+        # turn_id/interaction_id phải ổn định qua retry, không dùng timestamp.
+        # Không có cả hai thì không thể dedupe logical event: caller phải cấp ID.
+        event_ref = interaction_id or turn_id
+        if not event_ref:
+            return None
+        digest = hashlib.sha256(
+            f"{kp_id}|{evidence_type}|{interaction_id}|{turn_id}|{error_code}".encode("utf-8")
+        ).hexdigest()[:32]
+        evidence_id = f"ev:semantic:{digest}"
         evidence = LearningEvidence(
             evidence_id=evidence_id,
             kp_id=kp_id,
@@ -394,23 +404,32 @@ class LearningService:
     # ------------------------------------------------------------------
 
     def _commit_evidence_locked(self, evidence: LearningEvidence, ts: float) -> bool:
-        """Append evidence, recompute mastery, update SRS. Caller holds _lock."""
-        if not self._store.append_evidence(evidence):
-            return False   # duplicate
-
+        """Atomic evidence -> mastery -> review -> BKT shadow. Caller holds lock."""
         kp_id = evidence.kp_id
-        # Recompute mastery from all evidence for this KP
-        all_evidence = self._store.load_evidence(kp_id)
-        new_record = compute_mastery(kp_id, all_evidence, now=ts, policy=self._mastery_policy)
-        self._store.save_mastery(new_record, now=ts)
 
-        # Update SRS queue
-        quality = quality_from_evidence_type(evidence.evidence_type, evidence.correct)
-        existing_reviews = self._store.load_review_items([kp_id])
-        current_item = existing_reviews[0] if existing_reviews else None
-        new_review = next_review_item(new_record, current_item, quality=quality, now=ts, scheduler=self._scheduler)
-        self._store.upsert_review_item(new_review)
-        return True
+        def project(ledger: list[LearningEvidence], current_review: ReviewItem | None):
+            mastery = compute_mastery(kp_id, ledger, now=ts, policy=self._mastery_policy)
+            quality = quality_from_evidence_type(evidence.evidence_type, evidence.correct)
+            review = next_review_item(
+                mastery, current_review, quality=quality, now=ts, scheduler=self._scheduler,
+            )
+            # BKT có thể là ước lượng sơ khai cho Root tham khảo, KHÔNG thay đổi
+            # mastery gate đã có trước khi kiểm định calibration trên dữ liệu thực.
+            belief = compute_belief(kp_id, ledger)
+            return mastery, review, belief
+
+        return self._store.commit_evidence_bundle(evidence, project, now=ts)
+
+    def learner_belief(self, kp_id: str) -> LearnerBeliefState:
+        """Read-model cho Root/Tutor: belief chưa hiệu chỉnh, không được ghi trực tiếp."""
+        with self._lock:
+            return self._store.load_belief(kp_id)
+
+    def learner_belief_snapshot(self, kp_ids: Sequence[str] | None = None) -> dict[str, dict]:
+        with self._lock:
+            path = self._store.load_path(self._active_path_id) if self._active_path_id else None
+            ids = list(kp_ids) if kp_ids is not None else (list(path.kp_ids) if path else [])
+            return {kp_id: self._store.load_belief(kp_id).to_dict() for kp_id in ids[:32]}
 
     def snapshot(self) -> dict:
         """Debug snapshot of service state."""

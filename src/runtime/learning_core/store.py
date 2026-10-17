@@ -23,8 +23,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
+from runtime.learning_core.belief_model import LearnerBeliefState
 from runtime.learning_core.contracts import (
     KnowledgePoint,
     LearnerProfile,
@@ -92,6 +93,14 @@ CREATE TABLE IF NOT EXISTS learning_evidence (
     metadata        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_kp ON learning_evidence(kp_id, recorded_at);
+
+-- BKT shadow state: KHÔNG thay mastery_records khi chưa được hiệu chỉnh.
+CREATE TABLE IF NOT EXISTS learner_beliefs (
+    kp_id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    evidence_seq INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL DEFAULT 0
+);
 
 CREATE TABLE IF NOT EXISTS review_items (
     kp_id           TEXT PRIMARY KEY,
@@ -354,6 +363,110 @@ class LearningStore:
             )
             self._db().commit()
         return True
+
+    def load_belief(self, kp_id: str) -> LearnerBeliefState:
+        """Snapshot chỉ-đọc: xác suất BKT *chưa hiệu chỉnh*, không phải mastery chính thức."""
+        with self._lock:
+            row = self._db().execute(
+                "SELECT payload FROM learner_beliefs WHERE kp_id=?", (kp_id,)
+            ).fetchone()
+        if row is None:
+            return LearnerBeliefState(kp_id=kp_id)
+        try:
+            return LearnerBeliefState.from_mapping(json.loads(row["payload"]))
+        except (TypeError, ValueError, KeyError):
+            return LearnerBeliefState(kp_id=kp_id)
+
+    def commit_evidence_bundle(
+        self,
+        evidence: LearningEvidence,
+        project: Callable[[list[LearningEvidence], ReviewItem | None],
+                          tuple[MasteryRecord, ReviewItem, LearnerBeliefState]],
+        *,
+        now: float,
+    ) -> bool:
+        """Một transaction giữ evidence, mastery, lịch ôn, BKT cùng một version.
+
+        Transaction BEGIN IMMEDIATE giữ serialization xuyên nhiều LearningService
+        dùng chung tệp SQLite. Callback chỉ tính toán thuần, không gọi LLM/I/O.
+        Retry trùng evidence_id sẽ không tăng trạng thái thêm lần nữa.
+        """
+        with self._lock:
+            db = self._db()
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if db.execute(
+                    "SELECT 1 FROM learning_evidence WHERE evidence_id=?",
+                    (evidence.evidence_id,),
+                ).fetchone():
+                    db.rollback()
+                    return False
+                db.execute(
+                    """INSERT INTO learning_evidence
+                        (evidence_id, kp_id, evidence_type, strength, correct,
+                         interaction_id, turn_id, recorded_at, error_code, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (evidence.evidence_id, evidence.kp_id, evidence.evidence_type,
+                     evidence.strength, int(evidence.correct), evidence.interaction_id,
+                     evidence.turn_id, evidence.recorded_at, evidence.error_code, evidence.metadata),
+                )
+                rows = db.execute(
+                    "SELECT * FROM learning_evidence WHERE kp_id=? "
+                    "ORDER BY recorded_at ASC, evidence_id ASC", (evidence.kp_id,)
+                ).fetchall()
+                ledger = [self._row_to_evidence(row) for row in rows]
+                old = db.execute(
+                    "SELECT * FROM review_items WHERE kp_id=?", (evidence.kp_id,)
+                ).fetchone()
+                current = ReviewItem(
+                    kp_id=old["kp_id"], due_at=float(old["due_at"]),
+                    forgetting_risk=float(old["forgetting_risk"]),
+                    interval_days=float(old["interval_days"]),
+                    ease_factor=float(old["ease_factor"]),
+                ) if old else None
+                mastery, review, belief = project(ledger, current)
+                if not (mastery.kp_id == review.kp_id == belief.kp_id == evidence.kp_id):
+                    raise ValueError("Projection kp_id mismatch")
+                db.execute(
+                    """INSERT INTO mastery_records
+                        (kp_id, mastery, confidence, stage, attempt_count, correct_count,
+                         last_evidence_at, next_review_at, retrievability, error_codes, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(kp_id) DO UPDATE SET
+                         mastery=excluded.mastery, confidence=excluded.confidence,
+                         stage=excluded.stage, attempt_count=excluded.attempt_count,
+                         correct_count=excluded.correct_count,
+                         last_evidence_at=excluded.last_evidence_at,
+                         next_review_at=excluded.next_review_at,
+                         retrievability=excluded.retrievability,
+                         error_codes=excluded.error_codes, updated_at=excluded.updated_at""",
+                    (mastery.kp_id, mastery.mastery, mastery.confidence, mastery.stage,
+                     mastery.attempt_count, mastery.correct_count, mastery.last_evidence_at,
+                     mastery.next_review_at, mastery.retrievability,
+                     json.dumps(list(mastery.error_codes)), now),
+                )
+                db.execute(
+                    """INSERT INTO review_items(kp_id, due_at, forgetting_risk, interval_days, ease_factor)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(kp_id) DO UPDATE SET
+                         due_at=excluded.due_at, forgetting_risk=excluded.forgetting_risk,
+                         interval_days=excluded.interval_days, ease_factor=excluded.ease_factor""",
+                    (review.kp_id, review.due_at, review.forgetting_risk,
+                     review.interval_days, review.ease_factor),
+                )
+                db.execute(
+                    """INSERT INTO learner_beliefs(kp_id, payload, evidence_seq, updated_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(kp_id) DO UPDATE SET payload=excluded.payload,
+                        evidence_seq=excluded.evidence_seq, updated_at=excluded.updated_at""",
+                    (belief.kp_id, json.dumps(belief.to_dict(), ensure_ascii=False),
+                     belief.evidence_seq, now),
+                )
+                db.commit()
+                return True
+            except BaseException:
+                db.rollback()
+                raise
 
     def load_evidence(self, kp_id: str, *, limit: int = 100) -> list[LearningEvidence]:
         with self._lock:

@@ -306,8 +306,10 @@ class RuntimeCoordinator(
         try:
             from runtime.tutor import build_tutor_runtime
 
+            learner_client = getattr(self.llm_service, "learner_client", None)
             tutor_bundle = build_tutor_runtime(
                 model_router=getattr(self, "ai_model_router", None),
+                learner_client=learner_client,
                 logger=logger,
             )
             self.learning_service = tutor_bundle.learning_service

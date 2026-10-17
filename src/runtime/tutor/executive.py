@@ -168,7 +168,9 @@ class TutorExecutive:
             assessment = self.reasoner.assess_response(observation, self._state, previous)
             if assessment is None:
                 return None
-            committed = self._apply_semantic_assessment(assessment, turn_id=turn_id, now=ts)
+            committed = self._apply_semantic_assessment(
+                assessment, interaction_id=previous.move_id, turn_id=turn_id, now=ts,
+            )
             # Hypothesis chỉ được đổi lifecycle khi semantic judgement cũng đủ
             # chắc để trở thành learning evidence. Assessment yếu vẫn trả cho
             # caller quan sát nhưng không được đóng khung learner state.
@@ -394,6 +396,7 @@ class TutorExecutive:
         self,
         assessment: SemanticAssessment,
         *,
+        interaction_id: str,
         turn_id: str,
         now: float,
     ) -> bool:
@@ -406,6 +409,7 @@ class TutorExecutive:
             strength=assessment.strength,
             correct=assessment.correct,
             turn_id=turn_id,
+            interaction_id=interaction_id,
             error_code=assessment.error_code,
             now=now,
         )
