@@ -143,7 +143,7 @@ class CoordinatorShutdownMixin:
                 activation_runtime.stop()
             except Exception as exc:
                 self.logger.debug("[v98 activation] stop error: %s", exc)
-        for background_name in ("background_living_user_observer", "background_memory_digest"):
+        for background_name in ("background_memory_digest",):
             background_service = getattr(self, background_name, None)
             if background_service is not None:
                 try:

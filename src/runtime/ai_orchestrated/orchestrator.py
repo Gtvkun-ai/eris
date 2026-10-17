@@ -23,7 +23,6 @@ from runtime.claim_domain_contract import validate_claim_manifest
 from runtime.self_biography_guard import embodied_self_history_without_evidence
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
-from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.affective_voice_state import project_affective_voice_state
 from runtime.reply_obligation import enforce_reply_obligation

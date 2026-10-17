@@ -119,10 +119,9 @@ def test_web_session_mode_can_be_disabled_or_rolled_back(monkeypatch) -> None:
 
 
 def test_context_compiler_does_not_feed_memory_archive_to_greeting() -> None:
-    from runtime.companion_model_routing import route_companion_turn
     from runtime.public_reply_context import compile_public_reply_context
 
-    route = route_companion_turn("xin chào")
+    route = {"reasons": ("simple_social_turn",)}
     compiled = compile_public_reply_context(
         route=route,
         personality="P" * 5000,
@@ -140,10 +139,9 @@ def test_context_compiler_does_not_feed_memory_archive_to_greeting() -> None:
 
 
 def test_context_compiler_keeps_evidence_for_technical_turn() -> None:
-    from runtime.companion_model_routing import route_companion_turn
     from runtime.public_reply_context import compile_public_reply_context
 
-    route = route_companion_turn("phân tích kiến trúc và root cause race condition này")
+    route = {"reasons": ("technical_depth",)}
     compiled = compile_public_reply_context(
         route=route,
         personality="personality",
