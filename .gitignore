@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .tmp_pytest/
 embedding_model/
+/src/paraphrase-multilingual-MiniLM-L12-v2/
 .coverage
 coverage.xml
 htmlcov/
