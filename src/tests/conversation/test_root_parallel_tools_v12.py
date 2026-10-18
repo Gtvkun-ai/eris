@@ -24,7 +24,6 @@ from runtime.conversation.context import (
     RootMemoryRecallTools,
 )
 from runtime.conversation.contracts import ConversationEvent, NextConversationMove, NoReply
-from runtime.tooling import ToolGateway, DomainTool
 
 
 class FakeRouter:
@@ -54,15 +53,15 @@ def decide(router, *, text="", kind="user_turn", context=None):
 # --- schema ----------------------------------------------------------------
 
 def test_root_step_schema_unchanged_batch_schema_adds_one_kind():
-    # V13 replaces use_capability with 3 tool protocol actions.
-    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 9
+    # ROOT_STEP_SCHEMA giữ 7 oneOf (test cũ phải vẫn xanh).
+    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 7
     kinds = set()
     for schema in ROOT_STEP_SCHEMA["oneOf"]:
         kinds.update(schema["properties"]["kind"].get("enum", []))
     assert "batch" not in kinds
 
     # ROOT_BATCH_STEP_SCHEMA = ROOT_STEP_SCHEMA + đúng một kind='batch'.
-    assert len(ROOT_BATCH_STEP_SCHEMA["oneOf"]) == 10
+    assert len(ROOT_BATCH_STEP_SCHEMA["oneOf"]) == 8
     batch_schema = ROOT_BATCH_STEP_SCHEMA["oneOf"][-1]
     assert batch_schema["properties"]["kind"]["enum"] == ["batch"]
     actions = batch_schema["properties"]["actions"]
@@ -71,7 +70,7 @@ def test_root_step_schema_unchanged_batch_schema_adds_one_kind():
     for item in actions["items"]["oneOf"]:
         item_kinds.update(item["properties"]["kind"].get("enum", []))
     # Non-finalize only; move/no_reply bị cấm trong actions.
-    assert item_kinds == {"tool_discover", "tool_describe", "tool_call", "recall_memory", "continue_thinking", "set_note", "clear_note"}
+    assert item_kinds == {"use_capability", "recall_memory", "continue_thinking", "set_note", "clear_note"}
     assert "move" not in item_kinds and "no_reply" not in item_kinds
 
 
@@ -93,27 +92,24 @@ def test_batch_runs_all_non_finalize_actions():
     cap_calls = []
     mem_calls = []
 
-    gateway = ToolGateway(None, domain_tools=(DomainTool(
-        id="research.request", group="research", description="research",
-        schema={"type": "object", "additionalProperties": False,
-                "required": ["topic"], "properties": {"topic": {"type": "string"}}},
-        available=lambda: True,
-        execute=lambda args, event, history: cap_calls.append(args) or {"status": "completed", "summary": "đã nghiên cứu"},
-    ),), status_provider=lambda: {})
-    registry = RootCapabilityRegistry({})
+    class Tool:
+        def invoke_for_root(self, **kwargs):
+            cap_calls.append(kwargs)
+            return {"status": "completed", "summary": "đã nghiên cứu"}
+
+    registry = RootCapabilityRegistry({"research": Tool()})
     memory = RootMemoryRecallTools(
         recall=lambda q: mem_calls.append(q) or {"status": "found", "text": "ký ức X"})
     router = FakeRouter(
         {"kind": "batch", "actions": [
             {"kind": "recall_memory", "query": "user thích gì"},
-            {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "A"}},
+            {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
             {"kind": "continue_thinking", "focus": "cân nhắc hướng nói"},
         ]},
         {"kind": "no_reply", "reason": "done"},
     )
     result = decide(router, context={
         "__root_capabilities": registry,
-        "__root_tool_gateway": gateway,
         "__root_memory_recall_tools": memory,
         "__conversation_run_id": "run:1",
     })
@@ -124,7 +120,7 @@ def test_batch_runs_all_non_finalize_actions():
     # Lượt model kế (thứ 2) nhận TOÀN BỘ tool_results từ batch.
     observed = router.calls[1]["payload"]["tool_results"]
     kinds = [r["kind"] for r in observed]
-    assert kinds == ["memory_result", "tool_result", "reflection_result"]
+    assert kinds == ["memory_result", "capability_result", "reflection_result"]
     assert observed[0]["result"] == {"status": "found", "text": "ký ức X"}
     assert observed[1]["result"]["status"] == "completed"
     assert observed[2]["status"] == "continued"
@@ -217,28 +213,24 @@ def test_batch_preempt_between_actions_stops_and_returns_preempted():
 def test_batch_failsoft_one_action_error_does_not_stop_batch():
     cap_calls = []
 
-    def boom(args, event, history):
-        cap_calls.append(args)
-        raise RuntimeError("boom")
+    class Boom:
+        def invoke_for_root(self, **kwargs):
+            cap_calls.append(kwargs)
+            raise RuntimeError("boom")
 
-    gateway = ToolGateway(None, domain_tools=(DomainTool(
-        id="research.request", group="research", description="research",
-        schema={"type": "object", "additionalProperties": False, "properties": {}},
-        available=lambda: True, execute=boom),), status_provider=lambda: {})
     mem_calls = []
-    registry = RootCapabilityRegistry({})
+    registry = RootCapabilityRegistry({"work": Boom()})
     memory = RootMemoryRecallTools(
         recall=lambda q: mem_calls.append(q) or {"status": "found"})
     router = FakeRouter(
         {"kind": "batch", "actions": [
-            {"kind": "tool_call", "tool_id": "research.request", "arguments": {}},
+            {"kind": "use_capability", "capability": "work", "arguments": {}},
             {"kind": "recall_memory", "query": "vẫn chạy"},
         ]},
         {"kind": "no_reply", "reason": "done"},
     )
     result = decide(router, context={
         "__root_capabilities": registry,
-        "__root_tool_gateway": gateway,
         "__root_memory_recall_tools": memory,
         "__conversation_run_id": "run:1",
     })
@@ -246,7 +238,7 @@ def test_batch_failsoft_one_action_error_does_not_stop_batch():
     assert isinstance(result, NoReply)
     assert len(cap_calls) == 1
     observed = router.calls[1]["payload"]["tool_results"]
-    assert observed[0]["kind"] == "tool_result"
+    assert observed[0]["kind"] == "capability_result"
     assert observed[0]["result"]["status"] == "failed"
     assert observed[1]["kind"] == "memory_result"  # action sau vẫn chạy
     assert mem_calls == ["vẫn chạy"]

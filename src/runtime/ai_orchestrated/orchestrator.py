@@ -23,6 +23,7 @@ from runtime.claim_domain_contract import validate_claim_manifest
 from runtime.self_biography_guard import embodied_self_history_without_evidence
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
+from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.affective_voice_state import project_affective_voice_state
 from runtime.reply_obligation import enforce_reply_obligation
@@ -754,26 +755,28 @@ class AIChatOrchestrator:
             kind="user_turn",
             text=str(user_text or "")[:16000],
         )
-        from runtime.capabilities.tutor import TutorCapability
-        from runtime.capabilities.research import ResearchCapability
-        from runtime.tooling import DomainTool, ToolGateway, ToolReceiptLedger
+        from runtime.capabilities import ActionCapability, ResearchCapability, TutorCapability, WorkCapability
+        from runtime.conversation.context import RootCapabilityRegistry
 
-        # V13: Root không đi qua ActionCapability/WorkCapability/Harness.
-        # Tất cả OS/project tool đều chạy qua ToolGateway -> ActionExecutor
-        # -> Subject Core / Sandbox. Domain intelligence cũng đăng ký schema
-        # riêng tại cùng điểm discovery, không có planner thứ hai.
+        # V12 hard cutover: foreground bootstrap chỉ *đăng ký* capability. Không
+        # gọi tutor/work/research trước RootAgent vì làm vậy sẽ biến router thành
+        # semantic authority thứ hai và khiến small-talk cũng phải chạy domain
+        # planner không cần thiết. DeepSeek tự quyết định capability nào đáng gọi.
         tutor_capability = getattr(host, "tutor_capability", None)
         if not isinstance(tutor_capability, TutorCapability):
             tutor_capability = TutorCapability(
                 getattr(host, "tutor_executive", None),
                 logger=getattr(host, "logger", None),
-                living_user_source=lambda: getattr(getattr(host, "memory_kernel", None), "living_user", None),
             )
             host.tutor_capability = tutor_capability
-        else:
-            tutor_capability.executive = getattr(host, "tutor_executive", None)
-            tutor_capability.living_user_source = lambda: getattr(
-                getattr(host, "memory_kernel", None), "living_user", None)
+
+        work_capability = getattr(host, "work_capability", None)
+        if not isinstance(work_capability, WorkCapability):
+            work_capability = WorkCapability(
+                getattr(host, "agent_harness", None),
+                logger=getattr(host, "logger", None),
+            )
+            host.work_capability = work_capability
 
         research_capability = getattr(host, "research_capability", None)
         if not isinstance(research_capability, ResearchCapability):
@@ -783,57 +786,20 @@ class AIChatOrchestrator:
             research_capability.host = host
             research_capability.logger = getattr(host, "logger", None)
 
-        def _tutor_advice(args, ev, hist):
-            return {"status": "completed", "data": tutor_capability.invoke_for_root(
-                arguments=args, event=ev, recent_history=hist)}
-
-        def _research_request(args, ev, hist):
-            return research_capability.invoke_for_root(
-                arguments={"operation": args["mode"], "topic": args["topic"],
-                           "context": args.get("context", "")},
-                event=ev, recent_history=hist,
+        action_capability = getattr(host, "action_capability", None)
+        if not isinstance(action_capability, ActionCapability):
+            action_capability = ActionCapability(
+                getattr(host, "action_executor", None),
+                logger=getattr(host, "logger", None),
             )
+            host.action_capability = action_capability
 
-        def _research_snapshot(args, ev, hist):
-            return research_capability.invoke_for_root(
-                arguments={"operation": "snapshot"}, event=ev, recent_history=hist)
-
-        gateway = ToolGateway(
-            getattr(host, "action_executor", None),
-            logger=getattr(host, "logger", None),
-            domain_tools=(
-                DomainTool(
-                    id="tutor.advise", group="learning", risk="low",
-                    description="Tư vấn sư phạm, đánh giá hiểu bài; không tự nói với user.",
-                    schema={"type": "object", "additionalProperties": False,
-                            "properties": {"user_text": {"type": "string"},
-                                           "response_to_previous": {"type": "boolean"}}},
-                    execute=_tutor_advice,
-                    available=lambda: getattr(tutor_capability, "executive", None) is not None,
-                ),
-                DomainTool(
-                    id="research.request", group="research", risk="low",
-                    description="Yêu cầu nghiên cứu hoặc tìm nhanh bất đồng bộ; started không có nghĩa completed.",
-                    schema={"type": "object", "additionalProperties": False,
-                            "required": ["topic", "mode"],
-                            "properties": {"topic": {"type": "string"},
-                                           "mode": {"type": "string", "enum": ["research", "quick_search"]},
-                                           "context": {"type": "string"}}},
-                    execute=_research_request,
-                    available=lambda: callable(getattr(host, "_fire_research_followup", None)),
-                ),
-                DomainTool(
-                    id="research.snapshot", group="research", risk="low",
-                    description="Đọc kết quả nghiên cứu có sẵn (không tự kích hoạt research).",
-                    schema={"type": "object", "additionalProperties": False, "properties": {}},
-                    execute=_research_snapshot,
-                    available=lambda: getattr(research_capability, "_last_result", None) is not None,
-                ),
-            ),
-        )
-        # Giữ receipt ledger đã dùng bởi RuntimeWriter/ClaimEvidence. Đây không
-        # phải capability dispatcher cũ; Root chỉ ghi result SAU khi gateway trả.
-        capability_registry = ToolReceiptLedger()
+        capability_registry = RootCapabilityRegistry({
+            "tutor": tutor_capability,
+            "work": work_capability,
+            "research": research_capability,
+            "action": action_capability,
+        })
         # ContextAssembler chỉ projection state/evidence; nó không route intent và
         # không chọn nội dung nói. RootAgent vẫn là semantic/social authority duy
         # nhất. Đây là chỗ nối lại identity/relationship/memory/world/affect đã bị
@@ -845,14 +811,6 @@ class AIChatOrchestrator:
             str(user_text or ""),
             previous_public_turn=previous_public_turn,
         )
-        # Cơ chế auto-path chỉ mở cửa cho TutorExecutive. Không tự phát lời,
-        # không bật Hệ 2 và không chiếm semantic authority của Root.
-        try:
-            from runtime.tutor.auto_path import maybe_autostart_path
-            maybe_autostart_path(host, user_text=str(user_text or ""),
-                                 recent_history=history, now=cycle_start)
-        except Exception as exc:
-            _orchestrator_boundary_note(host, "conversation_v12.tutor_auto_path", exc)
         runtime_context = ensure_conversation_context_assembler(host).assemble(
             user_text=str(user_text or ""),
             channel="chat",
@@ -877,13 +835,11 @@ class AIChatOrchestrator:
             # Dependency nội bộ cho root loop; RuntimeModelRootAgent không
             # serialize key ``__*`` vào prompt và writer không dùng registry này.
             "__root_capabilities": capability_registry,
-            "__root_tool_gateway": gateway,
             "language_hint": _runtime_language(),
             "speech_language_hint": _runtime_speech_language(),
         })
         host.current_stage_user_text = str(user_text or "")
         kernel = ensure_conversation_kernel(host)
-        _install_speculative_dispatch(host, kernel)
         result = kernel.handle_event(
             event,
             recent_history=history,
@@ -906,24 +862,6 @@ class AIChatOrchestrator:
             "decision": decision_dict,
         }
         return result
-
-def _install_speculative_dispatch(host: Any, kernel: Any) -> None:
-    """Dispatch root/writer prepare after commit; never choose its semantic content."""
-    import threading
-
-    def dispatch(lease: Any) -> None:
-        def prepare() -> None:
-            try:
-                AIAutonomousOrchestrator(host)._run_v12_signal(
-                    "autonomous_signal", sleep_after=False, speculative_lease=lease,
-                )
-            except Exception as exc:
-                _orchestrator_boundary_note(host, "conversation_v12.speculative", exc)
-        threading.Thread(target=prepare, daemon=True,
-                         name="eris-speculative-continuation").start()
-
-    kernel.speculative_preparer = dispatch
-
 
 class AIAutonomousOrchestrator:
     def __init__(self, host: Any) -> None:
@@ -1029,7 +967,6 @@ class AIAutonomousOrchestrator:
         metadata: Mapping[str, Any] | None = None,
         sleep_after: bool = True,
         event_id: str = "",
-        speculative_lease: Any | None = None,
     ) -> Any:
         """Submit a non-user opportunity to the single conversation authority."""
 
@@ -1060,7 +997,6 @@ class AIAutonomousOrchestrator:
             or "foreground:primary"
         ).strip()[:180]
         kernel = ensure_conversation_kernel(host)
-        _install_speculative_dispatch(host, kernel)
         if signal_kind != "opening_signal":
             phase = getattr(kernel.snapshot(sid).phase, "value", "")
             if phase in {"thinking", "writing", "delivering"}:
@@ -1155,15 +1091,6 @@ class AIAutonomousOrchestrator:
                 signal_metadata["latest_observation"] = dict(latest_observation)
             signal_metadata["open_loops"] = [str(item)[:500] for item in tuple(open_loops or ())[:5]]
 
-        if speculative_lease is not None:
-            result = kernel.prepare_continuation_candidate(
-                lease=speculative_lease,
-                recent_history=recent_history,
-                runtime_context=runtime_context,
-            )
-            # Speculative result CHƯA được public. Không ghi last_agent_turn,
-            # last_conversation_run và không phát ngôn sớm.
-            return result
         if signal_kind == "autonomous_signal":
             result = kernel.handle_due_continuation(
                 session_id=sid,
