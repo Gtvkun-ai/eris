@@ -2,8 +2,7 @@
 """Chính sách đồng bộ bubble chat với TTS.
 
 Text mặc định chỉ được public khi audio bắt đầu phát. Panel/debug vẫn có thể cập
-nhật ngay. Khi TTS synth thất bại trước playback, coordinator phải nhả text ra để
-không làm mất câu trả lời.
+nhật ngay. TTS lỗi/hủy trước playback không nhả text; không có fallback theo giờ.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ def sync_text_with_tts_enabled() -> bool:
 
 
 def text_sync_timeout_seconds() -> float:
-    """Fallback delay before showing text if playback never reports audio start."""
+    """Legacy setting reader; public delivery no longer releases text on timeout."""
 
     raw = os.environ.get("ERIS_TTS_TEXT_SYNC_TIMEOUT", "").strip()
     if not raw:
@@ -32,13 +31,9 @@ def text_sync_timeout_seconds() -> float:
 
 
 def tts_event_releases_deferred_text(event_type: str) -> bool:
-    """Nhả text khi synth thất bại trước lúc callback playback được gọi."""
+    """Chỉ playback thật sự mới được nhả text; failure/cancel không phải commit."""
 
-    return str(event_type or "").strip().lower() in {
-        "audio_failed",
-        "audio_localization_failed",
-        "audio_cancelled",
-    }
+    return str(event_type or "").strip().lower() == "audio_start"
 
 
 __all__ = [

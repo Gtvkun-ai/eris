@@ -32,11 +32,12 @@ def test_v87_trace_uses_asset_native_roles_without_outer_sheet() -> None:
     assert 'NewIdentityDossierSheet' not in trace_region
 
 
-def test_v87_secondary_actions_live_in_header_not_gemma_footer() -> None:
+def test_v87_secondary_actions_stay_in_header_after_observer_footer_removal() -> None:
     text = _body()
     build = text[text.index("private void BuildDepthPanelUi") : text.index("private void BuildDepthScrollDecoration")]
     assert 'NewIdentityHeaderActionButton' in build
-    observer_start = build.index('var observerDock')
-    observer = build[observer_start:]
-    assert 'NewFooterButton("Tạm dừng học"' not in observer
-    assert 'NewFooterButton("Xuất snapshot"' not in observer
+    assert 'ToggleIdentityLearning' in build
+    assert 'SendIdentityControl("snapshot")' in build
+    assert 'var observerDock' not in build
+    assert 'NewFooterButton("Tạm dừng học"' not in build
+    assert 'NewFooterButton("Xuất snapshot"' not in build

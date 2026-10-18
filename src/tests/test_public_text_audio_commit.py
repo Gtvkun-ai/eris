@@ -1,0 +1,237 @@
+"""Public speech text waits for real playback, including slow and failed TTS."""
+
+import logging
+from types import SimpleNamespace
+
+import pytest
+
+from domain import Decision
+from runtime.coordinator import RuntimeCoordinator
+from runtime.stage_contracts import StageFrameBuilder
+
+
+@pytest.fixture
+def speech_output(monkeypatch):
+    monkeypatch.setenv("ERIS_TTS_SYNC_TEXT", "1")
+    monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "0.2")
+    timers = []
+
+    class Timer:
+        def __init__(self, interval, callback):
+            self.callback = callback
+
+        def start(self):
+            timers.append(self)
+
+        def cancel(self):
+            if self in timers:
+                timers.remove(self)
+
+    monkeypatch.setattr("runtime.public_output_runtime.threading.Timer", Timer)
+
+    def build(language="vi", channel="chat", *, tts_ok=True, scheduled=True, sealed=True, backend=None):
+        monkeypatch.setattr(
+            "runtime.runtime_settings_store.runtime_text",
+            lambda section, key, default=None: language if (section, key) == ("tts", "language") else default,
+        )
+        messages, panels, events, visible_turns = [], [], [], []
+        callbacks = {}
+        owner = object.__new__(RuntimeCoordinator)
+        owner.logger = logging.getLogger("test-public-text-audio")
+        owner.transport = SimpleNamespace(
+            send_json=messages.append,
+            send_panel_state=lambda payload: panels.append(payload),
+        )
+        owner.ai_runtime_enabled = False
+        owner._stage_channel_blocked = lambda _channel: False
+        owner._build_body_bias_payload = lambda: {}
+        owner._private_mind_digest_for_payload = lambda: {}
+        owner._private_life_digest_for_payload = lambda: {}
+        owner._build_emotion_debug_payload = lambda: {}
+        owner._build_depth_v2_block = lambda **_kwargs: {}
+        owner._record_public_turn = lambda *args, **kwargs: visible_turns.append(kwargs["payload"])
+        owner._get_runtime_provider = lambda _name: SimpleNamespace(
+            engine=backend if backend is not None else SimpleNamespace(_ok=tts_ok))
+        owner._handle_tts_playback_event = lambda *args, **kwargs: None
+        owner._emit_stage_protocol_state = lambda *args, **kwargs: None
+        owner.subconscious_runtime_enabled = False
+        from live2d_body.stage_state import Live2DStageState
+        from runtime.interaction_clock import InteractionClock
+
+        live2d = Live2DStageState()
+        owner.interaction_clock = InteractionClock()
+        owner.stage_event_bus = SimpleNamespace(
+            emit=lambda event: events.append(event.to_payload()),
+            emit_live2d=lambda event: live2d.handle_payload(event.to_payload()),
+        )
+        owner.stage_frame_builder = StageFrameBuilder(language_hint=language)
+
+        def dispatch(frames, **kwargs):
+            callbacks.update(kwargs)
+            callbacks["frame"] = frames[0]
+            return scheduled
+
+        owner.stage_dispatcher = SimpleNamespace(dispatch_tts=dispatch)
+        if backend is not None:
+            from runtime.stage_dispatcher import StageDispatcher
+
+            owner.stage_dispatcher = StageDispatcher()
+        owner.current_stage_user_text = "xin chào"
+        owner.memory_state = None
+        decision = Decision(
+            text="Tớ nghe đây.", animation="stand", speech_text="聞いているよ。" if language == "ja" else "Tớ nghe đây.",
+            speech_language=language, utterance_turn_id="test-audio-commit",
+        )
+        prepared = None
+        state = SimpleNamespace(generation=1, active_run_id="run:audio", active_delivery_id="test-audio-commit")
+        if sealed:
+            from runtime.conversation.public_output_artifact import prepare_public_output
+
+            turn = SimpleNamespace(session_id="test-session", generation=1, run_id="run:audio",
+                                   delivery_id="test-audio-commit", move=SimpleNamespace(move_id="move:audio"))
+            prepared = prepare_public_output(event_id="user:audio", turn=turn, channel=channel,
+                                             decision=decision, payload=decision.to_payload())
+            owner.conversation_kernel = SimpleNamespace(store=SimpleNamespace(load=lambda _sid: state))
+        assert owner._send_decision_to_body(decision, channel=channel, prepared=prepared)
+
+        def event(kind, segment_id=0):
+            callbacks["on_event"](SimpleNamespace(
+                type=kind, turn_id=callbacks["frame"].turn_id, segment_id=segment_id,
+            ), callbacks["frame"])
+
+        def start_hint():
+            callback = callbacks.get("on_first_start")
+            if callable(callback):
+                callback()
+
+        return SimpleNamespace(owner=owner, messages=messages, panels=panels, events=events,
+                               visible_turns=visible_turns, callbacks=callbacks, event=event, timers=timers,
+                               state=state, prepared=prepared, start_hint=start_hint, live2d=live2d)
+
+    return build
+
+
+def _speech_packets(output):
+    return [packet for packet in output.messages if packet.get("text") == "Tớ nghe đây."]
+
+
+@pytest.mark.parametrize("language", ["vi", "ja"])
+@pytest.mark.parametrize("channel", ["chat", "autonomous"])
+@pytest.mark.parametrize("start_signal", ["callback_then_event", "event"])
+@pytest.mark.parametrize("sealed", [False, True])
+def test_public_text_commits_once_at_playback_start(speech_output, language, channel, start_signal, sealed):
+    output = speech_output(language, channel, sealed=sealed)
+    assert not _speech_packets(output)
+    assert not [event for event in output.events if event["type"] == "stage_segment"]
+    assert not output.visible_turns
+    assert output.panels
+    for kind in ("audio_prepare", "audio_queued", "audio_buffer_ready"):
+        output.event(kind)
+        assert not _speech_packets(output)
+
+    if start_signal == "callback_then_event":
+        output.start_hint()
+        assert not _speech_packets(output)
+    output.event("audio_start")
+    assert len(_speech_packets(output)) == 1
+    if sealed:
+        assert _speech_packets(output)[0]["text"] == output.prepared.display_text
+        assert output.callbacks["frame"].tts_text == output.prepared.segments[0].tts_text
+    assert len(output.visible_turns) == 1
+    assert len([event for event in output.events if event["type"] == "stage_segment"]) == 1
+    assert output.owner.public_lifecycle.snapshot().state == "SPEAKING"
+    output.event("audio_start")
+    output.start_hint()
+    assert len(_speech_packets(output)) == 1
+    assert len(output.visible_turns) == 1
+
+
+def test_slow_synthesis_cannot_release_text_on_sync_timeout(speech_output):
+    output = speech_output()
+    for timer in list(output.timers):
+        timer.callback()
+    assert not _speech_packets(output)
+    assert not output.visible_turns
+    output.event("audio_start")
+    assert len(_speech_packets(output)) == 1
+    assert output.owner.public_lifecycle.snapshot().state == "SPEAKING"
+
+
+@pytest.mark.parametrize("terminal", ["audio_failed", "audio_localization_failed", "audio_cancelled"])
+def test_failure_before_playback_discards_deferred_text(speech_output, terminal):
+    output = speech_output()
+    output.event(terminal)
+    assert not _speech_packets(output)
+    assert not output.visible_turns
+    assert output.owner.public_lifecycle.snapshot().state == (
+        "INTERRUPTED" if terminal == "audio_cancelled" else "DEGRADED"
+    )
+    for timer in list(output.timers):
+        timer.callback()
+    output.start_hint()
+    output.event("audio_start")
+    assert not _speech_packets(output)
+
+
+@pytest.mark.parametrize("tts_ok,scheduled", [(False, True), (True, False)])
+def test_unavailable_audio_does_not_commit_speech_text(speech_output, tts_ok, scheduled):
+    output = speech_output(tts_ok=tts_ok, scheduled=scheduled)
+    assert not _speech_packets(output)
+    assert not output.visible_turns
+    assert output.owner.public_lifecycle.snapshot().state == "DEGRADED"
+    assert output.owner._v12_public_delivery_outcomes["test-audio-commit"] == "failed"
+
+
+def test_user_preemption_during_synthesis_cannot_commit_old_text(speech_output):
+    output = speech_output()
+    output.state.generation += 1
+    output.start_hint()
+    output.event("audio_start")
+    output.event("audio_cancelled")
+    assert not _speech_packets(output)
+    assert not output.visible_turns
+    assert not [event for event in output.events if event["type"] == "stage_segment"]
+    assert output.owner._v12_public_delivery_outcomes["test-audio-commit"] == "cancelled"
+
+
+def test_later_segment_playback_keeps_lifecycle_after_discarding_text(speech_output):
+    output = speech_output()
+    output.event("audio_failed")
+    output.event("audio_start", segment_id=1)
+    assert not _speech_packets(output)
+    assert output.owner.interaction_clock.audio_active
+    assert output.live2d.advance(0).speaking
+    output.event("audio_done", segment_id=1)
+    assert not output.owner.interaction_clock.audio_active
+    assert not output.live2d.advance(0).speaking
+
+
+def test_legacy_opt_out_still_shows_text_immediately(speech_output, monkeypatch):
+    monkeypatch.setenv("ERIS_TTS_SYNC_TEXT", "0")
+    output = speech_output()
+    assert len(_speech_packets(output)) == 1
+    assert len(output.visible_turns) == 1
+
+
+def test_real_task_manager_synth_failure_cannot_fake_text_commit(speech_output, monkeypatch):
+    monkeypatch.setenv("ERIS_TTS_TASK_MANAGER", "1")
+
+    class FailingBackend:
+        _ok = True
+
+        def synthesize(self, text, **kwargs):
+            raise RuntimeError("controlled synthesis failure")
+
+        def play_audio(self, *args, **kwargs):
+            raise AssertionError("failed synthesis cannot reach playback")
+
+    backend = FailingBackend()
+    try:
+        output = speech_output(backend=backend)
+        assert backend.task_manager.wait_until_idle(2)
+        assert not _speech_packets(output)
+        assert not output.visible_turns
+        assert output.owner.public_lifecycle.snapshot().state == "DEGRADED"
+    finally:
+        if getattr(backend, "task_manager", None) is not None:
+            backend.task_manager.shutdown()

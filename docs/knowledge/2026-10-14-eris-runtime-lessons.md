@@ -7,6 +7,27 @@ Mục đích: giúp người/agent tiếp theo hiểu quyết định đã chố
 chẩn đoán sai và biết cần kiểm chứng gì trước khi sửa. Đây là tri thức dự án,
 không phải xác nhận Eris đang chạy tốt ở thời điểm đọc.
 
+## Yêu cầu cập nhật 18/10/2026: text chờ voice
+
+User yêu cầu **text phải đợi voice rồi mới commit lên**. Bubble và stage segment
+chỉ công bố khi event `audio_start` thực sự đến;
+không cần chờ đọc xong câu. Panel/trạng thái chuẩn bị giọng vẫn cập nhật ngay.
+
+Quyết định này thay thế chủ trương lịch sử “hiện text ngay để UI không treo” và
+fallback nhả text sau 30 giây hoặc khi TTS lỗi/hủy. Source hiện tại bỏ timer
+nhả chữ; lỗi/hủy trước playback bỏ text đang chờ, không tính `no_tts` của câu cần
+nói là delivered. Public-turn ledger ghi câu visible tại lúc gửi bubble; history
+của delivery adapter vẫn giữ pending receipt, không đồng nhất với lời đã nghe.
+Opt-out kỹ thuật `ERIS_TTS_SYNC_TEXT=0` vẫn giữ hành vi legacy khi bật rõ ràng.
+Không dùng callback `on_first_start` làm bằng chứng playback: task manager và
+engine legacy còn gọi callback đó ở fallback lỗi. Cả hai backend hiện phát event
+`audio_start` riêng tại ranh giới bắt đầu phát PCM; Live2D tiếp tục dùng event này.
+
+Nguồn: yêu cầu trực tiếp và thay đổi source `public_output_runtime.py` cùng
+regression `test_public_text_audio_commit.py` (chat/autonomous, VI/JA, prepared
+artifact, synth chậm, lỗi/hủy và generation bị preempt). Đây chưa phải xác nhận
+đã nghe hoặc triển khai thành công trên bản portable đang chạy.
+
 ## 1. Yêu cầu sản phẩm và ưu tiên cần giữ
 
 - **Eris phải có âm thanh khi nói.** User trực tiếp bác phương án chỉ hiện text

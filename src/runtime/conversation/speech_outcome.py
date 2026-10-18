@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Theo dõi riêng lời đã HIỂN THỊ và lời đã PHÁT XONG.
 
-P0: transport chấp nhận một public surface không có nghĩa TTS đã hoàn tất.
-Không được đợi TTS mới hiển thị chữ (sẽ khiến UI treo), nhưng cũng không
-được lưu một câu bị ngắt như một lượt hội thoại đã đọc trọn vẹn.
+Transport chấp nhận một public surface không có nghĩa TTS đã bắt đầu/hoàn tất.
+Theo yêu cầu 18/10/2026, bubble đợi playback start; history pending vẫn theo dõi
+receipt riêng, không lưu một câu bị ngắt như một lượt đã đọc trọn vẹn.
 
 Không tạo governor thứ hai: bộ theo dõi chỉ lưu kết quả cơ học theo delivery_id,
 không quyết định nội dung, không tự phát âm thanh và không wake continuation.

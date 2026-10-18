@@ -23,8 +23,6 @@ public partial class UdpListener : Node2D
 	private Label _depthLearningChip;
 	private Label _depthTurnChip;
 	private Button _depthFreezeButton;
-	private Label _depthGemmaObserverLabel;
-	private Label _depthGemmaObserverMetaLabel;
 	private bool _depthResetScrollOnRefresh = true;
 	private ScrollContainer _depthScrollContainer;
 	private Control _depthScrollDecorationLayer;
@@ -254,49 +252,6 @@ public partial class UdpListener : Node2D
 		ApplyHiddenScrollBarTheme(scroll.GetVScrollBar());
 		scroll.GetVScrollBar().ValueChanged += _ => UpdateDepthScrollDecor();
 		scroll.Resized += UpdateDepthScrollDecor;
-
-		// Footer cố định: Gemma đọc các atom/shard thật và comment, không phải một khối telemetry khác.
-		var observerDock = new PanelContainer
-		{
-			CustomMinimumSize = new Vector2(0f, 64f),
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-		};
-		observerDock.AddThemeStyleboxOverride("panel", IdentityObserverDockStyle());
-		root.AddChild(observerDock);
-
-		var observerPad = new MarginContainer();
-		observerPad.AddThemeConstantOverride("margin_left", 10);
-		observerPad.AddThemeConstantOverride("margin_top", 6);
-		observerPad.AddThemeConstantOverride("margin_right", 10);
-		observerPad.AddThemeConstantOverride("margin_bottom", 6);
-		observerDock.AddChild(observerPad);
-
-		var observerRow = new HBoxContainer { CustomMinimumSize = new Vector2(0f, 48f) };
-		observerRow.AddThemeConstantOverride("separation", 12);
-		observerPad.AddChild(observerRow);
-		observerRow.AddChild(NewIconBadge(IdentityAsset("identity_core_crystal.png"), "◇", new Vector2(38f, 38f), IdentityPink, true));
-
-		var observerCopy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-		observerCopy.AddThemeConstantOverride("separation", 1);
-		var observerTitle = NewLabel("GEMMA // OBSERVER", 9, new Color(0.58f, 0.22f, 0.40f), true);
-		observerCopy.AddChild(observerTitle);
-		_depthGemmaObserverLabel = NewLabel("Đang chờ Gemma có đủ mảnh thật để bình luận.", 10, IdentityInk, false);
-		_depthGemmaObserverLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-		_depthGemmaObserverLabel.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-		observerCopy.AddChild(_depthGemmaObserverLabel);
-		_depthGemmaObserverMetaLabel = NewLabel("GEMMA SHARDS · WAITING", 7, IdentityMuted, false);
-		observerCopy.AddChild(_depthGemmaObserverMetaLabel);
-		observerRow.AddChild(observerCopy);
-
-		string botanicalPath = ResolveIdentityAssetPath(IdentityAsset("identity_botanical_footer.png"));
-		if (ResourceLoader.Exists(botanicalPath))
-		{
-			var botanical = NewIdentityTexture(botanicalPath, new Vector2(92f, 42f));
-			botanical.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
-			botanical.Modulate = new Color(1f, 1f, 1f, 0.48f);
-			observerRow.AddChild(botanical);
-		}
-
 
 		BuildDepthScrollDecoration();
 		RefreshDepthTabStyle();
@@ -631,7 +586,6 @@ public partial class UdpListener : Node2D
 				case "trace": RenderIdentityTraceV82(root); break;
 				default: RenderIdentitySelfV82(root); break;
 			}
-			RefreshIdentityObserverV82(root);
 			Callable.From(UpdateDepthScrollDecor).CallDeferred();
 			ResetDepthScrollIfNeeded();
 		}
@@ -646,8 +600,7 @@ public partial class UdpListener : Node2D
 	// ─────────────────────────────────────────────────────────────────────
 	// V82 IDENTITY DOSSIER
 	// Một panel, hai tab: SELF / TRACE. Số thô vẫn nằm trong runtime,
-	// nhưng normal UI chỉ kể ý nghĩa. Gemma Observer đọc comment đã được Gemma
-	// sinh cùng lượt thought-shards nên không mở thêm model call.
+	// nhưng normal UI chỉ kể ý nghĩa từ snapshot identity_runtime.
 	// ─────────────────────────────────────────────────────────────────────
 	private void RenderIdentitySelfV82(JsonElement root)
 	{
@@ -1015,8 +968,6 @@ public partial class UdpListener : Node2D
 		JsonElement interpretation = Obj(observation, "self_interpretation");
 		string summary = ReadString(interpretation, "summary");
 		if (!string.IsNullOrWhiteSpace(summary)) return summary;
-		string gemmaNow = ReadGemmaThoughtShardV82("now");
-		if (!string.IsNullOrWhiteSpace(gemmaNow)) return gemmaNow;
 		return BuildIdentityHeadline(root);
 	}
 
@@ -1147,67 +1098,6 @@ public partial class UdpListener : Node2D
 			CustomMinimumSize = new Vector2(30f, 1f),
 		});
 		return center;
-	}
-
-	private void RefreshIdentityObserverV82(JsonElement root)
-	{
-		if (_depthGemmaObserverLabel == null || _depthGemmaObserverMetaLabel == null) return;
-		string gemma = ReadGemmaObserverCommentV82();
-		if (string.IsNullOrWhiteSpace(gemma))
-		{
-			string first = ReadGemmaThoughtShardV82("now");
-			string second = _depthActiveTab == "trace" ? ReadGemmaThoughtShardV82("next") : ReadGemmaThoughtShardV82("concern");
-			if (!string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second) && !string.Equals(first, second, StringComparison.Ordinal))
-				gemma = $"{first}  ·  {second}";
-			else
-				gemma = !string.IsNullOrWhiteSpace(first) ? first : BuildIdentitySelfHeadlineV82(root);
-		}
-		_depthGemmaObserverLabel.Text = TrimForPanel(gemma, 300);
-		string writer = string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson) ? "" : PrivateMindWriterSummary(_latestPrivateMindDebugJson);
-		string freshness = _privateMindLoadedFromCache ? "CACHE" : "LIVE";
-		string time = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-		_depthGemmaObserverMetaLabel.Text = string.IsNullOrWhiteSpace(writer)
-			? $"GEMMA // {freshness} · {time} LOCAL"
-			: $"{TrimForPanel(writer, 72)} · {freshness} · {time}";
-	}
-
-	private string ReadGemmaObserverCommentV82()
-	{
-		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson)) return "";
-		try
-		{
-			using JsonDocument doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
-			JsonElement shards = FindThoughtShardRootV82(doc.RootElement);
-			JsonElement observer = Obj(shards, "observer_comment");
-			return ReadString(observer, "text");
-		}
-		catch { return ""; }
-	}
-
-	private string ReadGemmaThoughtShardV82(string slot)
-	{
-		if (string.IsNullOrWhiteSpace(_latestPrivateMindDebugJson)) return "";
-		try
-		{
-			using JsonDocument doc = JsonDocument.Parse(_latestPrivateMindDebugJson);
-			JsonElement shards = FindThoughtShardRootV82(doc.RootElement);
-			JsonElement slots = Obj(shards, "slots");
-			JsonElement item = Obj(slots, slot);
-			return ReadString(item, "text");
-		}
-		catch { return ""; }
-	}
-
-	private static JsonElement FindThoughtShardRootV82(JsonElement root)
-	{
-		JsonElement direct = Obj(root, "thought_shards");
-		if (direct.ValueKind == JsonValueKind.Object) return direct;
-		JsonElement menu = Obj(root, "menu");
-		JsonElement fromMenu = Obj(menu, "thought_shards");
-		if (fromMenu.ValueKind == JsonValueKind.Object) return fromMenu;
-		JsonElement diary = Obj(root, "inner_diary");
-		JsonElement fromDiary = Obj(diary, "thought_shards");
-		return fromDiary;
 	}
 
 	private static JsonElement FirstObject(JsonElement array)
@@ -2190,22 +2080,6 @@ public partial class UdpListener : Node2D
 		CornerRadiusBottomRight = 14,
 		ContentMarginLeft = 10f,
 		ContentMarginRight = 10f,
-	};
-
-	private static StyleBoxFlat IdentityObserverDockStyle() => new()
-	{
-		BgColor = new Color(0.998f, 0.990f, 0.982f, 0.82f),
-		BorderColor = new Color(0.53f, 0.31f, 0.42f, 0.24f),
-		BorderWidthLeft = 1,
-		BorderWidthTop = 1,
-		BorderWidthRight = 1,
-		BorderWidthBottom = 1,
-		CornerRadiusTopLeft = 10,
-		CornerRadiusTopRight = 10,
-		CornerRadiusBottomLeft = 15,
-		CornerRadiusBottomRight = 15,
-		ShadowColor = new Color(0.20f, 0.08f, 0.16f, 0.05f),
-		ShadowSize = 5,
 	};
 
 	private static StyleBoxFlat IdentityActionDockStyle() => new()

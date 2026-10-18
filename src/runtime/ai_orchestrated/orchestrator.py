@@ -23,7 +23,6 @@ from runtime.claim_domain_contract import validate_claim_manifest
 from runtime.self_biography_guard import embodied_self_history_without_evidence
 from runtime.cognition.turn_anchor import anchor_from_semantic_frame
 from runtime.social_stance_policy import guard_subjective_stance_payload
-from runtime.companion_model_routing import route_companion_turn
 from runtime.public_reply_context import compile_public_reply_context
 from runtime.affective_voice_state import project_affective_voice_state
 from runtime.reply_obligation import enforce_reply_obligation
@@ -811,6 +810,14 @@ class AIChatOrchestrator:
             str(user_text or ""),
             previous_public_turn=previous_public_turn,
         )
+        # Cơ chế auto-path chỉ mở cửa cho TutorExecutive. Không tự phát lời,
+        # không bật Hệ 2 và không chiếm semantic authority của Root.
+        try:
+            from runtime.tutor.auto_path import maybe_autostart_path
+            maybe_autostart_path(host, user_text=str(user_text or ""),
+                                 recent_history=history, now=cycle_start)
+        except Exception as exc:
+            _orchestrator_boundary_note(host, "conversation_v12.tutor_auto_path", exc)
         runtime_context = ensure_conversation_context_assembler(host).assemble(
             user_text=str(user_text or ""),
             channel="chat",
@@ -840,6 +847,7 @@ class AIChatOrchestrator:
         })
         host.current_stage_user_text = str(user_text or "")
         kernel = ensure_conversation_kernel(host)
+        _install_speculative_dispatch(host, kernel)
         result = kernel.handle_event(
             event,
             recent_history=history,
@@ -862,6 +870,24 @@ class AIChatOrchestrator:
             "decision": decision_dict,
         }
         return result
+
+def _install_speculative_dispatch(host: Any, kernel: Any) -> None:
+    """Dispatch root/writer prepare after commit; never choose its semantic content."""
+    import threading
+
+    def dispatch(lease: Any) -> None:
+        def prepare() -> None:
+            try:
+                AIAutonomousOrchestrator(host)._run_v12_signal(
+                    "autonomous_signal", sleep_after=False, speculative_lease=lease,
+                )
+            except Exception as exc:
+                _orchestrator_boundary_note(host, "conversation_v12.speculative", exc)
+        threading.Thread(target=prepare, daemon=True,
+                         name="eris-speculative-continuation").start()
+
+    kernel.speculative_preparer = dispatch
+
 
 class AIAutonomousOrchestrator:
     def __init__(self, host: Any) -> None:
@@ -967,6 +993,7 @@ class AIAutonomousOrchestrator:
         metadata: Mapping[str, Any] | None = None,
         sleep_after: bool = True,
         event_id: str = "",
+        speculative_lease: Any | None = None,
     ) -> Any:
         """Submit a non-user opportunity to the single conversation authority."""
 
@@ -997,6 +1024,7 @@ class AIAutonomousOrchestrator:
             or "foreground:primary"
         ).strip()[:180]
         kernel = ensure_conversation_kernel(host)
+        _install_speculative_dispatch(host, kernel)
         if signal_kind != "opening_signal":
             phase = getattr(kernel.snapshot(sid).phase, "value", "")
             if phase in {"thinking", "writing", "delivering"}:
@@ -1091,6 +1119,15 @@ class AIAutonomousOrchestrator:
                 signal_metadata["latest_observation"] = dict(latest_observation)
             signal_metadata["open_loops"] = [str(item)[:500] for item in tuple(open_loops or ())[:5]]
 
+        if speculative_lease is not None:
+            result = kernel.prepare_continuation_candidate(
+                lease=speculative_lease,
+                recent_history=recent_history,
+                runtime_context=runtime_context,
+            )
+            # Speculative result CHƯA được public. Không ghi last_agent_turn,
+            # last_conversation_run và không phát ngôn sớm.
+            return result
         if signal_kind == "autonomous_signal":
             result = kernel.handle_due_continuation(
                 session_id=sid,

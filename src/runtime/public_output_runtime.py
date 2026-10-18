@@ -77,7 +77,7 @@ from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
 from runtime.subsystem_supervisor import SubsystemSupervisor
 from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
 from runtime.transport_boundary import RuntimeTransportBoundary
-from runtime.tts_sync_policy import sync_text_with_tts_enabled, text_sync_timeout_seconds, tts_event_releases_deferred_text
+from runtime.tts_sync_policy import sync_text_with_tts_enabled
 from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
 from runtime.voice_manager import VoiceManager
 from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATUS, VTUBER_STAGE_VERSION
@@ -432,7 +432,6 @@ class PublicOutputRuntimeMixin:
                 payload["behavior_observation"] = observation_summary
         except Exception as exc:
             self.logger.debug("[behavior-observation] public record skipped: %s", exc)
-        self._record_public_turn(decision, payload=payload, channel=channel)
         # V98 negative feedback: public commit tiêu expressive pressure và tạo
         # refractory tạm thời. Chỉ bơm ModulationEvent, không sửa activation trực tiếp.
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
@@ -474,10 +473,9 @@ class PublicOutputRuntimeMixin:
         # default=0 làm text hiện ngay, còn Gemini TTS bò tới sau vài giây như một
         # bản lồng tiếng bị lệch timeline. Có thể opt-out bằng ERIS_TTS_SYNC_TEXT=0.
         sync_text = sync_text_with_tts_enabled()
-        text_sync_timeout = text_sync_timeout_seconds()
         text_payload_sent = False
+        text_payload_cancelled = False
         text_payload_lock = threading.Lock()
-        text_release_timer = None
         stage_payload_sent = False
         panel_payload_sent = False
 
@@ -486,7 +484,6 @@ class PublicOutputRuntimeMixin:
             event_stage_frame,
             *,
             event=None,
-            fallback: bool = False,
         ) -> None:
             """Đưa lifecycle audio thẳng tới Live2D, không phụ thuộc Godot/UI protocol."""
             if not v03_current():
@@ -503,11 +500,7 @@ class PublicOutputRuntimeMixin:
             except (TypeError, ValueError):
                 seq = 0
             stable_turn = turn_id or "anonymous"
-            event_id = (
-                f"audio-fallback:{stable_turn}:{seq}:{edge_type}"
-                if fallback
-                else f"audio:{stable_turn}:{seq}:{edge_type}"
-            )
+            event_id = f"audio:{stable_turn}:{seq}:{edge_type}"
             data: dict[str, object] = {
                 "prosody_style": str(getattr(frame, "prosody_style", "") or ""),
                 "speech_act": str(getattr(frame, "speech_act", "") or ""),
@@ -569,24 +562,20 @@ class PublicOutputRuntimeMixin:
                     self.logger.debug("[stage-protocol] stage_segment emit failed: %s", exc)
 
         def send_text_payload(release_reason: str = "immediate"):
-            nonlocal text_payload_sent, text_release_timer
+            nonlocal text_payload_sent
             if not v03_current():
                 return
             with text_payload_lock:
-                if text_payload_sent:
+                if text_payload_sent or text_payload_cancelled:
                     return
                 text_payload_sent = True
-                timer = text_release_timer
-                text_release_timer = None
-            if timer is not None:
-                timer.cancel()
             if release_reason == "audio_start":
                 public_lifecycle.transition(
                     "SPEAKING",
                     turn_id=stage_frame.turn_id,
                     reason="audio_playback_started",
                 )
-            elif release_reason in {"audio_failed", "no_tts", "sync_timeout"}:
+            elif release_reason == "no_tts":
                 public_lifecycle.transition(
                     "DEGRADED",
                     turn_id=stage_frame.turn_id,
@@ -608,20 +597,16 @@ class PublicOutputRuntimeMixin:
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
+                # Public ledger chỉ nhìn thấy câu khi bubble thật sự được gửi.
+                # History của delivery adapter vẫn giữ receipt pending riêng.
+                self._record_public_turn(decision, payload=payload, channel=channel)
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
 
-        def schedule_text_payload_release():
-            nonlocal text_release_timer
-            if not sync_text:
-                return
+        def discard_deferred_text():
+            nonlocal text_payload_cancelled
             with text_payload_lock:
-                if text_payload_sent or text_release_timer is not None:
-                    return
-                timer = threading.Timer(text_sync_timeout, lambda: send_text_payload("sync_timeout"))
-                timer.daemon = True
-                text_release_timer = timer
-            timer.start()
+                text_payload_cancelled = True
 
         def send_panel_payload():
             nonlocal panel_payload_sent
@@ -694,6 +679,8 @@ class PublicOutputRuntimeMixin:
                     except Exception as exc:
                         self.logger.debug("[conversation-v12] stale audio receipt degraded: %s", exc)
                 return
+            if sync_text and event_type in {"audio_failed", "audio_localization_failed", "audio_cancelled"}:
+                discard_deferred_text()
             event_turn_id = str(
                 getattr(event, "turn_id", "")
                 or getattr(event_stage_frame, "turn_id", "")
@@ -780,9 +767,12 @@ class PublicOutputRuntimeMixin:
                     turn_id=stage_frame.turn_id,
                     reason=event_type,
                 )
-            # Task manager có thể fail trong lúc synth trước khi on_first_start.
-            if sync_text and tts_event_releases_deferred_text(event_type):
-                send_text_payload("audio_failed")
+            elif event_type in {"audio_failed", "audio_localization_failed"}:
+                public_lifecycle.transition(
+                    "DEGRADED",
+                    turn_id=stage_frame.turn_id,
+                    reason=event_type,
+                )
             self._handle_tts_playback_event(
                 event, stage_frame=event_stage_frame,
                 trace_id=str(payload.get("event_trace_id") or getattr(event_stage_frame, "turn_id", "") or ""),
@@ -803,9 +793,8 @@ class PublicOutputRuntimeMixin:
         # cảm xúc/nhật ký vẫn phải hiện ngay chứ không đứng nhìn spinner như một
         # nghi thức tôn giáo của UI bất đồng bộ.
         send_panel_payload()
-        # Show the committed public surface immediately; TTS playback can lag or
-        # fail independently, but chat should not look stuck after text exists.
-        send_stage_protocol_segments()
+        # Nội dung stage/bubble cùng chờ playback; panel và trạng thái buffering
+        # vẫn cập nhật ngay trong lúc synth, không tự nhả chữ sau một timeout.
         if not sync_text:
             # Chế độ legacy: text hiện ngay, audio tới sau.
             send_text_payload("immediate")
@@ -848,25 +837,15 @@ class PublicOutputRuntimeMixin:
                     }, logger=getattr(self, "logger", None))
                 except Exception:
                     pass
-                def on_first_audio_start() -> None:
-                    if not v03_current():
-                        return
-                    # Đây là callback sát thời điểm thiết bị bắt đầu phát nhất.
-                    # Gửi một edge ``speaking`` cứu hộ trước; event audio_start
-                    # giàu envelope sẽ tới ngay sau và thay thế animation bằng
-                    # nhịp audio thật. Nếu callback lifecycle bị rơi, miệng vẫn
-                    # không đứng im như ảnh hồ sơ.
-                    send_live2d_audio_edge("speaking", stage_frames[0], fallback=True)
-                    if sync_text:
-                        send_text_payload("audio_start")
-
+                # Callback on_first_start legacy còn được gọi cả khi synth lỗi.
+                # Chỉ event audio_start (sau PCM submission) mới commit text và
+                # phát edge Live2D có envelope trong handle_tts_event ở trên.
                 has_scheduled_tts = bool(dispatcher.dispatch_tts(
                     stage_frames,
                     tts_engine=_tts,
                     valence=_valence,
                     arousal=_arousal,
                     stance=_stance,
-                    on_first_start=on_first_audio_start,
                     on_event=handle_tts_event,
                 ))
             except Exception as _tts_exc:
@@ -887,24 +866,29 @@ class PublicOutputRuntimeMixin:
                     clock.mark_audio_finished(turn_id=str(stage_frame.turn_id or ""))
                 except Exception:
                     pass
-            send_text_payload("no_tts" if sync_text else "immediate")
+            audio_required = sync_text and _should_speak
+            if audio_required:
+                discard_deferred_text()
+                public_lifecycle.transition(
+                    "DEGRADED", turn_id=stage_frame.turn_id, reason="no_tts",
+                )
+            else:
+                send_text_payload("no_tts" if sync_text else "immediate")
             _settle_pedagogical_delivery_event(
                 self,
-                event_type="no_tts",
+                event_type="audio_failed" if audio_required else "no_tts",
                 turn_id=str(stage_frame.turn_id or ""),
                 now=time.time(),
             )
             try:
                 _settle_conversation_delivery_event(
-                    self, turn_id=str(stage_frame.turn_id or ""), successful=True
+                    self, turn_id=str(stage_frame.turn_id or ""), successful=not audio_required
                 )
             except Exception as exc:
                 self.logger.debug("[conversation-v12] no-tts delivery settle degraded: %s", exc)
         # Mọi lời ERIS thốt ra (autonomous, force_speak, session_ritual...) đều
         # ghi vào bộ đệm hội thoại hợp nhất để lượt chat/autonomous sau nối mạch.
         # Chat public được Architecture C ghi ở đúng commit point; không append trùng.
-        elif sync_text and not text_payload_sent:
-            schedule_text_payload_release()
 
         if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip():
             # Ghi mốc assistant sau khi output public đã được dựng và gửi. Đây là

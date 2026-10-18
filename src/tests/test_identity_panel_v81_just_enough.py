@@ -13,7 +13,6 @@ def test_v83_identity_is_one_panel_with_self_trace_tabs() -> None:
     assert 'AddDepthTab(tabs, "inner", "INNER//"' not in text
     assert 'AddDepthTab(tabs, "trace", "TRACE•"' in text
     assert 'ERIS / IDENTITY_01' in text
-    assert 'GEMMA // OBSERVER' in text
     assert 'private const string IdentityAssetRoot = "res://asset/identy/";' in text
     assert 'RenderIdentityInnerV82' not in text
 
@@ -31,10 +30,16 @@ def test_v83_normal_identity_ui_avoids_metric_bar_dashboard() -> None:
     assert '"NOW"' in trace_tab
 
 
-def test_v83_identity_uses_gemma_observer_without_extra_identity_model_lane() -> None:
-    # Body Godot (C#) vẫn giữ code đọc observer_comment; sau khi gỡ thought-shards
-    # phía Python, panel chỉ nhận chuỗi rỗng (degrade mềm). Không còn assert adapter
-    # vì write_thought_shards/observer_comment đã bị xóa cùng thought-shards.
+def test_identity_panel_does_not_read_retired_gemma_shards_or_label_fallback_as_observer() -> None:
+    # Snapshot identity vẫn dùng được khi payload/cache cũ còn giữ shard/comment;
+    # renderer không đọc chúng hoặc gắn nhãn Gemma cho headline fallback.
     text = _body()
-    assert "ReadGemmaObserverCommentV82" in text
-    assert "observer_comment" in text
+    assert "observer_comment" not in text
+    assert "thought_shards" not in text
+    assert "GEMMA // OBSERVER" not in text
+    assert "RefreshIdentityObserverV82" not in text
+    assert "ReadGemmaThoughtShardV82" not in text
+    headline = text[text.index("private string BuildIdentitySelfHeadlineV82") : text.index("private string BuildIdentityFormTagsV82")]
+    assert 'Obj(root, "latest_observation")' in headline
+    assert 'Obj(observation, "self_interpretation")' in headline
+    assert 'return BuildIdentityHeadline(root);' in headline
