@@ -116,6 +116,8 @@ class ConversationKernel:
         self.logger = logger
         self._delivery_lock = threading.RLock()
         self._delivery_turns: dict[str, KernelTurn] = {}
+        # Callback được orchestrator cung cấp, chỉ chạy SAU public delivery receipt.
+        self.speculative_preparer: Any = None
         self._event_condition = threading.Condition(threading.RLock())
         self._event_results: dict[str, ConversationRunResult] = {}
         self._events_inflight: set[str] = set()
@@ -168,6 +170,7 @@ class ConversationKernel:
         *,
         recent_history: Sequence[Mapping[str, Any]] = (),
         runtime_context: Mapping[str, Any] | None = None,
+        prepare_only: bool = False,
     ) -> ConversationRunResult:
         sid = str(event.session_id or "default")[:180]
         run_id = f"run:{uuid.uuid4().hex}"
@@ -361,6 +364,24 @@ class ConversationKernel:
                 rendered=rendered,
                 status="stale",
             )
+        if prepare_only:
+            # Chưa có public commit. Tháo claim tạm để event/user khác có thể
+            # preempt; candidate chỉ được giữ nếu generation + run còn đúng.
+            updated = self.store.mutate(
+                sid, lambda prior, now: replace(
+                    prior, active_run_id="", active_move_id="",
+                    active_delivery_id="", phase=RunPhase.CONTINUATION_PENDING,
+                ) if prior.generation == turn.generation and prior.active_run_id == turn.run_id
+                and prior.phase == RunPhase.WRITING else prior,
+            )
+            if updated.generation != turn.generation or updated.phase != RunPhase.CONTINUATION_PENDING:
+                self._move_outcome(turn, 'cancelled', reason='stale_speculative')
+                return ConversationRunResult(event=normalized_event, decision=decision,
+                                             turn=turn, status="stale")
+            # Không ghi delivered: chưa ai nghe câu này.
+            return ConversationRunResult(event=normalized_event, decision=decision,
+                                         turn=turn, rendered=rendered, status="speculative_ready")
+
         delivery_id = turn.delivery_id
         if self.delivery is None or not self.mark_delivery_started(turn, delivery_id=delivery_id):
             self._move_outcome(turn, 'failed_before_delivery' if self.delivery is None else 'cancelled',
@@ -464,6 +485,77 @@ class ConversationKernel:
                                      delivery_id=turn.delivery_id, status="runtime_status_delivering",
                                      failure_reason=reason)
 
+    def prepare_continuation_candidate(
+        self, *, lease: Any,
+        recent_history: Sequence[Mapping[str, Any]] = (),
+        runtime_context: Mapping[str, Any] | None = None,
+    ) -> ConversationRunResult | None:
+        """Speculatively run Root→Writer, never delivery. No extra speech owner.
+
+        Preparation is attached to one lease/generation. If a user turn arrived,
+        ordinary kernel preemption invalidates the run before it can be offered.
+        """
+        sid = str(lease.session_id or "default")[:180]
+        current = self.continuation.peek(sid)
+        if (current is None or current.lease_id != lease.lease_id
+                or current.generation != lease.generation or current.status != "pending"):
+            return None
+        event = ConversationEvent.continuation_due(
+            session_id=sid, generation=lease.generation, lease_id=lease.lease_id,
+        )
+        result = self._handle_event_once(
+            event,
+            recent_history=recent_history,
+            runtime_context={**dict(runtime_context or {}), "continuation_lease": lease.to_dict()},
+            prepare_only=True,
+        )
+        if result.status in {"speculative_ready", "no_reply"}:
+            if not self.continuation.offer_speculative(lease, result):
+                if result.turn is not None:
+                    self._move_outcome(result.turn, 'cancelled', reason='stale_speculative_lease')
+        return result
+
+    def _deliver_prepared_continuation(
+        self, candidate: ConversationRunResult, *, lease: Any,
+    ) -> ConversationRunResult | None:
+        """Claim a prepared move and deliver through the ORIGINAL delivery adapter."""
+        turn = candidate.turn
+        rendered = candidate.rendered
+        if turn is None or rendered is None or turn.generation != lease.generation:
+            return None
+        sid = turn.session_id
+        current = self.store.load(sid)
+        if current.generation != turn.generation or current.phase not in {
+            RunPhase.CONTINUATION_PENDING, RunPhase.WAITING_USER,
+        }:
+            return None
+        updated = self.store.mutate(
+            sid, lambda prior, now: replace(
+                prior, active_run_id=turn.run_id, active_move_id=turn.move.move_id,
+                phase=RunPhase.WRITING,
+            ) if prior.generation == turn.generation and prior.phase in {
+                RunPhase.CONTINUATION_PENDING, RunPhase.WAITING_USER,
+            } else prior,
+        )
+        if updated.active_run_id != turn.run_id or updated.phase != RunPhase.WRITING:
+            return None
+        if self.delivery is None or not self.mark_delivery_started(turn, delivery_id=turn.delivery_id):
+            self._fail_run(turn)
+            return ConversationRunResult(event=candidate.event, decision=candidate.decision,
+                                         turn=turn, rendered=rendered, status="delivery_unavailable")
+        with self._delivery_lock:
+            self._delivery_turns[turn.delivery_id] = turn
+        try:
+            self.delivery.deliver(turn=turn, rendered=rendered, delivery_id=turn.delivery_id)
+        except Exception as exc:
+            self.settle_delivery_id(session_id=sid, delivery_id=turn.delivery_id, successful=False)
+            return ConversationRunResult(event=candidate.event, decision=candidate.decision,
+                                         turn=turn, rendered=rendered, status="delivery_failed",
+                                         failure_reason=_safe_failure_reason(exc))
+        return ConversationRunResult(event=candidate.event, decision=candidate.decision,
+                                     turn=turn, rendered=rendered,
+                                     delivery_id=turn.delivery_id, status="delivering")
+
     def handle_due_continuation(
         self,
         *,
@@ -481,6 +573,16 @@ class ConversationKernel:
         )
         if lease is None:
             return None
+        # Fast-path: consume candidate đã localize/verify từ Root/Writer.
+        prepared = self.continuation.take_speculative(lease)
+        if isinstance(prepared, ConversationRunResult):
+            if prepared.status == "no_reply":
+                self.continuation.consume(lease)
+                return prepared
+            delivered = self._deliver_prepared_continuation(prepared, lease=lease)
+            if delivered is not None:
+                self.continuation.consume(lease)
+                return delivered
         event = ConversationEvent.continuation_due(
             session_id=sid,
             generation=lease.generation,
@@ -790,6 +892,12 @@ class ConversationKernel:
                 last_delivery_finished_at=now,
             ),
         )
+        if lease is not None and callable(self.speculative_preparer):
+            try:
+                # Callback chỉ dispatch background thread, không block TTS.
+                self.speculative_preparer(lease)
+            except Exception as exc:
+                self._log("warning", "[conversation-v12] speculative_dispatch_failed reason=%s", type(exc).__name__)
         return True
 
     def preempt_for_user(self, session_id: str) -> ConversationSessionState:

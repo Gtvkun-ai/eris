@@ -55,6 +55,50 @@
       {
         "Name": "teasing",
         "File": "expressions/teasing.exp3.json"
+      },
+      {
+        "Name": "smirk_minor",
+        "File": "expressions/smirk_minor.exp3.json"
+      },
+      {
+        "Name": "smirk_disdain",
+        "File": "expressions/smirk_disdain.exp3.json"
+      },
+      {
+        "Name": "blush_affection",
+        "File": "expressions/blush_affection.exp3.json"
+      },
+      {
+        "Name": "cat_mouth",
+        "File": "expressions/cat_mouth.exp3.json"
+      },
+      {
+        "Name": "sad_empathy",
+        "File": "expressions/sad_empathy.exp3.json"
+      },
+      {
+        "Name": "wink_correct",
+        "File": "expressions/wink_correct.exp3.json"
+      },
+      {
+        "Name": "teehee",
+        "File": "expressions/teehee.exp3.json"
+      },
+      {
+        "Name": "yan_warning",
+        "File": "expressions/yan_warning.exp3.json"
+      },
+      {
+        "Name": "lazy_deadpan",
+        "File": "expressions/lazy_deadpan.exp3.json"
+      },
+      {
+        "Name": "wink_correct_right",
+        "File": "expressions/wink_correct_right.exp3.json"
+      },
+      {
+        "Name": "teehee_right",
+        "File": "expressions/teehee_right.exp3.json"
       }
     ],
     "Motions": {

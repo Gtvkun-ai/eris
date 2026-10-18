@@ -28,7 +28,40 @@ class TutorGuardrailPolicy:
         learner: LearnerProfile,
     ) -> MoveEnvelope:
         pace = learner.preferred_pace
-        teach_budget = 5 if pace == "slow" else (3 if pace == "fast" else 4)
+        teach_budget = 6 if pace == "slow" else (4 if pace == "fast" else 5)
+
+        # LEARN-04: evidence từ SQLite quyết định *khung* chiến thuật;
+        # DeepSeek chỉ chọn cách thể hiện trong khung, không tự kết luận mastery.
+        if step.reason == "adaptive_repair_repeated_error":
+            return MoveEnvelope(
+                allowed_kinds=("counterexample", "repair"),
+                requires_user_response=False,
+                max_sentences=min(3, teach_budget),
+                reason="adaptive_repair_repeated_error",
+            )
+        if step.reason == "adaptive_repair_after_failure":
+            return MoveEnvelope(
+                allowed_kinds=("repair", "worked_example", "counterexample"),
+                requires_user_response=False,
+                max_sentences=min(3, teach_budget),
+                reason="adaptive_repair_after_failure",
+            )
+        if step.reason == "adaptive_transfer_probe":
+            return MoveEnvelope(
+                allowed_kinds=("assessment",),
+                requires_user_response=True,
+                max_sentences=2,
+                interaction_type="application",
+                reason="adaptive_transfer_probe",
+            )
+        if step.reason == "adaptive_independent_practice":
+            return MoveEnvelope(
+                allowed_kinds=("guided_practice",),
+                requires_user_response=True,
+                max_sentences=2,
+                interaction_type="application",
+                reason="adaptive_independent_practice",
+            )
 
         if step.kind == "probe":
             return MoveEnvelope(
@@ -50,7 +83,7 @@ class TutorGuardrailPolicy:
                 return MoveEnvelope(
                     allowed_kinds=("counterexample", "socratic_question", "repair", "explain"),
                     requires_user_response=False,
-                    max_sentences=min(teach_budget, 4),
+                    max_sentences=min(teach_budget, 6),
                     interaction_type="short_answer",
                     reason="repair_misconception_before_more_content",
                 )
@@ -82,7 +115,7 @@ class TutorGuardrailPolicy:
 
         if step.kind == "review":
             return MoveEnvelope(
-                allowed_kinds=("review", "assessment", "socratic_question"),
+                allowed_kinds=("review",),
                 requires_user_response=True,
                 max_sentences=2,
                 interaction_type=step.interaction_type,
@@ -125,10 +158,45 @@ class TutorGuardrailPolicy:
             envelope.requires_user_response
             or kind in self._RESPONSE_REQUIRED_KINDS
         )
+        # Với các bước adaptive, policy cung cấp chỉ dẫn cố định để mô hình
+        # không làm rơi mục tiêu "bài biến thể / ít gợi ý / sửa đúng lỗi".
+        # Không chép error_code/giả thuyết vào public prompt như một sự thật.
+        directives = {
+            "adaptive_repair_repeated_error": (
+                "Đưa một phản ví dụ ngắn hoặc sửa một mắt xích khái niệm. "
+                "Không gán nhãn năng lực người học; không lặp nguyên bài giảng.",
+                "",
+            ),
+            "adaptive_repair_after_failure": (
+                "Sửa một bước cụ thể của bài trước, giải thích nguyên nhân và "
+                "giữ lại phần còn lại để người học tự thử ở bước tiếp theo.",
+                "",
+            ),
+            "adaptive_transfer_probe": (
+                "Đặt một bài áp dụng BIẾN THỂ với bối cảnh mới so với ví dụ trước. "
+                "Không giải mẫu, không hé đáp án và không gợi ý trước khi người học trả lời.",
+                "Kiểm tra khả năng vận dụng độc lập bằng một bài mới khác bề mặt.",
+            ),
+            "spaced_retrieval_before_reteaching": (
+                "Kiểm tra lại kiến thức cũ bằng MỘT câu hỏi nhớ lại không gợi ý. "
+                "Ưu tiên ví dụ biến thể, không chép đáp án hay giải mẫu trước. "
+                "Nếu user quên, đợi họ trả lời rồi mới hỗ trợ.",
+                "Đánh giá recall độc lập của một kiến thức đã học.",
+            ),
+            "adaptive_independent_practice": (
+                "Cho một bài thực hành ngắn để người học tự giải. "
+                "Không đưa lời giải hoặc gợi ý trước; chỉ hỗ trợ thêm sau khi có câu trả lời.",
+                "Yêu cầu tự vận dụng kiến thức trước khi nhận trợ giúp.",
+            ),
+        }
+        directive = directives.get(envelope.reason)
         return replace(
             move,
             kind=kind,
             kp_id=kp_id or move.kp_id,
+            instruction_vi=directive[0] if directive else move.instruction_vi,
+            question_goal=(directive[1] or move.question_goal) if directive else move.question_goal,
+            reason=envelope.reason if directive else move.reason,
             interaction_type=envelope.interaction_type,
             requires_user_response=requires_response,
             max_sentences=min(move.max_sentences, envelope.max_sentences),

@@ -140,7 +140,9 @@ class ConservativeTutorReasoner:
             kind=preferred,
             kp_id=observation.kp_id,
             objective=f"Tiến triển knowledge point: {observation.kp_title or observation.kp_id}",
-            instruction_vi=instruction_by_kind[preferred],
+            instruction_vi=(instruction_by_kind[preferred]
+                            + " Giữ giọng Eris tự nhiên: hài khô, trêu nhẹ, tự giễu hoặc có quan điểm khi phù hợp; "
+                              "không làm phẳng cá tính thành lời giảng trung tính. Vẫn giữ ràng buộc sư phạm."),
             question_goal=question_goal,
             expected_response_shape=expected_shape,
             interaction_type=envelope.interaction_type,

@@ -1,0 +1,24 @@
+{
+  "approved": true,
+  "findings": [
+    {
+      "label": "Nhánh debug chết trong _ensure_loaded",
+      "detail": "else: logger.debug(...) không reachable vì 'if self._load_error: return False' short-circuit trước khi vào lại try. Có thể bỏ để khỏi gây hiểu nhầm có đường log lần hai.",
+      "confidence": "confirmed",
+      "blocking": false
+    },
+    {
+      "label": "_dense_similarity thành dead code production",
+      "detail": "Sau batch hoá, compile không còn gọi _dense_similarity; git grep trên src/ chỉ thấy định nghĩa + tham chiếu docstring, không caller nào khác, không test. Giữ cho tương thích chấp nhận được nhưng nên chú thích hoặc dọn sau.",
+      "confidence": "confirmed",
+      "blocking": false
+    },
+    {
+      "label": "Cửa sổ đua của health signal",
+      "detail": "'Log đúng một lần' dựa vào cờ _load_failed_signaled không khoá; hai first-call _ensure_loaded đồng thời về lý thuyết có thể cùng qua cổng cờ và log hai lần. Chỉ ảnh hưởng độ ồn log, không ảnh hưởng recall/scoring.",
+      "confidence": "possible",
+      "blocking": false
+    }
+  ],
+  "reviewDoc": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eris-embedding-batch-loaderror-2026-10-16\\review-logic.md"
+}

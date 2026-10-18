@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from runtime.conversation.agent import RuntimeModelRootAgent
 from runtime.conversation.context import RootCapabilityRegistry, RootMemoryRecallTools
+from runtime.tooling import ToolGateway, DomainTool
 from runtime.conversation.contracts import ConversationEvent, NextConversationMove, NoReply
 
 
@@ -84,17 +85,21 @@ def test_no_progress_streak_forces_early_finalize_user_turn_memory():
 def test_no_progress_streak_forces_no_reply_for_autonomous_capability():
     # Hai capability khác args nhưng đều 'failed' -> 2 bước trì trệ -> NoReply
     # 'no_progress' cho event không phải user_turn.
-    class Tool:
-        def invoke_for_root(self, **kwargs):
-            raise RuntimeError("boom")
-    registry = RootCapabilityRegistry({"research": Tool()})
+    def boom(args, event, history):
+        raise RuntimeError("boom")
+    gateway = ToolGateway(None, domain_tools=(DomainTool(
+        id="research.request", description="research", group="research",
+        schema={"type": "object", "additionalProperties": False, "required": ["topic"],
+                "properties": {"topic": {"type": "string"}}},
+        execute=boom, available=lambda: True),), status_provider=lambda: {})
+    registry = RootCapabilityRegistry({})
     router = FakeRouter(
-        {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
-        {"kind": "use_capability", "capability": "research", "arguments": {"topic": "B"}},
+        {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "A"}},
+        {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "B"}},
         move("không nên tới đây"),
     )
     result = decide(router, kind="autonomous_signal",
-                    context={"__root_capabilities": registry, "__conversation_run_id": "run:1"})
+                    context={"__root_tool_gateway": gateway, "__root_capabilities": registry, "__conversation_run_id": "run:1"})
     assert isinstance(result, NoReply)
     assert result.reason == "no_progress"
     assert len(router.calls) == 2

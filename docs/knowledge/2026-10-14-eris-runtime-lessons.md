@@ -364,3 +364,27 @@ Tám module liên quan trong bản portable trùng SHA-256 source hiện tại.
 Các kết quả này bổ sung giải thích trước đó thiên về chất lượng voice mẫu:
 pipeline cũng có bất đối xứng lời đọc VI/JA cần tính đến. Chưa có A/B audio live
 để quy khoảng cách chất âm cho một nguyên nhân, chưa thay đổi hành vi runtime.
+
+### Probe được user yêu cầu tiếp ngày 17/10
+
+Đọc raw surface response trong `C:/eris_debug/deepseek_raw/` của hai phiên
+`events_20261017T110649Z_pid23520.jsonl` và
+`events_20261017T113734Z_pid25184.jsonl`: cả 12 cặp `text`/`speech_text` trích
+được đều giống nhau, gồm cả các lượt đếm số ngắn. **Thu hẹp giả thuyết ở trên:**
+việc ghi đè speech Việt vẫn tồn tại trong code, nhưng bỏ ghi đè riêng lẻ sẽ
+không thay đổi các câu trong hai phiên này; writer chưa tạo lời nói Việt khác
+bubble. Không dùng giả thuyết mất speech riêng để giải thích chất âm của các
+lượt này như một nguyên nhân đã được xác nhận.
+
+Đã sinh live hai mẫu thử có kiểm soát bằng voice `aHC3XZOMg3HZuXVYK6hy`,
+`eleven_v3`, cùng preset `soft_warm`/tag `[warmly]`, stability 0.474 và cùng
+speaker boost, dùng đường Bearer hiện tại. Hai mẫu cùng từ ngữ, chỉ đổi dấu
+câu, không chứa tiếng Nhật: A dài 6.88s, B dài 8.72s; WAV mono PCM16 24kHz
+được kiểm tra hợp lệ. Artifacts cục bộ:
+`C:/Users/Gtvkun/Documents/eris-voice-ab-20261017/` gồm `listen.html`,
+`A-bubble.wav`, `B-speech.wav`, `probe.json`. Câu mẫu là câu kiểm soát tự soạn,
+không phải lời writer trích từ log. Script thử nằm trong Temp, không triển khai.
+
+Mỗi biến thể chỉ sinh một lần, không khóa seed: biến thiên TTS có thể ảnh hưởng
+so sánh. Chưa có người nghe chấm chất lượng; không khẳng định B hay hơn, hoặc
+ngang giọng Nhật. Probe không sửa source/config runtime, không build lại.

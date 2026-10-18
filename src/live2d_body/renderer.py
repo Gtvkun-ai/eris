@@ -17,6 +17,7 @@ from typing import Any
 from .config import Live2DBodyConfig
 from .asset_playback import NativeAssetPlayback
 from .gaze import GazeController, GazeSample
+from .layer_visibility import Live2DLayerVisibility
 from .parameter_profile import INFJ_PARAMETER_PROFILE
 from .stage_state import Live2DStageState
 from .udp_receiver import Live2DStageReceiver
@@ -90,6 +91,7 @@ class Live2DRenderer:
         # --- Idle sway (Neuro-like procedural animation) ---
         self._sway_t: float = 0.0  # thời gian tích luỹ riêng cho sway
         self._asset_playback = NativeAssetPlayback(config.model_path)
+        self._layer_visibility = Live2DLayerVisibility()
 
     def run(self) -> None:
         glfw, live2d = _load_dependencies()
@@ -336,6 +338,14 @@ class Live2DRenderer:
                 if parameter_id in self.available_parameters:
                     model.SetParameterValue(parameter_id, 0.0)
         self._apply_eyelids(model, left_scale=snapshot.eye_open_left * gaze.left_eye_open_scale, right_scale=snapshot.eye_open_right * gaze.right_eye_open_scale)
+        # Chỉ can thiệp vào Part có ID khớp model thật; ArtMesh không được
+        # giả định là Part và không được ẩn cả mặt để mô phỏng hiệu ứng.
+        self._layer_visibility.apply(
+            model,
+            emotion=snapshot.emotion,
+            weight=snapshot.explicit_emotion_weight,
+            terminal=self._asset_playback.terminal,
+        )
 
     def _update_gaze(self, geometry: WindowGeometry, dt: float) -> GazeSample:
         if not self.config.eye_tracking:

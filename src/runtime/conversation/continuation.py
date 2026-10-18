@@ -44,6 +44,9 @@ class ContinuationLeaseScheduler:
         self.lease_ttl_seconds = max(2.0, float(lease_ttl_seconds))
         self._lock = threading.RLock()
         self._leases: dict[str, ContinuationLease] = {}
+        # Candidate chỉ tồn tại trong RAM, đi cùng lease/generation. Không persist
+        # text chưa phát: restart sẽ re-evaluate bằng Root như cũ.
+        self._speculative: dict[str, tuple[str, int, Any]] = {}
 
     @staticmethod
     def _sid(session_id: str) -> str:
@@ -120,12 +123,36 @@ class ContinuationLeaseScheduler:
             status="pending",
             updated_at=ts,
         )
+        with self._lock:
+            self._speculative.pop(sid, None)
         self._write(lease)
         return lease
+
+    def offer_speculative(self, lease: ContinuationLease, candidate: Any) -> bool:
+        """Đệm kết quả Root→Writer đã chuẩn bị; chỉ nhận nếu lease còn sống."""
+        sid = self._sid(lease.session_id)
+        current = self.peek(sid)
+        if (current is None or current.lease_id != lease.lease_id
+                or current.generation != lease.generation or current.status != "pending"):
+            return False
+        with self._lock:
+            self._speculative[sid] = (lease.lease_id, lease.generation, candidate)
+        return True
+
+    def take_speculative(self, lease: ContinuationLease) -> Any | None:
+        """Một lần duy nhất; generation/lease cũ tuyệt đối không được phát."""
+        sid = self._sid(lease.session_id)
+        with self._lock:
+            item = self._speculative.pop(sid, None)
+        if item is None or item[0] != lease.lease_id or item[1] != lease.generation:
+            return None
+        return item[2]
 
     def cancel_session(self, session_id: str) -> bool:
         sid = self._sid(session_id)
         prior = self.peek(sid)
+        with self._lock:
+            self._speculative.pop(sid, None)
         self._clear(sid)
         return prior is not None
 
@@ -217,8 +244,13 @@ class ContinuationLeaseScheduler:
                     return
                 if current.lease_id == lease.lease_id and current.claim_token == lease.claim_token:
                     tx.stage(self._empty_payload(sid, updated_at=ts))
+            # Callback delivery có thể đồng thời schedule lease kế tiếp.
+            # Chỉ xóa mirror nếu lease cũ vẫn là bản hiện hành; tuyệt đối
+            # không dọn mất lease MỚI vừa được schedule trong lúc consume.
             with self._lock:
-                self._leases.pop(sid, None)
+                mirror = self._leases.get(sid)
+                if mirror is not None and mirror.lease_id == lease.lease_id:
+                    self._leases.pop(sid, None)
         except Exception as exc:  # noqa: BLE001
             self._log("warning", "[conversation-v12] durable lease consume degraded: %s", exc)
 

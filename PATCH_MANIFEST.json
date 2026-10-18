@@ -1,0 +1,66 @@
+{
+  "source": "eris(8).zip",
+  "design": "Markdown đã dán (1)(7).md",
+  "files": [
+    {
+      "path": "src/runtime/ai_orchestrated/orchestrator.py",
+      "status": "MODIFIED",
+      "sha256": "506b3a141a61000d8f4c533d276b9941836fcfbdf8eeca31de4cc37423949f25"
+    },
+    {
+      "path": "src/runtime/conversation/agent.py",
+      "status": "MODIFIED",
+      "sha256": "8aa2a53780308571135a94323a0d38f9b1f457bf7790278c5249a116f0485e77"
+    },
+    {
+      "path": "src/runtime/conversation/context_assembler.py",
+      "status": "MODIFIED",
+      "sha256": "05a9c762198a395259cb10ae31ad6fc33690eed055175aca439480c162b4d1ce"
+    },
+    {
+      "path": "src/runtime/conversation/continuation.py",
+      "status": "MODIFIED",
+      "sha256": "01f4cc4b34d295ed6e47b3e08c06cbd343e9df57cb7cceac86357c1cd84aa3b8"
+    },
+    {
+      "path": "src/runtime/conversation/kernel.py",
+      "status": "MODIFIED",
+      "sha256": "ed39e8d1ddd2c0655ec4edd28116847d5c251fd8d7161a22ebee1bec10dad0e3"
+    },
+    {
+      "path": "src/runtime/tutor/auto_path.py",
+      "status": "NEW",
+      "sha256": "0dea53bd3e57a987d47a610d4b2fbb5d7235f76a602c331a4e853e8cf708d752"
+    },
+    {
+      "path": "src/runtime/tutor/model_reasoner.py",
+      "status": "MODIFIED",
+      "sha256": "8672309c46e671c3f45bbb6e92b4488f42e815f22cdda7905f5e94f850026f2a"
+    },
+    {
+      "path": "src/runtime/tutor/policy.py",
+      "status": "MODIFIED",
+      "sha256": "b4e1dc7c3c1820c079b8f5b48fcb5df2ef27d6d575137c0841212dd57c0ef594"
+    },
+    {
+      "path": "src/runtime/tutor/reasoner.py",
+      "status": "MODIFIED",
+      "sha256": "ebb9f3f8ba200531e0b0cd461b27e8f427ee7d4294f53f54adfc73220d8c1404"
+    },
+    {
+      "path": "src/tests/conversation/test_context_assembler_v12.py",
+      "status": "MODIFIED",
+      "sha256": "2afa0948bdbca7b438db716933eaea551de8ac7d19586af157be137a5d093e25"
+    },
+    {
+      "path": "src/tests/conversation/test_proactive_human_design.py",
+      "status": "NEW",
+      "sha256": "cce3ce935444d574528e5ad81718215e11f3c24f16ed573a661d4b907d235b65"
+    },
+    {
+      "path": "src/tests/test_tutor_executive_v1.py",
+      "status": "MODIFIED",
+      "sha256": "5485fde4273ca54511d309d0ebe77adba9f44bbd016fcaf2bcaa27d4ff2a912c"
+    }
+  ]
+}

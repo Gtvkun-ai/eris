@@ -11,6 +11,7 @@ Nếu model fail:
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from typing import Any, Mapping
 
 from runtime.tutor.contracts import (
@@ -134,6 +135,35 @@ ASSESSMENT_SCHEMA: dict[str, Any] = {
 }
 
 
+def valid_semantic_assessment_wire(raw: Any) -> bool:
+    """Chỉ nhận JSON đúng schema trước khi SemanticAssessment normalize.
+
+    Không để output thiếu field / NaN / verdict sai tự được fallback thành
+    kết luận đủ confidence, rồi commit evidence. Validator hẹp theo wire schema
+    hiện có; không phán xử độ đúng về mặt kiến thức.
+    """
+    if not isinstance(raw, Mapping):
+        return False
+    props = ASSESSMENT_SCHEMA["properties"]
+    required = set(ASSESSMENT_SCHEMA["required"])
+    if not required.issubset(raw) or any(key not in props for key in raw):
+        return False
+    for key, value in raw.items():
+        rule = props[key]
+        if rule["type"] == "string":
+            if not isinstance(value, str) or len(value) > rule.get("maxLength", 10**8):
+                return False
+        elif rule["type"] == "number":
+            if (isinstance(value, bool) or not isinstance(value, (float, int))
+                or not math.isfinite(value)
+                or value < rule.get("minimum", -math.inf)
+                or value > rule.get("maximum", math.inf)):
+                return False
+        if "enum" in rule and value not in rule["enum"]:
+            return False
+    return True
+
+
 class RuntimeTutorReasoner:
     """Structured semantic brain của tutor, chạy trên model router hiện có."""
 
@@ -185,6 +215,8 @@ class RuntimeTutorReasoner:
                 "Ưu tiên hành vi của tutor người giỏi: probe khi chưa chắc, counterexample khi có misconception, "
                 "Socratic khi user có thể tự nối reasoning, worked example khi procedure còn mơ hồ, practice để kiểm tra transfer. "
                 "instruction_vi là chỉ dẫn ngắn cho writer, không phải bài giảng. Không chứa expected answer. "
+                "instruction_vi phải giữ giọng Eris tự nhiên: có thể hài khô/trêu nhẹ/tự giễu/có quan điểm; "
+                "đừng biến nội dung sư phạm thành lời chatbot trung tính, nhưng không hé đáp án hay giải hộ. "
                 "Không tự vượt max_sentences hoặc đổi phase do learning policy quyết định."
             ),
             payload={
@@ -230,7 +262,7 @@ class RuntimeTutorReasoner:
             max_tokens=850,
             priority=76,
         )
-        if not raw:
+        if not valid_semantic_assessment_wire(raw):
             return None
         try:
             assessment = SemanticAssessment.from_mapping(raw)
@@ -292,4 +324,5 @@ __all__ = [
     "DIAGNOSIS_SCHEMA",
     "MOVE_SCHEMA",
     "RuntimeTutorReasoner",
+    "valid_semantic_assessment_wire",
 ]

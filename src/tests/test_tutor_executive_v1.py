@@ -258,8 +258,9 @@ def test_learner_pace_changes_teaching_budget(tmp_path) -> None:
 
     assert decision is not None
     assert decision.policy_step.kind == "teach"
-    assert decision.envelope.max_sentences == 3
-    assert decision.move.max_sentences <= 3
+    # Design proactive-human: teach pace=fast phải có tối thiểu 4 câu.
+    assert decision.envelope.max_sentences == 4
+    assert decision.move.max_sentences <= 4
 
 class _SocraticReasoner(ConservativeTutorReasoner):
     def choose_move(self, observation, state, diagnosis, envelope):

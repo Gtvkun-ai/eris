@@ -81,3 +81,31 @@ def test_context_assembler_does_not_feed_last_grounding_back_into_itself():
     assert "STALE_SELF_OUTPUT_SHOULD_NOT_BE_REINGESTED" not in second["grounding_context"]
     # Clock có thể đổi giây, nhưng packet không được phình theo số turn.
     assert abs(len(second["grounding_context"]) - len(first_grounding)) < 80
+
+
+def test_handoff_confusion_arrives_in_root_context_same_turn():
+    host = _Host()
+    host.conversation_handoff_runtime = SimpleNamespace(to_dict=lambda: {
+        "repair_needed": True,
+        "user_stance": "confused",
+        "self_caused_reaction_probability": 0.65,
+        "causal_hypotheses": [{"kind": "unclear_explanation"}],
+    })
+    context = ConversationContextAssembler(host).assemble(
+        user_text="Tôi chưa hiểu đoạn vừa rồi", channel="chat",
+        event=SimpleNamespace(kind="user_turn", text="Tôi chưa hiểu đoạn vừa rồi"),
+    )
+    assert context["confusion_signal"]["repair_needed"] is True
+    assert context["confusion_signal"]["primary_hypothesis"] == "unclear_explanation"
+
+
+def test_no_confusion_signal_when_handoff_engaged():
+    host = _Host()
+    host.conversation_handoff_runtime = SimpleNamespace(to_dict=lambda: {
+        "repair_needed": False, "user_stance": "engaged",
+    })
+    context = ConversationContextAssembler(host).assemble(
+        user_text="Cảm ơn nhé", channel="chat",
+        event=SimpleNamespace(kind="user_turn", text="Cảm ơn nhé"),
+    )
+    assert "confusion_signal" not in context

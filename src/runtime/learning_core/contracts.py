@@ -336,8 +336,10 @@ class PendingInteraction:
     expires_at: float = 0.0
     answered_at: float = 0.0
     turn_id: str = ""
+    review_recall: bool = False  # only set by trusted question-authoring caller
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "review_recall", _bool(self.review_recall))
         object.__setattr__(self, "interaction_id", _sid(self.interaction_id))
         object.__setattr__(self, "path_id", _sid(self.path_id))
         object.__setattr__(self, "kp_id", _sid(self.kp_id))
@@ -363,6 +365,7 @@ class PendingInteraction:
             "interaction_id": self.interaction_id,
             "path_id": self.path_id,
             "kp_id": self.kp_id,
+            "review_recall": self.review_recall,
             "interaction_type": self.interaction_type,
             "question_text": self.question_text,
             "options": list(self.options),
@@ -391,6 +394,7 @@ class PendingInteraction:
             expires_at=d.get("expires_at", 0.0),
             answered_at=d.get("answered_at", 0.0),
             turn_id=d.get("turn_id", ""),
+            review_recall=d.get("review_recall", False),
         )
 
 

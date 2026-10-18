@@ -219,6 +219,30 @@ _EMOTION_TARGETS: dict[str, ExpressionTarget] = {
         eye_open_left=1.0,
         eye_open_right=1.0,
     ),
+    # BIEUCAM: 9 biểu cảm mới theo tài liệu Word (trang 1–9).
+    # Trường thiếu trong Word được để trung tính, không bịa chuyển động đầu/mắt.
+    # MouthOpen=0 khi im lặng do stage quản lý; lúc nói TTS nắm quyền lip-sync.
+    "smirk_minor": ExpressionTarget(mouth_form=-0.3, mouth_corner_l=1.0),
+    "smirk_disdain": ExpressionTarget(mouth_form=-0.3, mouth_corner_l=1.0,
+                                        eye_open_left=0.8, eye_open_right=0.8),
+    # Trang 3 chỉ mô tả bật layer Mado khi thiện cảm đạt mốc, không cung cấp
+    # giá trị param hay mức thiện cảm: giữ các param trung tính chờ mesh thật.
+    "blush_affection": ExpressionTarget(),
+    "cat_mouth": ExpressionTarget(mouth_form=-1.0),
+    "sad_empathy": ExpressionTarget(mouth_form=-0.3, brow_left=1.0, brow_right=1.0),
+    # Hình minh họa nháy mắt trái. Word cho phép đổi qua mắt phải; cần preset
+    # riêng khi tác giả muốn đảo bên, không đảo ngẫu nhiên trong một frame.
+    "wink_correct": ExpressionTarget(mouth_form=0.0, brow_left=-1.0, brow_right=-1.0,
+                                       eye_open_left=0.0, eye_open_right=1.0),
+    "teehee": ExpressionTarget(mouth_form=0.0, brow_left=-1.0, brow_right=-1.0,
+                                 eye_open_left=0.0, eye_open_right=1.0, tongue=0.6),
+    # Biến thể nháy mắt phải đúng theo tùy chọn "EyeL hoặc EyeR" trong Word.
+    "wink_correct_right": ExpressionTarget(mouth_form=0.0, brow_left=-1.0, brow_right=-1.0,
+                                             eye_open_left=1.0, eye_open_right=0.0),
+    "teehee_right": ExpressionTarget(mouth_form=0.0, brow_left=-1.0, brow_right=-1.0,
+                                       eye_open_left=1.0, eye_open_right=0.0, tongue=0.6),
+    "yan_warning": ExpressionTarget(mouth_form=-0.3),
+    "lazy_deadpan": ExpressionTarget(mouth_form=-0.3, brow_left=1.0, brow_right=1.0),
     "teasing": ExpressionTarget(
         mouth_form=0.08,
         brow_left=0.08,
@@ -251,6 +275,17 @@ _EMOTION_ALIASES = {
     "thinking_soft": "thinking",
     "tease": "teasing",
     "tongue": "teasing",
+    # Bí danh mang ngữ nghĩa sử dụng từ tutor/Root; không có heuristic đọc
+    # văn bản câu trả lời để tự gán người học vào nhóm "lười" / "sai".
+    "small_smirk": "smirk_minor",
+    "disdain_smirk": "smirk_disdain",
+    "blush": "blush_affection",
+    "cat_smile": "cat_mouth",
+    "empathetic_sad": "sad_empathy",
+    "wink_success": "wink_correct",
+    "playful_teehee": "teehee",
+    "yandere_warning": "yan_warning",
+    "lazy_stare": "lazy_deadpan",
 }
 
 # Preserve asset names so native playback can select exact expressions.
@@ -749,6 +784,11 @@ class Live2DStageState:
             speech_eye_right = speech_pose.eye_open_right_scale if speech_pose is not None else 1.0
             desired_eye_left = composed.eye_open_left * idle_pose.eye_open_left_scale * speech_eye_left
             desired_eye_right = composed.eye_open_right * idle_pose.eye_open_right_scale * speech_eye_right
+            if emotion_weight >= 0.5:
+                if self._emotion in {"wink_correct", "teehee"}:
+                    desired_eye_left = 0.0
+                elif self._emotion in {"wink_correct_right", "teehee_right"}:
+                    desired_eye_right = 0.0
             eye_blend = 1.0 - math.exp(-7.0 * dt) if dt > 0.0 else 1.0
             self._eye_open_left += (desired_eye_left - self._eye_open_left) * eye_blend
             self._eye_open_right += (desired_eye_right - self._eye_open_right) * eye_blend

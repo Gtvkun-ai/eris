@@ -33,6 +33,7 @@ from runtime.tutor.contracts import (
     TutorState,
 )
 from runtime.tutor.policy import TutorGuardrailPolicy
+from runtime.tutor.adaptive_policy import choose_adaptive_step
 from runtime.tutor.reasoner import ConservativeTutorReasoner, TutorReasoner
 from runtime.tutor.session_store import TutorSessionLedger
 
@@ -93,6 +94,16 @@ class TutorExecutive:
             step = self.learning.next_tutor_step(learner=learner, now=ts)
             if step is None:
                 return None
+            # LEARN-04: đọc ledger đã commit rồi mới chọn cách dạy.
+            # Root vẫn nắm quyền gọi capability; quyết định này không tự tạo turn.
+            if step.kp_id:
+                point = next((kp for kp in path.knowledge_points if kp.kp_id == step.kp_id), None)
+                step = choose_adaptive_step(
+                    step,
+                    evidence=self.learning.recent_evidence(step.kp_id),
+                    repeated_error_count=len(self.learning.repeated_error_patterns(step.kp_id)),
+                    knowledge_type=point.kp_type if point is not None else "concept",
+                )
 
             state = self._ensure_session(path.path_id, path.goal, ts)
             observation = self._build_observation(
@@ -170,6 +181,8 @@ class TutorExecutive:
                 return None
             committed = self._apply_semantic_assessment(
                 assessment, interaction_id=previous.move_id, turn_id=turn_id, now=ts,
+                review_recall=(previous.kind == "review" and
+                               previous.move_id in self._committed_move_ids),
             )
             # Hypothesis chỉ được đổi lifecycle khi semantic judgement cũng đủ
             # chắc để trở thành learning evidence. Assessment yếu vẫn trả cho
@@ -399,6 +412,7 @@ class TutorExecutive:
         interaction_id: str,
         turn_id: str,
         now: float,
+        review_recall: bool = False,
     ) -> bool:
         if assessment.verdict == "uncertain" or assessment.confidence < self.semantic_commit_confidence:
             return False
@@ -411,6 +425,7 @@ class TutorExecutive:
             turn_id=turn_id,
             interaction_id=interaction_id,
             error_code=assessment.error_code,
+            review_recall=review_recall,
             now=now,
         )
         return evidence is not None

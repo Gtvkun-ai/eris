@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from runtime.learning_core.belief_model import LearnerBeliefState
+from runtime.learning_core.review_memory import ReviewMemory
 from runtime.learning_core.contracts import (
     KnowledgePoint,
     LearnerProfile,
@@ -102,6 +103,13 @@ CREATE TABLE IF NOT EXISTS learner_beliefs (
     updated_at REAL NOT NULL DEFAULT 0
 );
 
+-- Separate heuristic memory state from mastery and old review schedule.
+CREATE TABLE IF NOT EXISTS review_memory (
+    kp_id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at REAL NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS review_items (
     kp_id           TEXT PRIMARY KEY,
     due_at          REAL NOT NULL,
@@ -123,7 +131,8 @@ CREATE TABLE IF NOT EXISTS interactions (
     created_at      REAL NOT NULL DEFAULT 0,
     expires_at      REAL NOT NULL DEFAULT 0,
     answered_at     REAL NOT NULL DEFAULT 0,
-    turn_id         TEXT NOT NULL DEFAULT ''
+    turn_id         TEXT NOT NULL DEFAULT '',
+    review_recall INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_interaction_kp ON interactions(path_id, kp_id, status);
 """
@@ -148,6 +157,10 @@ class LearningStore:
         conn = sqlite3.connect(str(self._path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.executescript(_DDL)
+        # ALTER chỉ cho DB cũ; DB mới có sẵn column trong DDL.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(interactions)")}
+        if "review_recall" not in columns:
+            conn.execute("ALTER TABLE interactions ADD COLUMN review_recall INTEGER NOT NULL DEFAULT 0")
         conn.commit()
         self._conn = conn
 
@@ -377,11 +390,27 @@ class LearningStore:
         except (TypeError, ValueError, KeyError):
             return LearnerBeliefState(kp_id=kp_id)
 
+    def load_review_memory(self, kp_id: str) -> ReviewMemory | None:
+        """Read-model D/S/R bền vững; không có record không đồng nghĩa đã nhớ."""
+        with self._lock:
+            row = self._db().execute(
+                "SELECT payload FROM review_memory WHERE kp_id=?", (kp_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return ReviewMemory.from_mapping(json.loads(row["payload"]))
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    def load_review_memory_batch(self, ids: Sequence[str]) -> dict[str, ReviewMemory]:
+        # Bounded by caller. Each read is short; avoids schema change to old review_items.
+        return {k: state for k in ids if (state := self.load_review_memory(k)) is not None}
+
     def commit_evidence_bundle(
         self,
         evidence: LearningEvidence,
-        project: Callable[[list[LearningEvidence], ReviewItem | None],
-                          tuple[MasteryRecord, ReviewItem, LearnerBeliefState]],
+        project: Callable[..., tuple],
         *,
         now: float,
     ) -> bool:
@@ -424,8 +453,18 @@ class LearningStore:
                     interval_days=float(old["interval_days"]),
                     ease_factor=float(old["ease_factor"]),
                 ) if old else None
-                mastery, review, belief = project(ledger, current)
-                if not (mastery.kp_id == review.kp_id == belief.kp_id == evidence.kp_id):
+                previous_memory_row = db.execute(
+                    "SELECT payload FROM review_memory WHERE kp_id=?", (evidence.kp_id,)
+                ).fetchone()
+                previous_memory = (
+                    ReviewMemory.from_mapping(json.loads(previous_memory_row["payload"]))
+                    if previous_memory_row else None
+                )
+                result = project(ledger, current, previous_memory)
+                mastery, review, belief, memory = result
+                if (mastery.kp_id != evidence.kp_id or belief.kp_id != evidence.kp_id
+                        or (review is not None and review.kp_id != evidence.kp_id)
+                        or (memory is not None and memory.kp_id != evidence.kp_id)):
                     raise ValueError("Projection kp_id mismatch")
                 db.execute(
                     """INSERT INTO mastery_records
@@ -445,7 +484,8 @@ class LearningStore:
                      mastery.next_review_at, mastery.retrievability,
                      json.dumps(list(mastery.error_codes)), now),
                 )
-                db.execute(
+                if review is not None:
+                    db.execute(
                     """INSERT INTO review_items(kp_id, due_at, forgetting_risk, interval_days, ease_factor)
                         VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(kp_id) DO UPDATE SET
@@ -453,7 +493,15 @@ class LearningStore:
                          interval_days=excluded.interval_days, ease_factor=excluded.ease_factor""",
                     (review.kp_id, review.due_at, review.forgetting_risk,
                      review.interval_days, review.ease_factor),
-                )
+                    )
+                if memory is not None:
+                    db.execute(
+                        """INSERT INTO review_memory(kp_id, payload, updated_at)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(kp_id) DO UPDATE SET
+                            payload=excluded.payload, updated_at=excluded.updated_at""",
+                        (memory.kp_id, json.dumps(memory.to_dict()), now),
+                    )
                 db.execute(
                     """INSERT INTO learner_beliefs(kp_id, payload, evidence_seq, updated_at)
                        VALUES (?, ?, ?, ?)
@@ -469,26 +517,58 @@ class LearningStore:
                 raise
 
     def repeated_error_patterns(self, kp_id: str, *, min_independent: int = 2, limit: int = 4) -> list[dict[str, Any]]:
-        """Thống kê lỗi tái diễn qua các câu hỏi; không xem nhãn lỗi là chẩn đoán.
+        """Các lỗi có tối thiểu N nguồn độc lập, không phải chẩn đoán tâm lý.
 
-        Nhóm theo interaction/turn để 3 retries hay 3 evidence cùng câu hỏi
-        KHÔNG biến thành 3 lần người học mắc sai lầm độc lập.
+        Nếu retry trùng interaction ID HOẶC cùng turn user, chỉ tính một.
+        Đếm trên 512 bản ghi gần nhất để không mở rộng truy vấn vô hạn.
         """
         with self._lock:
             rows = self._db().execute(
-                """SELECT error_code,
-                    COUNT(DISTINCT COALESCE(NULLIF(interaction_id, ''),
-                                            NULLIF(turn_id, ''), evidence_id)) AS independent_count
+                """SELECT error_code, interaction_id, turn_id, evidence_id
                    FROM learning_evidence
                    WHERE kp_id = ? AND correct = 0 AND error_code <> ''
-                   GROUP BY error_code
-                   HAVING independent_count >= ?
-                   ORDER BY independent_count DESC, error_code ASC LIMIT ?""",
-                (kp_id, max(2, min(10, int(min_independent))), max(1, min(8, int(limit)))),
+                   ORDER BY recorded_at DESC, evidence_id DESC LIMIT 512""",
+                (kp_id,),
             ).fetchall()
-        return [{"error_code": str(row["error_code"])[:80],
-                 "independent_count": int(row["independent_count"]),
-                 "status": "repeat_observed_not_diagnosis"} for row in rows]
+        groups: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            code = str(row["error_code"])[:80]
+            interaction = str(row["interaction_id"] or "")
+            turn = str(row["turn_id"] or "")
+            fallback = str(row["evidence_id"] or "")
+            group = groups.setdefault(code, {"interactions": set(), "turns": set(),
+                                             "legacy": set(), "count": 0})
+            if ((interaction and interaction in group["interactions"])
+                    or (turn and turn in group["turns"])
+                    or (not interaction and not turn and fallback in group["legacy"])):
+                continue
+            if interaction:
+                group["interactions"].add(interaction)
+            if turn:
+                group["turns"].add(turn)
+            if not interaction and not turn:
+                group["legacy"].add(fallback)
+            group["count"] += 1
+        threshold = max(2, min(10, int(min_independent)))
+        ranked = sorted(((code, group["count"]) for code, group in groups.items()
+                         if group["count"] >= threshold), key=lambda item: (-item[1], item[0]))
+        return [{"error_code": code, "independent_count": count,
+                 "status": "repeat_observed_not_diagnosis"}
+                for code, count in ranked[:max(1, min(8, int(limit)))]]
+
+    def load_recent_evidence(self, kp_id: str, *, limit: int = 16) -> list[LearningEvidence]:
+        """Đọc N evidence mới nhất; không thay thứ tự API load_evidence cũ.
+
+        Cần cho LEARN-04: load_evidence() trả N *cũ nhất* nên dùng nó để
+        chọn chiến thuật dài hạn sẽ bỏ qua các bài làm sau nhiều tháng.
+        """
+        with self._lock:
+            rows = self._db().execute(
+                "SELECT * FROM learning_evidence WHERE kp_id = ? "
+                "ORDER BY recorded_at DESC, evidence_id DESC LIMIT ?",
+                (kp_id, max(1, min(32, int(limit)))),
+            ).fetchall()
+        return [self._row_to_evidence(row) for row in rows]
 
     def load_evidence(self, kp_id: str, *, limit: int = 100) -> list[LearningEvidence]:
         with self._lock:
@@ -579,8 +659,8 @@ class LearningStore:
                 INSERT INTO interactions
                     (interaction_id, path_id, kp_id, interaction_type, question_text,
                      expected_answer, options, correct_index, status,
-                     created_at, expires_at, answered_at, turn_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     created_at, expires_at, answered_at, turn_id, review_recall)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     interaction.interaction_id, interaction.path_id, interaction.kp_id,
@@ -590,7 +670,7 @@ class LearningStore:
                     interaction.correct_index,
                     interaction.status,
                     interaction.created_at, interaction.expires_at,
-                    interaction.answered_at, interaction.turn_id,
+                    interaction.answered_at, interaction.turn_id, int(interaction.review_recall),
                 ),
             )
             self._db().commit()
@@ -651,6 +731,7 @@ class LearningStore:
             expires_at=float(row["expires_at"]),
             answered_at=float(row["answered_at"]),
             turn_id=row["turn_id"],
+            review_recall=bool(row["review_recall"]),
         )
 
 

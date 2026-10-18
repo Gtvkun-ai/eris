@@ -18,6 +18,18 @@ EXPRESSION_ALIASES = {
     "distant": "low", "low": "low", "skeptical": "skeptical",
     "concerned": "concerned", "annoyed_soft": "annoyed_soft",
     "surprise": "surprised_soft", "surprised_soft": "surprised_soft",
+    # BIEUCAM: tên preset mới phải đi trực tiếp đến native SetExpression.
+    "smirk_minor": "smirk_minor", "small_smirk": "smirk_minor",
+    "smirk_disdain": "smirk_disdain", "disdain_smirk": "smirk_disdain",
+    "blush_affection": "blush_affection", "blush": "blush_affection",
+    "cat_mouth": "cat_mouth", "cat_smile": "cat_mouth",
+    "sad_empathy": "sad_empathy", "empathetic_sad": "sad_empathy",
+    "wink_correct": "wink_correct", "wink_success": "wink_correct",
+    "teehee": "teehee", "playful_teehee": "teehee",
+    "wink_correct_right": "wink_correct_right",
+    "teehee_right": "teehee_right",
+    "yan_warning": "yan_warning", "yandere_warning": "yan_warning",
+    "lazy_deadpan": "lazy_deadpan", "lazy_stare": "lazy_deadpan",
 }
 
 MOTION_ALIASES = {

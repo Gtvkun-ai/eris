@@ -127,6 +127,7 @@ def learner_continuity_snapshot(learning: Any, *, source: Any = None, max_kps: i
                 "observed_error_codes": [str(x)[:80] for x in mastery.error_codes[:5]],
                 "repeated_error_hypotheses": learning.repeated_error_patterns(kp_id),
                 "due_for_review": kp_id in due,
+                "review_memory_heuristic": learning.review_memory(kp_id),
                 "p_known_shadow": round(float(belief.p_known), 4),
                 "uncertainty_heuristic": round(float(belief.uncertainty), 4),
                 "independent_evidence_count": int(belief.independent_count),

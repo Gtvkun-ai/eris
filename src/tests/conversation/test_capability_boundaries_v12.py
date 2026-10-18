@@ -68,7 +68,7 @@ def test_foreground_registers_capabilities_without_eager_domain_calls():
 
     # Router chỉ wire dependency. RootAgent mới được quyền quyết có gọi domain
     # capability hay không; small talk không được chạy TutorExecutive ngầm.
-    assert "RootCapabilityRegistry" in source
+    assert "ToolReceiptLedger" in source
     assert '"__root_capabilities": capability_registry' in source
     assert "tutor_capability.advise" not in source
     assert "work_capability.snapshot" not in source
@@ -174,6 +174,7 @@ def test_v01_root_receipt_uses_runtime_run_and_real_executor_status():
     """Dùng RootAgent thật/fake model, không giả sử gọi tool tức completed."""
     from runtime.conversation.agent import RuntimeModelRootAgent
     from runtime.conversation.context import RootCapabilityRegistry
+    from runtime.tooling import ToolGateway, DomainTool
 
     class Router:
         executive_client = object()
@@ -181,7 +182,7 @@ def test_v01_root_receipt_uses_runtime_run_and_real_executor_status():
         def invoke_structured_worker(self, client, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                return {"kind": "use_capability", "capability": "research", "arguments": {"topic": "Eris"}}
+                return {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "Eris"}}
             return {"kind": "move", "intent": "phản hồi", "say": "Không có kết quả hoàn tất",
                     "delivery": "gọn", "after": "wait_user"}
 
@@ -189,13 +190,20 @@ def test_v01_root_receipt_uses_runtime_run_and_real_executor_status():
         def invoke_for_root(self, **kwargs):
             return {"status": "started", "job_id": "j1"}
 
-    capabilities = RootCapabilityRegistry({"research": Research()})
+    capabilities = RootCapabilityRegistry({})
+    gateway = ToolGateway(None, domain_tools=(DomainTool(
+        id="research.request", group="research", description="research",
+        schema={"type": "object", "additionalProperties": False, "required": ["topic"],
+                "properties": {"topic": {"type": "string"}}},
+        available=lambda: True,
+        execute=lambda args, ev, history: {"status": "started", "job_id": "j1"},
+    ),), status_provider=lambda: {})
     router = Router()
     agent = RuntimeModelRootAgent(router)
     event = ConversationEvent(event_id="e1", session_id="s", kind="user_turn", generation=2,
                               text="nghiên cứu đi")
     decision = agent.decide(event=event, recent_history=(), note="", runtime_context={
-        "__root_capabilities": capabilities, "__conversation_run_id": "run:true",
+        "__root_capabilities": capabilities, "__root_tool_gateway": gateway, "__conversation_run_id": "run:true",
     })
     assert decision.say == "Không có kết quả hoàn tất"
     receipts = capabilities.result_receipts_for("e1", run_id="run:true", generation=2)

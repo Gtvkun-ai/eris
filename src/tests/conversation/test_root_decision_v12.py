@@ -8,6 +8,7 @@ from runtime.conversation import (
     RuntimeModelRootAgent,
 )
 from runtime.conversation.context import ConversationNoteTools, RootCapabilityRegistry
+from runtime.tooling import ToolGateway, DomainTool
 
 
 class _Router:
@@ -119,8 +120,15 @@ def test_root_can_call_capability_then_finalize_one_move():
             calls.append(kwargs)
             return {"active": True, "teaching_move": {"kind": "explain_concept"}}
 
+    gateway = ToolGateway(None, domain_tools=(DomainTool(
+        id="tutor.advise", description="tutor advice", group="learning",
+        schema={"type": "object", "additionalProperties": False,
+                "properties": {"user_text": {"type": "string"}}},
+        execute=lambda args, ev, hist: calls.append(args) or {"status": "completed", "data": {"active": True}},
+        available=lambda: True,
+    ),), status_provider=lambda: {})
     router = _Router(results=[
-        {"kind": "use_capability", "capability": "tutor", "arguments": {"user_text": "transaction là gì"}},
+        {"kind": "tool_call", "tool_id": "tutor.advise", "arguments": {"user_text": "transaction là gì"}},
         {
             "kind": "move",
             "intent": "giải thích transaction theo advice",
@@ -133,7 +141,7 @@ def test_root_can_call_capability_then_finalize_one_move():
         event=_event("user_turn", text="transaction là gì"),
         recent_history=(),
         note="",
-        runtime_context={"__root_capabilities": RootCapabilityRegistry({"tutor": _Capability()})},
+        runtime_context={"__root_tool_gateway": gateway, "__root_capabilities": RootCapabilityRegistry({})},
     )
 
     assert isinstance(decision, NextConversationMove)
@@ -141,7 +149,7 @@ def test_root_can_call_capability_then_finalize_one_move():
     # use_capability + move = 2 lượt model; move finalize trực tiếp (không verify).
     assert len(router.requests) == 2
     second_payload = router.requests[1]["payload"]
-    assert second_payload["tool_results"][0]["capability"] == "tutor"
+    assert second_payload["tool_results"][0]["tool_id"] == "tutor.advise"
 
 
 def test_root_note_tool_is_optional_and_not_a_public_field():

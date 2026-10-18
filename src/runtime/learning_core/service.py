@@ -43,6 +43,7 @@ mot instance/process va inject xuong cac adapter thay vi tu tao service moi.
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 import uuid
@@ -81,6 +82,10 @@ from runtime.learning_core.scheduler import (
     next_review_item,
 )
 from runtime.learning_core.store import LearningStore
+from runtime.learning_core.review_memory import (
+    ReviewMemory, retrievability as review_retrievability,
+    update_review_memory, with_current_risk,
+)
 
 
 class LearningService:
@@ -159,7 +164,9 @@ class LearningService:
 
             # Load overdue reviews (scoped to this path's KPs)
             review_items = self._store.load_review_items(list(path.kp_ids))
-            overdue = due_items(review_items, now=ts)
+            memories = self._store.load_review_memory_batch([x.kp_id for x in review_items])
+            review_items = [with_current_risk(x, memories.get(x.kp_id), now=ts) for x in review_items]
+            overdue = due_items(review_items, now=ts, max_items=3)
 
             return next_step(
                 path,
@@ -186,6 +193,7 @@ class LearningService:
         options: tuple[str, ...] = (),
         correct_index: int = -1,
         expires_in_seconds: float = 300.0,
+        review_recall: bool = False,
         now: float | None = None,
     ) -> PendingInteraction:
         """Create and persist a new pending interaction."""
@@ -202,6 +210,7 @@ class LearningService:
             correct_index=correct_index,
             created_at=ts,
             expires_at=ts + max(30.0, float(expires_in_seconds)),
+            review_recall=bool(review_recall),
         )
         with self._lock:
             self._ledger.add(interaction)
@@ -250,6 +259,8 @@ class LearningService:
                     turn_id=turn_id,
                     recorded_at=ts,
                     error_code=result.grading.error_code,
+                    metadata=json.dumps({"review_recall": True, "hint_count": 0})
+                    if result.interaction.review_recall else "",
                 )
                 self._commit_evidence_locked(evidence, ts)
                 # Update session counter
@@ -273,6 +284,8 @@ class LearningService:
         interaction_id: str = "",
         turn_id: str = "",
         error_code: str = "",
+        review_recall: bool = False,
+        hint_count: int = 0,
         now: float | None = None,
     ) -> LearningEvidence | None:
         """Commit one piece of evidence from the caller (semantic assessor, etc.)."""
@@ -296,6 +309,8 @@ class LearningService:
             turn_id=turn_id,
             recorded_at=ts,
             error_code=error_code,
+            metadata=json.dumps({"review_recall": True, "hint_count": max(0, min(10, int(hint_count)))})
+            if review_recall else "",
         )
         with self._lock:
             if self._commit_evidence_locked(evidence, ts):
@@ -381,6 +396,16 @@ class LearningService:
         with self._lock:
             return self._store.load_mastery(kp_id)
 
+    def recent_evidence(self, kp_id: str, *, limit: int = 16) -> tuple[LearningEvidence, ...]:
+        """Read-only bounded ledger phục vụ adaptive teaching.
+
+        Không trả raw chat, không tự ghi evidence hoặc nhận phán đoán của Root.
+        ID ổn định giúp phân biệt các câu hỏi độc lập để tránh quá tự tin.
+        """
+        with self._lock:
+            rows = self._store.load_recent_evidence(kp_id, limit=max(1, min(32, int(limit))))
+        return tuple(rows)
+
     # ------------------------------------------------------------------
     # Review items
     # ------------------------------------------------------------------
@@ -391,13 +416,32 @@ class LearningService:
             path = self._store.load_path(self._active_path_id) if self._active_path_id else None
             kp_ids = list(path.kp_ids) if path else None
             items = self._store.load_review_items(kp_ids)
-        return due_items(items, now=ts)
+        memories = self._store.load_review_memory_batch([x.kp_id for x in items])
+        refreshed = [with_current_risk(x, memories.get(x.kp_id), now=ts) for x in items]
+        return due_items(refreshed, now=ts, max_items=3)
 
     def review_snapshot(self, kp_ids: Sequence[str] | None = None) -> dict[str, dict]:
         """Projection chỉ-đọc cho adapter/debug; scheduler/DB vẫn thuộc service."""
         with self._lock:
             items = self._store.load_review_items(list(kp_ids) if kp_ids is not None else None)
-        return {item.kp_id: item.to_dict() for item in items}
+        memories = self._store.load_review_memory_batch([x.kp_id for x in items])
+        ts = time.time()
+        return {
+            item.kp_id: {
+                **with_current_risk(item, memories.get(item.kp_id), now=ts).to_dict(),
+                "memory": memories[item.kp_id].to_dict() if item.kp_id in memories else None,
+                "retrievability_heuristic": round(review_retrievability(memories[item.kp_id], now=ts), 4)
+                if item.kp_id in memories else None,
+            } for item in items
+        }
+
+    def review_memory(self, kp_id: str) -> dict[str, Any] | None:
+        """D/S/R heuristic chỉ đọc; có thể truy vấn lại sau restart."""
+        with self._lock:
+            memory = self._store.load_review_memory(kp_id)
+        if memory is None:
+            return None
+        return {**memory.to_dict(), "retrievability_now": round(review_retrievability(memory, now=time.time()), 4)}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -407,16 +451,32 @@ class LearningService:
         """Atomic evidence -> mastery -> review -> BKT shadow. Caller holds lock."""
         kp_id = evidence.kp_id
 
-        def project(ledger: list[LearningEvidence], current_review: ReviewItem | None):
+        def project(ledger: list[LearningEvidence], current_review: ReviewItem | None,
+                    old_memory: ReviewMemory | None):
             mastery = compute_mastery(kp_id, ledger, now=ts, policy=self._mastery_policy)
-            quality = quality_from_evidence_type(evidence.evidence_type, evidence.correct)
-            review = next_review_item(
-                mastery, current_review, quality=quality, now=ts, scheduler=self._scheduler,
+            # Một câu hỏi / một user turn chỉ được tạo MỘT lần recall, dù
+            # transport hoặc model gửi các assessment với evidence_id khác nhau.
+            # Vẫn ghi ledger để audit, nhưng không tăng stability thêm lần nữa.
+            old_review_refs = [x for x in ledger[:-1] if '"review_recall": true' in x.metadata.lower()]
+            correlated = any(
+                (evidence.interaction_id and x.interaction_id == evidence.interaction_id)
+                or (evidence.turn_id and x.turn_id == evidence.turn_id)
+                for x in old_review_refs
             )
-            # BKT có thể là ước lượng sơ khai cho Root tham khảo, KHÔNG thay đổi
-            # mastery gate đã có trước khi kiểm định calibration trên dữ liệu thực.
+            from dataclasses import replace
+            schedule_evidence = replace(evidence, metadata="") if correlated else evidence
+            review, memory = update_review_memory(
+                schedule_evidence, current_review, old_memory, now=ts,
+                max_interval_days=self._scheduler.max_interval_days,
+            )
+            # Mastery là hiểu, D/S/R là ước lượng nhớ lại, không đánh đồng.
+            # MasteryRecord chỉ mang metadata lịch, không là nguồn R thời gian thực.
+            if review is not None:
+                from dataclasses import replace
+                mastery = replace(mastery, next_review_at=review.due_at,
+                                  retrievability=review_retrievability(memory, now=ts) if memory else 1.0)
             belief = compute_belief(kp_id, ledger)
-            return mastery, review, belief
+            return mastery, review, belief, memory
 
         return self._store.commit_evidence_bundle(evidence, project, now=ts)
 

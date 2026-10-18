@@ -17,6 +17,7 @@ from runtime.conversation.context import (
 )
 from runtime.conversation.contracts import ConversationEvent, NextConversationMove, NoReply
 from runtime.conversation.kernel import ConversationKernel
+from runtime.tooling import ToolGateway, DomainTool
 
 
 class FakeRouter:
@@ -118,17 +119,20 @@ def test_root_repeated_memory_query_does_not_execute_recall_twice():
 
 def test_root_repeated_side_effect_capability_is_blocked_per_event():
     calls = []
-    class Tool:
-        def invoke_for_root(self, **kwargs):
-            calls.append(kwargs)
-            return {"status": "completed", "summary": "đã nghiên cứu"}
-    registry = RootCapabilityRegistry({"research": Tool()})
+    gateway = ToolGateway(None, domain_tools=(DomainTool(
+        id="research.request", group="research", description="research",
+        schema={"type": "object", "additionalProperties": False, "required": ["topic"],
+                "properties": {"topic": {"type": "string"}}},
+        available=lambda: True,
+        execute=lambda args, ev, history: calls.append(args) or {"status": "completed", "summary": "đã nghiên cứu"},
+    ),), status_provider=lambda: {})
+    registry = RootCapabilityRegistry({})
     router = FakeRouter(
-        {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
-        {"kind": "use_capability", "capability": "research", "arguments": {"topic": "A"}},
+        {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "A"}},
+        {"kind": "tool_call", "tool_id": "research.request", "arguments": {"topic": "A"}},
         move("kết quả nghiên cứu A"),
     )
-    result = decide(router, context={"__root_capabilities": registry, "__conversation_run_id": "run:1"})
+    result = decide(router, context={"__root_tool_gateway": gateway, "__root_capabilities": registry, "__conversation_run_id": "run:1"})
     assert isinstance(result, NextConversationMove)
     assert len(calls) == 1
     assert registry.result_receipts_for("e1", run_id="run:1", generation=0)
@@ -201,7 +205,7 @@ def test_root_step_schema_has_internal_actions_but_public_move_contract_unmodifi
     kinds = set()
     for schema in ROOT_STEP_SCHEMA["oneOf"]:
         kinds.update(schema["properties"]["kind"].get("enum", []))
-    assert kinds == {"move", "no_reply", "use_capability", "set_note", "clear_note", "recall_memory", "continue_thinking"}
+    assert kinds == {"move", "no_reply", "tool_discover", "tool_describe", "tool_call", "set_note", "clear_note", "recall_memory", "continue_thinking"}
     fields = ROOT_STEP_SCHEMA["oneOf"][0]["properties"]
     assert set(fields) == {"kind", "intent", "say", "delivery", "after"}
 

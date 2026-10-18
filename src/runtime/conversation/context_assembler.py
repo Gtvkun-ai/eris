@@ -215,6 +215,27 @@ class ConversationContextAssembler:
             },
         }
 
+        # Handoff được quan sát trước ContextAssembler ngay trong user turn.
+        # Chỉ đọc observation hiện tại, không phát hiện lại/không viết lại state.
+        if event is not None and getattr(event, "kind", "") == "user_turn":
+            try:
+                handoff = getattr(host, "conversation_handoff_runtime", None)
+                snapshot = getattr(handoff, "to_dict", None)
+                state = snapshot() if callable(snapshot) else {}
+                if isinstance(state, Mapping) and (
+                    state.get("repair_needed") or state.get("user_stance") == "confused"
+                ):
+                    hypotheses = state.get("causal_hypotheses") or ()
+                    primary = hypotheses[0] if hypotheses and isinstance(hypotheses[0], Mapping) else {}
+                    context["confusion_signal"] = {
+                        "repair_needed": bool(state.get("repair_needed")),
+                        "stance": str(state.get("user_stance", ""))[:50],
+                        "self_caused_probability": float(state.get("self_caused_reaction_probability", 0.0) or 0.0),
+                        "primary_hypothesis": str(primary.get("kind", ""))[:80],
+                    }
+            except Exception as exc:
+                self._debug("context.confusion", exc)
+
         # Chỉ đưa vào Root một ảnh chụp tiến độ học có giới hạn. Không tự kích hoạt
         # Tutor hay biến BKT shadow thành đánh giá năng lực chắc chắn.
         try:
