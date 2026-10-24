@@ -11,7 +11,7 @@
     "inner_diary_model_enabled": true,
     "background_tutor_enabled": false,
     "event_trace_enabled": true,
-    "private_residue_curator_enabled": true,
+    "private_residue_curator_enabled": false,
     "inner_diary_thought_shards_enabled": true,
     "inner_diary_deep_reflection_enabled": true
   },
@@ -90,11 +90,11 @@
   },
   "social_observer": {
     "enabled": true,
-    "primary_model": "llama-3.1-8b-instant",
+    "primary_model": "deepseek-flash",
     "deep_enabled": true,
-    "deep_model": "llama-3.3-70b-versatile",
+    "deep_model": "deepseek-flash",
     "fallback_enabled": false,
-    "fallback_model": "llama-3.1-8b-instant",
+    "fallback_model": "",
     "workers": 2,
     "prompt_context_enabled": true,
     "state_authority": true
@@ -132,6 +132,8 @@
     "audio_polish": false,
     "provider": "elevenlabs",
     "elevenlabs_voice_id": "fUjY9K2nAIwlALOwSiwc",
+    "elevenlabs_voice_id_vi": "aHC3XZOMg3HZuXVYK6hy",
+    "elevenlabs_voice_id_ja": "fUjY9K2nAIwlALOwSiwc",
     "elevenlabs_model": "eleven_v3",
     "voice_director_enabled": false
   },

@@ -2856,7 +2856,7 @@ public partial class UdpListener : Node2D
 		var titleLabel = CreateUiLabel("Inner Diary", 30, new Color(0.62f, 0.10f, 0.36f));
 		titleCol.AddChild(titleLabel);
 
-		var subtitleLabel = CreateUiLabel("5 mảnh sống do Gemma cập nhật; DeepSeek chỉ suy ngẫm sâu khi đủ vật liệu. Không chứa raw chain-of-thought.", 13, new Color(0.74f, 0.46f, 0.60f));
+		var subtitleLabel = CreateUiLabel("Nội tâm từ trạng thái runtime và các mảnh đã lưu.", 13, new Color(0.74f, 0.46f, 0.60f));
 		titleCol.AddChild(subtitleLabel);
 		_privateMindFreshnessLabel = CreateUiLabel("chưa có snapshot", 11, new Color(0.64f, 0.44f, 0.56f));
 		titleCol.AddChild(_privateMindFreshnessLabel);
@@ -5058,7 +5058,7 @@ public partial class UdpListener : Node2D
 			if (shardWriter.ValueKind == JsonValueKind.Object)
 			{
 				string model = shardWriter.TryGetProperty("model", out JsonElement m) && m.ValueKind == JsonValueKind.String ? m.GetString() ?? "" : "";
-				if (!string.IsNullOrWhiteSpace(model)) parts.Add($"Gemma shards · {model}");
+				if (!string.IsNullOrWhiteSpace(model)) parts.Add($"Nhật ký · {model}");
 			}
 			if (deepWriter.ValueKind == JsonValueKind.Object)
 			{

@@ -4,6 +4,15 @@
 The dispatcher owns protocol mechanics only. Domain handlers remain on the
 coordinator-facing mixins, preserving the public runtime API while preventing
 ``RuntimeCoordinator`` from becoming a 7,000-line switch statement with moods.
+
+Nâng cấp Incremental Dialogue (Text-first):
+- Sử dụng ``InteractionDynamicsController`` để phân loại từ ngắn ("ừ", "khoan"...)
+  dựa trên ngữ cảnh câu nói trước đó của Eris (ví dụ: "ừ" sau câu hỏi của Eris là
+  ``YIELD_TO_USER`` phải tạo lượt trả lời, còn "ừ" khi Eris đang giảng bài là
+  ``KEEP_SPEAKING`` giữ nguyên audio).
+- Tích hợp ``MicroActRouter`` để phát trực tiếp các micro-act không mang nội dung
+  mới (``RECEIPT``, ``PROMPT_CONTINUE``, ``STOP_ACK``) và ghi log bằng
+  ``InteractionActReceipt`` mà không phải chờ toàn bộ semantic pipeline (Root -> Writer).
 """
 from __future__ import annotations
 from core.di import resolve_dependency
@@ -13,6 +22,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.interaction_dynamics import (
+    DynamicsAction,
+    MicroActKind,
+    ensure_interaction_dynamics_controller,
+    ensure_micro_act_router,
+)
+from runtime.open_loop_store import ensure_open_loop_store
 from runtime.policy_settings import ProtocolSettings
 from runtime.stage_protocol import is_stage_inbound_type
 from runtime.subsystem_health import FailureKind
@@ -133,27 +149,91 @@ class IncomingMessageDispatcher:
             owner._enter_chat_cycle()
         cancel_audio = True  # Fail-safe: chưa biết nghĩa thì user được quyền chen ngang.
         cancel_generation = True
+        dynamics_decision = None
         try:
-            from runtime.conversation import InterruptKind, classify_interrupt
-            interrupt = classify_interrupt(user_text, final=True)
             clock = getattr(owner, "interaction_clock", None)
             speech_busy = bool(getattr(clock, "speech_floor_busy", False))
-            if interrupt.kind == InterruptKind.BACKCHANNEL and speech_busy:
-                # Đây chỉ là tiếng đệm trong lúc Eris đang nói; không gửi thành
-                # user turn thứ hai, không làm mất câu đang phát hoặc Root run.
-                owner.logger.debug("[conversation-v12] preserved audio on backchannel=%r", user_text[:80])
-                # Đây là transcript cuối: nếu không đóng chat_mode, một
-                # backchannel có thể giữ Autonomous ở trạng thái paused.
+            thinking_busy = bool(getattr(owner, "_chat_processing", False))
+
+            # Lấy ngữ cảnh câu nói gần nhất hoặc đang phát của Eris để phân biệt
+            # "ừ" khi đang giảng bài (KEEP_SPEAKING) với "ừ" sau câu hỏi (YIELD_TO_USER).
+            spoken_so_far = ""
+            ledger = getattr(owner, "interrupt_ledger", None)
+            if ledger is not None and callable(getattr(ledger, "active", None)):
+                active_span = ledger.active()
+                if active_span is not None:
+                    spoken_so_far = str(getattr(active_span, "text", "") or "")
+            last_assistant_text = str(getattr(owner, "last_text", "") or "")
+            if not last_assistant_text:
+                chat_hist = getattr(owner, "chat_history", None) or ()
+                for item in reversed(tuple(chat_hist)):
+                    if isinstance(item, Mapping) and item.get("role") == "assistant":
+                        last_assistant_text = str(item.get("content", "") or "")
+                        break
+            last_turn = getattr(owner, "last_agent_turn", None)
+            last_act = str(last_turn.get("intent", "") if isinstance(last_turn, Mapping) else "")
+
+            sid = str(
+                getattr(owner, "conversation_id", "")
+                or getattr(owner, "thread_id", "")
+                or "foreground:primary"
+            ).strip()[:180]
+            has_open_loop = bool(ensure_open_loop_store(owner).active_loops(sid, now=timestamp))
+
+            controller = ensure_interaction_dynamics_controller(owner)
+            dynamics_decision = controller.evaluate_incoming(
+                user_text,
+                speech_busy=speech_busy,
+                thinking_busy=thinking_busy,
+                spoken_text_so_far=spoken_so_far,
+                last_assistant_text=last_assistant_text,
+                last_assistant_act=last_act,
+                has_open_loop=has_open_loop,
+            )
+            owner.last_dynamics_decision = dynamics_decision
+
+            if dynamics_decision.action == DynamicsAction.KEEP_SPEAKING and speech_busy:
+                # Đây thực sự là tiếng đệm lắng nghe khi Eris đang giảng bài;
+                # giữ nguyên audio đang phát và không tạo user turn mới.
+                owner.logger.debug(
+                    "[conversation-v12] KEEP_SPEAKING on context-verified backchannel=%r",
+                    user_text[:80],
+                )
                 finish = getattr(owner, "_end_chat_cycle", None)
                 if callable(finish):
                     finish()
                 return
-            cancel_audio = bool(interrupt.cancel_audio)
-            cancel_generation = bool(interrupt.cancel_generation)
+
+            cancel_audio = bool(dynamics_decision.cancel_audio)
+            cancel_generation = bool(dynamics_decision.cancel_generation)
+
+            # Bổ sung MicroActRouter phát trực tiếp các act không mang nội dung mới
+            # (RECEIPT, PROMPT_CONTINUE, STOP_ACK) và ghi log bằng InteractionActReceipt.
+            micro_router = ensure_micro_act_router(owner)
+            rev_buf = getattr(owner, "input_revision_buffer", None)
+            current_rev = int(getattr(rev_buf, "current_revision", 0) or 0) + 1
+
+            def _emit_micro_act(surface: str, act_kind: MicroActKind) -> bool:
+                emit_hook = getattr(owner, "_emit_fast_micro_act", None)
+                if callable(emit_hook):
+                    return bool(emit_hook(surface, act_kind=act_kind.value, timestamp=timestamp))
+                return True
+
+            receipt = micro_router.select_and_emit(
+                dynamics_decision,
+                user_text=user_text,
+                input_revision=current_rev,
+                eris_currently_speaking=speech_busy,
+                full_reply_imminent=False,
+                emit_fn=_emit_micro_act,
+                now=timestamp,
+            )
+            if receipt is not None:
+                owner.last_interaction_act_receipt = receipt
         except Exception as exc:
             logger = getattr(owner, "logger", None)
             if callable(getattr(logger, "debug", None)):
-                logger.debug("[conversation-v12] interrupt classification failed: %s", exc)
+                logger.debug("[conversation-v12] dynamics classification failed: %s", exc)
         owner._capture_speech_interrupt_for_user(user_text, timestamp=timestamp)
         preempt = getattr(owner, "_preempt_for_classified_user_turn", None)
         if callable(preempt):

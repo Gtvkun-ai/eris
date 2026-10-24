@@ -51,81 +51,29 @@ def _enabled() -> bool:
     return runtime_bool("tts", "stage_localize", default=True)
 
 
-def _remote_provider_is_gemini() -> bool:
-    provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
-    if provider == "gemini":
-        return True
-    base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
-    return "generativelanguage.googleapis.com" in base_url or "googleapis.com" in base_url
 
 
 def localizer_provider_name() -> str:
-    provider = os.environ.get("ERIS_TTS_LOCALIZER_PROVIDER", "").strip().lower()
-    if provider in {"deepseek", "gemini"}:
-        return provider
-    remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
-    if remote_provider == "deepseek":
-        return "deepseek"
-    return "gemini"
+    return "deepseek"
 
 
 def localizer_model_name() -> str:
-    """Model Gemini/open-model dùng riêng cho transcript localization trước TTS."""
-
+    from llm.provider_policy import retired_provider
     value = os.environ.get("ERIS_TTS_LOCALIZER_MODEL", "").strip()
-    if value and not value.startswith("PASTE_"):
+    if value and not value.startswith("PASTE_") and not retired_provider(model=value):
         return value
-    if localizer_provider_name() == "deepseek":
-        return (
-            os.environ.get("ERIS_REMOTE_MODEL", "").strip()
-            or os.environ.get("DEEPSEEK_MODEL", "").strip()
-            or "deepseek-v4-flash"
-        )
-    value = os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-    if value and not value.startswith("PASTE_"):
-        return value
-    return "gemini-2.5-flash"
+    remote = os.environ.get("ERIS_REMOTE_MODEL", "").strip()
+    return remote if remote and not retired_provider(model=remote) else "deepseek-flash"
 
 
-def _get_api_key_lease(*, provider: str = "gemini", exclude_indices: Iterable[int] = ()):
-    """Lấy key + lease, không lấy lại key pool đã thử trong cùng request."""
-
-    if provider == "deepseek":
-        for env_name in (
-            "ERIS_TTS_LOCALIZER_API_KEY",
-            "ERIS_DS_CRITIC_API_KEY",
-            "ERIS_STYLE_API_KEY",
-            "DEEPSEEK_API_KEY",
-            "ERIS_REMOTE_API_KEY",
-        ):
-            key = os.environ.get(env_name, "").strip()
-            if key and not key.startswith("PASTE_"):
-                return key, None, None
-        return "", None, None
-
+def _get_api_key_lease(*, provider: str = "deepseek", exclude_indices: Iterable[int] = ()):
     for env_name in (
-        "ERIS_TTS_API_KEY",
-        "ERIS_SPEECH_API_KEY",
-        "GEMINI_SPEECH_API_KEY",
-        "GEMINI_API_KEY",
+        "ERIS_TTS_LOCALIZER_API_KEY", "ERIS_DS_CRITIC_API_KEY", "ERIS_STYLE_API_KEY",
+        "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY",
     ):
         key = os.environ.get(env_name, "").strip()
         if key and not key.startswith("PASTE_"):
             return key, None, None
-    if _remote_provider_is_gemini():
-        key = os.environ.get("ERIS_REMOTE_API_KEY", "").strip()
-        if key and not key.startswith("PASTE_"):
-            return key, None, None
-    try:
-        from llm.key_pool import get_key_pool
-
-        pool = get_key_pool("gemini")
-        if pool and pool.size > 0:
-            lease = pool.acquire(exclude_indices=exclude_indices)
-            if lease is not None:
-                return lease.key, pool, lease
-    except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
-        safe_log(logger, "debug", "TTS key-pool lookup failed: %s", exc)
     return "", None, None
 
 
@@ -524,28 +472,14 @@ class SpeechLocalizer:
                     def call_localizer(*, cancel_token=None):
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
-                        if provider_name == "deepseek":
-                            result = _translate_with_deepseek_api(
-                                api_key=api_key,
-                                model_name=model_name,
-                                system_instruction=system_instruction,
-                                prompt=prompt,
-                                timeout_seconds=_localizer_timeout_seconds(),
-                                max_output_tokens=_localizer_output_tokens(budgeted_text),
-                            )
-                        else:
-                            from google import genai
-
-                            client = genai.Client(api_key=api_key)
-                            result = client.models.generate_content(
-                                model=model_name,
-                                contents=prompt,
-                                config={
-                                    "system_instruction": system_instruction,
-                                    "temperature": 0.15,
-                                    "max_output_tokens": _localizer_output_tokens(budgeted_text),
-                                },
-                            )
+                        result = _translate_with_deepseek_api(
+                            api_key=api_key,
+                            model_name=model_name,
+                            system_instruction=system_instruction,
+                            prompt=prompt,
+                            timeout_seconds=_localizer_timeout_seconds(),
+                            max_output_tokens=_localizer_output_tokens(budgeted_text),
+                        )
                         if cancel_token is not None:
                             cancel_token.raise_if_cancelled(broker_request)
                         return result
@@ -698,6 +632,8 @@ def _translate_with_deepseek_api(
     base_url = os.environ.get("ERIS_TTS_LOCALIZER_BASE_URL", "").strip()
     if not base_url:
         base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.deepseek.com").strip()
+    from llm.provider_policy import require_active_provider
+    require_active_provider(base_url=base_url, model=model_name)
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": model_name,

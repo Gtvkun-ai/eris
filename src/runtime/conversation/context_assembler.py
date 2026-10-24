@@ -270,6 +270,27 @@ class ConversationContextAssembler:
                 registry, degraded=memory_degraded or source_report is None,
             )
 
+        # Bổ sung thông tin từ OpenLoopStore (SuspendedMove) và MicroActRouter
+        # (InteractionActReceipt) để RootAgent biết ý định còn dở (quyết định RESUME
+        # hay RETIRE) và biết các micro-act vừa phát (tránh mở câu lặp lại "Ừm...").
+        try:
+            from runtime.open_loop_store import ensure_open_loop_store
+            from runtime.interaction_dynamics import ensure_micro_act_router
+            sid = str(
+                getattr(host, "conversation_id", "")
+                or getattr(host, "thread_id", "")
+                or "foreground:primary"
+            ).strip()[:180]
+            active_open_loops = getattr(host, "_active_open_loop_items", None)
+            if active_open_loops is None:
+                active_open_loops = [
+                    item.to_dict() for item in ensure_open_loop_store(host).active_loops(sid)
+                ]
+            context["open_loop_hints"] = list(active_open_loops)
+            context["recent_interaction_act_receipts"] = ensure_micro_act_router(host).recent_receipt_dicts(limit=5)
+        except Exception as exc:
+            self._debug("context.incremental_dialogue", exc)
+
         # Mirror compatibility để panel/debug/caller cũ đọc được state mới nhất.
         # Đây là OUTPUT của assembler, không còn là input authority của V12.
         try:

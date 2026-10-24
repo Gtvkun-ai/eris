@@ -488,8 +488,8 @@ class ApiKeyPool:
             }
 
 
-_GROQ_PROVIDERS = {"openai", "openai_compatible", "compatible", "remote", "groq"}
-_REMOTE_MAIN_KINDS = {"main", "main_brain", "remote_main", "deepseek"}
+_GROQ_PROVIDERS = {"groq"}
+_REMOTE_MAIN_KINDS = {"main", "main_brain", "remote_main", "deepseek", "openai", "openai_compatible", "compatible", "remote"}
 
 # Có ba pool tách biệt:
 # - remote: credential dành riêng cho não chính;
@@ -527,30 +527,8 @@ def _split_keys_env(*names: str) -> list[str]:
 
 
 def _collect_gemini_keys() -> list[str]:
-    """Gom credential Gemini phụ: private-mind, speech và fallback."""
-    ordered: list[str] = []
-    try:
-        from eris_secrets import _load_secrets, get_secret
-
-        payload = _load_secrets() or {}
-        api_keys = payload.get("api_keys", {}) if isinstance(payload, dict) else {}
-
-        primary = get_secret("ERIS_PRIVATE_MIND_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY")
-        if primary:
-            ordered.append(primary)
-        if isinstance(api_keys, dict):
-            speech_key = api_keys.get("ERIS_SPEECH_API_KEY")
-            if speech_key:
-                ordered.append(str(speech_key))
-            for fallback_name in ("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"):
-                fallbacks = api_keys.get(fallback_name)
-                if isinstance(fallbacks, list):
-                    ordered.extend(str(k) for k in fallbacks if str(k or "").strip())
-    except Exception as exc:
-        safe_log(_LOGGER, "debug", "Private-mind key source unavailable: %s", exc)
-    # T4.1: thêm key từ env (sau khi .env đã nạp) — hỗ trợ danh sách phân tách.
-    ordered.extend(_split_keys_env("ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS"))
-    return ordered
+    """Retained empty slot for the retired provider."""
+    return []
 
 
 def _collect_remote_keys() -> list[str]:
@@ -600,25 +578,8 @@ def _collect_remote_keys() -> list[str]:
 
 
 def _collect_groq_keys() -> list[str]:
-    """Gom key Groq: ERIS_GROQ_API_KEY + ERIS_GROQ_FALLBACK_API_KEYS (bỏ placeholder)."""
-    ordered: list[str] = []
-    try:
-        from eris_secrets import _load_secrets, get_secret
-
-        payload = _load_secrets() or {}
-        api_keys = payload.get("api_keys", {}) if isinstance(payload, dict) else {}
-
-        primary = get_secret("ERIS_GROQ_API_KEY")
-        if not _is_placeholder(primary):
-            ordered.append(primary)
-        if isinstance(api_keys, dict):
-            fallbacks = api_keys.get("ERIS_GROQ_FALLBACK_API_KEYS")
-            if isinstance(fallbacks, list):
-                ordered.extend(str(k) for k in fallbacks if not _is_placeholder(k))
-    except Exception as exc:
-        safe_log(_LOGGER, "debug", "Groq fallback key source unavailable: %s", exc)
-    ordered.extend(_split_keys_env("ERIS_GROQ_FALLBACK_API_KEYS"))
-    return ordered
+    """Retained empty slot for the retired provider."""
+    return []
 
 
 def get_key_pool(kind: str = "gemini") -> ApiKeyPool:

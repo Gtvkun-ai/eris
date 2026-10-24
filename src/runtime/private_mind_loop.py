@@ -68,9 +68,6 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: floa
     return max(float(minimum), min(float(maximum), value))
 
 
-def _gemini_background_timeout_seconds() -> float:
-    default = _env_float("ERIS_PRIVATE_MIND_TIMEOUT", 60.0, minimum=5.0, maximum=300.0)
-    return _env_float("ERIS_PRIVATE_MIND_GEMINI_TIMEOUT", default, minimum=5.0, maximum=300.0)
 
 
 @dataclass(slots=True)
@@ -134,8 +131,6 @@ class PrivateMindLoop:
         # Inner Diary renderer dựng panel từ dữ kiện thô (bảng cảm xúc, concern,
         # residue, memory_echo). Thiếu model thì renderer vẫn trung thực với state
         # thật thay vì để một lane khác âm thầm giả làm nhật ký.
-        self._gemini_background_lock = threading.Lock()
-        self._gemini_background_active: set[str] = set()
 
     def _boundary_note(self, operation: str, exc: Exception) -> None:
         method = getattr(self.logger, "debug", None)
@@ -214,9 +209,9 @@ class PrivateMindLoop:
                 provider = str(
                     os.getenv(
                         "ERIS_PRIVATE_MIND_PROVIDER",
-                        os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini"),
+                        os.getenv("ERIS_DAYDREAM_PROVIDER", "deepseek"),
                     )
-                    or "gemini"
+                    or "deepseek"
                 ).strip().lower()
                 private_mind_advice = GLOBAL_INFERENCE_BROKER.optional_lane_advice(
                     "private_mind", provider=provider
@@ -398,10 +393,7 @@ class PrivateMindLoop:
             filtered_candidate=candidate,
             now=now,
         )
-        self._run_gemini_background(
-            "private_residue_curator",
-            lambda: self._maybe_consolidate_residue(now=now),
-        )
+        self._maybe_consolidate_residue(now=now)
 
         result = PrivateMindTickResult(
             dossier=dossier,
@@ -560,60 +552,10 @@ class PrivateMindLoop:
                         now=now,
                     )
 
-    def _run_gemini_background(self, name: str, work: Callable[[], None]) -> None:
-        if not _env_flag("ERIS_PRIVATE_MIND_GEMINI_BACKGROUND", True):
-            work()
-            return
-
-        with self._gemini_background_lock:
-            if name in self._gemini_background_active:
-                return
-            self._gemini_background_active.add(name)
-
-        def _runner() -> None:
-            try:
-                work()
-            except Exception as exc:
-                self._boundary_note(f"{name}.background", exc)
-            finally:
-                with self._gemini_background_lock:
-                    self._gemini_background_active.discard(name)
-
-        threading.Thread(target=_runner, name=f"eris-{name}", daemon=True).start()
 
     def _maybe_consolidate_residue(self, *, now: float) -> None:
-        if not self.residue_store.should_curate(now=now):
-            return
-        packet = self.residue_store.curator_packet(limit=24)
-        if not packet.get("items"):
-            return
-        curate_fn = getattr(self.model_adapter, "curate_residue", None)
-        meta_fn = getattr(self.model_adapter, "residue_metadata", None)
-        curator_meta = meta_fn() if callable(meta_fn) else {"configured": False, "model": ""}
-        curated = None
-        if callable(curate_fn) and bool(curator_meta.get("configured", False)):
-            try:
-                from runtime.inference_broker import inference_context
-                with inference_context(
-                    "private_residue_curator",
-                    optional=True,
-                    timeout_seconds=_gemini_background_timeout_seconds(),
-                    cancel_scope="background:private_residue",
-                    coalesce_key="private_residue:latest_batch",
-                    metadata={"items": len(packet.get("items", []))},
-                ):
-                    curated = curate_fn(packet)
-            except Exception as exc:
-                curator_meta = dict(curator_meta)
-                curator_meta["error"] = f"{type(exc).__name__}:{exc}"[:160]
-                self._boundary_note("residue.curator", exc)
-        if isinstance(curated, Mapping):
-            applied = self.residue_store.apply_curator_output(curated, curator_meta=curator_meta, now=now)
-            if applied:
-                return
-        # Gemma vắng/lỗi/không có decision hợp lệ: vẫn giữ cognition thật, nhưng
-        # tuyệt đối không biến unprocessed stimulus thành diary.
-        self.residue_store.deterministic_consolidate(now=now)
+        if self.residue_store.should_curate(now=now):
+            self.residue_store.deterministic_consolidate(now=now)
 
     @staticmethod
     def _dossier_residue_text(dossier: Any) -> str:

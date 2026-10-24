@@ -670,7 +670,7 @@ public partial class UdpListener : Node2D
 
 		AddSettingsPageFooter(
 			root,
-			"Bốn credential owner tách biệt: Main Brain, Gemini phụ, Groq phụ và ElevenLabs TTS.",
+			"Main Brain và ElevenLabs TTS. Các ô Gemini/Groq được giữ trống.",
 			showBackupActions: true);
 	}
 
@@ -797,13 +797,13 @@ public partial class UdpListener : Node2D
 		StyleSettingsSingleLineLabel(hint);
 		card.AddChild(hint);
 
-		_settingsProviderSelect = AddSettingsOptionRow(card, 80f, "Provider", new[] { "gemini", "groq", "openai_compatible", "deepseek" }, RemoteApiProvider);
+		_settingsProviderSelect = AddSettingsOptionRow(card, 80f, "Provider", new[] { "deepseek_web", "deepseek", "openai_compatible" }, RemoteApiProvider);
 		_settingsModelInput = AddSettingsLineEditRow(card, 124f, "Model", RemoteApiModelName);
 		_settingsBaseUrlInput = AddSettingsLineEditRow(card, 168f, "Base URL", RemoteApiBaseUrl);
 
 		_settingsProviderSelect.ItemSelected += _ =>
 		{
-			RemoteApiProvider = SelectedOptionText(_settingsProviderSelect, "gemini");
+			RemoteApiProvider = SelectedOptionText(_settingsProviderSelect, "deepseek_web");
 			ApplyProviderDefaults(RemoteApiProvider);
 			RefreshSettingsProviderInputs();
 			RefreshSettingsRuntimeModelSummary();
@@ -1077,13 +1077,15 @@ public partial class UdpListener : Node2D
 		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
 		_settingsPoolStatusLabel.Position = new Vector2(18f + tabWidth + tabGap, 46f);
 		_settingsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsPoolStatusLabel.TooltipText = "Credential cho private mind và lane Gemini; không mặc định sở hữu TTS";
+		_settingsPoolStatusLabel.TooltipText = "Ô key trống; provider đã ngừng sử dụng.";
+		_settingsPoolStatusLabel.Disabled = true;
 		parent.AddChild(_settingsPoolStatusLabel);
 
 		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
 		_settingsFallbackStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 2f, 46f);
 		_settingsFallbackStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsFallbackStatusLabel.TooltipText = "Credential cho parser, social lane và fallback Groq";
+		_settingsFallbackStatusLabel.TooltipText = "Ô key trống; provider đã ngừng sử dụng.";
+		_settingsFallbackStatusLabel.Disabled = true;
 		parent.AddChild(_settingsFallbackStatusLabel);
 
 		_settingsElevenLabsPoolStatusLabel = CreateSettingsButton($"11Labs · {elevenLabsCount}", () => SwitchSettingsKeyPool("elevenlabs"), primary: _settingsKeyPoolKind == "elevenlabs");
@@ -1366,7 +1368,7 @@ public partial class UdpListener : Node2D
 		tts.Size = new Vector2(160f, 24f);
 		parent.AddChild(tts);
 
-		_settingsVoiceSelect = AddSettingsOptionRow(parent, 78f, "Giọng", new[] { "Aoede", "Leda", "Achernar", "Kore", "Callirrhoe" }, _settingsTtsVoice);
+		_settingsVoiceSelect = AddSettingsOptionRow(parent, 78f, "Giọng", new[] { "ElevenLabs" }, _settingsTtsVoice);
 		_settingsLanguageSelect = AddSettingsSpeechLanguageRow(parent, 118f);
 		_settingsQualitySelect = AddSettingsOptionRow(parent, 158f, "Chất lượng", new[] { "balanced", "high" }, _settingsTtsQuality);
 		_settingsVoiceSelect.ItemSelected += _ => ApplyLiveTtsSettingsFromPanel("giọng");
@@ -2046,14 +2048,16 @@ public partial class UdpListener : Node2D
 		string provider = NormalizeProviderProfileKey(RemoteApiProvider);
 		string baseUrl = (RemoteApiBaseUrl ?? "").Trim();
 		string model = (RemoteApiModelName ?? "").Trim();
-		if (provider == "openai_compatible" && (baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase) || baseUrl.Contains("shopaikey.com", StringComparison.OrdinalIgnoreCase)))
+		bool retired = provider is "gemini" or "groq" or "gemma"
+			|| baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase)
+			|| baseUrl.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase)
+			|| model.Contains("gemini", StringComparison.OrdinalIgnoreCase)
+			|| model.Contains("gemma", StringComparison.OrdinalIgnoreCase);
+		if (retired)
 		{
-			RemoteApiBaseUrl = "http://127.0.0.1:8081/v1";
-			if (string.IsNullOrWhiteSpace(model)
-				|| model.Contains("qwen", StringComparison.OrdinalIgnoreCase)
-				|| model.StartsWith("llama", StringComparison.OrdinalIgnoreCase)
-				|| model.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
-				RemoteApiModelName = "playwright/gemini/gemini-3.1-pro";
+			RemoteApiBaseUrl = "";
+			RemoteApiModelName = "";
+			ApplyProviderDefaults("deepseek_web");
 		}
 	}
 
@@ -2302,7 +2306,7 @@ public partial class UdpListener : Node2D
 					string provider = tts.TryGetProperty("provider", out JsonElement providerEl) ? providerEl.GetString() ?? _settingsTtsProvider : _settingsTtsProvider;
 					string model = string.Equals(provider, "elevenlabs", StringComparison.OrdinalIgnoreCase)
 						? (tts.TryGetProperty("elevenlabs_model", out JsonElement modelEl) ? modelEl.GetString() ?? _settingsElevenLabsModel : _settingsElevenLabsModel)
-						: "Gemini TTS";
+						: "ElevenLabs TTS";
 					_settingsTtsProvider = provider;
 					if (_settingsTtsEngineStatusLabel != null)
 						_settingsTtsEngineStatusLabel.Text = ready ? $"{provider}: sẵn sàng · {model}" : $"{provider}: chưa sẵn sàng · {model}";
@@ -2496,43 +2500,21 @@ public partial class UdpListener : Node2D
 	private void ApplyProviderDefaults(string provider)
 	{
 		string normalized = (provider ?? "").Trim().ToLowerInvariant();
-		if (normalized == "groq")
+		if (normalized == "deepseek_web")
 		{
-			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
-				RemoteApiBaseUrl = "https://api.groq.com/openai/v1";
-			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
-				RemoteApiModelName = "llama-3.1-8b-instant";
-			RemoteApiProvider = "groq";
-			return;
-		}
-		if (normalized == "deepseek")
-		{
-			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("deepseek.com", StringComparison.OrdinalIgnoreCase))
-				RemoteApiBaseUrl = "https://api.deepseek.com";
-			if (string.IsNullOrWhiteSpace(RemoteApiModelName) || !RemoteApiModelName.Contains("deepseek"))
-				RemoteApiModelName = "deepseek-chat";
-			RemoteApiProvider = "deepseek";
+			RemoteApiProvider = "deepseek_web";
+			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl)) RemoteApiBaseUrl = "http://127.0.0.1:6011/v1";
+			if (string.IsNullOrWhiteSpace(RemoteApiModelName)) RemoteApiModelName = "deepseek-flash";
 			return;
 		}
 		if (normalized == "openai_compatible")
 		{
-			if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl)
-				|| RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase)
-				|| RemoteApiBaseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase))
-				RemoteApiBaseUrl = "http://127.0.0.1:8081/v1";
-			if (string.IsNullOrWhiteSpace(RemoteApiModelName)
-				|| RemoteApiModelName.Contains("gemini", StringComparison.OrdinalIgnoreCase)
-				|| RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase)
-				|| RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
-				RemoteApiModelName = "playwright/gemini/gemini-3.1-pro";
 			RemoteApiProvider = "openai_compatible";
 			return;
 		}
-		if (string.IsNullOrWhiteSpace(RemoteApiBaseUrl) || !RemoteApiBaseUrl.Contains("googleapis", StringComparison.OrdinalIgnoreCase))
-			RemoteApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
-		if (string.IsNullOrWhiteSpace(RemoteApiModelName) || RemoteApiModelName.StartsWith("llama", StringComparison.OrdinalIgnoreCase) || RemoteApiModelName.Contains("gpt-", StringComparison.OrdinalIgnoreCase))
-			RemoteApiModelName = "gemini-2.5-flash";
-		RemoteApiProvider = "gemini";
+		RemoteApiProvider = "deepseek";
+		RemoteApiBaseUrl = "https://api.deepseek.com";
+		RemoteApiModelName = "deepseek-flash";
 	}
 
 	private void RefreshSettingsProviderInputs()
@@ -3038,12 +3020,12 @@ public partial class UdpListener : Node2D
 
 	private List<string> ReadConfiguredGeminiKeys()
 	{
-		return ReadConfiguredKeys("ERIS_PRIVATE_MIND_API_KEY", "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GEMINI_FALLBACK_API_KEYS");
+		return new List<string>();
 	}
 
 	private List<string> ReadConfiguredGroqKeys()
 	{
-		return ReadConfiguredKeys("ERIS_GROQ_API_KEY", "ERIS_GROQ_FALLBACK_API_KEYS");
+		return new List<string>();
 	}
 
 	private string ReadMainBrainProfileApiKey()
@@ -3128,6 +3110,13 @@ public partial class UdpListener : Node2D
 	private void ReplaceEditableKeysForPool(JsonObject root, string poolKind, List<string> keys)
 	{
 		string kind = NormalizeSettingsPoolKind(poolKind);
+		if (kind is "gemini" or "groq")
+		{
+			JsonObject retiredSlots = EnsureObject(root, "api_keys");
+			foreach (string name in new[] { "GEMINI_API_KEY", "ERIS_SPEECH_API_KEY", "ERIS_PRIVATE_MIND_API_KEY", "ERIS_GROQ_API_KEY" }) retiredSlots[name] = "";
+			foreach (string name in new[] { "ERIS_GEMINI_FALLBACK_API_KEYS", "ERIS_PRIVATE_MIND_FALLBACK_API_KEYS", "ERIS_GROQ_FALLBACK_API_KEYS" }) retiredSlots[name] = new JsonArray();
+			return;
+		}
 		string[] controlled = kind switch
 		{
 			"main" => new[] { "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "ERIS_REMOTE_FALLBACK_API_KEYS" },

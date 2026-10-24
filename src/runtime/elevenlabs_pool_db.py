@@ -29,6 +29,88 @@ ELEVENLABS_MIN_REMAINING_QUOTA = 100
 # Phòng trường hợp user dùng ElevenLabs từ web/app khác làm lệch character_count nội bộ.
 ELEVENLABS_LOW_QUOTA_SYNC_THRESHOLD = 500
 
+# Timeout connect/read (giây) cho request refresh token + sync subscription.
+# Connect ngắn để nếu một địa chỉ chết (vd IPv6 không route được) thì bỏ nhanh,
+# không ngồi chờ ~12s mỗi địa chỉ. Read dài hơn vì API có thể trả chậm.
+_ELEVEN_HTTP_CONNECT_TIMEOUT = float(os.environ.get("ERIS_ELEVENLABS_SYNC_CONNECT_TIMEOUT_S", "4") or "4")
+_ELEVEN_HTTP_READ_TIMEOUT = float(os.environ.get("ERIS_ELEVENLABS_SYNC_READ_TIMEOUT_S", "12") or "12")
+
+# Cho phép tắt ưu tiên IPv4 nếu cần (mặc định bật).
+_ELEVEN_PREFER_IPV4 = str(os.environ.get("ERIS_ELEVENLABS_PREFER_IPV4", "1") or "1").strip().lower() not in {
+    "0", "false", "off", "no",
+}
+
+_HTTP_SESSION: Optional[Any] = None
+_HTTP_SESSION_LOCK = threading.Lock()
+
+
+def _build_ipv4_adapter():
+    """HTTPAdapter ép phân giải IPv4 trước.
+
+    `requests`/`urllib3` thử các địa chỉ DNS TUẦN TỰ (không Happy Eyeballs như
+    trình duyệt). Nếu host trả IPv6 trước mà mạng không ra được IPv6, mỗi địa
+    chỉ phải chờ hết connect-timeout rồi mới sang địa chỉ kế — cộng dồn thành
+    hàng chục giây. Ta ép getaddrinfo chỉ trả IPv4 cho các connection của
+    adapter này để tránh hình phạt đó.
+    """
+    import socket
+    from requests.adapters import HTTPAdapter
+    from urllib3.util import connection as urllib3_connection
+
+    _orig_create_connection = urllib3_connection.create_connection
+
+    def _ipv4_create_connection(address, *args, **kwargs):
+        host, port = address
+        # Ép family AF_INET: getaddrinfo chỉ trả IPv4, bỏ qua IPv6.
+        kwargs = dict(kwargs)
+        # urllib3 create_connection không nhận socket_options qua kwargs ở mọi
+        # phiên bản; cách an toàn nhất là tạm vá getaddrinfo cho riêng lời gọi.
+        _orig_getaddrinfo = socket.getaddrinfo
+
+        def _ipv4_getaddrinfo(a_host, a_port, family=0, *a, **kw):
+            return _orig_getaddrinfo(a_host, a_port, socket.AF_INET, *a, **kw)
+
+        socket.getaddrinfo = _ipv4_getaddrinfo
+        try:
+            return _orig_create_connection(address, *args, **kwargs)
+        finally:
+            socket.getaddrinfo = _orig_getaddrinfo
+
+    class _IPv4FirstAdapter(HTTPAdapter):
+        def init_poolmanager(self, *args, **kwargs):
+            return super().init_poolmanager(*args, **kwargs)
+
+        def send(self, *args, **kwargs):
+            _prev = urllib3_connection.create_connection
+            urllib3_connection.create_connection = _ipv4_create_connection
+            try:
+                return super().send(*args, **kwargs)
+            finally:
+                urllib3_connection.create_connection = _prev
+
+    return _IPv4FirstAdapter(pool_connections=5, pool_maxsize=10, max_retries=0)
+
+
+def _get_http_session():
+    """Session dùng chung cho refresh/sync; ép IPv4-first nếu bật."""
+    global _HTTP_SESSION
+    if _HTTP_SESSION is not None:
+        return _HTTP_SESSION
+    with _HTTP_SESSION_LOCK:
+        if _HTTP_SESSION is not None:
+            return _HTTP_SESSION
+        import requests
+        session = requests.Session()
+        if _ELEVEN_PREFER_IPV4:
+            try:
+                adapter = _build_ipv4_adapter()
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+            except Exception as exc:  # không chặn nếu môi trường thiếu urllib3 nội bộ
+                _LOGGER.warning("[ElevenPool] Không mount IPv4-first adapter được: %s", exc)
+        _HTTP_SESSION = session
+        return _HTTP_SESSION
+
 
 def _resolve_db_path() -> Path:
     env_root = os.environ.get("ERIS_PROJECT_ROOT", "").strip()
@@ -382,7 +464,9 @@ class ElevenPoolDB:
             return False, "Không tìm thấy tài khoản"
 
         from eris_secrets import get_secret
-        import requests
+
+        session = _get_http_session()
+        _timeout = (_ELEVEN_HTTP_CONNECT_TIMEOUT, _ELEVEN_HTTP_READ_TIMEOUT)
 
         firebase_key = str(get_secret("FIREBASE_API_KEY") or "").strip()
         if not firebase_key:
@@ -398,7 +482,7 @@ class ElevenPoolDB:
         data = {"grant_type": "refresh_token", "refresh_token": acc.refresh_token}
 
         try:
-            r = requests.post(url, headers=headers, data=data, timeout=12)
+            r = session.post(url, headers=headers, data=data, timeout=_timeout)
             if r.status_code != 200:
                 err_msg = r.json().get("error", {}).get("message", r.text)
                 self.mark_cooling(account_id, 600)
@@ -422,7 +506,7 @@ class ElevenPoolDB:
         }
 
         try:
-            r2 = requests.get(sub_url, headers=sub_headers, timeout=12)
+            r2 = session.get(sub_url, headers=sub_headers, timeout=_timeout)
             if r2.status_code == 200:
                 info = r2.json()
                 char_count = int(info.get("character_count", 0))

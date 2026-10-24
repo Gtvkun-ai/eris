@@ -112,3 +112,6 @@ eris-code/
 
 # Local implementation worktrees
 .worktrees/
+
+# Source snapshots for external AI review
+/exports/

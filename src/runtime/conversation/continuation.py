@@ -8,6 +8,13 @@ caller phải gọi lại RootAgent để quyết định từ ngữ cảnh mớ
 Nếu có ``atomic_store`` thì lease được ghi vào SQLite atomic state hiện có.
 Mục đích là sống sót qua restart mà không tạo ghost speech: sau restart ta chỉ
 khôi phục *quyền được re-evaluate*, không khôi phục câu chữ cũ.
+
+Nâng cấp Incremental Dialogue (Text-first):
+Khi phiên bị hủy bởi user cắt ngang (``cancel_session_with_open_loop``), thay vì
+xóa mất hoàn toàn ý định đang nói dở, scheduler cho phép chụp lại một
+``SuspendedMove`` lưu vào ``OpenLoopStore`` (sống qua các lần đổi generation)
+để truyền phần chưa nói dưới dạng hint vào lượt Root kế tiếp quyết định
+``RESUME`` hay ``RETIRE``.
 """
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ import uuid
 from typing import Any, Mapping
 
 from .contracts import ConversationAfter, ContinuationLease
+from runtime.open_loop_store import OpenLoopStore, SuspendedMove
 
 
 class ContinuationLeaseScheduler:
@@ -32,12 +40,14 @@ class ContinuationLeaseScheduler:
         self,
         *,
         atomic_store: Any | None = None,
+        open_loop_store: OpenLoopStore | None = None,
         logger: Any = None,
         max_consecutive_self_wakes: int = 24,
         max_chain_seconds: float = 120.0,
         lease_ttl_seconds: float = 30.0,
     ) -> None:
         self.atomic_store = atomic_store
+        self.open_loop_store = open_loop_store or OpenLoopStore()
         self.logger = logger
         self.max_consecutive_self_wakes = max(1, int(max_consecutive_self_wakes))
         self.max_chain_seconds = max(5.0, float(max_chain_seconds))
@@ -152,9 +162,80 @@ class ContinuationLeaseScheduler:
         sid = self._sid(session_id)
         prior = self.peek(sid)
         with self._lock:
-            self._speculative.pop(sid, None)
+            speculative_item = self._speculative.pop(sid, None)
+        # Nếu có speculative candidate đã chuẩn bị nhưng bị hủy bởi user turn mới,
+        # lưu lại ý định đó thành SuspendedMove trong OpenLoopStore (chỉ làm hint,
+        # không bao giờ tự phát lại wording cũ).
+        if speculative_item is not None and self.open_loop_store is not None:
+            self._preserve_speculative_as_open_loop(sid, speculative_item)
         self._clear(sid)
         return prior is not None
+
+    def cancel_session_with_interrupt(
+        self,
+        session_id: str,
+        interrupt_event: Any,
+        *,
+        source_move_id: str = "",
+        source_generation: int = 0,
+        intent: str = "",
+        interruption_kind: str = "steering",
+    ) -> SuspendedMove | None:
+        """Hủy continuation lease hiện tại nhưng bảo toàn ý đang nói dở vào ``OpenLoopStore``."""
+        sid = self._sid(session_id)
+        self.cancel_session(sid)
+        if interrupt_event is None or self.open_loop_store is None:
+            return None
+        return self.open_loop_store.capture_from_interrupt(
+            interrupt_event,
+            session_id=sid,
+            source_move_id=source_move_id,
+            source_generation=source_generation,
+            intent=intent,
+            interruption_kind=interruption_kind,
+        )
+
+    def _preserve_speculative_as_open_loop(
+        self,
+        session_id: str,
+        speculative_item: tuple[str, int, Any],
+    ) -> SuspendedMove | None:
+        """Trích xuất intent và nội dung dự kiến từ speculative candidate bị hủy để lưu làm hint."""
+        try:
+            _lease_id, generation, candidate = speculative_item
+            turn = getattr(candidate, "turn", None)
+            move = getattr(turn, "move", None) or getattr(candidate, "decision", None)
+            rendered = getattr(candidate, "rendered", None)
+            surface = getattr(rendered, "surface", None)
+            pending_hint = str(
+                getattr(surface, "display_text", "")
+                or getattr(move, "say", "")
+                or ""
+            ).strip()
+            intent = str(getattr(move, "intent", "") or "").strip()
+            move_id = str(getattr(move, "move_id", "") or "").strip()
+            if not pending_hint and not intent:
+                return None
+            now = time.time()
+            suspended = SuspendedMove(
+                loop_id=f"openloop:{uuid.uuid4().hex[:12]}",
+                session_id=session_id,
+                source_move_id=move_id,
+                source_generation=int(generation or 0),
+                intent=intent or "Ý tiếp nối đang chuẩn bị trước khi user nhắn xen vào.",
+                spoken_text="",
+                pending_text_hint=(pending_hint or intent)[:2000],
+                interrupted_by="(preempted_before_continuation_delivery)",
+                interruption_kind="continuation_preempt",
+                status="suspended",
+                recommended_action="RESUME",
+                needs_revalidation=True,
+                created_at=now,
+                expires_at=now + self.open_loop_store.default_ttl_seconds,
+            )
+            return self.open_loop_store.add(suspended)
+        except Exception:
+            return None
 
     def peek(self, session_id: str) -> ContinuationLease | None:
         sid = self._sid(session_id)

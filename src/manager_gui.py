@@ -12,7 +12,6 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 
-GEMINI_API_KEYS_URL = "https://aistudio.google.com/api-keys"
 DEEPSEEK_POOL_URL = "http://127.0.0.1:5010"
 ELEVENLABS_POOL_URL = "http://127.0.0.1:18888"
 
@@ -42,7 +41,6 @@ CORE_ACTIONS = [
     Action("Runtime", "Runtime only", "run_runtime.bat"),
     Action("Runtime", "Smoke test", "run_smoke_test.bat"),
     Action("Accounts", "Secrets setup", "setup_secrets.bat", note="Create/open config\\secrets.json"),
-    Action("Accounts", "Gemini login", "setup_gemini_login.bat"),
     Action("Accounts", "Tutor browser setup", "setup_tutor_browser.bat"),
     Action("Accounts", "Tutor login", "tutor_login.bat"),
     Action("Accounts", "ElevenLabs pool UI", "run_elevenlabs_pool_ui.bat"),
@@ -111,7 +109,6 @@ class ErisManager(tk.Tk):
         self.minsize(860, 560)
         self.configure(bg="#f5f5f2")
         self.script_rows: list[tuple[str, Path]] = []
-        self.gemini_key_var = tk.StringVar()
         self.firebase_key_var = tk.StringVar()
 
         self._build_style()
@@ -210,12 +207,6 @@ class ErisManager(tk.Tk):
         guide = self._setup_card(parent, "Start here")
         ttk.Button(guide, text="Open user guide", command=lambda: self.run_action(self._action_by_name("User guide"))).pack(side=tk.LEFT)
         ttk.Button(guide, text="Open secrets file", command=self.open_or_create_secrets).pack(side=tk.LEFT, padx=(8, 0))
-
-        gemini = self._setup_card(parent, "Gemini key")
-        ttk.Button(gemini, text="Get Gemini key", command=lambda: self.open_url(GEMINI_API_KEYS_URL)).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-        ttk.Entry(gemini, textvariable=self.gemini_key_var, show="*", width=38).grid(row=0, column=1, sticky=tk.EW, padx=(0, 8))
-        ttk.Button(gemini, text="Save", command=self.save_gemini_key, style="Accent.TButton").grid(row=0, column=2, sticky=tk.E)
-        gemini.columnconfigure(1, weight=1)
 
         deepseek = self._setup_card(parent, "DeepSeek pool")
         ttk.Button(deepseek, text="Open Pool UI", command=lambda: self.run_action(self._action_by_name("DeepSeek pool UI"))).grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
@@ -383,26 +374,6 @@ class ErisManager(tk.Tk):
         self.open_path(path)
         self.refresh()
 
-    def save_gemini_key(self) -> None:
-        value = self.gemini_key_var.get().strip()
-        if not value:
-            messagebox.showinfo("Eris Manager", "Paste Gemini API key first.")
-            return
-        try:
-            self._save_secret_values(
-                {"GEMINI_API_KEY": value},
-                fill_empty={
-                    "ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY": value,
-                    "ERIS_SPEECH_API_KEY": value,
-                },
-            )
-        except Exception as exc:
-            messagebox.showerror("Eris Manager", str(exc))
-            return
-        self.gemini_key_var.set("")
-        self.log_insert("Saved Gemini key to config\\secrets.json")
-        messagebox.showinfo("Eris Manager", "Gemini key saved.")
-        self.refresh()
 
     def save_firebase_key(self) -> None:
         value = self.firebase_key_var.get().strip()
@@ -523,7 +494,6 @@ class ErisManager(tk.Tk):
             api_keys = {}
         lines = [
             f"secrets.json: {self.file_mark(self.secrets_path())}",
-            f"Gemini key: {'OK' if str(api_keys.get('GEMINI_API_KEY') or '').strip() else 'MISSING'}",
             f"Firebase key: {'OK' if str(api_keys.get('FIREBASE_API_KEY') or '').strip() else 'MISSING'}",
             f"ElevenLabs accounts: {self._count_elevenlabs_accounts()}",
             f"DeepSeek gateway pools: {self._count_deepseek_gateway_keys()}",

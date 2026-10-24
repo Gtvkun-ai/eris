@@ -162,10 +162,7 @@ class AttentionOverseer:
             self.process_manager.build_diary_client()
             if inner_diary_model_enabled() and inner_diary_deep_reflection_enabled() else None
         )
-        residue_curator_client = (
-            self.process_manager.build_residue_curator_client()
-            if private_residue_curator_enabled() else None
-        )
+        residue_curator_client = None
         seed_client = self.process_manager.build_seed_client()
         surface_client = self.process_manager.build_surface_client()
         research_client = self.process_manager.build_research_client() if background_tutor_enabled() else None

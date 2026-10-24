@@ -382,20 +382,7 @@ def runtime_sensor_health_snapshot(*, owner: Any | None = None) -> dict[str, str
 
 
 def _remote_tool_credential_available(capability_id: str) -> tuple[bool, str]:
-    try:
-        from eris_secrets import get_agent_profile, get_secret
-
-        # Direct web search đã bị loại khỏi runtime. Remote credential probe
-        # hiện chỉ còn phục vụ capability thời tiết.
-        profile = get_agent_profile(capability_id, default_provider="gemini", default_slot="weather")
-        key = str(profile.get("api_key") or "").strip() or str(
-            get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY") or ""
-        ).strip()
-        if not key:
-            return False, "credential_missing"
-        return True, "credential_present"
-    except Exception:
-        return False, "credential_probe_failed"
+    return False, "provider_retired"
 
 
 __all__ = [

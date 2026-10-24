@@ -736,8 +736,6 @@ deploy_pairs = [
      os.path.join(OUT,  "run_elevenlabs_pool_ui.bat")),
     (os.path.join(REPO, "run_deepseek_pool_ui.bat"),
      os.path.join(OUT,  "run_deepseek_pool_ui.bat")),
-    (os.path.join(REPO, "setup_gemini_login.bat"),
-     os.path.join(OUT,  "setup_gemini_login.bat")),
     (os.path.join(REPO, "src", "settings", "runtime_settings.json"),
      os.path.join(OUT,  "src", "settings", "runtime_settings.json")),
 ]
@@ -945,7 +943,7 @@ def _copy_heavy_dir(dirname: str) -> None:
 
 _copy_heavy_dir("asset")
 _copy_heavy_dir("voice_presets")
-_copy_heavy_dir("gemini_manager")
+
 
 if os.path.exists(cline_src):
     # Buoc 1: build TypeScript -> dist/ (phai co node trong PATH)

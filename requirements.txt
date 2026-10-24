@@ -13,6 +13,5 @@ pyinstaller>=6.0
 # sentence-transformers==3.4.1  # optional — dùng transformers+torch đã có thay thế
 
 # TTS — Emotional voice (Gemini TTS API)
-google-genai>=2.8.0       # Gemini TTS API (cần ERIS_SPEECH_API_KEY)
 sounddevice>=0.5.0        # phát WAV realtime (pip install sounddevice)
 miniaudio>=1.71           # fallback audio nếu không có sounddevice

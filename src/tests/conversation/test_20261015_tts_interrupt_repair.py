@@ -107,55 +107,14 @@ def test_two_concurrent_half_open_slots_are_isolated():
     assert breaker.state(key) == BreakerState.OPEN
 
 
-def test_gemini_synthesis_cancel_does_not_mark_breaker_failed_or_healthy(monkeypatch):
-    """Mock broker thật: user chen vào sau khi SDK trả dữ liệu, trước PCM."""
-    import contextlib
-    import sys
-    import threading
-    from runtime import tts_engine as engine
-    from runtime import inference_broker as broker
-    from runtime.tts_engine import TtsCancelledError
-
-    cancel = threading.Event()
-    breaker = TtsCircuitBreaker(failure_threshold=1, cooldown_s=1, successful_probes=2)
-    key = ("gemini", "tts-model", "voice", "ja-JP")
-    breaker.record_failure(key, now=10)
-    assert breaker.allow(key, now=12).allowed
-    # Giải phóng probe do test mở để lần synth tự xin slot.
-    breaker.record_cancelled(key)
-    monkeypatch.setattr(engine, "GLOBAL_TTS_BREAKER", breaker)
-    monkeypatch.setattr(engine, "_tts_breaker_enabled", lambda: True)
-    monkeypatch.setattr(engine, "_get_api_key", lambda: "test-key")
-    monkeypatch.setattr(engine, "_tts_max_attempts", lambda: 1)
-    monkeypatch.setattr(engine, "_try_local_tts_fallback", lambda *_args, **_kw: b"")
-    monkeypatch.setattr(engine, "_tts_broker_timeout_seconds", lambda: 5.0)
-
-    # Fake SDK không chạm mạng, broker vẫn chạy đúng cơ chế cấp request.
-    class Models:
-        def generate_content(self, **kwargs):
-            return object()
-
-    fake_genai = SimpleNamespace(Client=lambda **kwargs: SimpleNamespace(models=Models()))
-    fake_types = SimpleNamespace(
-        GenerateContentConfig=lambda **kw: kw,
-        SpeechConfig=lambda **kw: kw,
-        VoiceConfig=lambda **kw: kw,
-        PrebuiltVoiceConfig=lambda **kw: kw,
-    )
-    fake_genai.types = fake_types
-    monkeypatch.setitem(sys.modules, "google", SimpleNamespace(genai=fake_genai))
-    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
-    monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
-
-    monkeypatch.setattr(broker.GLOBAL_INFERENCE_BROKER, "request_from_context", lambda **kw: object())
-    monkeypatch.setattr(broker.GLOBAL_INFERENCE_BROKER, "run", lambda _req, _call: (cancel.set(), object())[1])
-    monkeypatch.setattr(broker, "inference_context", lambda *_a, **_k: contextlib.nullcontext())
-
+def test_retired_google_synthesis_never_enters_broker(monkeypatch):
     import pytest
-    with pytest.raises(TtsCancelledError):
-        engine._synthesize_wav("hi", "voice", "tts-model", fallback_text="hi",
-                               language_hint="ja", cancel_event=cancel)
-    assert breaker.state(key) == BreakerState.HALF_OPEN
-    assert breaker._entries[key].failures == 1
-    assert breaker._entries[key].probes_in_flight == 0
-    assert breaker._entries[key].successful_probes == 0
+    from runtime import tts_engine as engine
+    from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("retired synthesis must not enter the inference broker")
+
+    monkeypatch.setattr(GLOBAL_INFERENCE_BROKER, "request_from_context", forbidden)
+    with pytest.raises(RuntimeError, match="retired"):
+        engine._synthesize_wav("hi", "voice", "tts-model", fallback_text="hi", language_hint="ja")

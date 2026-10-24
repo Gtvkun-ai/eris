@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from runtime.open_loop_store import OpenLoopStore, SuspendedMove
+
 
 _WORD_RE = re.compile(r"\S+")
 
@@ -69,6 +71,32 @@ class InterruptEvent:
             f"- user_interrupted_with={user}\n"
             "Use this only if it helps the reply feel present. Acknowledge the cut-in briefly, "
             "then answer the user's latest intent. Do not mention ids, ledgers, or technical details."
+        )
+
+    def to_suspended_move(
+        self,
+        *,
+        session_id: str = "default",
+        source_move_id: str = "",
+        source_generation: int = 0,
+        intent: str = "",
+        interruption_kind: str = "steering",
+        ttl_seconds: float = 180.0,
+    ) -> SuspendedMove | None:
+        """Chuyển đổi ``InterruptEvent`` thành ``SuspendedMove`` để lưu vào ``OpenLoopStore``.
+
+        Phần ``pending_text`` được giữ làm ``pending_text_hint`` (gợi ý ý định còn dở
+        cho lượt Root kế tiếp quyết định RESUME hay RETIRE, không phát lại nguyên văn).
+        """
+        store = OpenLoopStore(default_ttl_seconds=ttl_seconds)
+        return store.capture_from_interrupt(
+            self,
+            session_id=session_id,
+            source_move_id=source_move_id or self.interrupted_turn_id,
+            source_generation=source_generation,
+            intent=intent,
+            interruption_kind=interruption_kind,
+            now=self.timestamp,
         )
 
     def to_meta(self) -> dict[str, object]:

@@ -140,7 +140,7 @@ class _FakeResidueClient:
         return {"choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]}
 
 
-def test_private_mind_pool_uses_only_dedicated_residue_client():
+def test_private_mind_pool_does_not_use_retired_residue_client():
     residue = _FakeResidueClient()
     service = SimpleNamespace(
         inner_client=None,
@@ -168,12 +168,12 @@ def test_private_mind_pool_uses_only_dedicated_residue_client():
             ]
         }
     )
-    assert result is not None
-    assert len(residue.calls) == 1
-    assert pool.residue_metadata()["model"] == "gemma-4-31b-it"
+    assert result is None
+    assert residue.calls == []
+    assert pool.residue_metadata()["configured"] is False
 
 
-def test_process_manager_builds_gemma_residue_curator(monkeypatch, tmp_path):
+def test_process_manager_does_not_build_retired_residue_curator(monkeypatch, tmp_path):
     monkeypatch.setenv("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "1")
     monkeypatch.setenv("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY", "test-key")
     monkeypatch.setenv("ERIS_PRIVATE_RESIDUE_CURATOR_MODEL", "gemma-4-31b-it")
@@ -182,8 +182,7 @@ def test_process_manager_builds_gemma_residue_curator(monkeypatch, tmp_path):
         project_root=str(tmp_path),
     )
     client = manager.build_residue_curator_client()
-    assert client is not None
-    assert client.model_name == "gemma-4-31b-it"
+    assert client is None
 
 
 def test_bundled_runtime_settings_enable_diary_and_residue():
@@ -191,7 +190,7 @@ def test_bundled_runtime_settings_enable_diary_and_residue():
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["version"] >= 18
     assert data["architecture"]["inner_diary_model_enabled"] is True
-    assert data["architecture"]["private_residue_curator_enabled"] is True
+    assert data["architecture"]["private_residue_curator_enabled"] is False
 
 
 def test_v17_settings_migration_turns_inner_diary_on_once():
@@ -204,4 +203,4 @@ def test_v17_settings_migration_turns_inner_diary_on_once():
     assert changed is True
     assert migrated["version"] == 18
     assert migrated["architecture"]["inner_diary_model_enabled"] is True
-    assert migrated["architecture"]["private_residue_curator_enabled"] is True
+    assert migrated["architecture"]["private_residue_curator_enabled"] is False

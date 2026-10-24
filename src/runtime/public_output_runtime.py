@@ -1288,6 +1288,27 @@ class PublicOutputRuntimeMixin:
 
         if event is not None:
             self.pending_speech_interrupt_event = event
+            # Tạo SuspendedMove lưu vào OpenLoopStore ngay khi bắt được sự kiện user cắt ngang
+            # để bảo toàn phần chưa nói dưới dạng hint cho lượt Root kế tiếp.
+            try:
+                from runtime.open_loop_store import ensure_open_loop_store
+                sid = str(
+                    getattr(self, "conversation_id", "")
+                    or getattr(self, "thread_id", "")
+                    or "foreground:primary"
+                ).strip()[:180]
+                last_turn = getattr(self, "last_agent_turn", None)
+                last_intent = str(last_turn.get("intent", "") if isinstance(last_turn, dict) else "")
+                last_move_id = str(last_turn.get("move_id", "") if isinstance(last_turn, dict) else "")
+                ensure_open_loop_store(self).capture_from_interrupt(
+                    event,
+                    session_id=sid,
+                    source_move_id=last_move_id or str(getattr(event, "interrupted_turn_id", "") or ""),
+                    intent=last_intent,
+                    now=float(getattr(event, "timestamp", time.time()) or time.time()),
+                )
+            except Exception as exc:
+                self.logger.debug("[open-loop] capture in _capture_speech_interrupt_for_user failed: %s", exc)
             self.logger.info(
                 "[interrupt] user cut speech turn=%s seq=%s spoken=%r pending=%r",
                 event.interrupted_turn_id,

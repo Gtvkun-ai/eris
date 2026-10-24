@@ -816,6 +816,8 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "relationship_context",
         "previous_public_excerpt",
         "interrupt_context",
+        "open_loop_hints",
+        "recent_interaction_act_receipts",
         "memory_context",
         "grounding_context",
         "language_hint",

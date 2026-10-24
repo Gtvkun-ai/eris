@@ -30,6 +30,13 @@ artifact, synth chậm, lỗi/hủy và generation bị preempt). Đây chưa ph
 
 ## 1. Yêu cầu sản phẩm và ưu tiên cần giữ
 
+**Bằng chứng latency mới ngày 18/10:** hai lượt 10:47–10:51 chờ khoảng 98 giây
+trước request ElevenLabs; synth chỉ mất 3,4–3,8 giây. Probe tái hiện refresh
+Firebase thử 8 IPv6 không kết nối được trước IPv4, với timeout 12 giây mỗi địa
+chỉ trong source. Kết quả thay thế suy đoán synth/text-sync gây toàn bộ khoảng
+chờ ở hai lượt đó; chưa sửa runtime. Xem
+[điều tra token/IPv6](2026-10-18-elevenlabs-token-ipv6-latency.md).
+
 - **Eris phải có âm thanh khi nói.** User trực tiếp bác phương án chỉ hiện text
   khi dịch lỗi (nguồn dòng 603). Kênh hiển thị tiếng Việt và kênh TTS tiếng Nhật
   có hợp đồng riêng; fallback cần tôn trọng giọng/ngôn ngữ downstream.
@@ -409,3 +416,172 @@ không phải lời writer trích từ log. Script thử nằm trong Temp, khôn
 Mỗi biến thể chỉ sinh một lần, không khóa seed: biến thiên TTS có thể ảnh hưởng
 so sánh. Chưa có người nghe chấm chất lượng; không khẳng định B hay hơn, hoặc
 ngang giọng Nhật. Probe không sửa source/config runtime, không build lại.
+
+## 13. Đối chiếu module nghiên cứu/eval ngày 18/10/2026
+
+Đã đọc source, call site và chạy kiểm tra offline cho `domain`, `evals`,
+`experiments`, `integration`, `integrations`. Chi tiết:
+[nghiên cứu năm module](2026-10-18-five-module-study.md).
+
+- Golden Mentor V85 đạt 2/20; 18 ca chỉ lệch `primary_role`. Source hiện để
+  Mentor cung cấp evidence, AdaptiveCompanion sở hữu stance/delivery. Kết luận
+  này thay thế kỳ vọng cũ trong golden rằng Mentor còn tự chọn role.
+- Guard chống reuse giữa split của emergence bị vô hiệu cho cùng nội dung đổi
+  split vì fingerprint chứa `split`; đã tái hiện offline. Không coi docstring
+  chống reuse là bằng chứng holdout độc lập.
+- V57 tắt TTS và text-audio sync; không dùng kết quả harness để xác nhận yêu cầu
+  chữ chờ `audio_start`. Chat probe còn chỉ đếm main, bỏ surface; đã tái hiện
+  surface success nhưng report call delta 0 bằng object giả, chưa phải log live.
+- Nhóm test liên quan: 45 qua, 5 lỗi; báo cáo phân biệt lỗi lookup fixture với
+  assertion chưa điều tra nguyên nhân gốc. Chưa sửa hay triển khai runtime.
+
+## 14. Bản đồ module runtime ngày 18/10/2026
+
+Theo yêu cầu chỉ nghiên cứu phần tham gia Eris runtime, đã lập
+[bản đồ runtime có sơ đồ](2026-10-18-runtime-module-map.md) cho các thư mục
+Live2D, LLM, memory, native, embedding, parser và powers; đối chiếu thêm các
+thư mục dữ liệu/code lịch sử trong ảnh.
+
+- MiniLM local được memory ưu tiên khi không override model; đây là embedding,
+  không phải local chat model. Live2D là renderer nhận stage/audio event.
+- Parser chuyển contract về Decision, không thay thế evidence/receipt checking.
+- Powers discovery tìm 8 metadata nhưng cả 8 thiếu SKILL.md; probe offline
+  activate_skill trả lỗi thiếu file. Chưa kết luận mọi tool/coding path hỏng.
+- Không suy toàn bộ native monitor đang chạy từ implementation; báo cáo ghi rõ
+  các caller production tìm thấy. Đây là đối chiếu source, chưa chạy live.
+
+## 15. Probe live key Gemini/Groq ngày 23/10/2026
+
+Theo yêu cầu kiểm tra key của user, đã đọc credential hiện tại qua resolver
+`src/eris_secrets.py` từ `Documents/GitHub/eris/config/secrets.json`, gộp trùng
+và gọi trực tiếp endpoint chính thức bằng prompt ngắn `Reply only OK.`.
+Không sửa source, model routing, credential hoặc cấu hình runtime.
+
+- Hai pool có 8 key riêng biệt mỗi bên; cả 16 key gọi danh sách model HTTP 200.
+  Đây là bằng chứng xác thực, không tự chứng minh còn quota sinh nội dung.
+- Groq: cả 8 key sinh text thành công HTTP 200 với `openai/gpt-oss-20b`.
+  Probe `llama-3.1-8b-instant` trước đó đều trả 404 `model_not_found`, và model
+  này không có trong danh sách trả về của key chính. Không coi lỗi model này
+  là bằng chứng key hết hạn/bị thu hồi, hoặc tự đổi routing dựa trên probe.
+- Gemini: key speech chính và fallback `[0]`, `[1]`, `[3]`, `[4]`, `[5]`
+  sinh text HTTP 200 với `gemini-2.5-flash`. Fallback `[2]`, `[6]` xác thực
+  thành công nhưng model này trả 404, thông báo không còn dành cho user mới.
+- Fallback Gemini `[6]` sinh text HTTP 200 với `gemini-3.1-flash-lite`.
+  Fallback `[2]` gặp 503 khi thử `gemini-3.8-flash` và ReadTimeout khi thử
+  `gemini-3.1-flash-lite`; chưa xác nhận sinh được nội dung với key này.
+  Lần thử `gemini-3.8-flash` của fallback `[6]` cũng timeout trước khi lite qua.
+
+Kết quả tại thời điểm probe: Groq 8/8 và Gemini 7/8 đã sinh text; Gemini còn
+1 key xác thực được nhưng chưa xác nhận generation. Bổ sung/thu hẹp cách hiểu
+ở các mục lịch sử: có key hoặc list model thành công không bảo đảm gọi được
+model cụ thể; lỗi 404 model, 503 và timeout không đủ kết luận key đã chết.
+Probe không kiểm quota còn lại, tải kéo dài, TTS hoặc bản portable đang chạy.
+
+Receipt đã che credential, chỉ lưu tên biến và fingerprint SHA-256 8 ký tự:
+`C:/Users/Gtvkun/AppData/Local/Temp/eris-key-health-20261023.json`.
+
+### Phân công hiện tại đối chiếu tiếp ngày 23/10
+
+Đã đọc `vision.py`, `llm/process_manager.py`, `private_mind_model_adapter.py`,
+`private_mind_loop.py`, `speech_localizer.py`, `tts_engine.py` và settings lưu
+tại `Documents/ErisLive/config/runtime_settings.json`. Không gọi load settings
+có migration/ghi file; đây là đọc source/cấu hình, chưa phải quan sát request live.
+
+- Gemini pool cấp key cho Gemma `gemma-4-31b-it` của private residue curator:
+  gom, bỏ trùng và nén residue khi đủ điều kiện. Flag curator đang bật.
+  Nhãn log/comment Thought-Shards cũ không chứng minh còn điền năm ô diary;
+  private mind hiện render panel từ state và dùng DeepSeek inner cho synthesis.
+- Audio chính trong settings ErisLive là ElevenLabs, tiếng Nhật. Giá trị
+  `ERIS_TTS_PROVIDER=gemini` trong `.env` chỉ là bootstrap, không thắng provider
+  đã lưu. Gemini TTS còn làm fallback khi ElevenLabs lỗi (flag mặc định bật).
+  Transcript localizer cấu hình DeepSeek, không dùng Gemini cho việc dịch này.
+- Groq social parser/critic có implementation nhưng builder ưu tiên DeepSeek
+  observer/critic; cả hai worker có key và DS2API đang bật. Vì vậy model Llama
+  cũ trong settings không tự chứng minh observer hiện gọi Groq.
+- Vision Groq cấu hình `qwen/qwen3.6-27b` nhưng `ERIS_VISION_API_ENABLED=0`;
+  DDS và chat format fallback cũng tắt. Legacy model lanes tắt nên social
+  fallback cũ không khởi tạo dù setting social fallback lưu là bật.
+
+Phần này thu hẹp hệ quả của probe mục 15: Groq key sống/model Llama cũ lỗi
+không đồng nghĩa lane chat chính hiện hỏng, và test text Gemini thành công
+không xác nhận Gemma curator hoặc synthesis audio đã chạy thành công live.
+
+## 16. Audit sâu Gemma ngày 23/10/2026
+
+Theo yêu cầu mới của user, đã lần từ builder tới residue capture, trigger,
+request, validation, persistence và consumer; chi tiết và giới hạn:
+[audit Gemma runtime](2026-10-23-gemma-runtime-audit.md).
+
+- **Thu hẹp phát biểu “Gemma đang gom nội tâm” ở mục 15:** đó là phân công
+  source/config. Log portable có client-ready, chưa có receipt xác nhận Gemma
+  đã generation thành công trong phiên gần nhất. File residue ErisLive tìm
+  được cập nhật từ tháng 8, 64/64 entry ghi deterministic; không áp snapshot
+  cũ này cho phiên tháng 10 hoặc suy key/model đã chết.
+- **Đính chính hiệu quả “giữ continuity để nghĩ tiếp”:** loop đặt
+  `residue_continuity` vào dossier nhưng 10 prompt fragment và 1 prompt
+  synthesis đều bỏ field này. Sentinel offline xác nhận; recent_thoughts
+  đối chứng vẫn đi qua. Chưa chứng minh Gemma continuity đang ảnh hưởng model.
+- Mode ai_orchestrated hiện cấu hình dùng panel AI state riêng, không phải
+  renderer diary legacy đọc residue. Không quy nội dung panel cho Gemma.
+- Guard ID/provenance chặn diary từ nguồn thuần unprocessed nhưng chưa kiểm
+  nghĩa bản nén. Probe synthetic dùng ID thật với text không liên quan vẫn
+  được nhận; đây là giới hạn guard, không phải hallucination live đã quan sát.
+- Trigger batch/salience vượt điều kiện interval 600s; không coi 10 phút là
+  cooldown cứng. Fallback deterministic duy trì diary và che khuất nguyên nhân
+  remote trước đó trong snapshot last_curator cuối cùng.
+
+Test curator hiện có 7/7 qua; probe hoàn toàn offline. Bốn module curator/loop/
+adapter/process-manager trùng SHA-256 bản portable. Chưa sửa/build/restart hay
+gọi Gemma live mới; không khẳng định bản chạy đã tích hợp các thay đổi mới.
+
+## 17. User yêu cầu bỏ Gemini/Gemma/Groq ngày 23/10/2026
+
+Ủy quyền mới trong phiên: “bỏ hết đi. chừa key trống đó thôi. cứ dọn đi”.
+Phạm vi bao gồm Gemini TTS fallback theo trao đổi ngay trước đó. **Thay thế
+phân công hiện tại ở mục 15/16:** runtime không dùng ba provider này nữa.
+
+- Bỏ Gemini client implementation, Groq/Gemini provider builders và automatic
+  fallback assembly. Compatibility entry point còn lại báo provider retired.
+  Guard kiểm provider/model/URL cả lúc dựng client lẫn trước HTTP, kể cả model
+  qua proxy và client clone bị đổi model sau khi dựng.
+- Pool Gemini/Groq không đọc key và trả rỗng. Giữ tên ô key với string/list
+  trống trong `config/secrets.json` của dev và portable; `.env`/templates dọn
+  bootstrap cũ. Không xóa backup/log lịch sử hoặc thu hồi key trên nhà cung cấp.
+- Private residue giữ capture, persistence và deterministic consolidation;
+  bỏ remote curator adapter/thread. Settings cũ hoặc live patch không bật lại
+  curator. DeepSeek inner/observer/critic và các quyền public-speech giữ nguyên.
+- TTS chỉ dùng ElevenLabs cùng local fallback hiện có; bỏ Google SDK synthesis,
+  Google romaji và Google localizer. Transcript localizer dùng DeepSeek và
+  chặn endpoint retired ngay ở request trực tiếp. Bỏ dependency google-genai.
+- Legacy weather handler từng gửi Google generateContent và có thể mượn
+  `ERIS_REMOTE_API_KEY`: đã bỏ request, capability trả unavailable. Không thêm
+  provider thời tiết mới. Đây là đường phụ reviewer tìm thấy, không phải
+  bằng chứng đã có credential truyền nhầm live.
+- Settings UI không chọn provider/model Gemini/Groq; các tab key cũ được giữ
+  trống và vô hiệu hóa. Bỏ card/login Gemini trong Manager, lời mô tả Gemma
+  trên panel và hành vi launcher mirror main key sang GEMINI_API_KEY.
+
+Kiểm chứng mới:
+
+- 23 regression retirement qua (đã thấy RED trước sửa); suite cuối liên quan
+  provider, diary, DeepSeek, settings, language switch, playback/lip-sync,
+  prosody, localization, observer singleflight và launcher: **162 passed**.
+- Nhóm worker rộng hơn có ba failure tái hiện với source trước task qua import
+  overlay: `test_worker_spec_uses_exact_role_environment`,
+  `test_surface_worker_ignores_example_placeholder`,
+  `test_research_client_no_longer_falls_back_to_main_or_fallback` trong
+  `test_deepseek_multi_worker_base.py`. Không quy chúng cho đợt dọn hoặc sửa
+  worker ngoài phạm vi. Không tuyên bố toàn suite xanh.
+- Dotnet Debug build: 0 warning/0 error. Godot Windows debug export và
+  PyInstaller Manager build exit 0. Export đầu thiếu thư mục staging đã được
+  tạo rồi chạy lại thành công; artifact cuối đã đối chiếu hash.
+- Đã đồng bộ 18 source file thay đổi sang `Documents/eris` sau khi kiểm hash
+  bản đích trùng source trước sửa; giữ các thay đổi đang dở khác. Native exe,
+  pck/.NET data và Manager/Setup mới đã triển khai. Settings lưu trong ErisLive
+  giữ ElevenLabs/profile ngôn ngữ, curator tắt.
+- Smoke portable chỉ import/dựng client, không gửi request: companion,
+  observer, critic vẫn là worker DeepSeek; TTS ElevenLabs, localizer DeepSeek;
+  pool Gemini/Groq 0/0 và active key slots rỗng ở cả dev/portable.
+
+Chưa mở phiên chat hoặc phát audio live sau triển khai, chưa đo latency/chất âm.
+Kế hoạch và ledger: [retirement plan](../superpowers/plans/2026-10-23-retire-gemini-groq.md).

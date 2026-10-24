@@ -11,6 +11,12 @@ lớp state machine chung:
 
 Nhờ vậy coordinator không còn tự ghép ``ledger.record`` rồi ``tts.cancel`` ở
 nhiều chỗ, một nghi thức rất dễ tạo ra audio zombie sau interrupt.
+
+Nâng cấp Incremental Dialogue (Text-first):
+Khi phân loại một từ ngắn như "ừ" trong ``_strategy_for_text``, xét thêm ngữ cảnh
+câu đang phát trong ``InterruptLedger`` (hoặc ``previous_assistant_text`` được truyền
+vào): nếu Eris vừa đặt câu hỏi xác nhận, "ừ" là ``yield`` (câu trả lời thực sự)
+chứ không phải ``continue_short``.
 """
 
 from __future__ import annotations
@@ -76,19 +82,20 @@ class VoiceManager:
         *,
         timestamp: float | None = None,
         reason: str = "user_interrupt",
+        previous_assistant_text: str = "",
     ) -> BargeInDecision:
         """Commit interrupt từ chat hoặc ASR final/partial đủ nghĩa.
 
         Backchannel là ngoại lệ quan trọng: caller cũ có thể gọi method này
         trước khi classifier ở tầng chat chạy. Vì vậy chính VoiceManager phải
         chặn ``ừm/đúng rồi/...`` khỏi ``supersede_all()`` để không có đường
-        hard-cancel audio ngoài ý muốn.
+        hard-cancel audio ngoài ý muốn, TRỪ KHI Eris vừa đặt câu hỏi xác nhận.
         """
 
         text = " ".join(str(user_text or "").split()).strip()
         if not text:
             return self.interrupt_signal(reason=reason)
-        strategy = self._strategy_for_text(text)
+        strategy = self._strategy_for_text(text, previous_assistant_text=previous_assistant_text)
         if strategy == "continue_short":
             return BargeInDecision(
                 committed=False,
@@ -206,9 +213,19 @@ class VoiceManager:
             self._vad_started_at = 0.0
             self._partial_text = ""
 
-    def _strategy_for_text(self, text: str) -> str:
-        # Chung classifier với UDP Chat; không tồn tại whitelist thứ hai.
-        decision = classify_interrupt(text, final=True)
+    def _strategy_for_text(self, text: str, *, previous_assistant_text: str = "") -> str:
+        # Chung classifier với UDP Chat; xét thêm câu Eris đang nói trong ledger
+        # để phân biệt "ừ" trả lời câu hỏi với "ừ" phụ họa khi đang giảng bài.
+        context_text = str(previous_assistant_text or "").strip()
+        if not context_text:
+            active_span = self.ledger.active() if self.ledger is not None else None
+            if active_span is not None:
+                context_text = str(getattr(active_span, "text", "") or "")
+        decision = classify_interrupt(
+            text,
+            final=True,
+            previous_assistant_text=context_text,
+        )
         if decision.kind == InterruptKind.BACKCHANNEL:
             return "continue_short"
         if _CORRECTION_RE.search(text):

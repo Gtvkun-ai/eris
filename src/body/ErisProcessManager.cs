@@ -16,7 +16,7 @@ public sealed class ErisServiceConfig
 	public string TtsLanguage { get; init; } = "ja";
 	public string TtsQuality { get; init; } = "high";
 	public string DefaultRemoteApiKey { get; init; } = "";
-	public string RemoteApiProvider { get; init; } = "gemini";
+	public string RemoteApiProvider { get; init; } = "deepseek_web";
 	public string RemoteApiBaseUrl { get; init; } = "";
 	public string RemoteApiModelName { get; init; } = "";
 	public bool TutorEnabled { get; init; } = true;
@@ -195,16 +195,7 @@ public sealed class ErisProcessManager
 		};
 	}
 
-	private static bool ShouldMirrorRemoteKeyToGemini(ErisServiceConfig config)
-	{
-		string provider = (config.RemoteApiProvider ?? "").Trim().ToLowerInvariant();
-		if (provider == "gemini")
-			return true;
 
-		string baseUrl = (config.RemoteApiBaseUrl ?? "").Trim().ToLowerInvariant();
-		return baseUrl.Contains("generativelanguage.googleapis.com")
-			|| baseUrl.Contains("googleapis.com");
-	}
 
 	private void PopulateVisionEnvironment(ProcessStartInfo startInfo, ErisServiceConfig config)
 	{
@@ -229,7 +220,7 @@ public sealed class ErisProcessManager
 		startInfo.Environment["ERIS_TTS_EVENT_PAYLOAD"] = "1";
 		// Settings panel da load secrets/user settings vao config truoc khi start.
 		// Gan truc tiep de Restart ap dung ngay ca khi user chua bam Save.
-		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = string.IsNullOrWhiteSpace(config.RemoteApiProvider) ? "gemini" : config.RemoteApiProvider.Trim();
+		startInfo.Environment["ERIS_REMOTE_PROVIDER"] = string.IsNullOrWhiteSpace(config.RemoteApiProvider) ? "deepseek_web" : config.RemoteApiProvider.Trim();
 		startInfo.Environment["ERIS_REMOTE_BASE_URL"] = config.RemoteApiBaseUrl ?? "";
 		startInfo.Environment["ERIS_REMOTE_MODEL"] = config.RemoteApiModelName ?? "";
 		startInfo.Environment["ERIS_LOCAL_STYLE_REWRITE_ENABLED"] = "0";
@@ -243,8 +234,7 @@ public sealed class ErisProcessManager
 		if (!string.IsNullOrWhiteSpace(config.DefaultRemoteApiKey))
 		{
 			startInfo.Environment["ERIS_REMOTE_API_KEY"] = config.DefaultRemoteApiKey;
-			if (ShouldMirrorRemoteKeyToGemini(config))
-				startInfo.Environment["GEMINI_API_KEY"] = config.DefaultRemoteApiKey;
+
 		}
 	}
 

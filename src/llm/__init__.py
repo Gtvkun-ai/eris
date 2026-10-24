@@ -1,4 +1,4 @@
-from .client import GeminiClient, OpenAICompatibleClient
+from .client import OpenAICompatibleClient
 from .contracts import (
     CHAT_RULES_PROMPT,
     DECISION_GBNF,
@@ -14,7 +14,6 @@ from .service import FormatViolationException, LlmService
 
 __all__ = [
     "DECISION_GBNF",
-    "GeminiClient",
     "OpenAICompatibleClient",
     "LlmService",
     "FormatViolationException",

@@ -44,7 +44,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "inner_diary_model_enabled": True,
         "inner_diary_thought_shards_enabled": True,
         "inner_diary_deep_reflection_enabled": True,
-        "private_residue_curator_enabled": True,
+        "private_residue_curator_enabled": False,
         "background_tutor_enabled": False,
         "event_trace_enabled": True,
     },
@@ -171,7 +171,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "provider": "elevenlabs",
         "elevenlabs_voice_id": "",
         "elevenlabs_voice_id_vi": "aHC3XZOMg3HZuXVYK6hy",
-        "elevenlabs_voice_id_ja": "",
+        "elevenlabs_voice_id_ja": "fUjY9K2nAIwlALOwSiwc",
         "elevenlabs_model": "eleven_v3",
         "voice_director_enabled": False,
         # Project Eris dùng bubble Việt + voice Nhật theo mặc định.
@@ -990,7 +990,7 @@ class RuntimeSettingsStore:
             # tắt lại bằng Settings/env nếu thật sự muốn.
             architecture = dict(out.get("architecture") or {}) if isinstance(out.get("architecture"), Mapping) else {}
             architecture["inner_diary_model_enabled"] = True
-            architecture.setdefault("private_residue_curator_enabled", True)
+            architecture["private_residue_curator_enabled"] = False
             out["architecture"] = architecture
             migrated = True
 
@@ -1190,6 +1190,11 @@ def _coerce_setting(path: str, value: Any, expected: Any) -> tuple[bool, Any]:
             normalized = value
     except Exception:
         return False, expected
+
+    if path == "architecture.private_residue_curator_enabled":
+        return True, False
+    if path == "tts.provider":
+        return True, "elevenlabs"
 
     # Whitelist/range theo field. Schema kiểu dữ liệu thôi chưa đủ, vì con người
     # rất sáng tạo trong việc nhập 9000 worker rồi hỏi sao máy nóng.

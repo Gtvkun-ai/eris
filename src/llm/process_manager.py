@@ -1,7 +1,8 @@
 import os
 
 from eris_secrets import apply_secrets_to_environ, get_provider_profile, get_secret
-from .client import GeminiClient, OpenAICompatibleClient, ChainedFallbackClient
+from .client import OpenAICompatibleClient, ChainedFallbackClient
+from .provider_policy import retired_provider
 from .deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_STRONG_MODEL, normalize_model
 from .key_pool import get_key_pool
 from .model_catalog import DEFAULT_OPEN_MODEL_ID
@@ -69,33 +70,8 @@ class RemoteModelProcessManager:
             )
             return client
 
-        if provider == "gemini":
-            base_url = (
-                str(remote_profile.get("base_url") or "").strip()
-                or os.environ.get(
-                    "ERIS_REMOTE_BASE_URL",
-                    "https://generativelanguage.googleapis.com/v1beta",
-                ).strip()
-            )
-            model_name = (
-                str(remote_profile.get("model") or "").strip()
-                or str(remote_profile.get("model_name") or "").strip()
-                or os.environ.get("ERIS_REMOTE_MODEL", "").strip()
-                or os.environ.get("GEMINI_MODEL", "").strip()
-                or DEFAULT_OPEN_MODEL_ID
-            )
-            api_key = (
-                str(remote_profile.get("api_key") or "").strip()
-                or main_pool_key
-                or get_secret("ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
-            )
-            if not api_key:
-                raise RuntimeError("Remote Gemini dang bat nhung chua co GEMINI_API_KEY hoac ERIS_REMOTE_API_KEY.")
-            self.logger.info("Dung Gemini API tai %s voi model %s", base_url, model_name)
-            try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=main_pool)
-            except ValueError as exc:
-                raise RuntimeError(f"Loi API key Gemini: {exc}") from exc
+        if retired_provider(provider):
+            raise ValueError("Gemini/Gemma/Groq providers are retired from Eris runtime.")
 
         if provider == "deepseek":
             base_url = (
@@ -193,19 +169,11 @@ class RemoteModelProcessManager:
                 or str(remote_profile.get("model_name") or "").strip()
                 or os.environ.get("ERIS_REMOTE_MODEL", "gpt-4o-mini").strip()
             )
-            is_groq_remote = provider == "groq" or "api.groq.com" in base_url.lower()
-            if is_groq_remote:
-                api_key = (
-                    str(remote_profile.get("api_key") or "").strip()
-                    or main_pool_key
-                    or get_secret("ERIS_REMOTE_API_KEY", "ERIS_GROQ_API_KEY", "OPENAI_API_KEY")
-                )
-            else:
-                api_key = (
-                    str(remote_profile.get("api_key") or "").strip()
-                    or main_pool_key
-                    or get_secret("ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
-                )
+            api_key = (
+                str(remote_profile.get("api_key") or "").strip()
+                or main_pool_key
+                or get_secret("ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            )
             if not api_key:
                 raise RuntimeError("Remote API dang bat nhung chua co ERIS_REMOTE_API_KEY hoac provider API key.")
             self.logger.info("Dung OpenAI-compatible API tai %s voi model %s", base_url, model_name)
@@ -222,76 +190,10 @@ class RemoteModelProcessManager:
             raise RuntimeError(f"Loi API key remote: {exc}") from exc
 
     def _speech_api_requested(self) -> bool:
-        apply_secrets_to_environ()
-        if self._env_flag("ERIS_SPEECH_API_ENABLED", "0"):
-            return True
-        if get_secret("ERIS_SPEECH_API_KEY", "ERIS_STYLE_API_KEY", "OPENAI_SPEECH_API_KEY", "GEMINI_SPEECH_API_KEY"):
-            return True
-        if os.environ.get("ERIS_SPEECH_PROVIDER", "").strip():
-            return True
-        profile_provider = os.environ.get("ERIS_SPEECH_PROVIDER", os.environ.get("ERIS_REMOTE_PROVIDER", "gemini")).strip().lower()
-        return bool(get_provider_profile(profile_provider, slot=os.environ.get("ERIS_SPEECH_SLOT", "speech")))
+        return False
 
     def _build_speech_client(self):
-        apply_secrets_to_environ()
-        provider = os.environ.get("ERIS_SPEECH_PROVIDER", os.environ.get("ERIS_REMOTE_PROVIDER", "gemini")).strip().lower()
-        slot = os.environ.get("ERIS_SPEECH_SLOT", "speech").strip() or "speech"
-        profile = get_provider_profile(provider, slot=slot)
-        api_key = (
-            str(profile.get("api_key") or "").strip()
-            or get_secret("ERIS_SPEECH_API_KEY", "ERIS_STYLE_API_KEY")
-        )
-
-        if provider == "gemini":
-            remote_provider = os.environ.get("ERIS_REMOTE_PROVIDER", "").strip().lower()
-            remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip()
-            remote_model = os.environ.get("ERIS_REMOTE_MODEL", "").strip()
-            remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url.lower()
-
-            api_key = api_key or get_secret("GEMINI_SPEECH_API_KEY", "GEMINI_API_KEY")
-            if not api_key and remote_is_gemini:
-                api_key = get_secret("ERIS_REMOTE_API_KEY")
-            base_url = (
-                str(profile.get("base_url") or "").strip()
-                or os.environ.get(
-                    "ERIS_SPEECH_BASE_URL",
-                    remote_base_url if remote_is_gemini and remote_base_url else "https://generativelanguage.googleapis.com/v1beta",
-                ).strip()
-            )
-            model_name = (
-                str(profile.get("model") or "").strip()
-                or str(profile.get("model_name") or "").strip()
-                or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-                or os.environ.get("GEMINI_MODEL", "").strip()
-                or (remote_model if remote_is_gemini and remote_model else "")
-                or "gemini-2.5-flash"
-            )
-            if not api_key:
-                raise RuntimeError("Speech Gemini dang bat nhung chua co ERIS_SPEECH_API_KEY hoac GEMINI_API_KEY.")
-            self.logger.info("Dung Gemini speech API tai %s voi model %s", base_url, model_name)
-            try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
-            except ValueError as exc:
-                raise RuntimeError(f"Loi API key speech Gemini: {exc}") from exc
-
-        api_key = api_key or get_secret("OPENAI_SPEECH_API_KEY", "ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
-        base_url = (
-            str(profile.get("base_url") or "").strip()
-            or os.environ.get("ERIS_SPEECH_BASE_URL", os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.openai.com/v1")).strip()
-        )
-        model_name = (
-            str(profile.get("model") or "").strip()
-            or str(profile.get("model_name") or "").strip()
-            or os.environ.get("ERIS_SPEECH_MODEL", "").strip()
-            or os.environ.get("ERIS_REMOTE_MODEL", DEFAULT_OPEN_MODEL_ID).strip()
-        )
-        if not api_key:
-            raise RuntimeError("Speech API dang bat nhung chua co ERIS_SPEECH_API_KEY.")
-        self.logger.info("Dung OpenAI-compatible speech API tai %s voi model %s", base_url, model_name)
-        try:
-            return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("groq"))
-        except ValueError as exc:
-            raise RuntimeError(f"Loi API key speech remote: {exc}") from exc
+        return None
 
     def build_deepseek_worker_client(self, role: str, *, required: bool = False):
         """Build/cache one DeepSeek Web worker selected by its gateway API key.
@@ -503,66 +405,8 @@ class RemoteModelProcessManager:
         return client
 
     def build_residue_curator_client(self):
-        """Dựng Gemma private lane cho Residue Curator.
-
-        Gemma gom/dedupe/nén residue nội tâm. Nó không có quyền public speech hay
-        apply identity. Thiếu key thì residue vẫn retention theo deterministic
-        fallback.
-        """
-        apply_secrets_to_environ()
-        if not self._env_flag("ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", "1"):
-            return None
-        provider = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower()
-        model_name = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_MODEL", DEFAULT_OPEN_MODEL_ID) or DEFAULT_OPEN_MODEL_ID).strip()
-
-        if provider == "gemini":
-            pool = get_key_pool("gemini")
-            remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
-            api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY", "GEMINI_API_KEY") or _bootstrap_pool_key(pool)
-            if not api_key and remote_provider == "gemini":
-                api_key = get_secret("ERIS_REMOTE_API_KEY")
-            if not api_key:
-                self.logger.info(
-                    "Gemma private lane chua co key; residue retention + raw diary fallback van hoat dong."
-                )
-                return None
-            base_url = str(os.environ.get(
-                "ERIS_PRIVATE_RESIDUE_CURATOR_BASE_URL",
-                "https://generativelanguage.googleapis.com/v1beta",
-            ) or "https://generativelanguage.googleapis.com/v1beta").strip()
-            try:
-                client = GeminiClient(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model_name=model_name,
-                    key_pool=get_key_pool("gemini"),
-                )
-                self.logger.info("Gemma Thought-Shards/Residue san sang: model=%s", model_name)
-                return client
-            except ValueError as exc:
-                self.logger.warning("Khong dung duoc Gemma Residue Curator: %s", exc)
-                return None
-
-        # Có thể override sang OpenAI-compatible cho deployment riêng, nhưng
-        # không có implicit fallback: user yêu cầu một curator rõ owner.
-        base_url = str(os.environ.get("ERIS_PRIVATE_RESIDUE_CURATOR_BASE_URL", "") or "").strip()
-        api_key = get_secret("ERIS_PRIVATE_RESIDUE_CURATOR_API_KEY")
-        if not (base_url and api_key and model_name):
-            self.logger.info("Residue Curator provider=%s chua du cau hinh.", provider)
-            return None
-        try:
-            client = OpenAICompatibleClient(
-                base_url=base_url,
-                api_key=api_key,
-                model_name=model_name,
-                key_pool=None,
-                provider_circuit_id=f"{base_url.rstrip('/')}#residue_curator",
-            )
-            self.logger.info("Residue Curator san sang: provider=%s model=%s", provider, model_name)
-            return client
-        except ValueError as exc:
-            self.logger.warning("Khong dung duoc Residue Curator: %s", exc)
-            return None
+        """Residue retention is deterministic; no remote curator is started."""
+        return None
 
     def build_seed_client(self):
         """Dựng worker ``seed`` riêng cho premise chạy nền.
@@ -638,6 +482,9 @@ class RemoteModelProcessManager:
         if provider == "deepseek_web":
             provider = "deepseek"
 
+        if retired_provider(provider):
+            return None
+
         slot = os.environ.get("ERIS_CODING_SLOT", "coding").strip() or "coding"
         # Secrets files tend to use human/provider names (e.g. ``openai``), while
         # runtime normalization may call the same protocol ``openai_compatible``.
@@ -660,26 +507,7 @@ class RemoteModelProcessManager:
             return (not allow_local) and any(token in lowered for token in ("localhost", "127.0.0.1", "0.0.0.0"))
 
         try:
-            if provider == "gemini":
-                base_url = explicit_base or "https://generativelanguage.googleapis.com/v1beta"
-                model_name = (
-                    explicit_model
-                    or (os.environ.get("ERIS_REMOTE_MODEL", "").strip() if remote_provider == "gemini" else "")
-                    or os.environ.get("GEMINI_MODEL", "").strip()
-                    or "gemini-2.5-pro"
-                )
-                api_key = explicit_key or get_secret("GEMINI_API_KEY")
-                if not api_key and remote_provider == "gemini":
-                    api_key = get_secret("ERIS_REMOTE_API_KEY")
-                if not api_key:
-                    self.logger.info("Coding brain tat: chua co ERIS_CODING_API_KEY/GEMINI_API_KEY.")
-                    return None
-                if _reject_local(base_url):
-                    self.logger.warning("Coding brain tu choi local endpoint: %s", base_url)
-                    return None
-                client = GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=None)
-
-            elif provider == "deepseek":
+            if provider == "deepseek":
                 base_url = explicit_base or DEEPSEEK_BASE_URL
                 model_name = normalize_model(explicit_model or DEEPSEEK_STRONG_MODEL)
                 api_key = explicit_key or get_secret("DEEPSEEK_API_KEY")
@@ -738,179 +566,36 @@ class RemoteModelProcessManager:
         return self._build_remote_client()
 
     def build_style_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
-        # "style" is a runtime surface/repair capability, not a separate
-        # account owner. Route it through critic so users only manage one
-        # correction/format/style pool.
-        worker = self.build_deepseek_worker_client("critic")
-        if worker is not None:
-            return worker
-        if self._speech_api_requested():
-            return self._build_speech_client()
-        return None
+        return self.build_deepseek_worker_client("critic")
 
     def build_format_fallback_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
-        """Build an optional format-recovery chain without the retired aggregator.
-
-        A dedicated OpenAI-compatible fallback is used only when the user
-        explicitly supplies ERIS_CHAT_FALLBACK_BASE_URL and API key. Groq and
-        Gemini remain optional secondary providers when their own keys exist.
-        """
+        """Recover through the configured critic or an explicit active endpoint."""
         apply_secrets_to_environ()
         if not self._env_flag("ERIS_CHAT_FORMAT_FALLBACK_ENABLED", "1"):
             return None
-
-        chain = []
-        critic_worker = self.build_deepseek_worker_client("critic")
-        if critic_worker is not None:
-            chain.append(critic_worker)
-
+        critic = self.build_deepseek_worker_client("critic")
         if _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek")) == "deepseek_web":
-            if critic_worker is None:
-                self.logger.info(
-                    "DeepSeek Web format fallback tat: khong co critic worker; khong tu chen provider API khac."
-                )
-                return None
-            self.logger.info(
-                "DeepSeek Web format fallback dung critic worker cung gateway; external API fallback bi khoa."
-            )
-            return critic_worker
-
-        fallback_base = os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
-        fallback_key = get_secret("ERIS_CHAT_FALLBACK_API_KEY")
-        fallback_model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
-        if fallback_base and fallback_key and fallback_model:
-            pool = get_key_pool("groq") if "api.groq.com" in fallback_base.lower() else None
-            try:
-                chain.append(
-                    OpenAICompatibleClient(
-                        base_url=fallback_base,
-                        api_key=fallback_key,
-                        model_name=fallback_model,
-                        key_pool=pool,
-                    )
-                )
-            except ValueError as exc:
-                self.logger.warning("Bo qua fallback OpenAI-compatible: %s", exc)
-
-        groq_key = get_secret("ERIS_GROQ_API_KEY")
-        if groq_key and not any("api.groq.com" in str(getattr(c, "base_url", "")).lower() for c in chain):
-            try:
-                groq_pool = get_key_pool("groq")
-                chain.append(
-                    OpenAICompatibleClient(
-                        base_url=os.environ.get("ERIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip(),
-                        api_key=_bootstrap_pool_key(groq_pool) or groq_key,
-                        model_name=os.environ.get("ERIS_CHAT_GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant").strip(),
-                        key_pool=groq_pool,
-                    )
-                )
-            except ValueError as exc:
-                self.logger.warning("Bo qua fallback Groq: %s", exc)
-
-        remote_provider = _normalize_remote_provider(os.environ.get("ERIS_REMOTE_PROVIDER", "deepseek"))
-        remote_base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "").strip().lower()
-        remote_is_gemini = remote_provider == "gemini" or "generativelanguage.googleapis.com" in remote_base_url
-        gemini_key = get_secret("GEMINI_API_KEY", "ERIS_SPEECH_API_KEY")
-        if not gemini_key and remote_is_gemini:
-            gemini_key = get_secret("ERIS_REMOTE_API_KEY")
-        if gemini_key:
-            try:
-                chain.append(
-                    GeminiClient(
-                        base_url="https://generativelanguage.googleapis.com/v1beta",
-                        api_key=gemini_key,
-                        model_name="gemini-2.5-flash",
-                        key_pool=get_key_pool("gemini"),
-                    )
-                )
-            except Exception as exc:
-                self.logger.warning("Bo qua fallback Gemini: %s", exc)
-
+            return critic
+        base = os.environ.get("ERIS_CHAT_FALLBACK_BASE_URL", "").strip()
+        model = os.environ.get("ERIS_CHAT_FALLBACK_MODEL", "").strip()
+        key = get_secret("ERIS_CHAT_FALLBACK_API_KEY")
+        chain = [critic] if critic is not None else []
+        if base and model and key and not retired_provider(base_url=base, model=model):
+            chain.append(OpenAICompatibleClient(base_url=base, api_key=key, model_name=model, key_pool=None))
         if not chain:
-            self.logger.info("Chat fallback tat: khong co provider phu duoc cau hinh.")
             return None
-        if len(chain) == 1:
-            self.logger.info("Chat fallback 1 tang: %s", getattr(chain[0], "model_name", "?"))
-            return chain[0]
-        self.logger.info(
-            "Chat fallback chain: %s",
-            " -> ".join(str(getattr(c, "model_name", "?")) for c in chain),
-        )
-        return ChainedFallbackClient(chain, logger=self.logger)
+        return chain[0] if len(chain) == 1 else ChainedFallbackClient(chain, logger=self.logger)
 
 
-    def _build_groq_social_client(self, *, model_name: str, enabled_env: str):
-        """Dựng lane Groq riêng cho social parser/critic.
-
-        Lane dùng chung key pool Groq nhưng tách model, nên parser 8B không vô tình
-        chạy Qwen 32B và ngược lại. Không có key thì trả None, runtime deterministic
-        vẫn hoạt động bình thường.
-        """
-        apply_secrets_to_environ()
-        if not self._env_flag(enabled_env, "1"):
-            return None
-        pool = get_key_pool("groq")
-        api_key = _bootstrap_pool_key(pool) or get_secret("ERIS_GROQ_API_KEY")
-        if not api_key:
-            return None
-        base_url = os.environ.get("ERIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
-        try:
-            return OpenAICompatibleClient(
-                base_url=base_url,
-                api_key=api_key,
-                model_name=model_name,
-                key_pool=pool,
-            )
-        except ValueError as exc:
-            self.logger.warning("Không dựng được social lane %s: %s", model_name, exc)
-            return None
 
     def build_social_parser_client(self):
-        worker = self.build_deepseek_worker_client("observer")
-        if worker is not None:
-            return worker
-        model = (
-            os.environ.get("ERIS_SOCIAL_OBSERVER_MODEL")
-            or os.environ.get("ERIS_SOCIAL_PARSER_MODEL")
-            or "llama-3.1-8b-instant"
-        ).strip()
-        client = self._build_groq_social_client(
-            model_name=model,
-            enabled_env="ERIS_SOCIAL_OBSERVER_ENABLED",
-        )
-        if client is not None:
-            self.logger.info("Social parser client sẵn sàng: %s", model)
-        return client
+        return self.build_deepseek_worker_client("observer")
 
     def build_social_critic_client(self):
-        worker = self.build_deepseek_worker_client("critic")
-        if worker is not None:
-            return worker
-        model = (
-            os.environ.get("ERIS_SOCIAL_OBSERVER_DEEP_MODEL")
-            or os.environ.get("ERIS_SOCIAL_CRITIC_MODEL")
-            or "llama-3.3-70b-versatile"
-        ).strip()
-        client = self._build_groq_social_client(
-            model_name=model,
-            enabled_env="ERIS_SOCIAL_OBSERVER_DEEP_ENABLED",
-        )
-        if client is not None:
-            self.logger.info("Social deliberator/critic client sẵn sàng: %s", model)
-        return client
+        return self.build_deepseek_worker_client("critic")
 
     def build_social_fallback_client(self):
-        worker = self.build_deepseek_worker_client("observer")
-        if worker is not None:
-            return worker
-        model = os.environ.get("ERIS_SOCIAL_OBSERVER_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
-        client = self._build_groq_social_client(
-            model_name=model,
-            enabled_env="ERIS_SOCIAL_OBSERVER_FALLBACK_ENABLED",
-        )
-        if client is not None:
-            self.logger.info("Social observer fallback client sẵn sàng: %s", model)
-        return client
+        return None
 
     def build_escalation_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
         """Build a DEDICATED "strong" client cho self-critique escalation (bái sư).
@@ -951,28 +636,17 @@ class RemoteModelProcessManager:
             "ERIS_CHAT_FALLBACK_API_KEY",
         )
 
-        if provider == "gemini":
-            api_key = api_key or get_secret("GEMINI_API_KEY", "ERIS_REMOTE_API_KEY")
-            base_url = base_url or "https://generativelanguage.googleapis.com/v1beta"
-            model_name = model_name or "gemini-2.5-flash"
-            if not api_key:
-                self.logger.info("Escalation client tat: khong tim thay key Gemini.")
-                return None
-            self.logger.info("Escalation client (Gemini) san sang tai %s voi model %s", base_url, model_name)
-            try:
-                return GeminiClient(base_url=base_url, api_key=api_key, model_name=model_name, key_pool=get_key_pool("gemini"))
-            except ValueError as exc:
-                self.logger.warning("Khong dung duoc escalation client: %s", exc)
-                return None
+        if retired_provider(provider, base_url=base_url, model=model_name):
+            return None
 
         if provider == "deepseek":
             api_key = api_key or get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
             base_url = base_url or DEEPSEEK_BASE_URL
             model_name = normalize_model(model_name or DEEPSEEK_STRONG_MODEL)
         else:
-            api_key = api_key or get_secret("ERIS_GROQ_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
-            base_url = base_url or ("https://api.groq.com/openai/v1" if provider == "groq" else "https://api.openai.com/v1")
-            model_name = model_name or ("llama-3.3-70b-versatile" if provider == "groq" else "gpt-4o-mini")
+            api_key = api_key or get_secret("ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
+            base_url = base_url or "https://api.openai.com/v1"
+            model_name = model_name or "gpt-4o-mini"
         if not api_key:
             self.logger.info("Escalation client tat: khong tim thay key.")
             return None
@@ -989,59 +663,19 @@ class RemoteModelProcessManager:
             return None
 
     def build_vision_client(self, *, model_path: str = "", n_ctx: int = 0, n_gpu_layers: int = 0):
-        """Build an explicitly configured remote vision client.
-
-        DeepSeek's current public Chat Completions API is text-only, so the main
-        DeepSeek credential is never reused for image captioning. Configure a
-        separate multimodal endpoint with ERIS_VISION_API_* or use the Groq
-        vision default when ERIS_GROQ_API_KEY is available.
-        """
+        """Only an explicitly configured active multimodal endpoint may run."""
         apply_secrets_to_environ()
-        raw_mode = os.environ.get("ERIS_VISION_API_ENABLED", "auto").strip().lower()
-        # "auto" thực sự phải là auto: nếu có cấu hình/key multimodal thì dựng
-        # client; chỉ các giá trị tắt rõ ràng mới vô hiệu hóa vision API.
-        if raw_mode in {"0", "false", "no", "off", "disabled"}:
+        if os.environ.get("ERIS_VISION_API_ENABLED", "auto").strip().lower() in {"0", "false", "no", "off", "disabled"}:
             return None
-
-        provider = os.environ.get("ERIS_VISION_API_PROVIDER", os.environ.get("ERIS_VISION_PROVIDER", "")).strip().lower()
-        base_url = os.environ.get("ERIS_VISION_API_BASE_URL", "").strip()
-        model_name = os.environ.get("ERIS_VISION_API_MODEL", "").strip()
-        groq_requested = (
-            provider == "groq"
-            or "api.groq.com" in base_url.lower()
-            or model_name.startswith("qwen/")
-        )
-        groq_default = not base_url and not get_secret("ERIS_VISION_API_KEY") and get_secret("ERIS_GROQ_API_KEY")
-        if groq_requested or groq_default:
-            base_url = base_url or os.environ.get("ERIS_GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip()
-            if not model_name or (groq_default and model_name.startswith("gpt-")):
-                model_name = os.environ.get("ERIS_GROQ_VISION_MODEL", "qwen/qwen3.6-27b").strip()
-            pool = get_key_pool("groq")
-            api_key = (
-                get_secret("ERIS_VISION_API_KEY")
-                or _bootstrap_pool_key(pool)
-                or get_secret("ERIS_GROQ_API_KEY")
-            )
-        else:
-            pool = None
-            api_key = get_secret("ERIS_VISION_API_KEY")
-        if not (api_key and base_url and model_name):
-            self.logger.info(
-                "Vision API tat: can ERIS_VISION_API_* hoac ERIS_GROQ_API_KEY cho Groq vision."
-            )
+        provider = os.environ.get("ERIS_VISION_API_PROVIDER", os.environ.get("ERIS_VISION_PROVIDER", ""))
+        base = os.environ.get("ERIS_VISION_API_BASE_URL", "").strip()
+        model = os.environ.get("ERIS_VISION_API_MODEL", "").strip()
+        if retired_provider(provider, base_url=base, model=model):
             return None
-
-        self.logger.info("Dung vision API rieng tai %s voi model %s", base_url, model_name)
-        try:
-            return OpenAICompatibleClient(
-                base_url=base_url,
-                api_key=api_key,
-                model_name=model_name,
-                key_pool=pool,
-            )
-        except ValueError as exc:
-            self.logger.warning("Khong dung duoc vision API: %s", exc)
+        key = get_secret("ERIS_VISION_API_KEY")
+        if not (base and model and key):
             return None
+        return OpenAICompatibleClient(base_url=base, api_key=key, model_name=model, key_pool=None)
 
     def stop(self):
         return None

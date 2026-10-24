@@ -49,7 +49,7 @@ def inner_diary_deep_reflection_enabled() -> bool:
 
 def private_residue_curator_enabled() -> bool:
     """Bật Gemma Residue Curator; thiếu credential vẫn giữ deterministic retention."""
-    return _flag("private_residue_curator_enabled", "ERIS_PRIVATE_RESIDUE_CURATOR_ENABLED", True)
+    return False
 
 
 def background_tutor_enabled() -> bool:

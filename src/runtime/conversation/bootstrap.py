@@ -1,3 +1,4 @@
+from runtime.open_loop_store import ensure_open_loop_store
 # -*- coding: utf-8 -*-
 """Production wiring for the single V12 conversation authority."""
 from __future__ import annotations
@@ -39,7 +40,11 @@ def ensure_conversation_kernel(host: Any) -> ConversationKernel:
     kernel = ConversationKernel(
         root,
         store=ConversationSessionStore(atomic_store=atomic_store, logger=logger),
-        continuation=ContinuationLeaseScheduler(atomic_store=atomic_store, logger=logger),
+        continuation=ContinuationLeaseScheduler(
+            atomic_store=atomic_store,
+            open_loop_store=ensure_open_loop_store(host),
+            logger=logger,
+        ),
         receipts=DeliveryReceiptLedger(atomic_store=atomic_store, logger=logger),
         outcomes=MoveOutcomeLedger(atomic_store=atomic_store, logger=logger),
         writer=RuntimeConversationWriter(host),

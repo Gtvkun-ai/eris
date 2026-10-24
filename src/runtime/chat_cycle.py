@@ -4,7 +4,9 @@ import os
 import re
 import time
 
+from runtime.input_revision_buffer import InputRevisionBuffer
 from runtime.interrupt_reaction_policy import InterruptReactionPolicy
+from runtime.open_loop_store import ensure_open_loop_store
 from runtime.source_grounding import SourceGroundingEngine
 from runtime.cognition.normalization import normalize_vi
 from screen.screen_anaphora_rescue import ScreenAnaphoraRescue
@@ -15,7 +17,52 @@ class ChatCycleMixin:
 
     Module này chỉ quản lý quyền phát loa, burst input và context ngắt lời. Toàn
     bộ hiểu nghĩa, lập kế hoạch và sinh lời nằm ở Cortex V2 + AIChatOrchestrator.
+
+    Nâng cấp Incremental Dialogue (Text-first):
+    - Thay vì chặn cứng bằng ``_chat_processing`` và xếp hàng xử lý tuần tự khiến
+      Root trả lời cho câu cũ đã lỗi thời, sử dụng ``InputRevisionBuffer``: khi
+      User nhắn thêm lúc Root đang nghĩ, đánh dấu ``stale`` ngay cho run đang chạy,
+      gom câu mới qua cửa sổ debounce ngắn, và restart Root đúng 1 lần trên
+      canonical latest user state.
+    - Khi User cắt ngang lúc Eris đang trả lời, tạo ``SuspendedMove`` lưu vào
+      ``OpenLoopStore`` và truyền phần chưa nói dưới dạng hint vào lượt Root kế tiếp
+      để quyết định ``RESUME`` hay ``RETIRE``.
     """
+
+    def _ensure_input_revision_buffer(self) -> InputRevisionBuffer:
+        """Lấy hoặc khởi tạo ``InputRevisionBuffer`` cho vòng chat."""
+        buf = getattr(self, "input_revision_buffer", None)
+        if isinstance(buf, InputRevisionBuffer):
+            return buf
+        raw_debounce = str(os.environ.get("ERIS_INPUT_REVISION_DEBOUNCE_SEC", "0.25") or "0.25").strip()
+        try:
+            debounce = max(0.0, float(raw_debounce))
+        except ValueError:
+            debounce = 0.25
+        buf = InputRevisionBuffer(debounce_seconds=debounce)
+        self.input_revision_buffer = buf
+        return buf
+
+    def _mark_active_root_run_stale_for_revision(self, stale_rev: int, new_rev: int) -> None:
+        """Đánh dấu stale cho lượt chạy hiện tại của Root và hủy request LLM/discovery cũ."""
+        self.logger.info(
+            "[input-revision] user sent new message while Root thinking: stale_rev=%d -> new_rev=%d",
+            stale_rev,
+            new_rev,
+        )
+        sid = str(
+            getattr(self, "conversation_id", "")
+            or getattr(self, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        kernel = getattr(self, "conversation_kernel", None)
+        preempt_fn = getattr(kernel, "preempt_for_user", None)
+        if callable(preempt_fn):
+            try:
+                preempt_fn(sid)
+            except Exception as exc:
+                self.logger.debug("[input-revision] kernel preempt failed: %s", exc)
+        self._preempt_for_classified_user_turn(cancel_audio=False, cancel_generation=True)
 
     def _enter_chat_cycle(self) -> None:
         """Chat-start chỉ giữ quyền lượt, chưa biết user sẽ nói gì.
@@ -115,8 +162,16 @@ class ChatCycleMixin:
                 note_user(now=cycle_start, focus_key="direct_chat")
             except Exception as exc:
                 self.logger.debug("[temporal mind] user turn update failed: %s", exc)
+        revision_buffer = self._ensure_input_revision_buffer()
         if getattr(self, "_chat_processing", False):
+            # Khi Root đang nghĩ mà User nhắn thêm: đẩy vào InputRevisionBuffer,
+            # đánh dấu stale ngay cho run đang chạy để hủy sớm và chờ gom qua debounce.
             self._queue_chat_burst_event(user_text, cycle_start)
+            revision_buffer.submit_revision(
+                user_text,
+                timestamp=cycle_start,
+                on_mark_stale=self._mark_active_root_run_stale_for_revision,
+            )
             return
 
         self._chat_processing = True
@@ -140,7 +195,12 @@ class ChatCycleMixin:
             user_text = self._merge_rapid_chat_burst(user_text, first_timestamp=cycle_start)
             if not user_text:
                 return
-            self.current_stage_user_text = user_text
+            sid = str(
+                getattr(self, "conversation_id", "")
+                or getattr(self, "thread_id", "")
+                or "foreground:primary"
+            ).strip()[:180]
+            revision_buffer.begin_turn(user_text, timestamp=cycle_start, session_id=sid)
 
             speech_interrupt_event = None
             consume_interrupt = getattr(self, "_consume_speech_interrupt_event", None)
@@ -160,18 +220,91 @@ class ChatCycleMixin:
                     render = getattr(speech_interrupt_event, "to_prompt_context", None)
                     speech_interrupt_context = render() if callable(render) else ""
 
+                # Tạo SuspendedMove lưu vào OpenLoopStore khi user cắt ngang câu trả lời của Eris.
+                try:
+                    last_turn = getattr(self, "last_agent_turn", None)
+                    last_intent = str(last_turn.get("intent", "") if isinstance(last_turn, dict) else "")
+                    last_move_id = str(last_turn.get("move_id", "") if isinstance(last_turn, dict) else "")
+                    open_store = ensure_open_loop_store(self)
+                    # Kiểm tra xem _capture_speech_interrupt_for_user đã lưu chưa để tránh trùng lặp.
+                    existing_latest = open_store.latest_active(sid, now=cycle_start)
+                    if (
+                        existing_latest is None
+                        or existing_latest.spoken_text != str(getattr(speech_interrupt_event, "spoken_text_so_far", "") or "")
+                    ):
+                        open_store.capture_from_interrupt(
+                            speech_interrupt_event,
+                            session_id=sid,
+                            source_move_id=last_move_id or str(getattr(speech_interrupt_event, "interrupted_turn_id", "") or ""),
+                            intent=last_intent,
+                            interruption_kind=str(getattr(speech_interrupt_reaction, "reaction_mode", "steering") or "steering"),
+                            now=cycle_start,
+                        )
+                except Exception as exc:
+                    self.logger.debug("[open-loop] capture from interrupt degraded: %s", exc)
+
+            # Truyền phần chưa nói từ OpenLoopStore dưới dạng hint vào lượt Root kế tiếp
+            # để Root quyết định RESUME hay RETIRE.
+            try:
+                open_loop_hint, open_loop_items = ensure_open_loop_store(self).prepare_hints_for_root(
+                    sid,
+                    latest_user_text=user_text,
+                    now=cycle_start,
+                )
+                self._active_open_loop_items = open_loop_items
+                if open_loop_hint:
+                    speech_interrupt_context = "\n\n".join(
+                        part for part in (speech_interrupt_context, open_loop_hint) if part.strip()
+                    )
+            except Exception as exc:
+                self.logger.debug("[open-loop] prepare hints degraded: %s", exc)
+
             previous_public_turn = self._link_previous_public_turn_for_chat(cycle_start)
             previous_public_context = self._previous_public_turn_context(previous_public_turn)
-            self._run_chat_cycle_inner(
-                user_text,
-                cycle_start=cycle_start,
-                previous_public_context=previous_public_context,
-                previous_public_turn=previous_public_turn,
-                speech_interrupt_context=speech_interrupt_context,
-                speech_interrupt_event=speech_interrupt_event,
-                speech_interrupt_reaction=speech_interrupt_reaction,
-            )
+
+            # Vòng lặp xử lý revision-aware: nếu trong lúc Root đang suy nghĩ mà có
+            # tin nhắn mới tới (đã đánh dấu stale run cũ), gom toàn bộ tin nhắn mới qua
+            # cửa sổ debounce ngắn của InputRevisionBuffer rồi restart Root đúng 1 lần
+            # trên canonical latest user state.
+            while True:
+                self.current_stage_user_text = user_text
+                self._run_chat_cycle_inner(
+                    user_text,
+                    cycle_start=cycle_start,
+                    previous_public_context=previous_public_context,
+                    previous_public_turn=previous_public_turn,
+                    speech_interrupt_context=speech_interrupt_context,
+                    speech_interrupt_event=speech_interrupt_event,
+                    speech_interrupt_reaction=speech_interrupt_reaction,
+                )
+                # Kiểm tra xem có tin nhắn mới chờ trong queue hoặc revision buffer không
+                queued_extra = self._pop_queued_chat_events()
+                queued_extra.extend(self._poll_ready_chat_events())
+                for ts, extra_text in queued_extra:
+                    revision_buffer.submit_revision(
+                        extra_text,
+                        timestamp=ts,
+                        on_mark_stale=self._mark_active_root_run_stale_for_revision,
+                    )
+                if not revision_buffer.has_pending_revision():
+                    break
+                latest_snapshot = revision_buffer.coalesce_and_claim_latest(
+                    poll_external_fn=lambda: [*self._pop_queued_chat_events(), *self._poll_ready_chat_events()],
+                )
+                if latest_snapshot is None or not latest_snapshot.canonical_text:
+                    break
+                user_text = latest_snapshot.canonical_text
+                cycle_start = latest_snapshot.updated_at
+                self.logger.info(
+                    "[input-revision] restarting Root once on coalesced revision=%d text=%r",
+                    latest_snapshot.revision,
+                    user_text[:120],
+                )
         finally:
+            try:
+                revision_buffer.clear_turn()
+            except Exception:
+                pass
             if clock is not None:
                 clock.mark_generation_finished()
             # PDF annotation, pages 17-19: acceptance is based on perceived
@@ -267,7 +400,9 @@ class ChatCycleMixin:
         item = (time.time() if timestamp is None else float(timestamp), text)
         lock = getattr(self, "_chat_burst_lock", None)
         if lock is None:
-            self._chat_burst_queue = [item]
+            existing = list(getattr(self, "_chat_burst_queue", []) or [])
+            existing.append(item)
+            self._chat_burst_queue = existing
             return
         with lock:
             self._chat_burst_queue.append(item)
@@ -294,7 +429,9 @@ class ChatCycleMixin:
     def _pop_queued_chat_events(self) -> list[tuple[float, str]]:
         lock = getattr(self, "_chat_burst_lock", None)
         if lock is None:
-            return []
+            queued = list(getattr(self, "_chat_burst_queue", []) or [])
+            self._chat_burst_queue = []
+            return [(float(ts), str(text or "").strip()) for ts, text in queued if str(text or "").strip()]
         with lock:
             queued = list(getattr(self, "_chat_burst_queue", []) or [])
             self._chat_burst_queue = []

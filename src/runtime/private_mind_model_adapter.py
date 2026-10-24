@@ -29,7 +29,8 @@ from typing import Any, Mapping
 
 from cortex.private_mind.contracts import EvidenceDossier, ThoughtFragment, compact_text, to_plain
 from eris_secrets import apply_secrets_to_environ, get_secret
-from llm.client import GeminiClient, OpenAICompatibleClient
+from llm.client import OpenAICompatibleClient
+from llm.provider_policy import retired_provider
 from llm.deepseek import DEEPSEEK_BASE_URL, DEEPSEEK_DEFAULT_MODEL, normalize_model as normalize_deepseek_model
 from llm.key_pool import get_key_pool
 from llm.model_catalog import DEFAULT_OPEN_MODEL_ID
@@ -86,8 +87,8 @@ def _classify_transport_exception(exc: Exception) -> str:
 @dataclass(slots=True, frozen=True)
 class PrivateMindModelAdapterConfig:
     enabled: bool = field(default_factory=lambda: _env_flag("ERIS_PRIVATE_MIND_API_ENABLED", False))
-    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "gemini")) or "gemini").strip().lower())
-    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", DEFAULT_OPEN_MODEL_ID)) or DEFAULT_OPEN_MODEL_ID).strip())
+    provider: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_PROVIDER", os.getenv("ERIS_DAYDREAM_PROVIDER", "deepseek")) or "deepseek").strip().lower())
+    model: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_MODEL", os.getenv("ERIS_DAYDREAM_MODEL", "deepseek-flash")) or "deepseek-flash").strip())
     base_url: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_BASE_URL", os.getenv("ERIS_REMOTE_BASE_URL", "")) or "").strip())
     api_key: str = field(default_factory=lambda: str(os.getenv("ERIS_PRIVATE_MIND_API_KEY", "") or "").strip())
     timeout_seconds: float = field(default_factory=lambda: max(4.0, _as_float(os.getenv("ERIS_PRIVATE_MIND_TIMEOUT", "90"), 90.0)))
@@ -192,7 +193,7 @@ class RuntimePrivateMindModelAdapter:
         return (
             self.config.api_key
             or pool_key
-            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY")
+            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
         )
 
     def _rotate_to_next_key(self) -> bool:
@@ -461,7 +462,7 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider in {"gemini", "deepseek", "openai", "openai_compatible", "compatible", "remote"}:
+        if self.config.provider in {"deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             client = self._provider_client_or_build()
             if client is None:
                 return PrivateMindModelResult(ok=False, error=f"missing_provider_client:{self.config.provider}", error_kind="fixed_config")
@@ -579,73 +580,9 @@ class RuntimePrivateMindModelAdapter:
         }
 
     def curate_residue(self, packet: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        """Gom/nén residue bằng dedicated Gemma curator.
+        return None
 
-        Đây KHÔNG phải writer và không được tạo thought mới. Mỗi decision bắt
-        buộc phải trỏ về residue id thật trong packet. ``unprocessed_stimulus``
-        chỉ được giữ làm continuity hoặc bỏ, không được nâng thành diary.
-        """
-        messages = self._residue_curator_messages(packet)
-        result = self._tracked_chat_json(
-            messages,
-            max_tokens=self.config.max_tokens_residue,
-            response_schema=self._residue_curator_schema(),
-        )
-        if not result.ok:
-            if result.error not in {"invalid_json_cooldown", "transient_cooldown"}:
-                self._log("warning", "[Residue Curator] failed error=%s", result.error)
-            return None
-        parsed = dict(result.parsed)
-        decisions = parsed.get("decisions")
-        if not isinstance(decisions, list):
-            return None
-        return {"decisions": decisions[:12]}
 
-    def _residue_curator_messages(self, packet: Mapping[str, Any]) -> list[dict[str, str]]:
-        user_content = json.dumps(to_plain(dict(packet)), ensure_ascii=False)
-        if len(user_content) > 12000:
-            user_content = user_content[:12000]
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "Bạn là Residue Curator của ERIS. Bạn KHÔNG phải Eris, KHÔNG viết thêm suy nghĩ mới, "
-                    "KHÔNG suy diễn dữ kiện mới. Nhiệm vụ duy nhất: gom các residue trùng ý, bỏ noise, "
-                    "và nén trung thành thành diary/continuity candidate. Mỗi decision PHẢI dùng residue_ids "
-                    "có thật trong input. action chỉ là diary, continuity, hoặc discard. "
-                    "unprocessed_stimulus chưa từng được cognition xử lý nên CHỈ được continuity/discard, "
-                    "tuyệt đối không diary. diary chỉ dùng khi có ít nhất một residue cognition thật như "
-                    "private_fragment/private_judgment/suppressed_private_candidate/suppressed_public_candidate/"
-                    "suppressed_expression_urge/packed_fragment. text phải ngắn, giữ đúng nghĩa nguồn, không thêm fact. "
-                    "kind cho diary chỉ là current/reflection/concern/future/desire. "
-                    "Trả đúng JSON object có trường decisions; tối đa 6 decisions."
-                ),
-            },
-            {"role": "user", "content": user_content},
-        ]
-
-    def _residue_curator_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "decisions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "residue_ids": {"type": "array", "items": {"type": "string"}},
-                            "action": {"type": "string", "enum": ["diary", "continuity", "discard"]},
-                            "kind": {"type": "string", "enum": ["current", "reflection", "concern", "future", "desire"]},
-                            "text": {"type": "string"},
-                            "confidence": {"type": "number"},
-                            "novelty": {"type": "number"},
-                        },
-                        "required": ["residue_ids", "action", "text"],
-                    },
-                }
-            },
-            "required": ["decisions"],
-        }
 
     # ------------------------------------------------------------------
     # Dossier slicers — mỗi evaluator chỉ nhận phần nó cần
@@ -997,7 +934,7 @@ class RuntimePrivateMindModelAdapter:
         api_key_configured = bool(
             selected_client is not None
             or self.config.api_key
-            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
+            or get_secret("ERIS_PRIVATE_MIND_API_KEY", "ERIS_REMOTE_API_KEY", "OPENAI_API_KEY")
         )
         average_latency = self._total_latency_ms / self._calls if self._calls else 0.0
         # Suy degraded_cause từ _last_error_kind và trạng thái cooldown
@@ -1149,13 +1086,7 @@ class RuntimePrivateMindModelAdapter:
             completion = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
             total = int(usage.get("total_tokens", prompt + completion) or 0)
             return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
-        gemini_usage = raw.get("usageMetadata")
-        if isinstance(gemini_usage, Mapping):
-            prompt = int(gemini_usage.get("promptTokenCount", 0) or 0)
-            completion = int(gemini_usage.get("candidatesTokenCount", 0) or 0)
-            total = int(gemini_usage.get("totalTokenCount", prompt + completion) or 0)
-            return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
-        return {}
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def _chat_json(self, messages: list[dict[str, str]], *, max_tokens: int, response_schema: dict[str, Any] | None = None) -> PrivateMindModelResult:
         result = self._chat_json_with_transient_retry(messages, max_tokens=max_tokens, temperature=self.config.temperature, response_schema=response_schema)
@@ -1274,14 +1205,12 @@ class RuntimePrivateMindModelAdapter:
                         continue
                     except Exception as exc:
                         return PrivateMindModelResult(ok=False, error=f"{type(exc).__name__}:{exc}", error_kind=_classify_transport_exception(exc))
-        if self.config.provider in {"gemini", "deepseek", "openai", "openai_compatible", "compatible", "remote"}:
+        if self.config.provider in {"deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             return self._provider_chat_json(messages, max_tokens=max_tokens, temperature=temperature, response_schema=response_schema)
         return PrivateMindModelResult(ok=False, error=f"unsupported_provider:{self.config.provider}", error_kind="fixed_config")
 
     def _response_format(self, response_schema: dict[str, Any] | None = None) -> dict[str, Any]:
         response_format: dict[str, Any] = {"type": "json_object"}
-        if self.config.provider == "gemini" and response_schema:
-            response_format["schema"] = response_schema
         return response_format
 
     def _json_repair_messages(self, messages: list[dict[str, str]], invalid_content: str) -> list[dict[str, str]]:
@@ -1344,16 +1273,8 @@ class RuntimePrivateMindModelAdapter:
             return self._provider_client
         provider = str(self.config.provider or "").strip().lower()
         timeout = int(max(4.0, float(self.config.timeout_seconds or 28.0)))
-        if provider == "gemini":
-            api_key = self._current_api_key()
-            if not api_key:
-                return None
-            base_url = self.config.base_url or os.getenv("ERIS_REMOTE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
-            self._provider_client = GeminiClient(
-                base_url=base_url, api_key=api_key, model_name=self.config.model,
-                timeout=timeout, key_pool=self._key_pool,
-            )
-            return self._provider_client
+        if retired_provider(provider, base_url=self.config.base_url, model=self.config.model):
+            return None
         if provider in {"deepseek", "openai", "openai_compatible", "compatible", "remote"}:
             api_key = self._current_api_key()
             if not api_key:
@@ -1669,28 +1590,6 @@ class PrivateMindAdapterPool:
             config=self._config, llm_service=llm_service, logger=logger
         )
 
-        # Gemma Residue Curator: gom/dedupe/nén private residue. Nó không có quyền
-        # public speech hay apply identity. Thiếu credential: residue vẫn giữ
-        # retention theo deterministic fallback.
-        residue_client = getattr(llm_service, "residue_curator_client", None) if llm_service is not None else None
-        residue_config = self._config
-        if residue_client is not None:
-            residue_config = replace(
-                self._config,
-                enabled=True,
-                provider=str(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower(),
-                model=str(getattr(residue_client, "model_name", self._config.model) or self._config.model),
-                base_url=str(getattr(residue_client, "base_url", self._config.base_url) or self._config.base_url),
-                api_key="worker-managed",
-            )
-        self._residue_adapter = RuntimePrivateMindModelAdapter(
-            config=residue_config,
-            llm_service=llm_service,
-            logger=logger,
-            client_attr="residue_curator_client",
-            strict_client_attr=True,
-        )
-
     @classmethod
     def from_env(cls, *, llm_service: Any = None, logger: Any = None) -> "PrivateMindAdapterPool | None":
         apply_secrets_to_environ()
@@ -1716,16 +1615,13 @@ class PrivateMindAdapterPool:
             # synthesis. In RÕ cả hai để nhìn log là biết vai trò nào chạy ở đâu,
             # tránh hiểu nhầm "fragment×5" đi cùng provider với synthesis.
             frag_cfg = PrivateMindModelAdapterConfig.fragment_overlay_from_env(config)
-            residue_meta = pool.residue_metadata()
             fn(
-                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + gemma-residue(model=%s configured=%d)×1",
+                "[PrivateMind API] ready fragment(%s/%s)×%d + synthesis(%s/%s)×1 + residue=deterministic",
                 frag_cfg.provider,
                 frag_cfg.model,
                 len(_EVALUATOR_ROLES),
                 config.provider,
                 config.model,
-                residue_meta.get("model", ""),
-                int(bool(residue_meta.get("configured", False))),
             )
         return pool
 
@@ -1739,17 +1635,10 @@ class PrivateMindAdapterPool:
 
     @property
     def residue_adapter(self) -> RuntimePrivateMindModelAdapter:
-        return self._residue_adapter
+        return None
 
     def residue_metadata(self) -> dict[str, Any]:
-        client = getattr(self._llm_service, "residue_curator_client", None) if self._llm_service is not None else None
-        return {
-            "owner": "gemma_micro_cognition",
-            "role": "residue_curator",
-            "provider": str(os.getenv("ERIS_PRIVATE_RESIDUE_CURATOR_PROVIDER", "gemini") or "gemini").strip().lower() if client is not None else "",
-            "model": str(getattr(client, "model_name", "") or ""),
-            "configured": bool(client is not None),
-        }
+        return {"owner": "deterministic", "role": "residue_retention", "provider": "", "model": "", "configured": False}
 
     # --- Delegate interface giống RuntimePrivateMindModelAdapter ---
     # để code dùng pool như một adapter bình thường vẫn hoạt động.
@@ -1761,7 +1650,7 @@ class PrivateMindAdapterPool:
         return self._synthesis_adapter.synthesize_judgment(dossier, fragments)
 
     def curate_residue(self, packet: Mapping[str, Any]) -> Any:
-        return self._residue_adapter.curate_residue(packet)
+        return None
 
     def debug_status(self) -> dict[str, Any]:
         """Aggregate status của tất cả adapter trong pool."""
@@ -1770,7 +1659,7 @@ class PrivateMindAdapterPool:
             for role, adapter in self._fragment_adapters.items()
         }
         synthesis_status = self._synthesis_adapter.debug_status()
-        residue_status = self._residue_adapter.debug_status()
+        residue_status = {}
         # Tổng hợp calls/tokens
         total_calls = synthesis_status.get("calls", 0) + residue_status.get("calls", 0) + sum(
             s.get("calls", 0) for s in fragment_statuses.values()

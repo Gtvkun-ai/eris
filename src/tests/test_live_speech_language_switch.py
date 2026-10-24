@@ -36,12 +36,21 @@ def store(tmp_path, monkeypatch):
 
 
 def test_switch_chooses_vietnamese_voice_despite_legacy_japanese_env(store, monkeypatch):
+    # Khi JA không có voice riêng (để rỗng), JA mới rơi về env legacy.
+    store.apply_patch({"tts": {"elevenlabs_voice_id_ja": ""}})
     monkeypatch.setenv("ERIS_ELEVENLABS_VOICE_ID", "legacy-ja-voice")
     assert tts._voice() == "legacy-ja-voice"
     store.apply_patch({"tts": {"language": "vi"}})
     assert tts._voice() == VI_VOICE
     store.apply_patch({"tts": {"language": "ja"}})
     assert tts._voice() == "legacy-ja-voice"
+
+
+def test_ja_uses_configured_japanese_voice_over_legacy_env(store, monkeypatch):
+    # JA có voice riêng thì thắng env legacy ERIS_ELEVENLABS_VOICE_ID.
+    monkeypatch.setenv("ERIS_ELEVENLABS_VOICE_ID", "legacy-ja-voice")
+    store.apply_patch({"tts": {"language": "ja", "elevenlabs_voice_id_ja": "configured-ja-voice"}})
+    assert tts._voice() == "configured-ja-voice"
 
 
 def test_language_specific_voice_can_be_changed_live(store):
