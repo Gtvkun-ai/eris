@@ -22,6 +22,7 @@ EXPRESSION_ALIASES = {
     "smirk_minor": "smirk_minor", "small_smirk": "smirk_minor",
     "smirk_disdain": "smirk_disdain", "disdain_smirk": "smirk_disdain",
     "blush_affection": "blush_affection", "blush": "blush_affection",
+    "warm_embarrassed": "blush_affection", "embarrassed": "blush_affection", "shy": "blush_affection",
     "cat_mouth": "cat_mouth", "cat_smile": "cat_mouth",
     "sad_empathy": "sad_empathy", "empathetic_sad": "sad_empathy",
     "wink_correct": "wink_correct", "wink_success": "wink_correct",

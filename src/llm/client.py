@@ -274,7 +274,6 @@ def _record_pressure_request(base_url: str, model_name: str, messages, max_token
     """Ghi request ở tầng transport để mọi lane đều góp vào pressure window."""
 
     require_active_provider(base_url=base_url, model=model_name)
-    require_active_provider(base_url=url, model=str((request_kwargs.get("json") or {}).get("model", model_name)))
     provider = _pressure_provider(base_url, model_name)
     try:
         prompt_tokens = _estimate_tokens(messages)

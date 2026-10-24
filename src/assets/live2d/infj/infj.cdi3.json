@@ -37,6 +37,16 @@
 			"Name": "ParamErisLipPress"
 		},
 		{
+			"Id": "ParamCheek",
+			"GroupId": "",
+			"Name": "Cheek"
+		},
+		{
+			"Id": "ParamEyeHighlight",
+			"GroupId": "",
+			"Name": "Eye Highlight"
+		},
+		{
 			"Id": "eyeballxl",
 			"GroupId": "",
 			"Name": "ParamEyeBallXL"
@@ -79,7 +89,7 @@
 		{
 			"Id": "ParamErisTongue",
 			"GroupId": "",
-			"Name": "ParamErisTongue "
+			"Name": "ParamErisTongue"
 		},
 		{
 			"Id": "ParamBreath",

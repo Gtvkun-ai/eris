@@ -180,6 +180,9 @@ class PublicOutputRuntimeMixin:
             return False
 
     def _supersede_tts_for_new_user_turn(self, reason: str) -> bool:
+        micro_stop = getattr(self, "_current_micro_act_stop", None)
+        if isinstance(micro_stop, threading.Event):
+            micro_stop.set()
         tts = getattr(self, "tts_engine", None)
         supersede = getattr(tts, "supersede_all", None)
         if not callable(supersede):
@@ -189,6 +192,136 @@ class PublicOutputRuntimeMixin:
         except Exception as exc:
             self.logger.debug("[TTS] supersede failed: %s", exc)
             return False
+
+    def _resolve_micro_vocal_bytes(self, act: str, user_text: str = "") -> tuple[bytes | None, str]:
+        """Lấy bytes file âm thanh ngắn và act thực tế phù hợp từ cache vocal."""
+        try:
+            from runtime.micro_reflex_system import get_micro_reflex_engine
+            engine = get_micro_reflex_engine(logger=getattr(self, "logger", None))
+            effective_act = act
+            if user_text:
+                effective_act = engine.evaluate_intake(user_text)
+            packet = engine.compile_packet(effective_act, user_text=user_text)
+            if packet and packet.audio_bytes:
+                return packet.audio_bytes, packet.act_kind
+            return None, str(getattr(effective_act, "value", effective_act))
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger:
+                logger.debug("[micro-act] resolve vocal error: %s", exc)
+            return None, act
+
+    def _emit_fast_micro_act(self, surface: str, *, act_kind: str, timestamp: float, user_text: str = "") -> bool:
+        """Phát xạ tức thì (micro reflex < 30ms) hoàn toàn cục bộ 0 token.
+
+        Phát một vài tiếng thở, tiếng 'ừm', 'ểh', 'huhu', 'hứ', 'haizz' từ cache audio ngắn kết hợp
+        cử động nhỏ của Live2D (gật nhẹ, nghiêng đầu, chớp mắt), offset tham số mặt (ParamCheek,
+        ParamEyeHighlight, ParamBreath), hoàn toàn không gọi LLM, không qua ElevenLabs synth
+        và không hiện text bubble lên chat.
+        """
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None and getattr(clock, "speech_floor_busy", False):
+            return False
+
+        try:
+            from runtime.micro_reflex_system import get_micro_reflex_engine
+            engine = get_micro_reflex_engine(logger=getattr(self, "logger", None))
+            effective_kind = act_kind
+            if user_text:
+                intake_kind = engine.evaluate_intake(user_text)
+                if getattr(intake_kind, "value", intake_kind) != "RECEIPT" or str(act_kind).upper() == "RECEIPT":
+                    effective_kind = intake_kind
+
+            packet = engine.compile_packet(effective_kind, user_text=user_text, timestamp=timestamp)
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger:
+                logger.debug("[micro-act] compile packet failed: %s", exc)
+            packet = None
+
+        if packet is None:
+            return False
+
+        motion = packet.motion_tag
+        emotion = packet.emotion_preset
+        cue = packet.cue_tags[0] if packet.cue_tags else "soft_breath"
+        wav_bytes = packet.audio_bytes
+        lip_envelope = list(packet.audio_envelope)
+        frame_ms = packet.audio_frame_ms
+        duration_ms = packet.audio_duration_ms
+        param_offsets = dict(packet.live2d_param_offsets)
+
+        turn_id = f"micro:{packet.act_kind.lower()}:{int(timestamp * 1000)}"
+        bus = getattr(self, "stage_event_bus", None)
+        mirror = getattr(bus, "emit_live2d", None) if bus is not None else None
+
+        if callable(mirror):
+            try:
+                mirror(StageProtocolEvent(
+                    type="audio_playback_started",
+                    turn_id=turn_id,
+                    seq=0,
+                    event_id=f"micro_start:{turn_id}",
+                    tts_text="",
+                    display_text="",
+                    emotion=emotion,
+                    motion=motion,
+                    interruptible=packet.interruptible,
+                    source="fast_micro_act",
+                    data={
+                        "audio_envelope": lip_envelope,
+                        "audio_frame_ms": frame_ms,
+                        "audio_duration_ms": duration_ms,
+                        "micro_act": packet.act_kind,
+                        "category": packet.category,
+                        "cue": cue,
+                        "tags": [motion, *packet.cue_tags],
+                        "param_offsets": param_offsets,
+                    },
+                ))
+            except Exception as exc:
+                logger = getattr(self, "logger", None)
+                if logger:
+                    logger.debug("[micro-act] stage event dispatch failed: %s", exc)
+
+        transport = getattr(self, "transport", None)
+        send_fn = getattr(transport, "send_json", None)
+        if callable(send_fn):
+            try:
+                send_fn({
+                    "type": "fast_micro_act",
+                    "act_kind": packet.act_kind,
+                    "category": packet.category,
+                    "motion": motion,
+                    "emotion": emotion,
+                })
+            except Exception:
+                pass
+
+        if wav_bytes:
+            stop_event = threading.Event()
+            self._current_micro_act_stop = stop_event
+
+            def _play_worker() -> None:
+                try:
+                    from runtime.tts_engine import _play_wav_bytes
+                    _play_wav_bytes(wav_bytes, stop_event, volume_applied=True)
+                    if callable(mirror) and not stop_event.is_set():
+                        mirror(StageProtocolEvent(
+                            type="audio_playback_done",
+                            turn_id=turn_id,
+                            seq=0,
+                            event_id=f"micro_done:{turn_id}",
+                            source="fast_micro_act",
+                        ))
+                except Exception as play_exc:
+                    logger = getattr(self, "logger", None)
+                    if logger:
+                        logger.debug("[micro-act] audio playback error: %s", play_exc)
+
+            threading.Thread(target=_play_worker, daemon=True, name="ErisFastMicroAct").start()
+
+        return True
 
     def _send_decision_to_body(self, decision: Decision, *, channel: str | None = None,
                                prepared=None, verification=None) -> bool:

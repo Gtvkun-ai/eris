@@ -408,14 +408,24 @@ class ConversationContextAssembler:
             projection = service.projection("self_turn", refresh=False)
             cognition = projection.get("cognition", {}) if isinstance(projection, Mapping) else {}
             if not isinstance(cognition, Mapping):
-                return {}
-            return {
+                cognition = {}
+            result = {
                 "active_concerns": [dict(x) for x in tuple(cognition.get("active_concerns", ()) or ())[:12] if isinstance(x, Mapping)],
                 "mental_material": [dict(x) for x in tuple(cognition.get("mental_material", ()) or ())[:12] if isinstance(x, Mapping)],
                 "current_goal": str(cognition.get("current_goal", "") or "")[:500],
                 "attention": str(cognition.get("attention", "") or "")[:160],
                 "contract": "Private semantic artifacts only; do not reveal hidden reasoning or treat them as external facts.",
             }
+            # Bổ sung các mạch nghĩ dở / chưa bộc lộ từ PrivateMindLoop để RootAgent nối mạch tự nhiên
+            pm_daemon = getattr(self.host, "private_mind_daemon", None)
+            pm_loop = getattr(pm_daemon, "loop", None) if pm_daemon else getattr(self.host, "private_mind_loop", None)
+            if pm_loop is not None:
+                continuity = getattr(pm_loop, "continuity", None)
+                if continuity is not None and hasattr(continuity, "recent_for_prompt"):
+                    recent = continuity.recent_for_prompt(n=3)
+                    if recent:
+                        result["recent_unexpressed_thoughts"] = recent
+            return result
         except Exception as exc:
             self._debug("context.private_cognition", exc)
             return {}

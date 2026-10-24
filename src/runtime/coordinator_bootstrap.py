@@ -431,10 +431,30 @@ class CoordinatorBootstrapMixin:
             from runtime.rollout_control import RolloutController
 
             self.observability = ErisObservability()
-            self.runtime_session_id = str(
-                getattr(self, "runtime_session_id", "")
-                or f"runtime-{os.getpid()}-{id(self)}"
-            )
+            session_from_env = str(os.getenv("ERIS_RUNTIME_SESSION_ID", "") or "").strip()
+            if session_from_env:
+                self.runtime_session_id = session_from_env
+            else:
+                from pathlib import Path
+                state_dir = Path(str(os.getenv("ERIS_STATE_DIR", ".eris_state") or ".eris_state")).expanduser()
+                session_file = state_dir / "runtime_session_id.txt"
+                persistent_id = ""
+                if session_file.is_file():
+                    try:
+                        persistent_id = session_file.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        persistent_id = ""
+                if not persistent_id:
+                    persistent_id = str(
+                        getattr(self, "runtime_session_id", "")
+                        or f"runtime-{os.getpid()}-{id(self)}"
+                    )
+                    try:
+                        state_dir.mkdir(parents=True, exist_ok=True)
+                        session_file.write_text(persistent_id, encoding="utf-8")
+                    except Exception:
+                        pass
+                self.runtime_session_id = persistent_id
             os.environ.setdefault("ERIS_RUNTIME_SESSION_ID", self.runtime_session_id)
             self.rollout_controller = RolloutController(observability=self.observability)
             from runtime.hardening_rollout import HardeningHealthGate

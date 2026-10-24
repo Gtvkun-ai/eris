@@ -52,7 +52,7 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     if str(language_hint or '').lower() in ('vi', 'vi-vn', 'vietnamese'):
         # The Vietnamese public surface is already canonical. Do not reuse a
         # translated Japanese surface, signature ending or fail-soft JA filler.
-        vietnamese = str(result.get('text', '') or '').strip()
+        vietnamese = str(result.get('speech_text') or result.get('text', '') or '').strip()
         if vietnamese:
             result.update(speech_text=vietnamese, speech_language='vi', tts_language='vi')
             contract = result.get('speech_contract')

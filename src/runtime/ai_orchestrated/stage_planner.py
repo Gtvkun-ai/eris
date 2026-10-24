@@ -33,6 +33,7 @@ _STAGE_PRESETS: dict[str, StagePlan] = {
     "soft_warm": StagePlan(delivery_hint="warm_soft", nonverbal_cue="small_smile", stage_motion="lean_in_small"),
     "guarded_warm": StagePlan(delivery_hint="restrained_warmth", nonverbal_cue="soft_breath", stage_motion="blink_slow"),
     "warm_embarrassed": StagePlan(delivery_hint="gentle_low", nonverbal_cue="soft_breath", stage_motion="look_away"),
+    "blush_affection": StagePlan(delivery_hint="warm_soft", nonverbal_cue="soft_breath", stage_motion="look_away"),
     "dry_tease": StagePlan(delivery_hint="dry_tease", nonverbal_cue="scoff_soft", stage_motion="blink_slow"),
     "playful": StagePlan(delivery_hint="soft_tease", nonverbal_cue="laugh_soft", stage_motion="tilt_head"),
     "curious": StagePlan(delivery_hint="curious_soft", nonverbal_cue="small_pause", stage_motion="tilt_head"),
@@ -42,6 +43,7 @@ _STAGE_PRESETS: dict[str, StagePlan] = {
     "sad_distant": StagePlan(delivery_hint="low_quiet", nonverbal_cue="soft_breath", stage_motion="look_down"),
     "repair": StagePlan(delivery_hint="low_direct", nonverbal_cue="nod_small", stage_motion="blink_slow"),
     "surprised": StagePlan(delivery_hint="surprised_soft", nonverbal_cue="small_gasp", stage_motion="lean_back_small"),
+    "yan_warning": StagePlan(delivery_hint="cold_low", nonverbal_cue="still", stage_motion="still"),
 }
 
 

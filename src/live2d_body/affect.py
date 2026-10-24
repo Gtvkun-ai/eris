@@ -42,6 +42,7 @@ class AffectPose:
     eye_open_right: float = 1.0
     gaze_bias_x: float = 0.0
     gaze_bias_y: float = 0.0
+    cheek: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +163,7 @@ class AffectVector:
 
         corner = mouth_form * 0.65
         asymmetry = self.curiosity * self.confidence * 0.035
+        subtle_cheek = _clamp((warmth - 0.28) * 0.38, 0.0, 0.22)
         return AffectPose(
             mouth_corner_l=_clamp(corner + asymmetry, -0.25, 0.25),
             mouth_corner_r=_clamp(corner - asymmetry, -0.25, 0.25),
@@ -174,6 +176,7 @@ class AffectVector:
             eye_open_left=_clamp(eye_base - eye_asymmetry, 0.76, 1.0),
             eye_open_right=_clamp(eye_base + eye_asymmetry * 0.45, 0.76, 1.0),
             gaze_bias_y=_clamp(self.curiosity * 0.018 - self.fatigue * 0.020, -0.035, 0.035),
+            cheek=subtle_cheek,
         )
 
     def dominant_label(self) -> str:

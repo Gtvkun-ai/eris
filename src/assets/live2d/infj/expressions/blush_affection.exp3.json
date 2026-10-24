@@ -2,5 +2,11 @@
   "Type": "Live2D Expression",
   "FadeInTime": 0.26,
   "FadeOutTime": 0.38,
-  "Parameters": []
+  "Parameters": [
+    {
+      "Id": "ParamCheek",
+      "Value": 1.0,
+      "Blend": "Overwrite"
+    }
+  ]
 }

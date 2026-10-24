@@ -7,6 +7,11 @@
       "Id": "ParamMouthForm",
       "Value": -0.3,
       "Blend": "Overwrite"
+    },
+    {
+      "Id": "ParamEyeHighlight",
+      "Value": 0.0,
+      "Blend": "Overwrite"
     }
   ]
 }

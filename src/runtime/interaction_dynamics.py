@@ -50,18 +50,26 @@ class MicroActKind(str, Enum):
     NONE = "NONE"
     RECEIPT = "RECEIPT"                  # Báo "tôi đang nghe/đã nhận" ("Ừm.", "Ừ.")
     PROMPT_CONTINUE = "PROMPT_CONTINUE"  # Mời user kể tiếp ("Rồi sao?", "Ừ, sao nữa?")
-    REPAIR_REQUEST = "REPAIR_REQUEST"    # Báo chưa rõ câu vừa gửi ("Hả?", "Ý là sao?")
+    REPAIR_REQUEST = "REPAIR_REQUEST"    # Báo chưa rõ câu vừa gửi ("Hả?", "Hủh?", "Ý là sao?")
     STOP_ACK = "STOP_ACK"                # Xác nhận đã dừng theo lệnh cắt ngang ("Ừ, khoan.")
     CONTINUE_ACK = "CONTINUE_ACK"        # Nhường lại sàn nói cho user ("Ừ, nói tiếp đi.")
+    PLAYFUL_CRY = "PLAYFUL_CRY"          # Giả khóc, mè nheo, mếu máo ("Huhu...", "Hức...")
+    PLAYFUL_CHUCKLE = "PLAYFUL_CHUCKLE"  # Cười khúc khích ("Hehe", "Hihi")
+    SULK = "SULK"                        # Giả dỗi, phồng má ("Hứ...")
+    DEADPAN = "DEADPAN"                  # Cạn lời, thở dài giả bộ ("Haizz...")
 
 
 # Tập câu bề mặt (surface) cố định, cực ngắn, tuyệt đối không chứa proposition/sự kiện mới.
 _MICRO_ACT_SURFACES: dict[MicroActKind, str] = {
     MicroActKind.RECEIPT: "Ừm.",
     MicroActKind.PROMPT_CONTINUE: "Rồi sao?",
-    MicroActKind.REPAIR_REQUEST: "Hả?",
+    MicroActKind.REPAIR_REQUEST: "Hủh?",
     MicroActKind.STOP_ACK: "Ừ, khoan.",
     MicroActKind.CONTINUE_ACK: "Ừ, nói tiếp đi.",
+    MicroActKind.PLAYFUL_CRY: "Huhu...",
+    MicroActKind.PLAYFUL_CHUCKLE: "Hehe.",
+    MicroActKind.SULK: "Hứ.",
+    MicroActKind.DEADPAN: "Haizz.",
 }
 
 
@@ -141,6 +149,31 @@ _CORRECTION_RE = re.compile(
 
 _RESUME_RE = re.compile(
     r"(?:\bnói tiếp đi\b|\bnói tiếp\b|\bnãy nói tiếp\b|\btiếp tục đi\b|\bkể tiếp đi\b|\bnói nốt đi\b)",
+    re.I,
+)
+
+_QUESTION_ONLY_RE = re.compile(
+    r"^(\?+|ủa\??|hả\??|hủh\??|ểh\??|hở\??|sao\??|gì cơ\??|gì dạ\??|gì thế\??)$",
+    re.I,
+)
+
+_LAUGH_RE = re.compile(
+    r"(?:\b(?:ha(?:ha)+|he(?:he)+|hi(?:hi)+|kaka|kak+a|cười|lol|lmao|nhộn|hài quá)\b)",
+    re.I,
+)
+
+_CRY_RE = re.compile(
+    r"(?:\b(?:hu(?:hu)+|hức|khóc|bắt nạt|mắng|tội nghiệp|dỗi rồi|mếu|ác độc)\b)",
+    re.I,
+)
+
+_SULK_RE = re.compile(
+    r"(?:\b(?:hứ|hừ|chê|xấu tính|đáng ghét|dở ẹc|ngốc|lì lợm|bướng|ghét)\b)",
+    re.I,
+)
+
+_DEADPAN_RE = re.compile(
+    r"(?:\b(?:haizz|chán|cạn lời|mệt mỏi|bó tay|bó chiếu|ngu ngơ|ngáo)\b)",
     re.I,
 )
 
@@ -354,8 +387,16 @@ class InteractionDynamicsController:
         micro_candidate = MicroActKind.RECEIPT
         if any(normalized.endswith(trailer) for trailer in _OPEN_STORY_TRAILERS):
             micro_candidate = MicroActKind.PROMPT_CONTINUE
-        elif normalized in {"?", "??", "???"}:
+        elif _QUESTION_ONLY_RE.match(normalized):
             micro_candidate = MicroActKind.REPAIR_REQUEST
+        elif _CRY_RE.search(normalized):
+            micro_candidate = MicroActKind.PLAYFUL_CRY
+        elif _LAUGH_RE.search(normalized):
+            micro_candidate = MicroActKind.PLAYFUL_CHUCKLE
+        elif _SULK_RE.search(normalized):
+            micro_candidate = MicroActKind.SULK
+        elif _DEADPAN_RE.search(normalized):
+            micro_candidate = MicroActKind.DEADPAN
 
         return DynamicsDecision(
             action=DynamicsAction.YIELD_TO_USER,

@@ -369,6 +369,12 @@ def test_v43_mood_biases_selection_lightly_before_neuro_without_granting_speech(
         uncertainty=0.20,
         speech_act="curiosity_probe",
         tone="neutral",
+        expression_commitment={
+            "commitment_id": "cmt:v43",
+            "origin": "seed",
+            "source_id": "seed:43",
+            "semantic_target": "curiosity_probe",
+        },
     )
     affordance = SimpleNamespace(
         affordance_id="aff:v43:curiosity",

@@ -62,6 +62,8 @@ class ExpressionTarget:
     mouth_corner_r: float = 0.0
     lip_press: float = 0.0
     tongue: float = 0.0
+    cheek: float = 0.0
+    eye_highlight: float = 1.0
 
     def parameters(self) -> dict[str, float]:
         params = {
@@ -76,6 +78,8 @@ class ExpressionTarget:
             "ParamErisMouthCornerR": self.mouth_corner_r,
             "ParamErisLipPress": self.lip_press,
             "ParamErisTongue": self.tongue,
+            "ParamCheek": self.cheek,
+            "ParamEyeHighlight": self.eye_highlight,
         })
         return params
 
@@ -93,6 +97,7 @@ class ExpressionTarget:
             angle_z=pose.angle_z,
             eye_open_left=pose.eye_open_left,
             eye_open_right=pose.eye_open_right,
+            cheek=getattr(pose, "cheek", 0.0),
         )
 
     def blend(self, other: "ExpressionTarget", weight: float) -> "ExpressionTarget":
@@ -109,6 +114,8 @@ class ExpressionTarget:
             mouth_corner_r=self.mouth_corner_r + (other.mouth_corner_r - self.mouth_corner_r) * ratio,
             lip_press=self.lip_press + (other.lip_press - self.lip_press) * ratio,
             tongue=self.tongue + (other.tongue - self.tongue) * ratio,
+            cheek=self.cheek + (other.cheek - self.cheek) * ratio,
+            eye_highlight=self.eye_highlight + (other.eye_highlight - self.eye_highlight) * ratio,
         )
 
 
@@ -225,9 +232,7 @@ _EMOTION_TARGETS: dict[str, ExpressionTarget] = {
     "smirk_minor": ExpressionTarget(mouth_form=-0.3, mouth_corner_l=1.0),
     "smirk_disdain": ExpressionTarget(mouth_form=-0.3, mouth_corner_l=1.0,
                                         eye_open_left=0.8, eye_open_right=0.8),
-    # Trang 3 chỉ mô tả bật layer Mado khi thiện cảm đạt mốc, không cung cấp
-    # giá trị param hay mức thiện cảm: giữ các param trung tính chờ mesh thật.
-    "blush_affection": ExpressionTarget(),
+    "blush_affection": ExpressionTarget(cheek=1.0),
     "cat_mouth": ExpressionTarget(mouth_form=-1.0),
     "sad_empathy": ExpressionTarget(mouth_form=-0.3, brow_left=1.0, brow_right=1.0),
     # Hình minh họa nháy mắt trái. Word cho phép đổi qua mắt phải; cần preset
@@ -241,7 +246,7 @@ _EMOTION_TARGETS: dict[str, ExpressionTarget] = {
                                              eye_open_left=1.0, eye_open_right=0.0),
     "teehee_right": ExpressionTarget(mouth_form=0.0, brow_left=-1.0, brow_right=-1.0,
                                        eye_open_left=1.0, eye_open_right=0.0, tongue=0.6),
-    "yan_warning": ExpressionTarget(mouth_form=-0.3),
+    "yan_warning": ExpressionTarget(mouth_form=-0.3, eye_highlight=0.0),
     "lazy_deadpan": ExpressionTarget(mouth_form=-0.3, brow_left=1.0, brow_right=1.0),
     "teasing": ExpressionTarget(
         mouth_form=0.08,
@@ -326,6 +331,9 @@ _PARAMETER_RESPONSE = {
     "ParamErisLipPress": 5.5,
     # Lưỡi: chuyển nhanh khi ra, về chậm hơn để không bị flash
     "ParamErisTongue": 8.0,
+    "ParamCheek": 4.5,
+    "ParamBreath": 5.0,
+    "ParamEyeHighlight": 8.0,
 }
 
 
@@ -718,6 +726,10 @@ class Live2DStageState:
             motion_weight = self._motion_weight(timestamp)
             for key, value in _MOTION_OFFSETS.get(self._motion, {}).items():
                 target[key] = target.get(key, 0.0) + value * motion_weight
+
+            # Nhịp thở sinh học tự nhiên: ~16 nhịp/phút, hơi thở nhanh hơn nhẹ khi arousal cao
+            breath_speed = 1.65 + visual_affect.arousal * 0.45
+            target["ParamBreath"] = 0.5 + 0.5 * math.sin(timestamp * breath_speed)
 
             allow_idle_gesture = (
                 not self._speaking

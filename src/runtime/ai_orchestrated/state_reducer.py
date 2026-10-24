@@ -218,13 +218,13 @@ class StateReducer:
         def delta(current: float, proposed: float, cap: float) -> float:
             return clamp01(current + max(-cap, min(cap, proposed * relation_weight * cap)))
 
-        relational_trust = delta(relation.relational_trust, observation.relational_delta, 0.035)
+        relational_trust = delta(relation.relational_trust, observation.relational_delta, 0.040)
         competence_trust = delta(relation.competence_trust, observation.competence_delta, 0.045)
         factual_reliability = delta(relation.factual_reliability, observation.factual_delta, 0.050)
         boundary_safety = delta(relation.boundary_safety, observation.boundary_delta, 0.040)
-        familiarity = delta(relation.familiarity, observation.familiarity_delta, 0.025)
-        closeness = delta(relation.closeness, observation.closeness_delta, 0.030)
-        playful_safety = delta(relation.playful_safety, observation.playful_safety_delta, 0.035)
+        familiarity = delta(relation.familiarity, observation.familiarity_delta, 0.035)
+        closeness = delta(relation.closeness, observation.closeness_delta, 0.045)
+        playful_safety = delta(relation.playful_safety, observation.playful_safety_delta, 0.065)
         rupture = delta(relation.rupture, observation.rupture_delta, 0.045)
         repair_progress = relation.repair_progress
         if relation_weight > 0.0:

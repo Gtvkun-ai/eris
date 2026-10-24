@@ -113,7 +113,7 @@ class InfjParameterProfile:
             return self.clamp_brow(value)
         if parameter_id in {"ParamErisMouthCornerL", "ParamErisMouthCornerR"}:
             return _clamp(value, -1.0, 1.0)
-        if parameter_id in {"ParamErisLipPress", "ParamErisTongue"}:
+        if parameter_id in {"ParamErisLipPress", "ParamErisTongue", "ParamCheek", "ParamBreath", "ParamEyeHighlight"}:
             return _clamp(value, 0.0, 1.0)
         if parameter_id == "ParamMouthForm":
             return self.clamp_mouth_form(value)

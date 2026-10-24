@@ -1154,6 +1154,15 @@ class AIAutonomousOrchestrator:
             "delivery_id": result.delivery_id,
             "decision": decision_dict,
         }
+        if getattr(result, "status", "") != "delivering":
+            maybe_ambient = getattr(host, "_maybe_emit_ambient_micro_reflex", None)
+            if callable(maybe_ambient):
+                try:
+                    maybe_ambient(now=time.time())
+                except Exception as ambient_exc:
+                    logger = getattr(host, "logger", None)
+                    if logger:
+                        logger.debug("[ambient-reflex] loop trigger error: %s", ambient_exc)
         if sleep_after:
             sleep = getattr(host, "_sleep_interruptible", None)
             if callable(sleep):

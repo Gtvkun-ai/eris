@@ -210,7 +210,56 @@ class PrivateMindDaemon:
             outcome_reports=tuple(self.outcome_feedback_reports[-6:]),
         )
         self.last_tick = daemon_tick
+        if ticked and owner is not None:
+            self._maybe_leak_cognition(result, owner)
         return daemon_tick
+
+    def _maybe_leak_cognition(self, result: Any, owner: Any) -> bool:
+        """Rò rỉ nhận thức vi mô (Micro Cognitive Leakage) từ Não ngầm.
+
+        Khi Eris vừa suy nghĩ sâu (có unexpressed thoughts, tension, hoặc ngộ ra eureka),
+        phát xạ một cử chỉ vi mô nhỏ (ánh mắt liếc, khẽ 'hửm...', hoặc 'a...') mà không
+        chiếm sóng chat công khai.
+        """
+        if result is None or owner is None:
+            return False
+        emit_fn = getattr(owner, "_emit_fast_micro_act", None)
+        if not callable(emit_fn):
+            return False
+        clock = getattr(owner, "interaction_clock", None)
+        if clock is not None and getattr(clock, "speech_floor_busy", False):
+            return False
+
+        try:
+            from runtime.micro_reflex_system import get_micro_reflex_engine
+            engine = get_micro_reflex_engine(logger=self.logger)
+
+            judgment = getattr(result, "judgment", None)
+            tension = float(getattr(judgment, "pressure", 0.0) or 0.0) if judgment is not None else 0.0
+            confidence = float(getattr(judgment, "confidence", 0.0) or 0.0) if judgment is not None else 0.0
+            eureka = confidence > 0.85 and bool(getattr(judgment, "dominant_judgment", ""))
+
+            unexpressed = ()
+            if judgment is not None:
+                unexpressed = getattr(judgment, "open_questions", ()) or ()
+            if not unexpressed and hasattr(result, "dossier"):
+                meta = getattr(result.dossier, "metadata", {}) or {}
+                unexpressed = meta.get("unresolved_threads") or ()
+
+            leak_kind = engine.evaluate_cognitive_leakage(
+                unexpressed_thoughts=list(unexpressed) if unexpressed else None,
+                tension=tension,
+                eureka=eureka,
+                now=time.time(),
+            )
+            if leak_kind is None:
+                return False
+
+            return bool(emit_fn(surface="", act_kind=leak_kind, timestamp=time.time()))
+        except Exception as exc:
+            if self.logger:
+                self.logger.debug("[private-mind] cognitive leakage error: %s", exc)
+            return False
 
     def record_outcome(self, outcome: Any, *, frame: Any = None) -> tuple[dict[str, Any], ...]:
         """Nhận hậu quả public turn và cập nhật concern lifecycle.

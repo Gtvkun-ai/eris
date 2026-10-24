@@ -216,7 +216,10 @@ class IncomingMessageDispatcher:
             def _emit_micro_act(surface: str, act_kind: MicroActKind) -> bool:
                 emit_hook = getattr(owner, "_emit_fast_micro_act", None)
                 if callable(emit_hook):
-                    return bool(emit_hook(surface, act_kind=act_kind.value, timestamp=timestamp))
+                    try:
+                        return bool(emit_hook(surface, act_kind=act_kind.value, timestamp=timestamp, user_text=user_text))
+                    except TypeError:
+                        return bool(emit_hook(surface, act_kind=act_kind.value, timestamp=timestamp))
                 return True
 
             receipt = micro_router.select_and_emit(

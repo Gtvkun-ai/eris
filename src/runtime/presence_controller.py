@@ -3,6 +3,9 @@ from __future__ import annotations
 import time
 
 
+from typing import Any, Mapping
+
+
 class PresenceControllerMixin:
     """Bookkeeping tối thiểu cho nhịp autonomous của Architecture C.
 
@@ -20,6 +23,53 @@ class PresenceControllerMixin:
             int(getattr(self, "reengagement_quiet_cycles", 0) or 0) + 1
         )
         return self.presence_maintenance_silent_cycles
+
+    def _maybe_emit_ambient_micro_reflex(self, *, now: float | None = None) -> bool:
+        """Đánh giá và phát xạ phản xạ sinh học tự nhiên (thở dài, ngâm nga, đổi dáng) khi rảnh."""
+        clock = getattr(self, "interaction_clock", None)
+        if clock is not None and getattr(clock, "speech_floor_busy", False):
+            return False
+
+        ts = float(now if now is not None else time.time())
+        idle_seconds = 0.0
+        if clock is not None and getattr(clock, "last_public_activity_at", 0.0) > 0.0:
+            idle_seconds = ts - clock.last_public_activity_at
+
+        # Nếu user mới tương tác gần đây (< 45s), không phát ambient
+        if idle_seconds < 45.0:
+            return False
+
+        # Kiểm tra xem có đang dở pending input của user không
+        if bool(getattr(self, "_pending_user_input", None)):
+            return False
+
+        try:
+            from runtime.micro_reflex_system import get_micro_reflex_engine
+            engine = get_micro_reflex_engine(logger=getattr(self, "logger", None))
+
+            current_mood: Mapping[str, Any] = {}
+            affect_bridge = getattr(self, "current_affect", None)
+            if isinstance(affect_bridge, Mapping):
+                current_mood = affect_bridge
+            elif hasattr(self, "ai_state_reducer"):
+                try:
+                    snapshot = self.ai_state_reducer.snapshot()
+                    current_mood = getattr(snapshot, "mood", {}) or {}
+                except Exception:
+                    pass
+
+            ambient_kind = engine.evaluate_ambient(idle_seconds, current_mood=current_mood, now=ts)
+            if ambient_kind is None:
+                return False
+
+            emit_fn = getattr(self, "_emit_fast_micro_act", None)
+            if callable(emit_fn):
+                return bool(emit_fn(surface="", act_kind=ambient_kind, timestamp=ts))
+        except Exception as exc:
+            logger = getattr(self, "logger", None)
+            if logger:
+                logger.debug("[ambient-reflex] eval error: %s", exc)
+        return False
 
     def _note_autonomous_spoken(
         self,

@@ -145,8 +145,28 @@ class IdentityExpressionBridge:
             else:
                 add(0.54 + 0.26 * conflict.activation, "warm_embarrassed", "attachment_vs_pride_attachment_leaks", "soft_compact", 0.06)
 
+        if embarrassment >= 0.36 and (tenderness >= 0.36 or relation.closeness >= 0.36):
+            add(
+                0.52 + 0.28 * embarrassment + 0.16 * tenderness,
+                "blush_affection",
+                "relational_affection_with_embarrassment",
+                "soft_compact",
+                0.05,
+            )
+
         if pressure >= 0.72 and withdrawal >= 0.48:
             add(0.60 + 0.28 * pressure, "sad_distant", "overload_withdrawal", "very_short", -0.45)
+
+        # Yandere / Warning: Kích hoạt khi ghen cao, hoặc ranh giới bị phạm kèm bực bội
+        jealous = float(state.personality.mood.get("jealous_activation", 0.0) or 0.0)
+        if jealous >= 0.35 or (irritation >= 0.58 and cold_distance >= 0.40):
+            add(
+                0.54 + 0.32 * max(jealous, irritation),
+                "yan_warning",
+                "jealous_or_boundary_warning_dead_eyes",
+                "short_cold",
+                -0.10,
+            )
 
         # Requested hint vẫn có trọng lượng. Bridge chỉ override khi state đủ rõ.
         requested_score = 0.52 if requested != "neutral" else 0.26
