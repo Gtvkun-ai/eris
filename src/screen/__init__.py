@@ -33,6 +33,30 @@ def build_screen_text_runtime(*, logger=None):
     return store, worker, router
 
 
+def build_vision_perception_runtime(*, logger=None):
+    """Factory khởi tạo Vision Perception runtime (chạy song song không block)."""
+    try:
+        from .vision_perception_worker import (
+            VisionPerceptionWorker,
+            ensure_vision_perception_service,
+        )
+        service = ensure_vision_perception_service()
+        worker = VisionPerceptionWorker(service)
+        return service, worker
+    except Exception as exc:
+        class _DisabledVisionWorker:
+            enabled = False
+            def start(self): return None
+            def stop(self): return None
+        if logger is not None:
+            try:
+                logger.debug("[vision perception] worker unavailable: %s", exc)
+            except Exception:
+                pass
+        from .vision_perception_worker import ensure_vision_perception_service
+        return ensure_vision_perception_service(), _DisabledVisionWorker()
+
+
 __all__ = [
     "ActiveWindowInfo",
     "PendingVisionEscalation",
@@ -44,4 +68,5 @@ __all__ = [
     "ScreenEvidenceStore",
     "ScreenRelevanceRouter",
     "build_screen_text_runtime",
+    "build_vision_perception_runtime",
 ]

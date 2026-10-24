@@ -369,11 +369,23 @@ class ConversationContextAssembler:
 
     def _world_context(self, channel: str) -> str:
         lane = "chat" if str(channel or "").strip().lower() == "chat" else "self_turn"
+        world_text = ""
         try:
-            return str(ensure_world_state_service(self.host).prompt_context(lane, refresh=True) or "")[:20000]
+            world_text = str(ensure_world_state_service(self.host).prompt_context(lane, refresh=True) or "")[:20000]
         except Exception as exc:
             self._debug("context.world", exc)
-            return ""
+
+        vision_text = ""
+        try:
+            from screen.vision_perception_worker import ensure_vision_perception_service
+            vision = ensure_vision_perception_service().get_latest_snapshot()
+            if vision is not None and not vision.is_stale(max_age_seconds=600.0):
+                vision_text = vision.prompt_context()
+        except Exception as exc:
+            self._debug("context.vision", exc)
+
+        parts = [p for p in (world_text, vision_text) if p]
+        return "\n\n".join(parts)
 
 
     @staticmethod

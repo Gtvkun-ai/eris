@@ -956,6 +956,19 @@ class CoordinatorBootstrapMixin:
             self.screen_text_worker = None
             self.screen_relevance_router = None
             self.logger.warning("[screen text] không khởi tạo được index: %s", exc)
+
+        try:
+            from screen import build_vision_perception_runtime
+            (
+                self.vision_perception_service,
+                self.vision_perception_worker,
+            ) = build_vision_perception_runtime(logger=self.logger)
+            self.vision_perception_worker.start()
+        except Exception as exc:
+            self.vision_perception_service = None
+            self.vision_perception_worker = None
+            self.logger.debug("[vision perception] worker bootstrap note: %s", exc)
+
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()
         self._chat_screen_capture_present = False

@@ -107,6 +107,12 @@ class CoordinatorShutdownMixin:
                 worker.stop()
             except Exception as exc:
                 self.logger.warning("[screen text] stop error: %s", exc)
+        vision_worker = getattr(self, "vision_perception_worker", None)
+        if vision_worker is not None:
+            try:
+                vision_worker.stop()
+            except Exception as exc:
+                self.logger.debug("[vision perception] stop error: %s", exc)
         # Dừng producer native trước, rồi mới dừng semantic consumer. Như vậy
         # shutdown không tạo thêm event sau khi worker đã ngừng nhận queue.
         native_broker = getattr(self, "native_environment_event_broker", None)
