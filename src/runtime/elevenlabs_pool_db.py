@@ -269,6 +269,94 @@ class ElevenPoolDB:
 
         return True, "Đã thêm tài khoản mới thành công", acc
 
+    def rename_account(self, account_id: int, new_label: str) -> Tuple[bool, str]:
+        lbl = str(new_label or "").strip()
+        if not lbl:
+            return False, "Tên giọng không được để trống"
+        with self._lock:
+            with self._connection() as conn:
+                conn.execute("UPDATE elevenlabs_accounts SET label = ? WHERE id = ?", (lbl, account_id))
+                conn.commit()
+                return True, f"Đã đổi tên thành '{lbl}'"
+
+    def upsert_account(
+        self,
+        refresh_token: str,
+        label: str = "",
+        notes: str = "",
+        auto_sync: bool = True,
+    ) -> Tuple[bool, str, Optional[ElevenAccount]]:
+        token = str(refresh_token or "").strip()
+        if not token:
+            return False, "Refresh Token không được để trống", None
+
+        now = time.time()
+        lbl = str(label or "").strip()
+        if not lbl:
+            lbl = f"Acc-{token[:6]}"
+
+        acc_id = None
+        is_update = False
+        with self._lock:
+            try:
+                with self._connection() as conn:
+                    # Check if exists by refresh_token
+                    existing = conn.execute(
+                        "SELECT id, label FROM elevenlabs_accounts WHERE refresh_token = ?", (token,)
+                    ).fetchone()
+                    if existing:
+                        acc_id = existing["id"]
+                        is_update = True
+                        update_lbl = lbl if label.strip() else existing["label"]
+                        conn.execute(
+                            """
+                            UPDATE elevenlabs_accounts
+                            SET label = ?, notes = COALESCE(NULLIF(?, ''), notes), status = 'active'
+                            WHERE id = ?
+                            """,
+                            (update_lbl, str(notes or "").strip(), acc_id),
+                        )
+                        conn.commit()
+                    else:
+                        # Check if exists by exact label
+                        existing_lbl = conn.execute(
+                            "SELECT id FROM elevenlabs_accounts WHERE label = ?", (lbl,)
+                        ).fetchone() if label.strip() else None
+
+                        if existing_lbl:
+                            acc_id = existing_lbl["id"]
+                            is_update = True
+                            conn.execute(
+                                """
+                                UPDATE elevenlabs_accounts
+                                SET refresh_token = ?, notes = COALESCE(NULLIF(?, ''), notes), status = 'active', bearer_token = '', bearer_expires_at = 0.0
+                                WHERE id = ?
+                                """,
+                                (token, str(notes or "").strip(), acc_id),
+                            )
+                            conn.commit()
+                        else:
+                            cur = conn.execute(
+                                """
+                                INSERT INTO elevenlabs_accounts (label, refresh_token, created_at, notes, status)
+                                VALUES (?, ?, ?, ?, 'active')
+                                """,
+                                (lbl, token, now, str(notes or "").strip()),
+                            )
+                            conn.commit()
+                            acc_id = cur.lastrowid
+            except Exception as exc:
+                return False, f"Lỗi cơ sở dữ liệu: {exc}", None
+
+        acc = self.get_account_by_id(acc_id)
+        if auto_sync and acc:
+            self.sync_subscription(acc.id)
+            acc = self.get_account_by_id(acc_id)
+
+        msg = f"Đã cập nhật token cho '{acc.label}'" if (acc and is_update) else (f"Đã thêm giọng '{acc.label}' thành công" if acc else "Thành công")
+        return True, msg, acc
+
+
     def get_account_by_id(self, account_id: int) -> Optional[ElevenAccount]:
         with self._lock:
             with self._connection() as conn:
@@ -672,3 +760,4 @@ class ElevenPoolDB:
 
 # Singleton Pool DB Instance
 GLOBAL_ELEVEN_POOL = ElevenPoolDB()
+ElevenLabsPoolDB = ElevenPoolDB
