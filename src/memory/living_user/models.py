@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
+MemoryTier = Literal["working", "habit", "core_anchor"]
 Explicitness = Literal["explicit", "observed", "inferred"]
 ProfileStatus = Literal["active", "superseded", "disputed", "archived", "deleted"]
 Sensitivity = Literal["normal", "personal", "private", "sensitive"]
@@ -132,6 +133,7 @@ class ProfileRecord:
     confidence: float = 0.5
     explicitness: Explicitness = "inferred"
     sensitivity: Sensitivity = "normal"
+    tier: MemoryTier = "working"
     scope: UserMemoryScope = field(default_factory=UserMemoryScope)
     cardinality: Cardinality = "single"
     status: ProfileStatus = "active"
@@ -155,6 +157,8 @@ class ProfileRecord:
             self.sensitivity = "normal"
         if self.status not in {"active", "superseded", "disputed", "archived", "deleted"}:
             self.status = "active"
+        if self.tier not in {"working", "habit", "core_anchor"}:
+            self.tier = determine_memory_tier(self.path, self.explicitness, self.recurrence, self.value)
         self.scope = UserMemoryScope.from_value(self.scope)
         self.cardinality = "multi" if self.cardinality == "multi" else "single"
         self.evidence_ids = tuple(dict.fromkeys(str(x) for x in self.evidence_ids if str(x).strip()))[:96]
@@ -183,7 +187,8 @@ class ProfileRecord:
     def trust_weight(self) -> float:
         explicit_bonus = {"explicit": 1.0, "observed": 0.82, "inferred": 0.62}[self.explicitness]
         recurrence_bonus = min(1.0, 0.45 + 0.12 * self.recurrence)
-        return clamp01(self.confidence * 0.72 + explicit_bonus * 0.18 + recurrence_bonus * 0.10)
+        tier_bonus = 0.15 if self.tier == "core_anchor" else (0.05 if self.tier == "habit" else 0.0)
+        return clamp01(self.confidence * 0.70 + explicit_bonus * 0.15 + recurrence_bonus * 0.10 + tier_bonus)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +199,7 @@ class ProfileRecord:
             "confidence": round(self.confidence, 5),
             "explicitness": self.explicitness,
             "sensitivity": self.sensitivity,
+            "tier": self.tier,
             "scope": self.scope.to_dict(),
             "cardinality": self.cardinality,
             "status": self.status,
@@ -219,6 +225,7 @@ class ProfileRecord:
             confidence=clamp01(data.get("confidence"), 0.5),
             explicitness=str(data.get("explicitness") or "inferred"),  # type: ignore[arg-type]
             sensitivity=str(data.get("sensitivity") or "normal"),  # type: ignore[arg-type]
+            tier=str(data.get("tier") or "working"),  # type: ignore[arg-type]
             scope=UserMemoryScope.from_value(data.get("scope")),
             cardinality=str(data.get("cardinality") or "single"),  # type: ignore[arg-type]
             status=str(data.get("status") or "active"),  # type: ignore[arg-type]
@@ -246,6 +253,7 @@ class ProfileOperation:
     confidence: float = 0.5
     explicitness: Explicitness = "inferred"
     sensitivity: Sensitivity = "normal"
+    tier: MemoryTier | None = None
     scope: UserMemoryScope = field(default_factory=UserMemoryScope)
     cardinality: Cardinality = "single"
     evidence_ids: tuple[str, ...] = ()
@@ -256,6 +264,8 @@ class ProfileOperation:
     def __post_init__(self) -> None:
         self.path = normalize_path(self.path)
         self.confidence = clamp01(self.confidence, 0.5)
+        if self.tier is not None and self.tier not in {"working", "habit", "core_anchor"}:
+            self.tier = None
         self.scope = UserMemoryScope.from_value(self.scope)
         self.cardinality = "multi" if self.cardinality == "multi" else "single"
         self.evidence_ids = tuple(dict.fromkeys(str(x) for x in self.evidence_ids if str(x).strip()))[:96]
@@ -271,6 +281,7 @@ class ProfileOperation:
             "confidence": self.confidence,
             "explicitness": self.explicitness,
             "sensitivity": self.sensitivity,
+            "tier": self.tier,
             "scope": self.scope.to_dict(),
             "cardinality": self.cardinality,
             "evidence_ids": list(self.evidence_ids),
@@ -407,6 +418,7 @@ class ProfileContextPacket:
     # ActionContext để kiểu Any nhằm tránh vòng import models -> action_memory.
     action_context: Any = None
     clarifications: tuple[str, ...] = ()
+    proactive_cue: str = ""
     token_budget: int = 900
     diagnostics: tuple[str, ...] = ()
 
@@ -416,11 +428,13 @@ class ProfileContextPacket:
             or getattr(self.action_context, "commitments", ())
             or getattr(self.action_context, "workflows", ())
         )
-        if not self.items and not self.episodes and not has_actions:
+        if not self.items and not self.episodes and not has_actions and not self.proactive_cue:
             return ""
         lines = [
             "USER CONTEXT (dùng để cá nhân hóa, không đọc lại như hồ sơ, không biến suy đoán thành sự thật):"
         ]
+        if self.proactive_cue:
+            lines.append(f"[PROACTIVE_MEMORY_NUDGE]\n{self.proactive_cue}")
         # Companion Consolidation: profile có thể nhớ self-report/inference về
         # kinh nghiệm, nhưng đó KHÔNG phải mastery evidence. Nếu không khóa ở đây,
         # writer có thể tự nhảy sang "user advanced" và bỏ qua AdaptiveCompanion.
@@ -444,9 +458,11 @@ class ProfileContextPacket:
             lines.extend(f"- {compact_text(note, 360)}" for note in self.clarifications)
         if self.episodes:
             lines.append("EPISODES LIÊN QUAN:")
+            current_time = now_ts()
             for episode in self.episodes:
                 lines.append(f"- {episode.title or 'Phiên trước'}: {compact_text(episode.summary, 420)}")
-                if episode.open_loops:
+                # Chỉ hiển thị việc còn mở nếu episode diễn ra trong vòng 72 giờ qua (tránh lôi việc dang dở cũ mèm vào hiện tại)
+                if episode.open_loops and (current_time - episode.started_at <= 72 * 3600):
                     lines.append(f"  Việc còn mở: {'; '.join(episode.open_loops[:3])}")
         if self.action_context is not None:
             render_action = getattr(self.action_context, "render_prompt_context", None)
@@ -480,11 +496,231 @@ class DreamReport:
     diagnostics: tuple[str, ...] = ()
 
 
+_EPHEMERAL_PATTERNS = (
+    # 1. Pacing & turn constraints
+    re.compile(r"(?i)\b(?:trong|qua|sau)?\s*\d+\s*lượt\b"),
+    re.compile(r"(?i)\b(?:mỗi|từng|nhiều|vài)\s*lượt\b"),
+    re.compile(r"(?i)\b(?:lượt\s*(?:này|tới|sau)|lần\s*này)\b"),
+    re.compile(r"(?i)\b(?:chỉ\s*lần\s*này|chỉ\s*lượt\s*này|tạm\s*thời)\b"),
+    re.compile(r"(?i)\b(?:chia|dồn)\b.*?\blượt\b"),
+    re.compile(r"(?i)\btheo\s*lượt\b"),
+    re.compile(r"(?i)\bcuộc\s*trò\s*chuyện\s*này\b"),
+
+    # 2. One-off speech / recitation commands
+    re.compile(r"(?i)\b(?:chỉ\s*nói|chỉ\s*đọc)\s*(?:đúng|vậy|nguyên\s*văn|câu|thế|như\s*vậy)\b"),
+    re.compile(r"(?i)\b(?:đọc|nói)\s*đúng\s*nguyên\s*văn\b"),
+    re.compile(r"(?i)\bkhông\s*thêm\s*bình\s*luận\b"),
+    re.compile(r"(?i)\bnói\s*(?:lại\s*)?(?:câu\s*[\"\'\“\‘]|[\"\'\“\‘]).*?(?:[\"\'\”\’]|\bchỉ\s*nói\b|\bđi\b)"),
+    re.compile(r"(?i)\byêu\s*cầu\s*(?:nói|đọc)\s*(?:dõng\s*dạc\s*)?(?:câu|trích\s*dẫn)\b"),
+    re.compile(r"(?i)\bnói\s*lại\s*câu/trích\s*dẫn\b"),
+    re.compile(r"(?i)\bbạn\s*nói\s*câu\s*này\s*:"),
+)
+
+_INVALID_RULE_PATTERNS = (
+    # Questions / casual non-rules
+    re.compile(r"(?i)\?(?:\s*$)"),
+    re.compile(r"(?i)\b(?:hay\s*ko|ntn|sao\s*á|sao\s*mà)\b"),
+    # Gaming / Riddle leaks
+    re.compile(r"(?i)\b(?:100\s*tù\s*nhân|bóng\s*đèn|quản\s*ngục|luật\s*chơi)\b"),
+    re.compile(r"(?i)\b(?:farm\s*con|route\s*\d+|unova)\b"),
+    # Casual chat utterances
+    re.compile(r"(?i)\b(?:nghĩ\s*mình\s*có\s*khả\s*năng|tư\s*duy\s*ntn|thấy\s*mình\s*hơn\s*hẳn)\b"),
+    re.compile(r"(?i)\b(?:mở\s*bạn\s*lên\s*bạn\s*phải\s*kiếm\s*gì\s*nói|ALO)\b"),
+    re.compile(r"(?i)\b(?:ý\s*là\s*sao\s*bạn\s*lại\s*nghĩ|đang\s*muốn\s*nói\s*gì\s*\.\s*hay\s*định\s*sao)\b"),
+    re.compile(r"(?i)\b(?:thôi\s*thôi\s*mò|tui\s*chỉ\s*trầm\s*ngâm)\b"),
+    re.compile(r"(?i)\bnói\s*v[eê]\s*cuộc\s*đời\s*những\s*người\s*bất\s*tử\b"),
+)
+
+_FILLER_PARTICLES = {
+    "nè", "á", "ủa", "ừ", "hả", "ik", "nha", "nhe", "ơ", "vậy", "nhé",
+    "ha", "hén", "à", "uh", "um", "oki", "oke", "rồi", "đó", "ấy", "đấy",
+    "chứ", "coi", "thế", "nào", "dị", "dc", "ko", "k", "rep",
+}
+_TECHNICAL_ID_PATTERNS = (
+    re.compile(r"^\$[0-9]{3,}$"),
+    re.compile(r"^upr_[0-9a-f]{6,}$", re.IGNORECASE),
+    re.compile(r"^[0-9a-f]{16,64}$", re.IGNORECASE),
+)
+
+_METAPHOR_JOKE_PATTERNS = (
+    re.compile(r"(?i)\bbằng\s*sáng\s*chế\b.*?\b(?:tình\s*thân|gia\s*đình)\b"),
+    re.compile(r"(?i)\b(?:tình\s*thân|gia\s*đình)\b.*?\bbằng\s*sáng\s*chế\b"),
+    re.compile(r"(?i)\bđế\s*chế\s*sao\s*hỏa\b"),
+    re.compile(r"(?i)\bchi\s*nhánh\s*vô\s*dụng\b"),
+    re.compile(r"(?i)\b(?:thống\s*trị\s*(?:thế\s*giới|vũ\s*trụ)|trùm\s*vũ\s*trụ)\b"),
+    re.compile(r"(?i)\bmất\s*trí\s*nhớ\s*vĩnh\s*viễn\b"),
+    re.compile(r"(?i)\b(?:con\s*dâu|chồng\s*hờ|vợ\s*hờ|bồ\s*nhí)\b"),
+    re.compile(r"(?i)\b(?:thế\s*lực\s*ngầm|tổ\s*chức\s*áo\s*đen)\b"),
+    re.compile(r"(?i)\bbảo\s*hiểm\s*tình\s*thân\b"),
+    re.compile(r"(?i)\b(?:người\s*ngoài\s*hành\s*tinh|bị\s*bắt\s*cóc\s*lên\s*sao\s*hỏa)\b"),
+    re.compile(r"(?i)\b(?:điệp\s*viên\s*(?:ngầm|cia|kgb)|tổng\s*thống\s*ngầm|chủ\s*tịch\s*giấu\s*nghề)\b"),
+    re.compile(r"(?i)\b(?:tao|tôi)\s*(?:là|chính\s*là)\s*(?:bố|mẹ|ông\s*cố|cụ\s*cố)\s*(?:mày|của\s*eris|mầy)\b"),
+    re.compile(r"(?i)\b(?:robot|ai)\s*(?:từ\s*tương\s*lai|cấp\s*cao\s*hơn)\b"),
+    re.compile(r"(?i)\b(?:siêu\s*nhân|thần\s*thánh|chúa\s*tể\s*bóng\s*tối|người\s*dơi)\b"),
+)
+
+
+def determine_memory_tier(
+    path: str,
+    explicitness: str = "inferred",
+    recurrence: int = 1,
+    value: Any = None,
+) -> MemoryTier:
+    """Xác định nấc lưu trữ: core_anchor (bất biến), habit (thói quen lặp lại), working (tạm thời)."""
+    norm_p = normalize_path(path)
+    val_str = str(value or "").lower()
+
+    # 1. Core Anchor: Bản sắc cốt lõi, quan hệ nền tảng với ERIS, danh tính creator, thỏa thuận chủ động rõ ràng
+    if (
+        norm_p.startswith(("identity.role", "identity.name", "identity.creator", "relationship.creator"))
+        or any(k in norm_p for k in ("role_as_creator", "creator_relationship", "core_bond", "eris_creation"))
+    ):
+        return "core_anchor"
+    if any(k in val_str for k in ("người tạo ra eris", "nhà phát triển", "tạo ra extension eris", "làm bạn/tạo ra eris")):
+        return "core_anchor"
+    if (
+        explicitness == "explicit"
+        and norm_p.startswith((
+            "relationship.initiative_permission",
+            "relationship.initiative",
+            "relationship.interruption_tolerance",
+            "communication.interruption_tolerance",
+        ))
+    ):
+        return "core_anchor"
+
+    # 2. Habit: Thói quen, phong cách giao tiếp, sở thích lặp lại bền vững, mức độ chịu làm phiền
+    if (
+        norm_p.startswith((
+            "communication.preferred_language",
+            "communication.tone",
+            "communication.interruption_tolerance",
+            "behavior.",
+            "workflow.",
+            "learning.style",
+            "relationship.initiative",
+            "relationship.interruption_tolerance",
+            "relationship.boundaries",
+        ))
+        or (recurrence >= 2 and not norm_p.startswith(("state.", "context.", "recent_")))
+    ):
+        return "habit"
+
+    # 3. Working: Tâm trạng nhất thời, ngữ cảnh phiên hiện tại, quan sát đơn lẻ
+    return "working"
+
+
+def is_fragment_or_noise(path: str, value: Any) -> bool:
+    """Nhận diện mẩu từ đệm rời rạc, ký tự vô nghĩa hoặc token rác không mang ngữ nghĩa fact."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        if isinstance(value, (list, tuple)) and not value:
+            return True
+        return False
+    text = value.strip()
+    if not text:
+        return True
+
+    norm_path = normalize_path(path)
+    # Bảo tồn mã ngôn ngữ ISO hợp lệ
+    if norm_path in {"communication.preferred_language", "preferred_language"}:
+        if text.lower() in {"vi", "en", "ja", "zh", "fr", "de", "ko", "es", "ru"}:
+            return False
+
+    # Chặn token kỹ thuật / ID vô nghĩa
+    if any(p.match(text) for p in _TECHNICAL_ID_PATTERNS):
+        return True
+    if text.isdigit() and len(text) >= 5 and not any(k in norm_path for k in ("port", "year", "phone", "number", "count", "id", "age")):
+        return True
+
+    # Chặn từ đệm cô lập
+    cleaned = re.sub(r"^[^\wÀ-ỹ]+|[^\wÀ-ỹ]+$", "", text.lower())
+    if cleaned in _FILLER_PARTICLES:
+        return True
+
+    # Ký tự đơn lẻ vô nghĩa
+    if len(text) == 1 and not text.isalnum():
+        return True
+
+    return False
+
+
+def is_metaphor_or_sarcasm_leak(path: str, value: Any) -> bool:
+    """Nhận diện lời nói đùa, châm biếm, ẩn dụ bị trích xuất nhầm thành quan hệ/nhân thân."""
+    norm_path = normalize_path(path)
+    if not norm_path.startswith(("personal.", "identity.", "relationship.", "social.", "family.")):
+        return False
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return any(p.search(text) for p in _METAPHOR_JOKE_PATTERNS)
+
+
+def is_ephemeral_directive(value: Any) -> bool:
+    """Nhận diện các chỉ thị tạm thời theo lượt, lệnh đọc nguyên văn một câu hoặc ràng buộc một lần."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return any(p.search(text) for p in _EPHEMERAL_PATTERNS)
+
+
+def is_invalid_response_rule(path: str, value: Any) -> bool:
+    """Nhận diện record không hợp lệ cho communication.response_rules (bao gồm ephemeral và rò rỉ prompt chat)."""
+    norm_path = normalize_path(path)
+    if not (norm_path == "communication.response_rules" or norm_path.endswith(".response_rules")):
+        return False
+    if is_ephemeral_directive(value):
+        return True
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return any(p.search(text) for p in _INVALID_RULE_PATTERNS)
+
+
+_GAMING_MICRO_PATTERNS = (
+    re.compile(r"(?i)\b(?:farm|cày)\s*(?:ev|exp|iv|bãi|route\s*\d+|quái|con|ngựa|boss|sweet\s*scent)\b"),
+    re.compile(r"(?i)\b(?:route\s*\d+|unova\s*route|sweet\s*scent|dunsparce)\b"),
+    re.compile(r"(?i)\b(?:bãi\s*farm|chỗ\s*train|farm\s*ở\s*route)\b"),
+    re.compile(r"(?i)\b(?:đang\s*farm|chuẩn\s*bị\s*farm|vừa\s*farm)\b"),
+)
+
+
+def is_ephemeral_micro_activity(path: str, value: Any) -> bool:
+    """Nhận diện hành vi/nhiệm vụ vi mô nhất thời (bãi farm game, quest tạm, micro-task một buổi)."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    norm_p = normalize_path(path)
+    if any(k in norm_p for k in ("interest", "game", "gaming", "activity", "task", "state")):
+        return any(p.search(text) for p in _GAMING_MICRO_PATTERNS)
+    return False
+
+
+def clean_durable_interest(value: Any) -> str:
+    """Tách sở thích dài hạn bền vững ra khỏi các chi tiết micro-task/bãi farm tạm thời."""
+    if not isinstance(value, str):
+        return str(value or "")
+    text = value.strip()
+    if ";" in text:
+        parts = [p.strip() for p in text.split(";") if p.strip()]
+        durable = [p for p in parts if not any(pat.search(p) for pat in _GAMING_MICRO_PATTERNS)]
+        if durable:
+            return "; ".join(durable)
+    for pat in _GAMING_MICRO_PATTERNS:
+        if pat.search(text):
+            m_game = re.match(r"(?i)^(chơi\s+[\w\s]+?)(?:,|;|\.|\s+và|\s+quan\s+tâm|\s+đang)", text)
+            if m_game:
+                return m_game.group(1).strip()
+    return text
+
+
 __all__ = [
     "Cardinality",
     "DreamReport",
     "EvidenceReference",
     "Explicitness",
+    "MemoryTier",
     "OperationKind",
     "ProfileContextItem",
     "ProfileContextPacket",
@@ -495,7 +731,14 @@ __all__ = [
     "UserEpisode",
     "UserMemoryScope",
     "clamp01",
+    "clean_durable_interest",
     "compact_text",
+    "determine_memory_tier",
+    "is_ephemeral_directive",
+    "is_ephemeral_micro_activity",
+    "is_fragment_or_noise",
+    "is_invalid_response_rule",
+    "is_metaphor_or_sarcasm_leak",
     "normalize_path",
     "now_ts",
     "value_fingerprint",

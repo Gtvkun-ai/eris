@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 public partial class UdpListener : Node2D
 {
@@ -61,6 +62,15 @@ public partial class UdpListener : Node2D
 	private bool _speechIsBeingRead = false;
 	private string _lastSpeechBubbleText = "";
 	private ulong _lastSpeechBubbleTextAtMs = 0;
+	private List<string> _speechSentences = new();
+	private int _currentSpeechSentenceIndex = -1;
+	private Tween _sentenceHighlightTween;
+	private float _lastTtsAudioDurationMs = 0f;
+	private bool _ttsAudioIsPlaying = false;
+	private static readonly Regex SentenceSplitterRegex = new Regex(
+		@"(?<=[.!?…\n])\s+",
+		RegexOptions.Compiled
+	);
 	private ErisProcessManager _processes;
 	private UdpDecisionParser _decisionParser = new();
 
@@ -105,6 +115,7 @@ public partial class UdpListener : Node2D
 	private const float ClimbSpeed = 50f;
 
 	private Panel _chatPanel;
+	private bool _chatPanelUserPositioned;
 	private Panel _characterContextMenu;
 	private Button _chatSendButton;
 	private Button _chatCloseButton;
@@ -386,6 +397,7 @@ public partial class UdpListener : Node2D
 		GetNode<Control>("CanvasLayer/Control").AddChild(_settingsPanel);
 		BuildSettingsPanelUi();
 		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
+		BuildChatPanelUi();
 		BuildConversationUi();
 	_chatSendButton.Pressed += OnSendPressed;
 	_chatCloseButton.Pressed += CloseChatPanel;
@@ -967,13 +979,21 @@ public partial class UdpListener : Node2D
 
 	public override void _Input(InputEvent @event)
 	{
-		if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape }
-			&& _conversationHistoryPanel?.Visible == true)
+		if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
 		{
-			if (_plannerEditor.Visible) _plannerEditor.Visible = false;
-			else CloseConversationHistoryPanel();
-			GetViewport().SetInputAsHandled();
-			return;
+			if (_chatPanel?.Visible == true)
+			{
+				CloseChatPanel();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+			if (_conversationHistoryPanel?.Visible == true)
+			{
+				if (_plannerEditor.Visible) _plannerEditor.Visible = false;
+				else CloseConversationHistoryPanel();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 		}
 		// Đang kéo một panel: xử lý di chuyển + thả tại đây để kéo mượt kể cả khi
 		// con trỏ rời khỏi vùng panel (GuiInput không nhận motion khi ra ngoài).
@@ -1285,6 +1305,7 @@ public partial class UdpListener : Node2D
 		}
 		if (_label != null)
 		{
+			_label.BbcodeEnabled = true;
 			_label.MouseFilter = Control.MouseFilterEnum.Stop;
 			_label.ScrollActive = true;
 			_label.ScrollFollowing = false;
@@ -1377,7 +1398,7 @@ public partial class UdpListener : Node2D
 
 		text = new RichTextLabel
 		{
-			BbcodeEnabled = false,
+			BbcodeEnabled = true,
 			FitContent = false,
 			ScrollActive = true,
 			ScrollFollowing = false,
@@ -1551,25 +1572,37 @@ public partial class UdpListener : Node2D
 	private void ToggleChatPanel()
 	{
 		CloseCharacterContextMenu();
-		if (_conversationHistoryPanel?.Visible == true)
-			CloseConversationHistoryPanel();
+		if (_chatPanel?.Visible == true)
+			CloseChatPanel();
 		else
-			OnContextChatPressed();
+			OpenChatPanel();
+	}
+
+	private void OpenChatPanel()
+	{
+		if (_chatPanel == null)
+			return;
+		CloseCharacterContextMenu();
+		_chatPanel.Visible = true;
+		_chatPanel.ZIndex = 1005;
+		_chatPanel.MoveToFront();
+		UpdateChatPanelLayout();
+		UpdateMousePassthrough();
+		_chatInput?.GrabFocus();
+		MarkChatActivity();
 	}
 
 	private void CloseChatPanel()
 	{
-		_chatPanel.Visible = false;
-		CloseConversationHistoryPanel();
+		if (_chatPanel != null)
+			_chatPanel.Visible = false;
+		UpdateMousePassthrough();
 	}
 
 	private void OnContextChatPressed()
 	{
 		_bodyAutonomy?.RecordUserInteraction();
-		ShowConversationHistoryPanel();
-		_workspaceShowPlanner = false;
-		SelectConversationDate(DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
-		_chatInput.GrabFocus();
+		OpenChatPanel();
 	}
 
 	private void OnContextTouchPressed()
@@ -1704,18 +1737,20 @@ public partial class UdpListener : Node2D
 
 		_chatInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
 		_chatInput.Alignment = HorizontalAlignment.Left;
-		_chatInput.PlaceholderText = "Nhan tin voi ERIS...";
+		_chatInput.PlaceholderText = "Nhắn tin với Eris...";
 		_chatInput.AddThemeColorOverride("font_color", new Color(0.43f, 0.39f, 0.42f));
 		_chatInput.AddThemeColorOverride("font_placeholder_color", new Color(0.64f, 0.60f, 0.63f));
 
-		ConfigureChatActionButton(_chatSendButton, "Gui", _chatSubmitTexture, 22);
-		ConfigureChatActionButton(_chatCloseButton, "X", _chatCloseTexture, 20);
+		ConfigureChatActionButton(_chatSendButton, "", _chatSubmitTexture, 22);
+		ConfigureChatActionButton(_chatCloseButton, "", _chatCloseTexture, 20);
+		_chatSendButton.TooltipText = "Gửi tin nhắn · Enter";
+		_chatCloseButton.TooltipText = "Đóng";
+		_chatPanel.Visible = false;
 		UpdateChatPanelLayout();
 	}
 
 	private void UpdateChatPanelLayout()
 	{
-		if (_workspaceChatColumn != null) return;
 		if (_chatPanel == null || _chatInput == null || _chatSendButton == null || _chatCloseButton == null || _chatFrameTexture == null)
 			return;
 
@@ -1770,9 +1805,12 @@ public partial class UdpListener : Node2D
 
 		_chatPanel.CustomMinimumSize = new Vector2(targetWidth, targetHeight);
 		_chatPanel.Size = new Vector2(targetWidth, targetHeight);
-		_chatPanel.Position = new Vector2(
-			usableLeft + Mathf.Max(0f, (usableWidth - targetWidth) * 0.5f),
-			Mathf.Max(usableTop, usableBottom - targetHeight - 8f));
+		if (!_chatPanelUserPositioned)
+		{
+			_chatPanel.Position = new Vector2(
+				usableLeft + Mathf.Max(0f, (usableWidth - targetWidth) * 0.5f),
+				Mathf.Max(usableTop, usableBottom - targetHeight - 8f));
+		}
 
 		if (GetNodeOrNull<HBoxContainer>("CanvasLayer/Control/ChatPanel/HBoxContainer") is { } row)
 		{
@@ -1816,7 +1854,7 @@ public partial class UdpListener : Node2D
 		});
 
 		ApplyChatButtonLayout(_chatSendButton, "", _chatSubmitTexture, new Vector2(submitWidth, buttonHeight), buttonFontSize, scale);
-		ApplyChatButtonLayout(_chatCloseButton, "X", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize, scale);
+		ApplyChatButtonLayout(_chatCloseButton, "", _chatCloseTexture, new Vector2(closeWidth, buttonHeight), closeFontSize, scale);
 	}
 
 	private void ConfigureChatActionButton(Button button, string text, Texture2D texture, int fontSize)
@@ -1983,12 +2021,12 @@ public partial class UdpListener : Node2D
 			EnsureLive2DContextButton(container);
 		}
 
-		ConfigureContextMenuButton(_contextChatButton, "Hội thoại & học tập", "res://asset/Resource/chat.png");
+		ConfigureContextMenuButton(_contextChatButton, "Trò chuyện", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextTouchButton, "Chạm / kéo / thả", "res://asset/Resource/tought.png");
 		ConfigureContextMenuButton(_contextForceSpeakButton, "Nói ngay", "res://asset/Resource/force.png");
 		ConfigureContextMenuButton(_contextEmotionButton, "Khí sắc & hiện diện", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextConversationHistoryButton, "Lịch sử hội thoại", "res://asset/Resource/chat.png");
-		_contextConversationHistoryButton.Visible = false; // Chat và lịch sử dùng chung cửa sổ.
+		_contextConversationHistoryButton.Visible = true; // Chức năng riêng xem lịch sử & kế hoạch.
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn", "res://asset/Resource/emotion.png");
@@ -4087,6 +4125,8 @@ public partial class UdpListener : Node2D
 			_panelDragOffset = panel.GetGlobalMousePosition() - panel.GlobalPosition;
 			if (panel == _conversationHistoryPanel)
 				_conversationHistoryUserPositioned = true;
+			if (panel == _chatPanel)
+				_chatPanelUserPositioned = true;
 			UpdateMousePassthrough();
 			panel.AcceptEvent();
 		}
@@ -4121,16 +4161,22 @@ public partial class UdpListener : Node2D
 	{
 		string msg = _chatInput.Text.Trim();
 		if (string.IsNullOrEmpty(msg)) return;
+		_chatInput.Text = "";
+		SendUserChatMessage(msg);
+		_chatInput.GrabFocus();
+	}
+
+	private void SendUserChatMessage(string msg)
+	{
+		if (string.IsNullOrWhiteSpace(msg)) return;
 		_bodyAutonomy?.RecordUserInteraction();
 		MarkChatActivity();
-		_chatInput.Text = "";
 		RecordConversationUserMessage(msg);
 		// JsonSerializer.Serialize(msg) để escape chuỗi. Không tự nối raw string ngu ngốc
 		string payload = $"{{\"type\":\"chat\",\"message\":{JsonSerializer.Serialize(msg)}}}";
 		_chatSend.PutPacket(Encoding.UTF8.GetBytes(payload));
 		// Preserve chat -> chat_end independently of window visibility.
 		SendChatSignal("chat_end");
-		_chatInput.GrabFocus();
 	}
 
 	private void SendChatSignal(string type)
@@ -4165,10 +4211,16 @@ public partial class UdpListener : Node2D
 			{
 				_textTween.Kill();
 			}
+			if (_sentenceHighlightTween != null && _sentenceHighlightTween.IsValid())
+			{
+				_sentenceHighlightTween.Kill();
+			}
 			HideAllSpeechBubbles();
 			_bubbleHideAtMs = 0;
 			_speechIsLong = false;
 			_speechIsBeingRead = false;
+			_currentSpeechSentenceIndex = -1;
+			_speechSentences.Clear();
 			_lastSpeechBubbleText = "";
 			_lastSpeechBubbleTextAtMs = 0;
 			if (_label != null)
@@ -4193,12 +4245,17 @@ public partial class UdpListener : Node2D
 		}
 		_lastSpeechBubbleText = normalizedText;
 		_lastSpeechBubbleTextAtMs = nowMs;
-		_speechIsLong = normalizedText.Length > LongSpeechImmediateChars;
+		_speechSentences = SplitSpeechSentences(normalizedText);
+		_speechIsLong = normalizedText.Length > LongSpeechImmediateChars || _speechSentences.Count > 1;
 		_speechIsBeingRead = _speechIsLong;
 
 		if (_textTween != null && _textTween.IsValid())
 		{
 			_textTween.Kill();
+		}
+		if (_sentenceHighlightTween != null && _sentenceHighlightTween.IsValid())
+		{
+			_sentenceHighlightTween.Kill();
 		}
 
 		RecordConversationAssistantMessage(text);
@@ -4240,21 +4297,37 @@ public partial class UdpListener : Node2D
 			SyncLegacySpeechBubbleOverlayTransform();
 		ScheduleTransientOverlayRefresh();
 	
-		// Với lời dài: hiện ĐỦ NGAY, không ép user đuổi theo ký tự và giọng
-		// Nhật. Scroll ở đầu, người dùng tự đọc và tự cuộn. Không auto-hide.
+		// Với lời dài hoặc nhiều câu: hiện ĐỦ NGAY, không ép user đuổi theo ký tự và giọng
+		// Nhật. Highlight theo câu đang nói; user tự đọc và tự cuộn. Không auto-hide.
 		if (_speechIsLong)
 		{
-			SetSpeechLabelText(_label, normalizedText);
-			SetSpeechLabelText(_live2DSpeechLabel, normalizedText);
+			if (_speechSentences.Count > 1)
+			{
+				if (_ttsAudioIsPlaying)
+				{
+					StartSentenceHighlightTracking(_lastTtsAudioDurationMs);
+				}
+				else
+				{
+					ApplySentenceHighlightToLabels(0, preserveScroll: false);
+					if (activeStatus != null)
+						activeStatus.Text = $"đang nói (1/{_speechSentences.Count})";
+				}
+			}
+			else
+			{
+				SetSpeechLabelText(_label, EscapeBbcode(normalizedText));
+				SetSpeechLabelText(_live2DSpeechLabel, EscapeBbcode(normalizedText));
+				if (activeStatus != null)
+					activeStatus.Text = "cứ đọc theo nhịp của bạn";
+			}
 			ResetSpeechScrollToTop(_label);
 			ResetSpeechScrollToTop(_live2DSpeechLabel);
-			if (activeStatus != null)
-				activeStatus.Text = "cứ đọc theo nhịp của bạn";
 			_bubbleHideAtMs = 0;
 			return;
 		}
 
-		// Với lời ngắn: vẫn giữ hiệu ứng gõ nhẹ. Không auto-follow xuống cuối.
+		// Với lời ngắn (1 câu): vẫn giữ hiệu ứng gõ nhẹ. Không auto-follow xuống cuối.
 		_textTween = CreateTween();
 		float totalDuration = Mathf.Max(0.01f, normalizedText.Length * 0.05f);
 		if (BubbleReadSeconds > 0f)
@@ -4279,16 +4352,22 @@ public partial class UdpListener : Node2D
 
 		// Đồng bộ cả hai presenter. Nếu người dùng đổi 2D/Live2D từ context menu
 		// giữa lúc đang gõ, tween không tiếp tục viết vào bubble đã bị ẩn.
-		SetSpeechLabelText(_label, partial);
-		SetSpeechLabelText(_live2DSpeechLabel, partial);
+		string escaped = EscapeBbcode(partial);
+		SetSpeechLabelText(_label, escaped);
+		SetSpeechLabelText(_live2DSpeechLabel, escaped);
 	}
 
-	private static void SetSpeechLabelText(RichTextLabel target, string text)
+	private static void SetSpeechLabelText(RichTextLabel target, string text, bool preserveScroll = false)
 	{
 		if (target == null)
 			return;
+		var vscroll = preserveScroll ? target.GetVScrollBar() : null;
+		double prevScroll = vscroll?.Value ?? 0;
 		target.Text = text ?? "";
-		// TUYỆT ĐỐI không chỉnh Value ở đây: user có thể đang đọc dòng đầu.
+		if (preserveScroll && vscroll != null && prevScroll > 0)
+		{
+			vscroll.CallDeferred("set_value", prevScroll);
+		}
 	}
 
 	private static void ResetSpeechScrollToTop(RichTextLabel target)
@@ -4299,14 +4378,168 @@ public partial class UdpListener : Node2D
 		target.CallDeferred("scroll_to_line", 0);
 	}
 
+	private static List<string> SplitSpeechSentences(string text)
+	{
+		var list = new List<string>();
+		if (string.IsNullOrWhiteSpace(text))
+			return list;
+
+		string[] rawParts = SentenceSplitterRegex.Split(text.Trim());
+		foreach (string part in rawParts)
+		{
+			string trimmed = part.Trim();
+			if (!string.IsNullOrEmpty(trimmed))
+				list.Add(trimmed);
+		}
+		return list;
+	}
+
+	private string RenderSpeechSentencesBbcode(int activeIndex, bool darkBackground)
+	{
+		if (_speechSentences == null || _speechSentences.Count == 0)
+			return EscapeBbcode(_lastSpeechBubbleText);
+
+		if (activeIndex < 0 || activeIndex >= _speechSentences.Count)
+		{
+			var sbClean = new StringBuilder();
+			for (int i = 0; i < _speechSentences.Count; i++)
+			{
+				sbClean.Append(EscapeBbcode(_speechSentences[i]));
+				if (i < _speechSentences.Count - 1)
+					sbClean.Append(" ");
+			}
+			return sbClean.ToString();
+		}
+
+		string activeColorHex = darkBackground ? "#ffffff" : "#1a121f";
+		string dimmedColorHex = darkBackground ? "#7c8b82" : "#8a7e8a";
+
+		var sb = new StringBuilder();
+		for (int i = 0; i < _speechSentences.Count; i++)
+		{
+			string escaped = EscapeBbcode(_speechSentences[i]);
+			if (i == activeIndex)
+			{
+				sb.Append($"[b][color={activeColorHex}]{escaped}[/color][/b]");
+			}
+			else
+			{
+				sb.Append($"[color={dimmedColorHex}]{escaped}[/color]");
+			}
+			if (i < _speechSentences.Count - 1)
+			{
+				sb.Append(" ");
+			}
+		}
+		return sb.ToString();
+	}
+
+	private void ApplySentenceHighlightToLabels(int activeIndex, bool preserveScroll = false)
+	{
+		if (_label != null)
+			SetSpeechLabelText(_label, RenderSpeechSentencesBbcode(activeIndex, darkBackground: false), preserveScroll);
+		if (_live2DSpeechLabel != null)
+			SetSpeechLabelText(_live2DSpeechLabel, RenderSpeechSentencesBbcode(activeIndex, darkBackground: true), preserveScroll);
+	}
+
+	private void StartSentenceHighlightTracking(float durationMs)
+	{
+		if (_sentenceHighlightTween != null && _sentenceHighlightTween.IsValid())
+		{
+			_sentenceHighlightTween.Kill();
+			_sentenceHighlightTween = null;
+		}
+
+		if (_speechSentences == null || _speechSentences.Count <= 1)
+			return;
+
+		if (durationMs <= 0f)
+		{
+			durationMs = Math.Max(3000f, _lastSpeechBubbleText.Length * 65f);
+		}
+
+		int count = _speechSentences.Count;
+		int totalChars = 0;
+		for (int i = 0; i < count; i++)
+			totalChars += Math.Max(1, _speechSentences[i].Length);
+
+		float[] startTimes = new float[count];
+		startTimes[0] = 0f;
+		for (int i = 1; i < count; i++)
+		{
+			float prevShare = Math.Max(1, _speechSentences[i - 1].Length) / (float)totalChars;
+			startTimes[i] = startTimes[i - 1] + durationMs * prevShare;
+		}
+
+		_currentSpeechSentenceIndex = 0;
+		ApplySentenceHighlightToLabels(0, preserveScroll: false);
+		if (ActiveSpeechStatusLabel() is { } status)
+		{
+			status.Text = $"đang nói (1/{count})";
+		}
+
+		float durationSec = durationMs / 1000f;
+		_sentenceHighlightTween = CreateTween();
+		_sentenceHighlightTween.TweenMethod(
+			Callable.From<float>(currentMs =>
+			{
+				int activeIdx = 0;
+				for (int i = count - 1; i >= 0; i--)
+				{
+					if (currentMs >= startTimes[i])
+					{
+						activeIdx = i;
+						break;
+					}
+				}
+				if (activeIdx != _currentSpeechSentenceIndex)
+				{
+					_currentSpeechSentenceIndex = activeIdx;
+					ApplySentenceHighlightToLabels(activeIdx, preserveScroll: true);
+					if (ActiveSpeechStatusLabel() is { } st)
+					{
+						st.Text = $"đang nói ({activeIdx + 1}/{count})";
+					}
+				}
+			}),
+			0f, durationMs, durationSec
+		);
+		_sentenceHighlightTween.Finished += () =>
+		{
+			CompleteSentenceHighlight();
+		};
+	}
+
+	private void CompleteSentenceHighlight()
+	{
+		if (_sentenceHighlightTween != null && _sentenceHighlightTween.IsValid())
+		{
+			_sentenceHighlightTween.Kill();
+			_sentenceHighlightTween = null;
+		}
+		_currentSpeechSentenceIndex = -1;
+		if (_speechSentences != null && _speechSentences.Count > 1)
+		{
+			ApplySentenceHighlightToLabels(-1, preserveScroll: true);
+		}
+		if (ActiveSpeechStatusLabel() is { } status)
+		{
+			status.Text = _speechIsLong ? "giọng đã dừng • bạn cứ đọc tiếp" : "đã nói xong";
+		}
+	}
+
 	private void DismissSpeechBubble()
 	{
 		if (_textTween != null && _textTween.IsValid())
 			_textTween.Kill();
+		if (_sentenceHighlightTween != null && _sentenceHighlightTween.IsValid())
+			_sentenceHighlightTween.Kill();
 		HideAllSpeechBubbles();
 		_bubbleHideAtMs = 0;
 		_speechIsBeingRead = false;
 		_speechIsLong = false;
+		_currentSpeechSentenceIndex = -1;
+		_speechSentences.Clear();
 		_lastSpeechBubbleText = "";
 		UpdateMousePassthrough();
 	}
@@ -4745,11 +4978,26 @@ public partial class UdpListener : Node2D
 
 			if (eventType == "audio_start")
 			{
+				_ttsAudioIsPlaying = true;
 				_ttsBodyAudioTurnId = turnId;
 				_ttsBodyAudioSegmentCount = Math.Max(segmentCount, segmentId + 1);
 				_audio?.SetTtsExclusiveMute(true);
-				if (!_speechIsLong && ActiveSpeechStatusLabel() is { } status)
+
+				float durationMs = 0f;
+				if (root.TryGetProperty("audio_duration_ms", out JsonElement durNode) && durNode.TryGetSingle(out float parsedDur))
+				{
+					durationMs = parsedDur;
+				}
+				_lastTtsAudioDurationMs = durationMs;
+
+				if (_speechSentences != null && _speechSentences.Count > 1)
+				{
+					StartSentenceHighlightTracking(durationMs);
+				}
+				else if (!_speechIsLong && ActiveSpeechStatusLabel() is { } status)
+				{
 					status.Text = "đang nói";
+				}
 				return true;
 			}
 
@@ -4762,9 +5010,9 @@ public partial class UdpListener : Node2D
 					int totalSegments = Math.Max(_ttsBodyAudioSegmentCount, segmentCount);
 					if (segmentId >= totalSegments - 1)
 					{
+						_ttsAudioIsPlaying = false;
 						ClearTtsBodyAudioMute();
-						if (ActiveSpeechStatusLabel() is { } status)
-							status.Text = _speechIsLong ? "giọng đã dừng • bạn cứ đọc tiếp" : "đã nói xong";
+						CompleteSentenceHighlight();
 					}
 				}
 				return true;
@@ -4772,7 +5020,9 @@ public partial class UdpListener : Node2D
 
 			if (eventType == "audio_failed" || eventType == "audio_cancelled")
 			{
+				_ttsAudioIsPlaying = false;
 				ClearTtsBodyAudioMute();
+				CompleteSentenceHighlight();
 				if (ActiveSpeechStatusLabel() is { } status)
 					status.Text = _speechIsLong ? "đã ngắt giọng • vẫn đọc được" : "giọng đã ngắt";
 				return true;

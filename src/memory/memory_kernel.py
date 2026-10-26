@@ -554,7 +554,8 @@ class MemoryKernel:
 
     def build_public_context(self, query: str, *, session_id: str,
                              user_context_token_budget: int = 6000,
-                             max_lines: int = 64) -> PublicMemoryContext:
+                             max_lines: int = 64,
+                             session_context: Mapping[str, Any] | None = None) -> PublicMemoryContext:
         """CÙNG một selection tạo text + records. Tuyệt đối không recall lần hai.
 
         ProfileContextPacket có items/episodes nhưng không phải toàn bộ đều có
@@ -572,11 +573,12 @@ class MemoryKernel:
                 profile = living_user.compile_context(
                     str(query or ""), session_id=session_id,
                     token_budget=int(user_context_token_budget),
+                    session_context=session_context,
                 )
                 profile_text = profile.render_prompt_context()
                 # Profile projection không đồng nghĩa canonical proof. Chỉ giữ
                 # typed records đã thực sự được packet core chọn; còn lại unknown.
-                if profile_text and (profile.items or profile.episodes or profile.action_context):
+                if profile_text and (profile.items or profile.episodes or profile.action_context or getattr(profile, "proactive_cue", "")):
                     degraded = True
             except Exception:
                 degraded = True
@@ -590,7 +592,7 @@ class MemoryKernel:
         không bị đổi prompt nếu user model còn rỗng.
         """
         core_kwargs = dict(kwargs)
-        for private_key in ("project_id", "session_id", "user_context_token_budget"):
+        for private_key in ("project_id", "session_id", "user_context_token_budget", "session_context"):
             core_kwargs.pop(private_key, None)
         core_context = self.core.render_context(*args, **core_kwargs)
         living_user = self.living_user
@@ -608,6 +610,7 @@ class MemoryKernel:
                 project_id=str(kwargs.get("project_id") or ""),
                 session_id=str(kwargs.get("session_id") or ""),
                 token_budget=int(kwargs.get("user_context_token_budget") or 900),
+                session_context=kwargs.get("session_context"),
             )
             profile_context = packet.render_prompt_context()
             if _is_user_memory_summary_query(query):

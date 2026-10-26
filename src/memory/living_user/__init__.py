@@ -23,6 +23,7 @@ from .models import (
     UserMemoryScope,
 )
 from .runtime_adapter import LlmServiceUserProfileAdapter
+from .gemini_adapter import GeminiWebUserProfileAdapter
 from .presenter import MemoryPortrait, MemoryPortraitItem, MemoryPortraitPresenter, MemoryPortraitSection
 from .service import LivingUserMemoryConfig, LivingUserMemoryService, UserTurnObservation
 from .sources import MemoryExplanation, MemorySourceTracker
@@ -56,6 +57,7 @@ __all__ = [
     "LivingUserMemoryService",
     "LivingUserModelProjection",
     "LlmServiceUserProfileAdapter",
+    "GeminiWebUserProfileAdapter",
     "MemoryPortrait",
     "MemoryPortraitItem",
     "MemoryPortraitPresenter",

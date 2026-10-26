@@ -46,6 +46,7 @@ class ProfileContextCompiler:
         clarification_policy: MemoryClarificationPolicy | None = None,
         config: ProfileContextCompilerConfig | None = None,
         admission_policy: MemoryAdmissionPolicy | None = None,
+        concept_graph: Any | None = None,
     ) -> None:
         self.profile_store = profile_store
         self.episode_store = episode_store
@@ -54,6 +55,7 @@ class ProfileContextCompiler:
         self.clarification_policy = resolve_dependency(clarification_policy, lambda: MemoryClarificationPolicy())
         self.config = resolve_dependency(config, lambda: ProfileContextCompilerConfig())
         self.admission_policy = resolve_dependency(admission_policy, lambda: MemoryAdmissionPolicy())
+        self.concept_graph = concept_graph
 
     def compile(
         self,
@@ -63,6 +65,8 @@ class ProfileContextCompiler:
         domain: str | None = None,
         token_budget: int | None = None,
         include_sensitive: bool = False,
+        include_proactive: bool = False,
+        session_context: Mapping[str, Any] | None = None,
     ) -> ProfileContextPacket:
         active_scope = scope or UserMemoryScope()
         resolved_domain = domain or infer_domain(query)
@@ -91,10 +95,29 @@ class ProfileContextCompiler:
             dense_scores = self._dense_similarities(q_vec, docs)
         else:
             dense_scores = [0.0] * len(records)
+
+        # Concept graph associative retrieval (Nấc 3)
+        associative_map: dict[str, float] = {}
+        if self.concept_graph is not None and query:
+            try:
+                from memory.concept_graph import extract_concepts
+                q_concepts = extract_concepts(query)
+                if q_concepts and hasattr(self.concept_graph, "multi_hop_neighbors"):
+                    associative_map = self.concept_graph.multi_hop_neighbors(q_concepts, limit=14, max_hops=2)
+            except Exception:
+                associative_map = {}
+
         scored: list[tuple[float, ProfileRecord, str]] = []
         for i, record in enumerate(records):
             dense = dense_scores[i] if q_vec else 0.0
-            score, reason = self._score(record, query=query, domain=resolved_domain, dense=dense, active_scope=active_scope)
+            score, reason = self._score(
+                record,
+                query=query,
+                domain=resolved_domain,
+                dense=dense,
+                active_scope=active_scope,
+                associative_map=associative_map,
+            )
             if score >= self.config.min_score:
                 scored.append((score, record, reason))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -134,10 +157,25 @@ class ProfileContextCompiler:
             scope=active_scope,
             embedding_index=self.embedding_index,
         )
-        # Nếu query quá chung, chỉ lấy episode gần đây có việc đang mở.
+        # Nếu query quá chung, chỉ lấy episode gần đây (<= 7 ngày) có việc đang mở hoặc importance cao.
         if not normalize_text(query):
-            episodes = tuple(x for x in self.episode_store.recent(limit=self.config.max_episodes, scope=active_scope) if x.open_loops or x.importance >= 0.72)
+            now_ts_val = time.time()
+            episodes = tuple(
+                x for x in self.episode_store.recent(limit=self.config.max_episodes, scope=active_scope)
+                if (now_ts_val - x.started_at <= 7 * 86400) and (x.open_loops or x.importance >= 0.72)
+            )
         action_context = self.action_store.context(query, scope=active_scope) if self.action_store is not None else None
+
+        # Gợi ý chủ động theo nhịp sinh học & mạch hội thoại (Nấc 2)
+        proactive_cue = ""
+        clean_q = normalize_text(query)
+        is_greeting = not clean_q or clean_q in {
+            "alo", "hi", "helo", "hello", "ê", "chào", "chao", "chào bạn", "ở đó ko",
+            "co do ko", "có đó ko", "ơi", "eris", "bạn ơi", "hế lô", "hội thoại",
+        }
+        if include_proactive or is_greeting:
+            proactive_cue = self.compile_proactive_cue(active_scope, session_context=session_context)
+
         return ProfileContextPacket(
             query=query,
             domain=resolved_domain,
@@ -145,6 +183,7 @@ class ProfileContextCompiler:
             episodes=episodes,
             action_context=action_context,
             clarifications=tuple(dict.fromkeys(clarifications)),
+            proactive_cue=proactive_cue,
             token_budget=budget,
             diagnostics=(
                 f"profile_candidates={len(records)}",
@@ -155,6 +194,118 @@ class ProfileContextCompiler:
             ),
         )
 
+    def compile_proactive_cue(
+        self,
+        active_scope: UserMemoryScope,
+        *,
+        now: float | None = None,
+        session_context: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Biên dịch gợi ý chủ động dựa trên nhịp thời gian, cảm xúc phiên trước, việc còn mở và quyền chủ động."""
+        current_ts = float(now or time.time())
+        local_tm = time.localtime(current_ts)
+        hour = local_tm.tm_hour
+
+        # 1. Nhịp sinh học thời gian (temporal context)
+        if 23 <= hour or hour < 5:
+            time_nudge = f"Đêm muộn ({hour:02d}:{local_tm.tm_min:02d}). Người dùng có thói quen thức khuya làm việc hoặc suy ngẫm."
+        elif 5 <= hour < 11:
+            time_nudge = f"Buổi sáng ({hour:02d}:{local_tm.tm_min:02d}). Bắt đầu ngày mới."
+        elif 11 <= hour < 14:
+            time_nudge = f"Buổi trưa ({hour:02d}:{local_tm.tm_min:02d})."
+        elif 14 <= hour < 18:
+            time_nudge = f"Buổi chiều ({hour:02d}:{local_tm.tm_min:02d})."
+        else:
+            time_nudge = f"Buổi tối ({hour:02d}:{local_tm.tm_min:02d})."
+
+        # 2. Liền mạch trạng thái cảm xúc (emotional continuity)
+        mood_records = self.profile_store.get("state.recent_emotional_state", scope=active_scope)
+        if not mood_records:
+            mood_records = self.profile_store.get("state.mental_state", scope=active_scope)
+        recent_mood = ""
+        if mood_records:
+            active_m = [r for r in mood_records if r.is_current]
+            if active_m:
+                latest = max(active_m, key=lambda r: r.updated_at)
+                recent_mood = str(latest.value or "").strip()
+
+        # 3. Vấn đề / việc chưa hoàn tất (unresolved loops) - CHỈ xét episode trong vòng 72h
+        open_loops: list[str] = []
+        recent_episodes = self.episode_store.recent(limit=5, scope=active_scope)
+        for ep in recent_episodes:
+            if (current_ts - ep.started_at <= 72 * 3600) and ep.open_loops:
+                open_loops.extend(ep.open_loops)
+        open_loops = list(dict.fromkeys(open_loops))[:2]
+
+        # 4. Quyền chủ động & mức độ chịu quấy rầy (initiative permission & interruption tolerance)
+        initiative_records = (
+            self.profile_store.get("relationship.initiative_permission", scope=active_scope)
+            or self.profile_store.get("relationship.initiative", scope=active_scope)
+            or self.profile_store.get("relationship.interruption_tolerance", scope=active_scope)
+            or self.profile_store.get("communication.interruption_tolerance", scope=active_scope)
+        )
+        proactive_permission = ""
+        if initiative_records:
+            active_perms = [r for r in initiative_records if r.is_current]
+            if active_perms:
+                latest_perm = max(active_perms, key=lambda r: r.updated_at)
+                proactive_permission = str(latest_perm.value or "").strip()
+
+        # 5. Ngữ cảnh màn hình / Desktop session hiện tại
+        screen_cue = ""
+        if session_context:
+            app = (
+                session_context.get("active_app")
+                or session_context.get("app")
+                or session_context.get("active_window")
+                or session_context.get("window_title")
+                or ""
+            )
+            screen_summary = (
+                session_context.get("screen_summary")
+                or session_context.get("screen")
+                or session_context.get("visual_observation")
+                or ""
+            )
+            parts = []
+            if app:
+                parts.append(f"Cửa sổ/ứng dụng: {app}")
+            if screen_summary:
+                parts.append(f"Mô tả màn hình: {screen_summary}")
+            if parts:
+                screen_cue = " | ".join(parts)
+
+        # 6. Concept Graph associative link
+        assoc_context = ""
+        if self.concept_graph is not None and (recent_mood or open_loops):
+            try:
+                from memory.concept_graph import extract_concepts
+                seed_text = f"{recent_mood} {' '.join(open_loops)}"
+                seed_c = extract_concepts(seed_text)
+                if seed_c and hasattr(self.concept_graph, "multi_hop_neighbors"):
+                    assoc_concepts = self.concept_graph.multi_hop_neighbors(seed_c, limit=4, max_hops=1)
+                    if assoc_concepts:
+                        assoc_context = ", ".join(assoc_concepts.keys())
+            except Exception:
+                assoc_context = ""
+
+        lines = [f"- Thời điểm: {time_nudge}"]
+        if recent_mood:
+            lines.append(f"- Trạng thái phiên gần nhất: {recent_mood}")
+        if open_loops:
+            lines.append(f"- Mạch việc dang dở: {'; '.join(open_loops)}")
+        if proactive_permission:
+            lines.append(
+                f"- Quyền chủ động: {proactive_permission}. Người dùng đã cho phép bạn thoải mái bắt chuyện hoặc làm phiền. "
+                "Hãy chủ động mở lời, chia sẻ suy nghĩ hoặc nhận xét điều bạn thấy mà không cần rụt rè lo lắng bị coi là spam."
+            )
+        if screen_cue:
+            lines.append(f"- Quan sát màn hình thực tế: {screen_cue}. Dùng thông tin này làm chất liệu gợi mở câu chuyện một cách tự nhiên nếu thích hợp.")
+        if assoc_context:
+            lines.append(f"- Khái niệm liên quan: {assoc_context}")
+        lines.append("- Định hướng: Giao tiếp tự nhiên, đồng hành chân thành theo cá tính INFJ (ấm áp, hơi trêu nhẹ, tinh tế, không gượng gạo như bot CSKH).")
+        return "\n".join(lines)
+
     def _score(
         self,
         record: ProfileRecord,
@@ -163,6 +314,7 @@ class ProfileContextCompiler:
         domain: str,
         dense: float,
         active_scope: UserMemoryScope,
+        associative_map: Mapping[str, float] | None = None,
     ) -> tuple[float, str]:
         path_domain = record.path.split(".", 1)[0]
         domain_score = 1.0 if path_domain == domain else _domain_affinity(domain, record.path)
@@ -170,10 +322,36 @@ class ProfileContextCompiler:
         scope_score = 1.0 if record.scope.identity == active_scope.identity else (0.78 if record.scope.kind == "global" else 0.0)
         recency = _recency(record.last_confirmed_at)
         trust = record.trust_weight
-        # Explicit profile có ích ngay cả khi query không trùng từ, nhưng domain vẫn
-        # phải phù hợp. Dense/lexical chỉ hỗ trợ, không được quyền đè bằng chứng.
-        score = trust * 0.34 + domain_score * 0.23 + lexical * 0.18 + dense * 0.13 + scope_score * 0.08 + recency * 0.04
-        reason = f"trust={trust:.2f}, domain={domain_score:.2f}, lexical={lexical:.2f}, dense={dense:.2f}"
+
+        # Concept graph associative recall (Nấc 3)
+        assoc_score = 0.0
+        if associative_map:
+            try:
+                from memory.concept_graph import extract_concepts
+                rec_concepts = extract_concepts(f"{record.path} {record.value}")
+                if rec_concepts:
+                    assoc_score = max((associative_map.get(c, 0.0) for c in rec_concepts), default=0.0)
+            except Exception:
+                assoc_score = 0.0
+
+        # Topical Relevance Gate:
+        # Nếu record không thuộc nhóm persona/giao tiếp cốt lõi (communication, identity, relationship)
+        # mà hoàn toàn không có liên hệ ngữ nghĩa hay từ vựng với query (domain_score <= 0.15, lexical == 0, dense < 0.20, assoc == 0)
+        # thì KHÔNG được kéo vào context của turn chỉ nhờ trust cao.
+        if path_domain not in {"communication", "identity", "relationship"}:
+            if domain_score <= 0.15 and lexical == 0.0 and dense < 0.20 and assoc_score == 0.0:
+                return 0.0, f"no_topical_relevance (domain={domain_score:.2f})"
+
+        score = (
+            trust * 0.32
+            + domain_score * 0.20
+            + lexical * 0.16
+            + dense * 0.12
+            + assoc_score * 0.10
+            + scope_score * 0.06
+            + recency * 0.04
+        )
+        reason = f"trust={trust:.2f}, domain={domain_score:.2f}, lexical={lexical:.2f}, dense={dense:.2f}, assoc={assoc_score:.2f}"
         return max(0.0, min(1.0, score)), reason
 
     def _query_vector(self, query: str) -> tuple[float, ...] | None:

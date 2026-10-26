@@ -326,12 +326,42 @@ class ConversationContextAssembler:
             return self._memory_context(user_text), (), True
         session = str(getattr(self.host, "conversation_id", "") or
                       getattr(self.host, "thread_id", "") or "foreground:primary")[:180]
+        session_ctx: dict[str, Any] = {}
+        try:
+            telemetry = getattr(self.host, "telemetry_service", None)
+            if telemetry and callable(getattr(telemetry, "capture_snapshot", None)):
+                snap = telemetry.capture_snapshot()
+                if snap:
+                    app = getattr(snap, "active_app", "") or getattr(snap, "active_window", "")
+                    if app:
+                        session_ctx["active_app"] = str(app)
+            if not session_ctx.get("active_app"):
+                world_svc = getattr(self.host, "world_state_service", None)
+                if world_svc is None:
+                    from runtime.world_state import ensure_world_state_service
+                    world_svc = ensure_world_state_service(self.host)
+                scene = getattr(world_svc, "current_scene", None)
+                if scene and getattr(scene, "active_window_title", None):
+                    session_ctx["active_app"] = str(scene.active_window_title)
+        except Exception:
+            pass
         try:
             packet = build(str(user_text or ""), session_id=session,
-                           user_context_token_budget=6000, max_lines=64)
+                           user_context_token_budget=6000, max_lines=64,
+                           session_context=session_ctx)
             return (str(packet.text or "")[:32000],
                     tuple(getattr(packet, "records", ()) or ()),
                     bool(getattr(packet, "degraded", True)))
+        except TypeError:
+            try:
+                packet = build(str(user_text or ""), session_id=session,
+                               user_context_token_budget=6000, max_lines=64)
+                return (str(packet.text or "")[:32000],
+                        tuple(getattr(packet, "records", ()) or ()),
+                        bool(getattr(packet, "degraded", True)))
+            except Exception as exc:
+                self._debug("context.typed_memory", exc)
+                return self._memory_context(user_text), (), True
         except Exception as exc:
             self._debug("context.typed_memory", exc)
             return self._memory_context(user_text), (), True

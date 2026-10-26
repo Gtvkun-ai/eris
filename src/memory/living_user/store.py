@@ -22,6 +22,7 @@ from .models import (
     ProfileRecord,
     UserMemoryScope,
     clamp01,
+    determine_memory_tier,
     normalize_path,
     now_ts,
     value_fingerprint,
@@ -199,6 +200,8 @@ class UserProfileStore:
             if not new_evidence:
                 return False, (), f"duplicate_evidence:{op.path}"
             existing.recurrence += 1
+            if getattr(existing, "tier", "working") != "core_anchor":
+                existing.tier = determine_memory_tier(existing.path, existing.explicitness, existing.recurrence, existing.value)
             existing.confidence = clamp01(max(existing.confidence * 0.97, op.confidence) + min(0.08, existing.recurrence * 0.008))
             existing.evidence_ids = tuple(dict.fromkeys((*existing.evidence_ids, *new_evidence)))[:96]
             existing.updated_at = now
@@ -244,6 +247,7 @@ class UserProfileStore:
             expires_at = now + 86400.0
         elif expires_at is None and op.scope.kind == "temporary":
             expires_at = now + 86400.0 * 7.0
+        tier = op.tier or determine_memory_tier(op.path, op.explicitness, 1, op.value)
         return ProfileRecord(
             id="",
             path=op.path,
@@ -251,6 +255,7 @@ class UserProfileStore:
             confidence=op.confidence,
             explicitness=op.explicitness,
             sensitivity=op.sensitivity,
+            tier=tier,
             scope=op.scope,
             cardinality=op.cardinality,
             status=status,  # type: ignore[arg-type]
@@ -344,6 +349,35 @@ class UserProfileStore:
                 self.save()
         return changed
 
+    def hard_delete(self, record_ids: Iterable[str]) -> int:
+        """Xóa vĩnh viễn các record theo ID khỏi working store, lịch sử và audit."""
+        target_ids = {str(x) for x in record_ids if str(x).strip()}
+        if not target_ids:
+            return 0
+        with self._lock:
+            removed: list[str] = []
+            for record_id in target_ids:
+                if record_id not in self._records:
+                    continue
+                removed.append(record_id)
+                self._records.pop(record_id, None)
+            if removed:
+                self._version += 1
+                for entry in self._history:
+                    rows = entry.get("records_before")
+                    if isinstance(rows, list):
+                        entry["records_before"] = [
+                            row for row in rows
+                            if not (isinstance(row, Mapping) and str(row.get("id") or "") in target_ids)
+                        ]
+                self._audit = [
+                    row for row in self._audit
+                    if not (isinstance(row, Mapping) and any(str(rid) in target_ids for rid in (row.get("record_ids") or ())))
+                ]
+                if self.config.autosave:
+                    self.save()
+        return len(removed)
+
     def correct(self, path: str, value: Any, *, evidence_ids: Iterable[str], scope: UserMemoryScope | None = None, confidence: float = 1.0) -> ApplyResult:
         return self.apply((ProfileOperation(
             op="update",
@@ -363,7 +397,7 @@ class UserProfileStore:
         cutoff = self.config.forget_after_days * 86400.0
         with self._lock:
             for record in self._records.values():
-                if record.status != "active" or record.explicitness == "explicit" and self.config.explicit_decay_per_day <= 0:
+                if record.status != "active" or getattr(record, "tier", "working") == "core_anchor" or (record.explicitness == "explicit" and self.config.explicit_decay_per_day <= 0):
                     continue
                 age = current - record.last_confirmed_at
                 if age <= cutoff:
@@ -469,6 +503,10 @@ class UserProfileStore:
                 selected = [record for record in records if record is not None]
                 if any(record.status not in {"active", "disputed"} for record in selected):
                     rejected.append(f"record_not_current:{','.join(record_ids)}")
+                    continue
+
+                if action in {"archive", "delete", "weaken"} and any(getattr(r, "tier", "working") == "core_anchor" for r in selected):
+                    rejected.append(f"core_anchor_protected:{','.join(record_ids)}")
                     continue
 
                 now = now_ts()

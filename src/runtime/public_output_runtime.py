@@ -1179,6 +1179,9 @@ class PublicOutputRuntimeMixin:
             "error": str(getattr(event, "error", "") or ""),
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         }
+        audio_dur = int(getattr(event, "audio_duration_ms", 0) or getattr(stage_frame, "audio_duration_ms", 0) or 0)
+        if audio_dur > 0:
+            record["audio_duration_ms"] = audio_dur
         self.last_tts_event = record
         # ``audio_cancelled`` trước đây chỉ đổi trạng thái UI, không settle
         # transcript V12. P0 bổ sung outcome riêng cho history/ledger, không

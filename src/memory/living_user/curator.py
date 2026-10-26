@@ -23,7 +23,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from .models import ProfileRecord, value_fingerprint
+from .models import (
+    ProfileRecord,
+    clean_durable_interest,
+    is_ephemeral_directive,
+    is_ephemeral_micro_activity,
+    is_fragment_or_noise,
+    is_invalid_response_rule,
+    is_metaphor_or_sarcasm_leak,
+    value_fingerprint,
+)
 
 ReviewCallable = Callable[[str, str, int], str | None]
 
@@ -267,6 +276,8 @@ class LivingUserMemoryCurator:
     ) -> list[dict[str, Any]]:
         operations: list[dict[str, Any]] = []
         for record in records:
+            if record.id in protected_ids or getattr(record, "tier", "working") == "core_anchor":
+                continue
             value = _value_text(record.value)
             reason = ""
             action = "archive"
@@ -276,6 +287,30 @@ class LivingUserMemoryCurator:
                 # Open loop thuộc conversation/action continuity, không phải chân dung user.
                 action = "delete"
                 reason = "Open loop là state hội thoại, không phải canonical user memory."
+            elif is_fragment_or_noise(record.path, record.value):
+                action = "delete"
+                reason = "Mẩu token rác, ký tự vô nghĩa hoặc từ đệm hội thoại rời rạc."
+            elif is_metaphor_or_sarcasm_leak(record.path, value):
+                action = "delete"
+                reason = "Trêu đùa, ẩn dụ hoặc nói bóng gió bị trích xuất nhầm thành quan hệ/nhân thân."
+            elif is_ephemeral_directive(value) or (
+                record.path.endswith("response_rules") and is_invalid_response_rule(record.path, value)
+            ):
+                action = "delete"
+                reason = "Chỉ thị tạm thời theo lượt hoặc rò rỉ prompt hội thoại, không phải canonical response rule."
+            elif is_ephemeral_micro_activity(record.path, value):
+                cleaned = clean_durable_interest(value)
+                if cleaned and cleaned != value:
+                    operations.append({
+                        "action": "rewrite",
+                        "record_ids": [record.id],
+                        "value": cleaned,
+                        "reason": "Bóc tách hành vi vi mô/bãi farm game nhất thời ra khỏi sở thích bền vững.",
+                    })
+                    continue
+                else:
+                    action = "delete"
+                    reason = "Hành vi/nhiệm vụ vi mô nhất thời trong game không thuộc chân dung dài hạn."
             if reason:
                 operations.append({"action": action, "record_ids": [record.id], "reason": reason})
         return operations
@@ -394,14 +429,8 @@ class LivingUserMemoryCurator:
     # ------------------------------------------------------------------
 
     def _protected_record_ids(self, records: Iterable[ProfileRecord]) -> set[str]:
-        """V68: không record nào được miễn dọn chỉ vì authority provenance.
-
-        Giữ method để caller/test cũ không gãy. User authority được truyền cho
-        DeepSeek dưới dạng evidence/source/trust, không biến representation thành
-        bất khả xâm phạm.
-        """
-        _ = tuple(records)
-        return set()
+        """core_anchor được bảo vệ khỏi curator deletion/archiving tự động."""
+        return {r.id for r in records if getattr(r, "tier", "working") == "core_anchor"}
 
     def _validate_operations(
         self,
@@ -417,7 +446,7 @@ class LivingUserMemoryCurator:
         khác root. DeepSeek đã là curator authority; validator chỉ chặn schema hỏng,
         ID không tồn tại và mutation mơ hồ.
         """
-        del protected_ids, cluster_sets
+        del cluster_sets
         safe: list[dict[str, Any]] = []
         touched: set[str] = set()
         allowed = {"keep", "archive", "delete", "weaken", "merge", "rewrite", "hide", "canonicalize"}
@@ -426,6 +455,8 @@ class LivingUserMemoryCurator:
             ids = [str(x) for x in row.get("record_ids", ()) if str(x) in records]
             ids = list(dict.fromkeys(ids))
             if action not in allowed or not ids or any(record_id in touched for record_id in ids):
+                continue
+            if action in {"archive", "delete", "weaken"} and any(rid in protected_ids for rid in ids):
                 continue
             reason = " ".join(str(row.get("reason") or "").split())[:420]
             if action == "keep":

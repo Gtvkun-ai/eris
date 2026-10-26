@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .json_store_io import atomic_write_json
 
@@ -133,5 +133,51 @@ class ConceptGraphStore:
         results.sort(key=lambda x: (x.get("weight", 0.0), x.get("occurrences", 0)), reverse=True)
         return results[: max(1, int(limit))]
 
+    def multi_hop_neighbors(
+        self,
+        concepts: Iterable[str],
+        *,
+        limit: int = 16,
+        max_hops: int = 2,
+    ) -> dict[str, float]:
+        """Truy hồi liên tưởng đa bước (multi-hop associative recall) từ tập concept ban đầu."""
+        input_concepts = {str(c or "").strip().lower() for c in concepts if str(c or "").strip()}
+        if not input_concepts:
+            return {}
+        graph = self.load()
+        edges = graph.get("edges", {})
 
-__all__ = ["ConceptGraphStore"]
+        adj: dict[str, list[tuple[str, float]]] = {}
+        for edge in edges.values():
+            s = edge.get("source")
+            t = edge.get("target")
+            w = float(edge.get("weight", 0.0) or 0.0)
+            if s and t and w > 0:
+                adj.setdefault(s, []).append((t, w))
+                adj.setdefault(t, []).append((s, w))
+
+        scores: dict[str, float] = {}
+        frontier: dict[str, float] = {c: 1.0 for c in input_concepts}
+
+        for hop in range(1, max(1, int(max_hops)) + 1):
+            next_frontier: dict[str, float] = {}
+            hop_decay = 0.55 if hop == 2 else 0.35
+            for node, current_w in frontier.items():
+                for neighbor, edge_w in adj.get(node, []):
+                    if neighbor in input_concepts:
+                        continue
+                    combined = current_w * edge_w * (1.0 if hop == 1 else hop_decay)
+                    if combined > scores.get(neighbor, 0.0):
+                        scores[neighbor] = combined
+                        next_frontier[neighbor] = max(next_frontier.get(neighbor, 0.0), combined)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[: max(1, int(limit))]
+        return dict(sorted_items)
+
+
+extract_concepts = _concepts
+
+__all__ = ["ConceptGraphStore", "extract_concepts"]

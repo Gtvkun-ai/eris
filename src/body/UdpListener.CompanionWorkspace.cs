@@ -22,6 +22,8 @@ public partial class UdpListener
     private LineEdit _plannerTitleInput, _plannerDateInput, _plannerTimeInput;
     private LineEdit _workspaceHistorySearch;
     private Panel _plannerReminderToast;
+    private LineEdit _workspaceChatInput;
+    private Button _workspaceChatSendButton;
     private bool _workspaceShowPlanner, _workspaceShowHistory;
     private string _conversationSearchQuery = "";
     private string _plannerRenderedDate = "";
@@ -153,20 +155,24 @@ public partial class UdpListener
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 10);
         panel.AddChild(row);
-        _chatInput.Reparent(row);
-        _chatInput.CustomMinimumSize = new Vector2(40, 42);
-        _chatInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _chatInput.PlaceholderText = "Kể Eris nghe, hoặc cùng học một chút…";
-        _chatInput.MaxLength = 12000;
-        StyleWorkspaceInput(_chatInput, framed: false);
-        _chatSendButton.Reparent(row);
-        _chatSendButton.Text = "";
-        _chatSendButton.Icon = WorkspaceIcon("send");
-        _chatSendButton.TooltipText = "Gửi tin nhắn · Enter";
-        _chatSendButton.CustomMinimumSize = new Vector2(42, 42);
-        StyleWorkspaceButton(_chatSendButton, primary: true);
-        _chatInput.TextChanged += text => _chatSendButton.Disabled = string.IsNullOrWhiteSpace(text);
-        _chatSendButton.Disabled = true;
+        _workspaceChatInput = new LineEdit
+        {
+            CustomMinimumSize = new Vector2(40, 42),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            PlaceholderText = "Kể Eris nghe, hoặc cùng học một chút…",
+            MaxLength = 12000,
+        };
+        StyleWorkspaceInput(_workspaceChatInput, framed: false);
+        row.AddChild(_workspaceChatInput);
+
+        _workspaceChatSendButton = WorkspaceButton("", "send", OnWorkspaceSendPressed, primary: true);
+        _workspaceChatSendButton.TooltipText = "Gửi tin nhắn · Enter";
+        _workspaceChatSendButton.CustomMinimumSize = new Vector2(42, 42);
+        _workspaceChatSendButton.Disabled = true;
+        row.AddChild(_workspaceChatSendButton);
+
+        _workspaceChatInput.TextChanged += text => _workspaceChatSendButton.Disabled = string.IsNullOrWhiteSpace(text);
+        _workspaceChatInput.TextSubmitted += _ => OnWorkspaceSendPressed();
         var foot = new HBoxContainer();
         root.AddChild(foot);
         var caption = ConversationLabel("Cùng trò chuyện · cùng học · từng chút một", 10, ErisMuted);
@@ -175,6 +181,17 @@ public partial class UdpListener
         foot.AddChild(caption);
         foot.AddChild(ConversationLabel("Enter để gửi", 10, ErisMuted));
         return margin;
+    }
+
+    private void OnWorkspaceSendPressed()
+    {
+        if (_workspaceChatInput == null) return;
+        string msg = _workspaceChatInput.Text.Trim();
+        if (string.IsNullOrEmpty(msg)) return;
+        _workspaceChatInput.Text = "";
+        _workspaceChatSendButton.Disabled = true;
+        SendUserChatMessage(msg);
+        _workspaceChatInput.GrabFocus();
     }
 
     private PanelContainer BuildPersonalPlannerRail()
@@ -397,13 +414,15 @@ public partial class UdpListener
         _workspaceShowHistory = false;
         UpdateCompanionColumns();
         SelectConversationDate(DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-        if (string.IsNullOrWhiteSpace(_chatInput.Text))
+        var input = _workspaceChatInput ?? _chatInput;
+        if (input != null && string.IsNullOrWhiteSpace(input.Text))
         {
             string goal = topic.Length > 0 ? topic : ErisPlannerStore.TodayGoals(_planner, DateTime.Now).FirstOrDefault(item => !item.Done)?.Title ?? "";
-            _chatInput.Text = goal.Length > 0 ? $"Eris, cùng mình học nhé. Mục tiêu của mình là: {goal}" : "Eris, cùng mình chọn một điều để học hôm nay nhé.";
+            input.Text = goal.Length > 0 ? $"Eris, cùng mình học nhé. Mục tiêu của mình là: {goal}" : "Eris, cùng mình chọn một điều để học hôm nay nhé.";
         }
-        _chatInput.GrabFocus();
-        _chatInput.CaretColumn = _chatInput.Text.Length;
+        input?.GrabFocus();
+        if (input != null)
+            input.CaretColumn = input.Text.Length;
     }
 
     private void UpdateCompanionColumns()

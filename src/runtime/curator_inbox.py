@@ -59,7 +59,7 @@ class CuratorInbox:
     def due(self) -> tuple[str, Mapping[str, Any], str, list[dict[str, Any]]] | None:
         with self._lock, self._db() as db:
             row = db.execute("""SELECT envelope_id, payload, status, operations FROM curator_inbox
-                WHERE next_at <= ? ORDER BY updated_at ASC LIMIT 1""", (time.time(),)).fetchone()
+                WHERE next_at <= ? AND status='pending' ORDER BY updated_at ASC LIMIT 1""", (time.time(),)).fetchone()
         if not row:
             return None
         return row[0], json.loads(row[1]), row[2], json.loads(row[3])
@@ -70,16 +70,22 @@ class CuratorInbox:
                 next_at=0, updated_at=? WHERE envelope_id=?""",
                 (json.dumps(operations, ensure_ascii=False, default=str), time.time(), envelope_id))
 
-    def retry(self, envelope_id: str) -> None:
+    def retry(self, envelope_id: str, *, max_attempts: int = 3) -> None:
         with self._lock, self._db() as db:
             row = db.execute("SELECT attempts FROM curator_inbox WHERE envelope_id=?", (envelope_id,)).fetchone()
             if row is None:
                 return
             attempts = row[0] + 1
-            # Exponential backoff hữu hạn, có jitter theo ID ổn định để tránh
-            # mọi curator request tỉnh dậy cùng thời điểm sau outage.
+            if attempts >= max_attempts:
+                # Ngừng vòng lặp vô tận sau max_attempts để tránh đốt cháy proxy/account
+                db.execute(
+                    "UPDATE curator_inbox SET attempts=?, status='failed', next_at=0, updated_at=? WHERE envelope_id=?",
+                    (attempts, time.time(), envelope_id),
+                )
+                return
+            # Exponential backoff hữu hạn, delay tối thiểu 30s để không spam
             jitter = (sum(envelope_id.encode("utf-8")) % 13) / 10.0
-            delay = min(300.0, 2 ** min(attempts, 8)) + jitter
+            delay = max(30.0, min(300.0, float(2 ** min(attempts, 8)))) + jitter
             db.execute("UPDATE curator_inbox SET attempts=?, next_at=?, updated_at=? WHERE envelope_id=?",
                        (attempts, time.time() + delay, time.time(), envelope_id))
 

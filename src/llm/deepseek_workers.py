@@ -299,7 +299,7 @@ def canonical_json_line(text: str) -> str:
         raise JsonlContractError("empty_jsonl_output")
 
     try:
-        value = json.loads(clean)
+        value = json.loads(clean, strict=False)
     except json.JSONDecodeError:
         object_start = clean.find("{")
         array_start = clean.find("[")
@@ -307,7 +307,7 @@ def canonical_json_line(text: str) -> str:
         if not starts:
             raise JsonlContractError("missing_json_value")
         start = min(starts)
-        decoder = json.JSONDecoder()
+        decoder = json.JSONDecoder(strict=False)
         try:
             value, _ = decoder.raw_decode(clean[start:])
         except json.JSONDecodeError as exc:

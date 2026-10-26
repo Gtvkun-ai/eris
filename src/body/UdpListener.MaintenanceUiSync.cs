@@ -141,6 +141,8 @@ public partial class UdpListener : Node2D
 		}
 		if (_chatInput != null)
 			_chatInput.Text = "";
+		if (_workspaceChatInput != null)
+			_workspaceChatInput.Text = "";
 
 		_bodyTimelineQueue.Clear();
 		_bodyTimelineStartedAtMs = 0;

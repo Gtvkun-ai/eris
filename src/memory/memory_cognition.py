@@ -270,6 +270,7 @@ class MemoryCognitionCore:
             event_ledger=self.event_ledger,
             embedding_index=_embedding_index,
             memory_feed_trace=self.memory_feed_trace,
+            concept_graph=self.concept_graph,
         )
 
     # ------------------------------------------------------------------

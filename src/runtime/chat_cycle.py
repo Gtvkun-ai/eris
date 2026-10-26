@@ -293,6 +293,10 @@ class ChatCycleMixin:
                 )
                 if latest_snapshot is None or not latest_snapshot.canonical_text:
                     break
+                if latest_snapshot.canonical_text.strip() == (self.current_stage_user_text or "").strip():
+                    # Tránh trường hợp user bấm gửi lại nội dung giống hệt do sốt ruột chờ audio,
+                    # làm hệ thống coi là revision mới rồi hủy mất câu trả lời vừa sinh xong.
+                    break
                 user_text = latest_snapshot.canonical_text
                 cycle_start = latest_snapshot.updated_at
                 self.logger.info(

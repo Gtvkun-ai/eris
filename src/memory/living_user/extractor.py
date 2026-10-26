@@ -19,7 +19,18 @@ from typing import Any, Iterable, Mapping, Protocol
 
 from memory.semantic_memory import normalize_text
 
-from .models import ProfileOperation, UserMemoryScope, clamp01, compact_text, normalize_path
+from .models import (
+    ProfileOperation,
+    UserMemoryScope,
+    clamp01,
+    compact_text,
+    determine_memory_tier,
+    is_ephemeral_directive,
+    is_fragment_or_noise,
+    is_invalid_response_rule,
+    is_metaphor_or_sarcasm_leak,
+    normalize_path,
+)
 
 
 class UserProfileModelAdapter(Protocol):
@@ -92,7 +103,7 @@ class UserProfileExtractor:
                 source="semantic_memory_sync",
                 metadata={"semantic_item_id": str(getattr(item, "id", "") or "")},
             ))
-        return tuple(out)
+        return _clean_operations(out)
 
     def from_turn(
         self,
@@ -137,7 +148,7 @@ class UserProfileExtractor:
                     raise  # Không xóa dấu lỗi; envelope phải được retry.
                 response = None
             ops.extend(self._parse_model_operations(response, ids=ids, default_scope=scope))
-        return tuple(_dedupe_operations(ops)[: self.config.max_operations_per_turn])
+        return tuple(_clean_operations(ops)[: self.config.max_operations_per_turn])
 
     def _behavioral_rules(
         self,
@@ -161,17 +172,34 @@ class UserProfileExtractor:
                 reason="Người dùng đang giao tiếp bằng tiếng Việt.",
             ))
 
-        # Yêu cầu trực tiếp về style. Value được giữ dưới dạng rule nguyên tử thay
-        # vì ép vào vài enum nghèo nàn.
-        style_cues = (
-            "trả lời", "tra loi", "nói", "noi", "viết", "viet", "đừng", "dung",
-            "ngắn", "ngan", "dài", "dai", "chi tiết", "chi tiet", "máy", "may",
-            "tự nhiên", "tu nhien", "thẳng", "thang", "chú thích", "chu thich",
+        # Yêu cầu trực tiếp về style/response rule. Phải là chỉ dẫn style thực sự,
+        # không phải câu hỏi, đố vui, gaming leak hay chỉ thị tạm thời theo lượt.
+        style_intent = bool(
+            re.search(
+                r"(?i)\b(?:trả\s*lời|nói|viết|giải\s*thích|phản\s*hồi|chú\s*thích)\s+(?:ngắn|gọn|chi\s*tiết|tự\s*nhiên|thẳng|rõ|đầy\s*đủ|(?:bằng\s+)?tiếng\s*(?:việt|anh))\b",
+                raw,
+            )
+            or re.search(
+                r"(?i)\b(?:đừng|không\s*nên|tránh)\s+(?:trả\s*lời|nói|viết)\s+(?:máy\s*móc|dài\s*dòng|vòng\s*vo)\b",
+                raw,
+            )
+            or re.search(
+                r"(?i)\b(?:từ\s*giờ|khi\s*trả\s*lời|lúc\s*nói)\s+.*?\b(?:hãy|nên|đừng|phải)\b",
+                raw,
+            )
+            or (
+                re.search(r"(?i)\b(?:hãy|nên|đừng|phải|tôi\s*muốn|làm\s*ơn)\b", raw)
+                and re.search(r"(?i)\b(?:trả\s*lời|nói|viết|xưng\s*hô|chú\s*thích)\b", raw)
+                and re.search(r"(?i)\b(?:ngắn|dài|chi\s*tiết|tự\s*nhiên|máy\s*móc|thẳng|tiếng\s*việt|tiếng\s*anh)\b", raw)
+            )
         )
-        directive_cues = ("hãy", "hay ", "đừng", "dung ", "nên", "nen ", "phải", "phai ", "tôi muốn", "toi muon", "làm ơn")
-        if any(cue in norm for cue in style_cues) and any(cue in norm for cue in directive_cues):
+        if style_intent and not raw.strip().endswith("?"):
             rule = _extract_instruction(raw)
-            if rule:
+            if (
+                rule
+                and not is_ephemeral_directive(raw)
+                and not is_invalid_response_rule("communication.response_rules", rule)
+            ):
                 out.append(_op(
                     "communication.response_rules", rule, evidence_ids, scope,
                     confidence=0.91, explicitness="explicit", cardinality="multi",
@@ -231,7 +259,7 @@ class UserProfileExtractor:
                 metadata={"expires_at": now + 120.0 * 86400.0, "context_only": True},
             ))
 
-        return tuple(out)
+        return _clean_operations(out)
 
     def _parse_model_operations(
         self,
@@ -258,7 +286,7 @@ class UserProfileExtractor:
             if op.sensitivity == "sensitive" and op.explicitness != "explicit":
                 continue
             out.append(op)
-        return out
+        return list(_clean_operations(out))
 
 
 def _extract_learning_fragments(raw: str) -> tuple[str, ...]:
@@ -365,16 +393,26 @@ def _feedback_lesson(norm: str) -> str:
     return "đọc feedback trực tiếp và sửa hành vi, không phòng thủ"
 
 
-def _dedupe_operations(operations: Iterable[ProfileOperation]) -> list[ProfileOperation]:
+def _clean_operations(operations: Iterable[ProfileOperation]) -> tuple[ProfileOperation, ...]:
     seen: set[tuple[str, str, str]] = set()
     out: list[ProfileOperation] = []
     for op in operations:
+        if is_fragment_or_noise(op.path, op.value):
+            continue
+        if is_metaphor_or_sarcasm_leak(op.path, op.value):
+            continue
+        if is_ephemeral_directive(op.value) or (
+            op.path.endswith("response_rules") and is_invalid_response_rule(op.path, op.value)
+        ):
+            continue
+        if op.tier is None:
+            op.tier = determine_memory_tier(op.path, op.explicitness, 1, op.value)
         key = (op.op, op.path, repr(op.value))
         if key in seen:
             continue
         seen.add(key)
         out.append(op)
-    return out
+    return tuple(out)
 
 
 __all__ = ["ProfileExtractionConfig", "UserProfileExtractor", "UserProfileModelAdapter"]

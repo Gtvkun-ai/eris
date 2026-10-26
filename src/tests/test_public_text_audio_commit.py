@@ -94,9 +94,10 @@ def speech_output(monkeypatch):
             owner.conversation_kernel = SimpleNamespace(store=SimpleNamespace(load=lambda _sid: state))
         assert owner._send_decision_to_body(decision, channel=channel, prepared=prepared)
 
-        def event(kind, segment_id=0):
+        def event(kind, segment_id=0, **kwargs):
             callbacks["on_event"](SimpleNamespace(
                 type=kind, turn_id=callbacks["frame"].turn_id, segment_id=segment_id,
+                **kwargs,
             ), callbacks["frame"])
 
         def start_hint():
@@ -235,3 +236,17 @@ def test_real_task_manager_synth_failure_cannot_fake_text_commit(speech_output, 
     finally:
         if getattr(backend, "task_manager", None) is not None:
             backend.task_manager.shutdown()
+
+
+def test_audio_start_carries_duration_ms(speech_output):
+    output = speech_output()
+    from runtime.public_output_runtime import PublicOutputRuntimeMixin
+    PublicOutputRuntimeMixin._handle_tts_playback_event(
+        output.owner,
+        SimpleNamespace(type="audio_start", turn_id="turn:test", audio_duration_ms=6200),
+    )
+    assert output.owner.last_tts_event.get("audio_duration_ms") == 6200
+    tts_packets = [msg for msg in output.messages if msg.get("type") == "tts_event"]
+    assert tts_packets
+    assert tts_packets[-1].get("audio_duration_ms") == 6200
+

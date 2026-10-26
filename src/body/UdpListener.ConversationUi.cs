@@ -376,7 +376,7 @@ public partial class UdpListener
             _conversationSearchQuery = "";
             _workspaceHistorySearch.Text = "";
             SelectConversationDate(DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-            _chatInput.GrabFocus();
+            (_workspaceChatInput ?? _chatInput)?.GrabFocus();
         }, primary: true));
         root.AddChild(ConversationLabel("LỊCH SỬ THEO NGÀY", 10, ErisMuted));
         _conversationDayScroll = new ScrollContainer

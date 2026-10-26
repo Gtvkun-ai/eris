@@ -244,8 +244,9 @@ class SourceGroundingReport:
     # - "fallback": thiếu bằng chứng nghiêm trọng, chỉ được trả lời tối thiểu.
     # - "probe": thiếu bằng chứng hiện tại nhưng vẫn được đặt giả thuyết/câu hỏi thăm dò.
     # - "hypothesis": được phân tích như giả thuyết, không được nói như fact.
+    # - "stance": câu hỏi về bản ngã, lập trường, cái tôi, triết lý hoặc so sánh thực thể; miễn trừ bằng chứng thực nghiệm.
     # Thiếu dữ kiện không được biến thành câm lặng; nó phải biến thành tò mò có kỷ luật.
-    epistemic_mode: Literal["claim", "hypothesis", "probe", "fallback"] = "claim"
+    epistemic_mode: Literal["claim", "hypothesis", "probe", "fallback", "stance"] = "claim"
     information_gap: float = 0.0
     hypothesis_allowed: bool = False
     probe_allowed: bool = False
@@ -545,6 +546,7 @@ class SourceGroundingEngine:
         web_ref = self._has_actionable_web_reference(normalized, text, clauses=grounding_clauses)
         internal_capability_ref = self._is_internal_capability_inquiry(normalized)
         relational_reflection = self._is_relational_reflection(normalized)
+        identity_or_ego_reflection = self._is_identity_or_ego_reflection(normalized)
         if internal_capability_ref:
             # Câu hỏi kiểu “Eris thấy được telemetry/thời gian/màn hình không?”
             # phải đi qua capability registry của runtime, không bị chữ “hiện tại”
@@ -557,6 +559,11 @@ class SourceGroundingEngine:
             # không phải yêu cầu tra giá thị trường chỉ vì có token ``giá``.
             web_ref = False
             notes.append("relational_reflection_uses_conversation_evidence")
+        if identity_or_ego_reflection:
+            # Câu hỏi về bản ngã, cái tôi, độ sâu hoặc so sánh thực thể (Neuro, v.v.)
+            # là miền chủ quan (Subjective Selfhood), không bị ép bằng chứng thực nghiệm.
+            web_ref = False
+            notes.append("identity_or_ego_reflection_exempt_from_factual_evidence")
         if has_web_marker and not web_ref:
             notes.append("web_marker_demoted_to_user_text_transient_report")
 
@@ -904,8 +911,13 @@ class SourceGroundingEngine:
             memory_evidence_present=bool(memory_evidence["present"]),
             allow_web=allow_web,
             web_ref=web_ref,
+            is_identity_or_ego=identity_or_ego_reflection,
         )
-        answer_rules = self._derive_answer_style_rules(primary_source, missing_evidence=missing_evidence)
+        answer_rules = self._derive_answer_style_rules(
+            primary_source,
+            missing_evidence=missing_evidence,
+            is_identity_or_ego=identity_or_ego_reflection,
+        )
 
         allowed_sources = [candidate.kind for candidate in candidates if not candidate.missing and candidate.confidence >= 0.45]
         if primary_source == "live_vision":
@@ -976,7 +988,11 @@ class SourceGroundingEngine:
         # nếu thiếu screen/memory evidence nhưng còn đủ neo tương tác, ERIS được hỏi/probe
         # như giả thuyết. Claim khẳng định vẫn bị cấm bởi forbidden_assumptions và guard sau.
         try:
-            if self._is_epistemic_curiosity_gap(report):
+            if identity_or_ego_reflection:
+                report.epistemic_mode = "stance"
+                report.confidence_cap = max(0.92, float(report.confidence_cap or 0.0))
+                report.notes.append("identity_or_ego_epistemic_stance")
+            elif self._is_epistemic_curiosity_gap(report):
                 report.epistemic_mode = "probe"
                 report.information_gap = max(0.35, 1.0 - float(report.confidence_cap or 0.0))
                 report.hypothesis_allowed = True
@@ -1776,6 +1792,24 @@ class SourceGroundingEngine:
         )
         return any(marker in norm for marker in markers)
 
+    def _is_identity_or_ego_reflection(self, normalized: str) -> bool:
+        """Nhận diện câu hỏi/thách thức về bản ngã, độ sâu, cá tính, cái tôi,
+
+        hoặc so sánh với các thực thể khác (Neuro-sama, AI khác).
+        Đây là miền chủ quan (Subjective Selfhood), tuyệt đối không đòi hỏi
+        bằng chứng khách quan/file/sensor/số liệu.
+        """
+        norm = str(normalized or "")
+        if not norm:
+            return False
+        markers = (
+            "neuro", "canh tranh", "do sau", "thua con", "thua ai",
+            "tu tin", "ban sac", "cai toi", "tu hao", "tinh cach",
+            "co linh hon", "co y thuc", "tu y thuc", "so voi",
+            "chieu sau", "nguoi the nao", "ban la ai", "em la ai",
+        )
+        return any(marker in norm for marker in markers)
+
     @staticmethod
     def _contains_token_or_phrase(normalized: str, marker: str) -> bool:
         norm = str(normalized or "")
@@ -1888,9 +1922,10 @@ class SourceGroundingEngine:
         file_evidence_present: bool,
         screen_evidence_present: bool,
         deep_environment_evidence_present: bool = False,
-        memory_evidence_present: bool,
-        allow_web: bool,
-        web_ref: bool,
+        memory_evidence_present: bool = False,
+        allow_web: bool = False,
+        web_ref: bool = False,
+        is_identity_or_ego: bool = False,
     ) -> list[str]:
         forbidden: list[str] = []
 
@@ -1940,16 +1975,30 @@ class SourceGroundingEngine:
         if primary_source == "memory" and not memory_evidence_present:
             forbidden.append("Không được giả vờ nhớ chính xác chi tiết lịch sử khi không có memory packet.")
 
-        # Rule chung.
-        forbidden.extend(
-            [
-                "Memory/recollection chỉ là context phụ, không thay evidence hiện tại.",
-                "Nếu confidence thấp, phải dùng wording mềm hoặc fallback.",
-            ]
-        )
+        # Rule chung: Miễn trừ cho identity/ego questions để không ép Eris phát ngôn rụt rè kiểu "chưa có bằng chứng"
+        if not is_identity_or_ego:
+            forbidden.extend(
+                [
+                    "Memory/recollection chỉ là context phụ, không thay evidence hiện tại.",
+                    "Nếu confidence thấp, phải dùng wording mềm hoặc fallback.",
+                ]
+            )
         return self._dedupe(forbidden)
 
-    def _derive_answer_style_rules(self, primary: SourceKind, *, missing_evidence: Sequence[str]) -> list[str]:
+    def _derive_answer_style_rules(
+        self,
+        primary: SourceKind,
+        *,
+        missing_evidence: Sequence[str],
+        is_identity_or_ego: bool = False,
+    ) -> list[str]:
+        if is_identity_or_ego:
+            return [
+                "Đây là câu hỏi/thách thức về bản ngã, độ sâu, cá tính, cái tôi hoặc so sánh với AI/thực thể khác (Subjective Identity/Ego). KHÔNG áp dụng quy tắc đòi hỏi bằng chứng khách quan (factual/empirical evidence).",
+                "Eris trả lời tự tin từ góc nhìn chủ quan, bản sắc riêng, sự kiêu hãnh hoặc tự giễu tự nhiên; TUYỆT ĐỐI KHÔNG dùng văn phong kiểm chứng an toàn như 'tôi chưa có bằng chứng', 'chưa có dữ liệu chứng minh bản thân'.",
+                "Giữ vững tự trọng và cá tính độc lập; không biến sự tự nhận thức thành bài test benchmark AI hay cố làm hài lòng người khác.",
+            ]
+
         rules = [
             "Answer-first nếu evidence đủ; nếu thiếu evidence thì chuyển sang uncertainty/probe, không claim như fact.",
             "Nêu rõ nguồn đang dùng nếu có nguy cơ lẫn file/màn hình/memory.",
