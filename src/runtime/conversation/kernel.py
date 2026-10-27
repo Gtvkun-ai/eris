@@ -288,6 +288,19 @@ class ConversationKernel:
                 status="no_reply",
             )
 
+        collect_batch = agent_context.get("__root_input_batch")
+        batch_view = agent_context.get("__root_input_batch_view", {})
+        accepted_batch = batch_view.get("snapshot") if isinstance(batch_view, Mapping) else None
+        if callable(collect_batch) and accepted_batch is not None:
+            newest = collect_batch()
+            if newest.revision != accepted_batch.revision:
+                self._release_updated_input(sid, state.generation, run_id)
+                return ConversationRunResult(event=normalized_event, decision=decision, status="input_updated")
+            metadata = accepted_batch.to_dict()
+            metadata.pop("canonical_text", None)
+            normalized_event = replace(normalized_event, text=accepted_batch.canonical_text,
+                                       metadata={**normalized_event.metadata, "user_input_batch": metadata})
+
         continuation_meta = (runtime_context or {}).get("continuation_lease", {})
         if not isinstance(continuation_meta, Mapping):
             continuation_meta = {}
@@ -364,6 +377,13 @@ class ConversationKernel:
                 rendered=rendered,
                 status="stale",
             )
+        if callable(collect_batch) and accepted_batch is not None:
+            newest = collect_batch()
+            if newest.revision != accepted_batch.revision:
+                self._move_outcome(turn, 'cancelled', reason='INPUT_BATCH_UPDATED_BEFORE_DELIVERY')
+                self._release_updated_input(sid, state.generation, run_id)
+                return ConversationRunResult(event=normalized_event, decision=decision,
+                                             turn=turn, rendered=rendered, status="input_updated")
         if prepare_only:
             # Chưa có public commit. Tháo claim tạm để event/user khác có thể
             # preempt; candidate chỉ được giữ nếu generation + run còn đúng.
@@ -434,6 +454,11 @@ class ConversationKernel:
         if state.generation == generation and state.active_run_id == run_id:
             self.store.mutate(sid, lambda prior, now: replace(
                 prior, phase=RunPhase.FAILED, active_run_id="", active_move_id="", active_delivery_id=""))
+
+    def _release_updated_input(self, sid: str, generation: int, run_id: str) -> None:
+        self.store.mutate(sid, lambda prior, now: replace(
+            prior, phase=RunPhase.CANCELLED, active_run_id="", active_move_id="", active_delivery_id="",
+        ) if prior.generation == generation and prior.active_run_id == run_id else prior)
 
     def _deliver_runtime_failure(self, event: ConversationEvent, generation: int,
                                  run_id: str, *, reason: str) -> ConversationRunResult:

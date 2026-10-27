@@ -694,14 +694,17 @@ class AIChatOrchestrator:
             or getattr(host, "thread_id", "")
             or "foreground:primary"
         ).strip()[:180]
-        user_turn = None
+        user_turn = (getattr(host, "_active_input_batch_turn", None)
+                     if getattr(host, "_chat_processing", False) else None)
+        new_user_batch = user_turn is None
         ledger_factory = getattr(host, "_ensure_session_turn_ledger", None)
-        if callable(ledger_factory):
+        if callable(ledger_factory) and new_user_batch:
             user_turn = ledger_factory().record_user(
                 str(user_text or ""),
                 timestamp=cycle_start,
                 meta={"channel": "chat", "architecture": "conversation_kernel_v12"},
             )
+            host._active_input_batch_turn = user_turn
         # V12 write-back: user turn phải nuôi trajectory/handoff/memory/identity
         # trước khi RootAgent đọc context. Bridge chỉ observe evidence, không route
         # intent và không có quyền quyết định câu trả lời.
@@ -744,12 +747,19 @@ class AIChatOrchestrator:
                 item for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
                 if isinstance(item, Mapping)
             )
+        if not new_user_batch and history and history[-1].get("role") == "user":
+            # This same batch is event.text; do not replay it as older history.
+            history = history[:-1]
         append_history = getattr(host, "_append_chat_history", None)
-        if callable(append_history):
+        if callable(append_history) and new_user_batch:
             append_history("user", str(user_text or ""))
         turn_index = int(getattr(user_turn, "index", 0) or 0)
+        event_id = f"user:{turn_index or time.time_ns()}"
+        if not new_user_batch:
+            revision = int(getattr(getattr(host, "input_revision_buffer", None), "current_revision", 0) or 0)
+            event_id += f":revision:{revision}"
         event = ConversationEvent(
-            event_id=f"user:{turn_index or time.time_ns()}",
+            event_id=event_id,
             session_id=sid,
             kind="user_turn",
             text=str(user_text or "")[:16000],
@@ -845,6 +855,42 @@ class AIChatOrchestrator:
             "language_hint": _runtime_language(),
             "speech_language_hint": _runtime_speech_language(),
         })
+        collect_batch = getattr(host, "_collect_user_input_batch", None)
+        if callable(collect_batch):
+            batch_view: dict[str, Any] = {}
+            admitted_messages = int(getattr(host, "_input_batch_admitted_messages", 0) or 0)
+
+            def refresh_input_batch(*, claim: bool = False):
+                nonlocal admitted_messages
+                snapshot = collect_batch(claim=claim)
+                batch_view["snapshot"] = snapshot
+                metadata = snapshot.to_dict()
+                metadata.pop("canonical_text", None)  # text appears once in event.text
+                ledger = ledger_factory() if callable(ledger_factory) else None
+                update = getattr(ledger, "update_user_batch", None)
+                if callable(update) and user_turn is not None:
+                    update(user_turn.index, snapshot.canonical_text, metadata=metadata)
+                for item in reversed(getattr(host, "chat_history", ())):
+                    if isinstance(item, dict) and item.get("role") == "user":
+                        item["content"] = snapshot.canonical_text
+                        if "raw_content" in item:
+                            item["raw_content"] = snapshot.canonical_text
+                        item["user_input_batch"] = metadata
+                        break
+                host.current_stage_user_text = snapshot.canonical_text
+                ingest = getattr(host, "_ingest_user_turn_memory_hot_path", None)
+                if callable(ingest) and user_turn is not None:
+                    for n, entry in enumerate(snapshot.entries[admitted_messages:], start=admitted_messages + 1):
+                        try:
+                            ingest(entry.text, turn_id=f"session_turn:{user_turn.index}:message:{n}")
+                        except Exception as exc:
+                            _orchestrator_boundary_note(host, "conversation_v12.batch_memory", exc)
+                admitted_messages = len(snapshot.entries)
+                host._input_batch_admitted_messages = admitted_messages
+                return snapshot
+
+            runtime_context["__root_input_batch"] = refresh_input_batch
+            runtime_context["__root_input_batch_view"] = batch_view
         host.current_stage_user_text = str(user_text or "")
         kernel = ensure_conversation_kernel(host)
         _install_speculative_dispatch(host, kernel)

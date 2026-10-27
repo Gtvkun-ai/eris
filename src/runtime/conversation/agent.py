@@ -253,6 +253,16 @@ class RuntimeModelRootAgent:
         for step_index in range(self.max_root_steps):
             if not still_active():
                 return NoReply(reason="root_turn_preempted")
+            collect_batch = runtime_context.get("__root_input_batch")
+            if event.kind == "user_turn" and callable(collect_batch):
+                batch = collect_batch(claim=True)
+                metadata = batch.to_dict()
+                metadata.pop("canonical_text", None)
+                from dataclasses import replace
+                event = replace(event, text=batch.canonical_text,
+                                metadata={**event.metadata, "user_input_batch": metadata})
+                self._log("info", "[root-input] messages=%d wait_seconds=%.1f revision=%d",
+                          len(batch.entries), metadata["wait_seconds"], batch.revision)
             payload = self._payload(
                 event=event,
                 recent_history=recent_history,
@@ -613,6 +623,9 @@ class RuntimeModelRootAgent:
         return (
             "Bạn là RootAgent của Eris và là semantic/social authority duy nhất cho lời public. "
             "Mỗi lần chỉ trả đúng MỘT action JSON. Bạn có thể finalize ngay bằng kind=move hoặc kind=no_reply; "
+            "event.metadata.user_input_batch mô tả toàn bộ các tin user gửi gộp trong lượt này, "
+            "gồm số lần gửi và thời gian đã chờ. Các câu lặp vẫn là input thật; tự hiểu theo toàn "
+            "bộ ngữ cảnh xem user đang bổ sung, sửa ý hay còn gặp vấn đề, không mặc định là đã được nghe trả lời. "
             "chỉ khi thật sự cần domain intelligence/work mới dùng kind=use_capability. Small talk, joke, phản hồi xã hội "
             "và câu đơn giản phải tự xử lý trực tiếp, không gọi tutor/work/research cho có. "
             f"Capability hiện có: {available}. "

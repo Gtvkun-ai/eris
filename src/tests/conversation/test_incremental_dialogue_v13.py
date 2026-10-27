@@ -103,6 +103,7 @@ def test_1b_chat_cycle_restarts_root_exactly_once_when_user_adds_messages_while_
             self.root_runs: list[str] = []
             self.preempted_count = 0
             self.conversation_kernel = SimpleNamespace(
+                store=SimpleNamespace(load=lambda _sid: SimpleNamespace(active_delivery_id="")),
                 preempt_for_user=lambda _sid: setattr(self, "preempted_count", self.preempted_count + 1)
             )
             self.ai_chat_orchestrator = SimpleNamespace(run=self._fake_orchestrator_run)
@@ -128,7 +129,7 @@ def test_1b_chat_cycle_restarts_root_exactly_once_when_user_adds_messages_while_
     assert host.root_runs[0] == "Mình tính dùng sqlite"
     assert "à không, postgres nhé" in host.root_runs[1]
     assert "tại có nhiều worker" in host.root_runs[1]
-    assert host.preempted_count >= 1
+    assert host.preempted_count == 0  # no delivery yet; collect one batch instead
 
 
 def test_2_open_loop_store_captures_suspended_move_and_decides_resume_or_retire():

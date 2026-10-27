@@ -49,6 +49,11 @@ class InputRevisionSnapshot:
             "revision": self.revision,
             "canonical_text": self.canonical_text,
             "entry_count": len(self.entries),
+            "message_count": len(self.entries),
+            "first_message_at": min((e.timestamp for e in self.entries), default=self.updated_at),
+            "last_message_at": max((e.timestamp for e in self.entries), default=self.updated_at),
+            "wait_seconds": max(0.0, self.updated_at - min((e.timestamp for e in self.entries), default=self.updated_at)),
+            "message_timestamps": [e.timestamp for e in self.entries],
             "stale_marked_revisions": list(self.stale_marked_revisions),
             "updated_at": self.updated_at,
         }
@@ -124,6 +129,7 @@ class InputRevisionBuffer:
         *,
         timestamp: float | None = None,
         session_id: str = "default",
+        entries: list[tuple[float, str]] | None = None,
     ) -> InputRevisionSnapshot:
         """Khởi tạo một lượt suy nghĩ mới của Root với câu nhắn đầu tiên của user."""
         clean = str(text or "").strip()
@@ -139,7 +145,10 @@ class InputRevisionBuffer:
                 timestamp=now,
                 is_correction=_looks_like_correction(clean),
             )
-            self._entries = [entry] if clean else []
+            self._entries = ([InputRevisionEntry(revision=rev, text=str(t).strip(), timestamp=float(ts),
+                                                is_correction=_looks_like_correction(str(t)))
+                              for ts, t in entries if str(t).strip()]
+                             if entries is not None else ([entry] if clean else []))
             self._pending_restart = False
             self._last_submit_at = now
             return self._snapshot_unlocked(now=now)
@@ -150,6 +159,7 @@ class InputRevisionBuffer:
         *,
         timestamp: float | None = None,
         on_mark_stale: Callable[[int, int], None] | None = None,
+        invalidate_active: bool = True,
     ) -> InputRevisionSnapshot:
         """Nhận tin nhắn bổ sung/chỉnh sửa khi Root đang nghĩ (chưa public commit).
 
@@ -166,7 +176,7 @@ class InputRevisionBuffer:
             old_active = self._active_run_revision
             self._current_revision += 1
             new_rev = self._current_revision
-            if old_active > 0 and old_active < new_rev:
+            if invalidate_active and old_active > 0 and old_active < new_rev:
                 self._stale_revisions.add(old_active)
                 stale_target = old_active
             entry = InputRevisionEntry(
@@ -188,6 +198,14 @@ class InputRevisionBuffer:
             except Exception:
                 pass
         return snapshot
+
+    def snapshot(self, *, claim: bool = False) -> InputRevisionSnapshot:
+        """Capture all input at a request boundary without cancelling delivery."""
+        with self._condition:
+            if claim:
+                self._active_run_revision = self._current_revision
+                self._pending_restart = False
+            return self._snapshot_unlocked(now=self.clock())
 
     def is_revision_stale(self, revision: int) -> bool:
         """Kiểm tra xem một revision có bị thay thế bởi câu nhắn mới hơn hay chưa."""

@@ -54,6 +54,22 @@ class SessionTurnLedger:
     def record_assistant(self, text: str, *, timestamp: Optional[float] = None, meta: Optional[dict[str, Any]] = None) -> SessionTurn:
         return self._record("assistant", text, timestamp=timestamp, meta=meta)
 
+    def update_user_batch(self, index: int, text: str, *, metadata: dict[str, Any]) -> SessionTurn | None:
+        """Extend the current, unanswered user turn with its original messages."""
+        for position, turn in enumerate(self._turns):
+            if turn.index != index or turn.role != "user":
+                continue
+            if any(t.role == "assistant" for t in self._turns[position + 1:]):
+                return None
+            cleaned = compact_spaces(text)
+            updated = replace(turn, text=cleaned, is_question=looks_like_question(cleaned),
+                              meta={**turn.meta, "user_input_batch": dict(metadata)})
+            self._turns[position] = updated
+            if cleaned != turn.text:
+                self._revision += 1
+            return updated
+        return None
+
     def _record(self, role: Role, text: str, *, timestamp: Optional[float], meta: Optional[dict[str, Any]]) -> SessionTurn:
         cleaned = compact_spaces(text)
         turn = SessionTurn(

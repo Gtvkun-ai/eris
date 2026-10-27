@@ -15,6 +15,7 @@ Boundary cần giữ:
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
@@ -69,12 +70,15 @@ class ConversationContextAssembler:
         # Chỉ dùng tối đa hai câu user trước làm gợi ý truy xuất Self; không
         # diễn giải lịch sử bằng rule hoặc đưa transcript vào state.
         host = self.host
+        context_started = time.perf_counter()
         state = self._mind_state()
 
         # Fallback chỉ dành cho adapter legacy không có event/state typed.
         personality = _call_text(state, "personality_prompt_context", limit=12000)
         relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=12000)
+        memory_started = time.perf_counter()
         memory, memory_records, memory_degraded = self._typed_memory_context(user_text)
+        memory_finished = time.perf_counter()
         world = self._world_context(channel)
         clock = self._clock_context()
         addressing = self._user_addressing_context()
@@ -302,6 +306,11 @@ class ConversationContextAssembler:
             host.last_affective_voice_state = dict(affect_payload)
         except Exception:
             pass
+        from runtime.diagnostic_logging import safe_log
+        safe_log(getattr(host, "logger", None), "info",
+                 "[chat-stage] context_ms=%d memory_context_ms=%d",
+                 int((time.perf_counter() - context_started) * 1000),
+                 int((memory_finished - memory_started) * 1000))
         return context
 
     def _mind_state(self) -> Any | None:
@@ -414,7 +423,9 @@ class ConversationContextAssembler:
         except Exception as exc:
             self._debug("context.vision", exc)
 
-        parts = [p for p in (world_text, vision_text) if p]
+        repair_text = _call_text(getattr(self.host, "ai_model_router", None),
+                                 "contract_repair_context", limit=12000)
+        parts = [p for p in (world_text, vision_text, repair_text) if p]
         return "\n\n".join(parts)
 
 

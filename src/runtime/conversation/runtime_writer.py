@@ -344,6 +344,13 @@ class RuntimeConversationWriter:
     ) -> RenderedConversationMove:
         router = getattr(self.host, "ai_model_router", None)
         generate = getattr(router, "generate_public_reply", None)
+        if turn.move.literal_dialogue:
+            # Prose recovered from Root is already dialogue, not a writing brief.
+            # Keep it verbatim and reuse localization/prepare/TTS downstream.
+            def generate(**kwargs):
+                return {"should_speak": True, "text": turn.move.say, "speech_text": "",
+                        "display_language": str(kwargs.get("language_hint", "vi")),
+                        "llm_malformed_json_repair": True}
         if not callable(generate):
             raise RuntimeError("public_writer_unavailable")
 

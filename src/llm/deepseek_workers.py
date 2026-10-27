@@ -482,6 +482,13 @@ class JsonlWorkerClient:
                 payload = self._client.create_chat_completion(**request_kwargs)
             if not structured:
                 return payload
+            # Dialogue survives a malformed envelope. The router owns immediate
+            # delivery and critic recovery; do not spend another foreground call.
+            from llm.dialogue_recovery import recover_dialogue
+            if recover_dialogue(_extract_openai_content(payload), kwargs.get("response_format") or {}):
+                # Preserve the original wire response and return success through
+                # fallback chains; bad formatting is not a provider outage.
+                return payload
             try:
                 line = canonical_json_line(_extract_openai_content(payload))
                 schema = _response_schema(kwargs.get("response_format"))

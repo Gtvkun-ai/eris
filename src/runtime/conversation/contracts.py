@@ -55,8 +55,9 @@ class InterruptKind(str, Enum):
 class NextConversationMove:
     """Quyết định semantic duy nhất mà root agent phải finalize.
 
-    ``say`` là chỉ dẫn nội dung cho SurfaceWriter, KHÔNG phải câu bắt writer chép
-    nguyên văn. ``delivery`` chỉ mô tả cách thể hiện gần đúng. Runtime tuyệt đối
+    ``say`` thường là chỉ dẫn nội dung cho SurfaceWriter. Riêng prose cứu từ
+    response lỗi có ``literal_dialogue`` để giữ nguyên lời đã sinh, không viết
+    lại. ``delivery`` chỉ mô tả cách thể hiện gần đúng. Runtime tuyệt đối
     không suy thêm thread, floor hay teaching move từ hai field này.
     """
 
@@ -65,6 +66,7 @@ class NextConversationMove:
     delivery: str = ""
     after: ConversationAfter = ConversationAfter.WAIT_USER
     move_id: str = field(default_factory=lambda: f"move:{uuid.uuid4().hex}")
+    literal_dialogue: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "NextConversationMove":
@@ -85,6 +87,7 @@ class NextConversationMove:
             delivery=_text(data.get("delivery"), 500),
             after=after,
             move_id=_text(data.get("move_id"), 180) or f"move:{uuid.uuid4().hex}",
+            literal_dialogue=data.get("_runtime_literal_dialogue") is True,
         )
 
     def to_dict(self) -> dict[str, Any]:

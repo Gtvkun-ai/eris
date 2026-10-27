@@ -12,6 +12,7 @@ from runtime.stage_contracts import StageFrameBuilder
 
 @pytest.fixture
 def speech_output(monkeypatch):
+    monkeypatch.setattr("runtime.ai_orchestrated.autonomous_trace.append_public_turn_trace", lambda *a, **kw: None)
     monkeypatch.setenv("ERIS_TTS_SYNC_TEXT", "1")
     monkeypatch.setenv("ERIS_TTS_TEXT_SYNC_TIMEOUT", "0.2")
     timers = []
@@ -249,4 +250,54 @@ def test_audio_start_carries_duration_ms(speech_output):
     tts_packets = [msg for msg in output.messages if msg.get("type") == "tts_event"]
     assert tts_packets
     assert tts_packets[-1].get("audio_duration_ms") == 6200
+
+
+@pytest.mark.parametrize("preempt", [False, True])
+def test_revision_retires_voice_and_text_together_with_real_dispatcher(speech_output, monkeypatch, preempt):
+    import io
+    import threading
+    import wave
+    from runtime.tts_engine import TtsEngine
+
+    monkeypatch.setenv("ERIS_TTS_TASK_MANAGER", "1")
+    entered, release = threading.Event(), threading.Event()
+    played = []
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as stream:
+        stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        stream.writeframes(b"\0\0" * 1600)
+
+    class Backend(TtsEngine):
+        def __init__(self):
+            self._ok = True
+            self._worker = None
+            self._speech_lock = threading.RLock()
+            self._speech_epoch = 0
+            self._speech_turn_id = ""
+        def refresh_configuration(self): pass
+        def synthesize(self, text, **kwargs):
+            entered.set()
+            assert release.wait(3)
+            return wav.getvalue()
+        def lip_sync_audio(self, data): return data
+        def play_prepared_audio(self, data, stop, *, on_started=None):
+            played.append(data)
+            on_started()
+
+    backend = Backend()
+    try:
+        output = speech_output(backend=backend)
+        assert entered.wait(2)
+        output.owner.tts_engine = backend
+        def invalidate(_sid):
+            output.state.generation += 1
+        output.owner.conversation_kernel.preempt_for_user = invalidate
+        if preempt:
+            output.owner._mark_active_root_run_stale_for_revision(1, 2)
+        release.set()
+        assert backend.task_manager.wait_until_idle(3)
+        assert (bool(played), bool(_speech_packets(output))) == (not preempt, not preempt)
+    finally:
+        release.set()
+        backend.task_manager.shutdown()
 

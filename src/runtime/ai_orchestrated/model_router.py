@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
@@ -1264,6 +1265,42 @@ class AIRuntimeModelRouter:
         self.llm_service = llm_service
         self.logger = logger
         self.budget_policy = budget_policy
+        self._contract_repair_lock = threading.Lock()
+        self._contract_repair = None
+
+    def _recover_dialogue(self, raw: Any, *, response_format: Mapping[str, Any],
+                         messages: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+        from llm.dialogue_recovery import recover_dialogue
+        recovered = recover_dialogue(_content(raw), response_format)
+        if recovered is None:
+            return None
+        try:
+            source = response_format.get("json_schema", {}).get("name", "")
+            with self._contract_repair_lock:
+                if self._contract_repair is None:
+                    from .contract_repair import BackgroundContractRepair
+                    self._contract_repair = BackgroundContractRepair(self)
+                repair = self._contract_repair
+            # Copy only the current input, never replay full Self/history to critic.
+            context = next((str(m.get("content", ""))[-12000:] for m in reversed(messages)
+                            if m.get("role") == "user"), "")
+            recovered["_runtime_contract_repair_id"] = repair.submit(
+                source=source, raw_content=_content(raw),
+                dialogue=str(recovered.get("say", recovered.get("text", ""))), context=context,
+            )
+        except Exception:
+            # An unavailable background worker must never drop recovered speech.
+            recovered["_runtime_contract_repair_id"] = ""
+        return recovered
+
+    def contract_repair_context(self) -> str:
+        repair = self._contract_repair
+        return repair.prompt_context() if repair is not None else ""
+
+    def close_contract_repair(self) -> None:
+        with self._contract_repair_lock:
+            if self._contract_repair is not None:
+                self._contract_repair.close()
 
     @staticmethod
     def _client_inference_profile(client: Any) -> tuple[str | None, str]:
@@ -1548,7 +1585,12 @@ class AIRuntimeModelRouter:
                 cognitive_lane=str(cognitive_lane or name),
             )
             content = _content(raw)
-            parsed = _json(content, public_reply=False)
+            recovered = self._recover_dialogue(
+                raw, response_format=response_format,
+                messages=(conversation_messages if conversation_messages is not None else
+                          [{"role": "user", "content": json.dumps(dict(payload), ensure_ascii=False)}]),
+            )
+            parsed = recovered if recovered is not None else _json(content, public_reply=False)
             result = _unwrap_schema_payload(parsed, schema)
             if observer_call:
                 if not isinstance(content, str) or not content.strip():
@@ -1905,7 +1947,12 @@ class AIRuntimeModelRouter:
                 )
                 provider_ms = max(0.0, (time.monotonic() - started) * 1000.0)
                 raw_content = _content(raw)
-                parsed = _json(raw_content)
+                recovered = self._recover_dialogue(
+                    raw, response_format={"type": "json_schema", "json_schema": {
+                        "name": response_name, "schema": response_schema}},
+                    messages=list(request_messages or messages),
+                )
+                parsed = recovered if recovered is not None else _json(raw_content)
                 if parsed and locked_semantic_frame:
                     parsed["semantic_frame"] = dict(locked_semantic_frame)
                 usable = bool(_public_text_from_mapping(parsed)) if parsed else False

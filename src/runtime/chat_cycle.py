@@ -18,12 +18,9 @@ class ChatCycleMixin:
     Module này chỉ quản lý quyền phát loa, burst input và context ngắt lời. Toàn
     bộ hiểu nghĩa, lập kế hoạch và sinh lời nằm ở Cortex V2 + AIChatOrchestrator.
 
-    Nâng cấp Incremental Dialogue (Text-first):
-    - Thay vì chặn cứng bằng ``_chat_processing`` và xếp hàng xử lý tuần tự khiến
-      Root trả lời cho câu cũ đã lỗi thời, sử dụng ``InputRevisionBuffer``: khi
-      User nhắn thêm lúc Root đang nghĩ, đánh dấu ``stale`` ngay cho run đang chạy,
-      gom câu mới qua cửa sổ debounce ngắn, và restart Root đúng 1 lần trên
-      canonical latest user state.
+    InputRevisionBuffer gom mọi tin nhắn và số lần gửi vào batch. Root lấy batch
+    trước request; checkpoint trước Writer/TTS phát hiện input mới. Nếu phải
+    thay lượt đã giao TTS, thu hồi cả audio trước khi đổi generation của text.
     - Khi User cắt ngang lúc Eris đang trả lời, tạo ``SuspendedMove`` lưu vào
       ``OpenLoopStore`` và truyền phần chưa nói dưới dạng hint vào lượt Root kế tiếp
       để quyết định ``RESUME`` hay ``RETIRE``.
@@ -50,6 +47,9 @@ class ChatCycleMixin:
             stale_rev,
             new_rev,
         )
+        # Revoke remote synthesis too: a stale kernel alone hides the bubble
+        # while the independent TTS epoch can still authorize its WAV to play.
+        self._preempt_for_classified_user_turn(cancel_audio=True, cancel_generation=True)
         sid = str(
             getattr(self, "conversation_id", "")
             or getattr(self, "thread_id", "")
@@ -62,7 +62,6 @@ class ChatCycleMixin:
                 preempt_fn(sid)
             except Exception as exc:
                 self.logger.debug("[input-revision] kernel preempt failed: %s", exc)
-        self._preempt_for_classified_user_turn(cancel_audio=False, cancel_generation=True)
 
     def _enter_chat_cycle(self) -> None:
         """Chat-start chỉ giữ quyền lượt, chưa biết user sẽ nói gì.
@@ -164,17 +163,17 @@ class ChatCycleMixin:
                 self.logger.debug("[temporal mind] user turn update failed: %s", exc)
         revision_buffer = self._ensure_input_revision_buffer()
         if getattr(self, "_chat_processing", False):
-            # Khi Root đang nghĩ mà User nhắn thêm: đẩy vào InputRevisionBuffer,
-            # đánh dấu stale ngay cho run đang chạy để hủy sớm và chờ gom qua debounce.
-            self._queue_chat_burst_event(user_text, cycle_start)
+            # Root/Writer checkpoints claim the batch, including repeated inputs.
+            # Do not invalidate a delivery independently for each message.
             revision_buffer.submit_revision(
                 user_text,
                 timestamp=cycle_start,
-                on_mark_stale=self._mark_active_root_run_stale_for_revision,
+                invalidate_active=False,
             )
             return
 
         self._chat_processing = True
+        self._active_input_batch_turn = None
         lifecycle_turn_id = f"chat:{int(cycle_start * 1000)}"
         self._active_public_lifecycle_turn_id = lifecycle_turn_id
         try:
@@ -200,7 +199,11 @@ class ChatCycleMixin:
                 or getattr(self, "thread_id", "")
                 or "foreground:primary"
             ).strip()[:180]
-            revision_buffer.begin_turn(user_text, timestamp=cycle_start, session_id=sid)
+            initial_batch = revision_buffer.begin_turn(
+                user_text, timestamp=cycle_start, session_id=sid,
+                entries=getattr(self, "_chat_initial_entries", None),
+            )
+            self._input_batch_admitted_messages = len(initial_batch.entries)
 
             speech_interrupt_event = None
             consume_interrupt = getattr(self, "_consume_speech_interrupt_event", None)
@@ -284,18 +287,23 @@ class ChatCycleMixin:
                     revision_buffer.submit_revision(
                         extra_text,
                         timestamp=ts,
-                        on_mark_stale=self._mark_active_root_run_stale_for_revision,
+                        invalidate_active=False,
                     )
                 if not revision_buffer.has_pending_revision():
                     break
+                # Input may arrive after the final checkpoint and TTS dispatch.
+                # Retire that delivery's voice before changing Root generation.
+                kernel = getattr(self, "conversation_kernel", None)
+                state = kernel.store.load(sid) if kernel is not None else None
+                if getattr(state, "active_delivery_id", ""):
+                    self._mark_active_root_run_stale_for_revision(
+                        revision_buffer.current_revision - 1,
+                        revision_buffer.current_revision,
+                    )
                 latest_snapshot = revision_buffer.coalesce_and_claim_latest(
                     poll_external_fn=lambda: [*self._pop_queued_chat_events(), *self._poll_ready_chat_events()],
                 )
                 if latest_snapshot is None or not latest_snapshot.canonical_text:
-                    break
-                if latest_snapshot.canonical_text.strip() == (self.current_stage_user_text or "").strip():
-                    # Tránh trường hợp user bấm gửi lại nội dung giống hệt do sốt ruột chờ audio,
-                    # làm hệ thống coi là revision mới rồi hủy mất câu trả lời vừa sinh xong.
                     break
                 user_text = latest_snapshot.canonical_text
                 cycle_start = latest_snapshot.updated_at
@@ -351,6 +359,7 @@ class ChatCycleMixin:
             self.current_stage_user_text = ""
             self.current_conversation_lane = None
             self._chat_processing = False
+            self._active_input_batch_turn = None
 
     def _run_chat_cycle_inner(
         self,
@@ -416,6 +425,7 @@ class ChatCycleMixin:
         collected.extend(self._pop_queued_chat_events())
         collected.extend(self._poll_ready_chat_events())
         if len(collected) <= 1:
+            self._chat_initial_entries = list(collected)
             return collected[0][1]
 
         window = float(getattr(self, "rapid_burst_window", 1.2) or 0.0)
@@ -428,7 +438,16 @@ class ChatCycleMixin:
                 collected.extend(new_events)
                 quiet_until = time.time() + window
         collected.sort(key=lambda item: item[0])
+        self._chat_initial_entries = list(collected)
         return "\n".join(text for _, text in collected if text)
+
+    def _collect_user_input_batch(self, *, claim: bool = False):
+        """Drain all pending user messages before inference, preserving repeats."""
+        buffer = self._ensure_input_revision_buffer()
+        incoming = [*self._pop_queued_chat_events(), *self._poll_ready_chat_events()]
+        for timestamp, text in incoming:
+            buffer.submit_revision(text, timestamp=timestamp, invalidate_active=False)
+        return buffer.snapshot(claim=claim)
 
     def _pop_queued_chat_events(self) -> list[tuple[float, str]]:
         lock = getattr(self, "_chat_burst_lock", None)

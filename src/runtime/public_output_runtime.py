@@ -730,6 +730,10 @@ class PublicOutputRuntimeMixin:
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
+                self.logger.info(
+                    "[public-text] sent turn=%s reason=%s chars=%d",
+                    stage_frame.turn_id, release_reason, len(str(body_payload.get("text", ""))),
+                )
                 # Public ledger chỉ nhìn thấy câu khi bubble thật sự được gửi.
                 # History của delivery adapter vẫn giữ receipt pending riêng.
                 self._record_public_turn(decision, payload=payload, channel=channel)
@@ -799,6 +803,11 @@ class PublicOutputRuntimeMixin:
                 # Trường hợp P0: user chen lời làm generation cũ stale trước
                 # khi callback TTS quay về. Không phát event sân khấu cũ đè
                 # lên turn mới, nhưng phải lưu trạng thái audio của câu cũ.
+                if event_type == "audio_start":
+                    self.logger.warning(
+                        "[public-text] stale audio_start rejected turn=%s; voice/text ownership diverged",
+                        str(getattr(event, "turn_id", "") or ""),
+                    )
                 if event_type in {"audio_done", "audio_failed", "audio_cancelled"}:
                     try:
                         from runtime.conversation.speech_outcome import note_public_delivery_outcome

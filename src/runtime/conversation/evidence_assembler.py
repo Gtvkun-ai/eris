@@ -6,6 +6,7 @@ phân loại social intent, không chọn câu trả lời và không tạo publ
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 
 from runtime.source_grounding import SourceGroundingEngine
@@ -17,6 +18,7 @@ class ConversationEvidenceAssembler:
 
     def assemble_chat(self, user_text: str, *, previous_public_turn: Any = None) -> dict[str, Any]:
         host = self.host
+        evidence_started = time.perf_counter()
         text = str(user_text or "")
         snapshot = self._telemetry_snapshot()
         if snapshot is not None:
@@ -42,6 +44,7 @@ class ConversationEvidenceAssembler:
                 pass
 
         memory_resonance = None
+        memory_started = time.perf_counter()
         recall = getattr(host, "_recall_memory_resonance", None)
         if callable(recall):
             try:
@@ -49,6 +52,7 @@ class ConversationEvidenceAssembler:
             except Exception as exc:
                 self._debug("memory_resonance", exc)
 
+        memory_finished = time.perf_counter()
         report = None
         builder = getattr(host, "_build_chat_source_grounding_report", None)
         if callable(builder):
@@ -84,6 +88,11 @@ class ConversationEvidenceAssembler:
                 logger_fn(report)
             except Exception:
                 pass
+        from runtime.diagnostic_logging import safe_log
+        safe_log(getattr(host, "logger", None), "info",
+                 "[chat-stage] evidence_ms=%d memory_recall_ms=%d",
+                 int((time.perf_counter() - evidence_started) * 1000),
+                 int((memory_finished - memory_started) * 1000))
         return {
             "source_grounding_context": prompt_context,
             "screen_image_data_uri": screen_data_uri,

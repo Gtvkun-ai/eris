@@ -89,3 +89,33 @@ def test_health_signal_logged_exactly_once(caplog):
     ]
     assert len(load_fail_errors) == 1
     assert index.debug_status()["load_failed_signaled"] is True
+
+
+def test_shared_index_does_not_block_recall_while_model_loads():
+    import threading
+    import numpy as np
+
+    index = EmbeddingIndex(device="cpu")
+    entered = threading.Event()
+    release = threading.Event()
+    loads = []
+    def load():
+        loads.append(1)
+        entered.set()
+        assert release.wait(2)
+    index._load_model = load
+    index._encode = lambda texts, role: np.array([[1., 0.] for text in texts])
+    index._async_load = True
+    try:
+        index.warmup()
+        assert entered.wait(1)
+        assert index.embed_query("xin chào") == ()
+        assert index.embed_documents(["a", "b"]) == [(), ()]
+        assert index._vector_cache == {}  # warming is not cached as a permanent empty result
+        assert index.debug_status()["loading"] is True
+        release.set()
+        index._loader.join(1)
+        assert index.embed_query("xin chào") == (1., 0.)
+        assert loads == [1]
+    finally:
+        release.set()

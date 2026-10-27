@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Sequence
@@ -93,13 +94,16 @@ class EmbeddingIndex:
             )
         ).strip()
         self.min_cosine = float(os.getenv("ERIS_EMBEDDING_MIN_COSINE", "0.20"))
-        self._device = device or ("cuda" if self._cuda_available() else "cpu")
+        self._device = device or "auto"
         self._model: Any = None
         self._tokenizer: Any = None
         self._loaded = False
         self._load_error = ""
         self._load_failed_signaled = False
         self._vector_cache: dict[str, np.ndarray] = {}
+        self._load_lock = threading.Lock()
+        self._async_load = False
+        self._loader: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Public search contract
@@ -182,6 +186,7 @@ class EmbeddingIndex:
             "query_instruction_enabled": bool(self.query_instruction),
             "cache_size": len(self._vector_cache),
             "load_failed_signaled": self._load_failed_signaled,
+            "loading": bool(self._loader and self._loader.is_alive()),
         }
 
     # ------------------------------------------------------------------
@@ -216,7 +221,31 @@ class EmbeddingIndex:
             return True
         if self._load_error:
             return False
+        if self._async_load:
+            self.warmup()
+            return False
+        return self._load_once()
+
+    def warmup(self) -> None:
+        """Shared runtime recall uses lexical results while the model loads."""
+        if self._loaded or self._load_error or self._loader is not None:
+            return
+        with self._load_lock:
+            if self._loaded or self._load_error or self._loader is not None:
+                return
+            self._loader = threading.Thread(target=self._load_once, name="ErisEmbeddingWarmup", daemon=True)
+            loader = self._loader
+        loader.start()
+
+    def _load_once(self) -> bool:
+        # Never make a foreground lookup wait for a background model import.
+        if not self._load_lock.acquire(blocking=False):
+            return False
         try:
+            if self._loaded:
+                return True
+            if self._load_error:
+                return False
             self._load_model()
             self._loaded = True
             return True
@@ -238,8 +267,12 @@ class EmbeddingIndex:
                     "EmbeddingIndex model load vẫn fail (%s): %s", self.model_name, exc
                 )
             return False
+        finally:
+            self._load_lock.release()
 
     def _load_model(self) -> None:
+        if self._device == "auto":
+            self._device = "cuda" if self._cuda_available() else "cpu"
         from transformers import AutoModel, AutoTokenizer
 
         t0 = time.time()
@@ -450,6 +483,8 @@ def get_shared_embedding_index() -> EmbeddingIndex | None:
         if not explicit_model and _LOCAL_MODEL_DIR.is_dir():
             cache_dir = str(_LOCAL_MODEL_DIR)
         _SHARED_INDEX = EmbeddingIndex(cache_dir=cache_dir)
+        _SHARED_INDEX._async_load = True
+        _SHARED_INDEX.warmup()
     except Exception:
         _SHARED_INDEX = None
     return _SHARED_INDEX

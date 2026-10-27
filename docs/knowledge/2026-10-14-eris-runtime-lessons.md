@@ -585,3 +585,174 @@ Kiểm chứng mới:
 
 Chưa mở phiên chat hoặc phát audio live sau triển khai, chưa đo latency/chất âm.
 Kế hoạch và ledger: [retirement plan](../superpowers/plans/2026-10-23-retire-gemini-groq.md).
+
+## 18. Đối chiếu source vision ngày 27/10/2026
+
+Khi trao đổi về tính năng chụp màn hình, đã đọc source hiện tại; chưa chạy
+capture, gọi Gemini hoặc xác nhận bản portable.
+
+- **Thay thế kết luận bao quát ở mục 17 rằng runtime không dùng Gemini nữa
+  trong phạm vi vision của checkout hiện tại:** `coordinator_bootstrap.py`
+  dựng và start `VisionPerceptionWorker`. Worker dùng `mss` chụp cửa sổ active
+  (fallback toàn desktop), nén JPEG rồi gửi `/api/vision/decompose`, mặc định
+  ở `127.0.0.1:8000`, với model `gemini-flash`. `ERIS_VISION_ENABLED=0` chặn
+  start worker. Đây là đường Gemini Vision Docker, chưa xác nhận request live.
+- Worker kiểm thay đổi ảnh và cooldown trước khi gửi. Ảnh được xử lý trong
+  bộ nhớ; service giữ snapshot phân tích. `context_assembler.py` đưa snapshot
+  chưa quá 600 giây vào world context. Không coi snapshot này là ảnh vừa chụp
+  tại thời điểm user hỏi.
+- `telemetry/service.py` cũng có capture ảnh data URI và `chat_perception.py`
+  có đường capture theo quyết định routing. Các đường capture này không tự
+  chứng minh đã có thao tác UI lưu/xem lại screenshot cho người dùng.
+
+Đây là cập nhật tri thức từ đọc source, không sửa hành vi runtime hoặc xác
+nhận lại các provider/lane khác trong quyết định retirement.
+
+## 19. JSON repair và text chưa hiện trong phiên 27/10 lúc 14:29
+
+Nguồn: `Documents/eris/logs/eris_run_20261027_142954.txt`, observability phiên
+và `C:/eris_debug/deepseek_raw/events_20261027T072956Z_pid20956.jsonl` (khôi
+phục payload từ object gzip). Bốn file worker/chat-cycle/public-output/input-
+revision trùng byte giữa checkout và portable. Không gọi API hoặc sửa runtime.
+
+- **Có JSON repair thật, thuộc Root/executive:** response HTTP 200 lúc
+  14:31:56.225 trả lời bằng prose, không có action JSON. Request 14:31:56.325
+  thêm repair instruction `Validation failure: missing_json_value`. Không có
+  response cho attempt này trước khi user thoát app lúc 14:32:01. Đây không
+  phải lỗi ghi file `.jsonl`, và không phải surface writer retry.
+- Trước đó surface tạo được hai candidate JSON hợp lệ lúc 14:30:33 và
+  14:31:39 (`WRITER_DIRECT`, `attempt=1/1`, contract-valid=1). Opening bị hủy
+  lúc user gửi `xin chào`; lượt chào kế tiếp bị preempt khi queue có `alo alo`,
+  rồi Root restart trên `xin chào\nalo alo` lúc 14:31:39.948. Phân biệt lần
+  restart do input revision này với JSON repair về sau.
+- Không thấy `audio_start` trong run log. Text gate vẫn đợi playback và chặn
+  generation cũ; synth/provider metric `completed` không chứng minh audio đã
+  phát hay chữ đã hiện. Không quy toàn bộ hiện tượng thiếu text cho JSON.
+- Lượt `xin chào` mất khoảng 61 giây đến khi writer chuẩn bị xong; raw request
+  Root mang lại Self 1.253.759 ký tự, body khoảng 1,57 MB. Chưa xác định riêng
+  nguyên nhân khoảng chờ khoảng 36 giây trước HTTP Root (14:30:40–14:31:16);
+  không coi kích thước prompt là bằng chứng duy nhất giải thích toàn latency.
+
+Kết quả bổ sung chẩn đoán cho đúng phiên này, không thay yêu cầu text chờ voice
+và không xác nhận lỗi parse ở các phiên khác.
+
+### Thay đổi theo yêu cầu user sau điều tra 27/10
+
+User yêu cầu lấy lời thoại khi Root không tuân thủ JSON và giao critic cứu
+metadata ở nền. **Thay thế hành vi retry định dạng đồng bộ ở mục 19 đối với
+response Root/public surface có lời thoại khôi phục được:**
+
+- JSONL worker trả nguyên wire response qua fallback chain, không retry hoặc
+  coi đây là provider outage. Router dựng move tạm `after=wait_user`; prose
+  Root đi vào literal dialogue, không gọi Surface viết lại. Surface trả prose
+  hoặc JSON hỏng còn trường text/say hoàn chỉnh cũng được cứu. Không lấy
+  reasoning_content hoặc tool action làm lời thoại.
+- Critic chạy trên một daemon worker với queue tối đa 4, timeout 20 giây để
+  khôi phục intent/delivery/after và metadata semantic. Chỉ nhận whitelist
+  metadata; không sửa dialogue, phát lời lần hai, chạy tool hoặc đổi lifecycle
+  của lượt đã giao. Context assembler đưa kết quả vào context lịch sử cho lượt
+  Root tiếp theo; không chỉ log rồi bỏ. Queue đầy/critic lỗi không làm mất thoại.
+- Giữ localizer, prepare, generation/preemption và text đợi `audio_start`.
+  Đây là khôi phục contract, không phải xác nhận những claim trong prose là đúng.
+
+Kiểm chứng offline: suite liên quan **153 passed, 5 deselected**. Năm ca loại
+đều tái hiện với module HEAD trước sửa qua import overlay: một ca cap prompt
+Root/Writer và bốn ca multi-worker (role env, placeholder, research fallback,
+DS2API disabled; ca cuối cần chạy cùng thứ tự suite để tái hiện).
+Regression mới kiểm prose/partial JSON, critic chậm/lỗi, preemption, giữ wire,
+literal thoại/localization, context consumer và không nhảy official fallback.
+
+Đã đồng bộ 8 runtime Python file sang `Documents/eris`, đối chiếu hash sau copy;
+sáu file đích cũ trùng source trước sửa, hai file mới chưa tồn tại. Backup và
+receipt: `Documents/eris/backups/dialogue-contract-recovery-20261027_144626/`.
+Replay offline response thật PID 20956 bằng source portable xác nhận giữ đúng
+nguyên văn thoại, literal flag và chỉ một Root call; không gọi mạng/TTS. Chưa
+mở phiên chat hoặc nghe audio live sau thay đổi; có hiệu lực khi mở lại Eris.
+
+## 20. Phiên 14:53 ngày 27/10: gom input trước request và trước TTS
+
+Nguồn mới: `Documents/eris/logs/eris_run_20261027_145313.txt`, observability và
+`C:/eris_debug/deepseek_raw/events_20261027T075315Z_pid20340.jsonl`.
+
+- **Thay trạng thái chưa xác nhận live ở mục 19 trong phạm vi cứu JSON:**
+  Root trả prose lúc 14:55:28, runtime giữ thoại, localizer hoàn tất 14:55:32;
+  critic chạy riêng và completed 14:55:36. Không có retry định dạng Root.
+  Tuy nhiên queue chỉ được đọc sau chuẩn bị câu trả lời; `alo alo alo` làm
+  revision stale rồi Root chạy lại. Chưa có `audio_start` trước khi user thoát.
+  Vì vậy cứu JSON không đồng nghĩa đã sửa hết nguyên nhân mất text/chờ lâu.
+- User yêu cầu **gộp toàn bộ tin vào một request với số lần gửi**, để Eris tự
+  hiểu các lần nhắn tiếp có biểu thị vấn đề chưa giải quyết hay không. Không
+  dùng danh sách từ như `alo` để bỏ qua input. Hướng lọc ping từng từ đã bỏ
+  trong lúc phát triển, chưa triển khai; không phải policy sản phẩm.
+- InputRevisionBuffer giữ ranh giới từng message, kể cả message giống nhau,
+  và thời điểm gửi. Root lấy batch mới nhất trước request; event metadata có
+  `message_count`, `first_message_at`, `last_message_at`, `wait_seconds` và
+  `message_timestamps`. Các tin nằm sẵn trong queue vào cùng request, không
+  tạo cancel/retry cho từng tin. Không suy sẵn ý nghĩa/cảm xúc từ số lần gửi.
+- Nếu có message mới sau khi request đã gửi, checkpoint trước Writer hoặc
+  delivery yêu cầu batch mới trước khi xếp TTS. Đó là request cho dữ liệu mới,
+  không thể đưa ngược tin tương lai vào request đã gửi. Ledger/history giữ một
+  user batch, request id đổi theo revision để tránh cache idempotency trả lại
+  candidate cũ. Giữ localizer, audio gating và preemption của generation.
+- Probe offline dùng đúng portable Python/local MiniLM tái hiện cold embedding
+  query **21,954 giây**; token-estimation/full MindState roundtrip lần lượt dưới
+  1 ms/khoảng 2 ms. Đây là bằng chứng một nguồn block khả dĩ, không đủ quy toàn
+  bộ hai khoảng chờ 24/23 giây của phiên cho embedding. HTTP Root trong phiên
+  vẫn mất 15,75–18,06 giây. Không tự tắt thinking hoặc rút Self để che latency.
+- Shared embedding index nay nạp model ở nền, recall dùng lexical hiện có khi
+  chưa sẵn sàng, rồi tự dùng vector khi ready. Không cache vector rỗng của giai
+  đoạn warm-up. Probe sau sửa: tạo shared index 0,0011 giây; lookup khi đang nạp
+  trả ngay; sau ready query có vector 384 chiều trong 0,0755 giây. Đã thêm log
+  `chat-stage` cho evidence/memory recall/context để tách latency còn lại.
+
+Kiểm chứng mới: **196 passed** trong nhóm batch, embedding, Root/kernel,
+history/observer/memory, writer/localizer, text-audio sync và cứu JSON. Có test
+qua orchestrator thật với provider/delivery giả: 3 tin thành 1 request, tin lặp
+đếm đủ; tin đến khi Writer chạy vào batch kế tiếp trước dispatch, ledger không
+nhân đôi và request id không trùng cache. Không gọi LLM/TTS live.
+
+Đã đồng bộ và đối chiếu hash 9 runtime file sang portable. Đích cũ khớp HEAD
+trước task hoặc receipt của mục 19; backup và receipt:
+`Documents/eris/backups/user-input-batch-20261027_151726/`. Chưa mở phiên chat
+hoặc nghe audio live sau sửa; không khẳng định mọi khoảng chờ đã hết.
+
+## 21. Đính chính 27/10: voice có thể phát dù callback đã bỏ text
+
+User xác nhận đã nghe voice nhưng không thấy chữ trong lượt vừa điều tra.
+Không tìm thấy run log mới hơn phiên 14:53 tại portable. Đối chiếu lại source,
+observability và `ErisLive/logs/autonomous_trace.jsonl` của chính phiên đó:
+
+- **Thay thế suy luận ở mục 19/20 rằng thiếu `audio_start` đủ để nói chưa phát
+  tiếng.** Profile log `clean` ẩn dòng này. Ngoài ra callback public trả về sớm
+  khi generation stale, trước cả ghi trace audio. Vì vậy ngay cả trace thiếu
+  start cũng không chứng minh thiết bị chưa phát.
+- 14:55:32.220 dispatch `delivery:45084788b80746d88d6a2db634485123`;
+  14:55:32.320 input revision preempt kernel, nhưng gọi
+  `_preempt_for_classified_user_turn(cancel_audio=False)`. TTS có speech epoch
+  riêng, vẫn giữ quyền phát; synth hoàn tất 14:55:42.042. Callback lúc quay về
+  gặp `v03_current=False`, bỏ cả bubble và log. Đây là đường lỗi khớp phản ánh
+  của user; log không có receipt trực tiếp của thiết bị để chốt giờ nghe.
+- Replay offline qua dispatcher/task manager thật, fake synth/device và
+  phương thức preempt từ portable trước sửa tái hiện `(audio_played=True,
+  text_sent=False)`. Sau sửa test thay lượt thành `(False, False)`; đối chứng
+  lượt còn hiệu lực thành `(True, True)`. Không gọi LLM, TTS remote hay loa thật.
+- Sửa preempt thu hồi TTS trước khi đổi kernel generation. Tin đến khi đang
+  xử lý đi vào batch, không preempt từng tin. Nếu tin lọt sau checkpoint và
+  sau dispatch, chat cycle thu hồi delivery đã xếp trước khi chạy batch mới.
+  Vẫn giữ text chờ playback, không nhả text bằng timer hay callback synth lỗi.
+- Thêm log `[public-text] sent` (turn, reason, số ký tự; không in nội dung)
+  và warning nếu audio_start đến từ generation đã mất hiệu lực. Dòng sent chỉ
+  xác nhận gửi transport, chưa phải acknowledgement bubble đã render.
+
+Nhóm regression mới: **97 passed**, gồm public text/audio, input batch,
+incremental dialogue, kernel, interrupt, task manager, playback và floor.
+Một assertion cũ yêu cầu preempt ngay khi Root đang nghĩ đã đổi theo yêu cầu
+batch: chưa có delivery thì không preempt từng message. Fixture text/audio
+đã cô lập trace test khỏi file autonomous_trace thật.
+
+Chưa nghe audio hoặc kiểm bubble live sau sửa; không coi kết quả offline là
+xác nhận toàn bộ UI/transport và mọi nguyên nhân thiếu chữ đã được giải quyết.
+
+Đã đồng bộ hai file `chat_cycle.py` và `public_output_runtime.py` sang portable,
+kiểm hash trước/sau; không có process Eris khi triển khai. Backup và receipt:
+`Documents/eris/backups/voice-text-ownership-20261027_152836/receipt.json`.

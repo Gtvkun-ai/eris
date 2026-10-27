@@ -80,6 +80,9 @@ from screen import build_screen_text_runtime
 
 class CoordinatorShutdownMixin:
     def stop(self):
+        repair_close = getattr(getattr(self, "ai_model_router", None), "close_contract_repair", None)
+        if callable(repair_close):
+            repair_close()
         self.running = False
         # IDE gateway giữ socket/thread riêng. Dừng nó trước khi tháo runtime để
         # client không nhận thêm event trong lúc các subsystem đang shutdown.
