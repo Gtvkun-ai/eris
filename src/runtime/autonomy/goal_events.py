@@ -242,5 +242,42 @@ class GoalEventLedger:
     def panel_projection(self) -> list[dict]:
         """Pure JSON projection, not UI control / permission to open panels."""
         return [{'goal_id': g.goal_id, 'title': g.title, 'status': g.status,
-                 'revision': g.revision, 'success_criteria': g.success_criteria}
+                 'revision': g.revision, 'success_criteria': g.success_criteria,
+                 'last_outcome_status': g.payload.get('last_outcome', {}).get('outcome_status', '')}
                 for g in self.list_goals()]
+
+    def attach_outcome(self, goal_id: str, *, expected_revision: int, event_id: str,
+                       outcome_ref: str, outcome_status: str, action_id: str) -> GoalSnapshot:
+        """Ghi bằng chứng outcome vào goal theo CAS, chưa tuyên bố mục tiêu đã hoàn thành.
+
+        Receipt của SandboxWorld vẫn là nguồn kiểm toán hành động. Projection này
+        chỉ giữ reference và loại kết quả, không chép output/screenshot vào SQLite.
+        """
+        ref = str(outcome_ref or "").strip()[:180]
+        state = str(outcome_status or "").strip()[:60]
+        action = str(action_id or "").strip()[:180]
+        if not (ref and state and action):
+            raise ValueError("Thiếu outcome_ref, outcome_status hoặc action_id")
+        now = self.clock()
+        payload = {"outcome_ref": ref, "outcome_status": state, "action_id": action}
+        def write(conn):
+            row = conn.execute('SELECT * FROM autonomy_goals WHERE goal_id=?', (goal_id,)).fetchone()
+            current = self._snap(row)
+            if current is None:
+                raise GoalConflict('goal not found')
+            prior = conn.execute('SELECT payload_json FROM autonomy_goal_events WHERE event_id=?', (event_id,)).fetchone()
+            if prior is not None:
+                if prior['payload_json'] != _canonical(payload):
+                    raise GoalConflict('outcome event replay with different payload')
+                return current
+            if current.status != 'active' or current.revision != expected_revision:
+                raise GoalConflict('outcome belongs to stale/nonactive goal')
+            revision = current.revision + 1
+            self._event(conn, event_id, goal_id, revision, 'outcome_observed', payload, now)
+            data = dict(current.payload)
+            data['last_outcome'] = payload
+            conn.execute('''UPDATE autonomy_goals
+                SET revision=?, epoch=epoch+1, data_json=?, updated_at=? WHERE goal_id=?''',
+                (revision, _canonical(data), now, goal_id))
+            return self._snap(conn.execute('SELECT * FROM autonomy_goals WHERE goal_id=?', (goal_id,)).fetchone())
+        return self._transaction(write)

@@ -72,6 +72,11 @@ class ChatCycleMixin:
         được preempt lời nói/công việc/generation.
         """
         self._chat_last_activity_at = time.time()
+        # User bắt đầu lượt mới: thu hồi quyền commit kết quả background đời cũ.
+        # Chưa tự cắt TTS: audio vẫn do classifier/ConversationKernel quyết định.
+        _autonomy = getattr(self, "_autonomy_v2", None)
+        if _autonomy is not None:
+            _autonomy.preempt()
         if self.chat_mode:
             return
         self.chat_mode = True
