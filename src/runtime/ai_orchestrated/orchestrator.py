@@ -904,6 +904,9 @@ class AIChatOrchestrator:
             if result.decision is not None and callable(getattr(result.decision, "to_dict", None))
             else {}
         )
+        from runtime.autonomy.authority_trace import emit as autonomy_trace
+        autonomy_trace("conversation.kernel_result", result_status=str(result.status),
+                       event_id=str(result.event.event_id), session_id=sid)
         host.last_agent_turn = decision_dict
         host.last_conversation_run = {
             "schema": "eris.conversation_run.v12",

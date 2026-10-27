@@ -692,6 +692,9 @@ class NervousAutonomousAuthorityV103:
         runtime_context: Mapping[str, Any] | None = None,
         now: float | None = None,
     ) -> tuple[tuple[Any, ...], MotorDecisionV103]:
+        from runtime.autonomy.authority_trace import emit as autonomy_trace
+        autonomy_trace("v103.preprocess", mode=self.config.mode,
+                       coalition_count=len(affordances or ()))
         current = float(now if now is not None else self.clock())
         context = dict(runtime_context or {})
         rows = tuple(affordances or ())
@@ -788,7 +791,9 @@ class NervousAutonomousAuthorityV103:
         with self._lock:
             decision = self._pending_decision
             scope = self._pending_scope
+        from runtime.autonomy.authority_trace import emit as autonomy_trace
         if decision is None or scope != "normal_autonomous":
+            autonomy_trace("v103.selection_unavailable", scope=str(scope))
             return None
 
         coalitions = tuple(getattr(frame, "coalitions", ()) or ())
@@ -836,6 +841,8 @@ class NervousAutonomousAuthorityV103:
                 "channel": decision.channel,
                 "semantic_source_id": decision.semantic_source_id,
             })
+        autonomy_trace("v103.selection", frame_id=str(getattr(frame, "frame_id", "")),
+                       channel=str(decision.channel), scope=str(scope))
         return selection
 
     def inject_semantic_modulation(

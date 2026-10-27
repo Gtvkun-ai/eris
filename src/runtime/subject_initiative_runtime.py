@@ -823,6 +823,10 @@ def build_subject_initiative_affordances(
     relational = relational if isinstance(relational, Mapping) else {}
     revision = max(0, int(initiative.get("revision", 0) or 0))
 
+    # Experimental read-only candidate feed. No goal adoption, no new speech.
+    from runtime.autonomy.live_shadow import observe_subject_initiative
+    observe_subject_initiative(initiative)
+
     output: list[ExecutiveAffordance] = []
     arbiter = InitiativeArbiter()
     note_control = getattr(subject_service, "note_initiative_control", None)

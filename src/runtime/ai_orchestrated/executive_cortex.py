@@ -1613,6 +1613,10 @@ class ExecutiveCortex:
                                 )
                             except Exception as exc:
                                 self._log("debug", "[semantic-modulation-v103] degraded: %s", exc)
+                    from runtime.autonomy.authority_trace import emit as autonomy_trace
+                    autonomy_trace("executive.v103_winner", mode=mode,
+                                   frame_id=str(getattr(frame, "frame_id", "")),
+                                   selection_source="v103")
                     self._log_neuro_selection("motor-authority", frame, _motor_selection, mode=mode)
                     commit = self._commit_from_selection(
                         frame,
@@ -1626,6 +1630,10 @@ class ExecutiveCortex:
                     return commit
 
         selection = self._neuro_selector.select(frame)
+        from runtime.autonomy.authority_trace import emit as autonomy_trace
+        autonomy_trace("executive.neuro_fallback", mode=mode,
+                       frame_id=str(getattr(frame, "frame_id", "")),
+                       selection_source="neuro")
         self._log_neuro_selection("neuro-fast", frame, selection, mode=mode)
 
         # Autonomous social speech gets a slow semantic appraisal before public

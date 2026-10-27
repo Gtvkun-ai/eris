@@ -193,7 +193,12 @@ class AutonomousLoopRuntimeMixin:
             )
             self.stop()
             return False
-        return bool(orchestrator.run_iteration())
+        from runtime.autonomy.authority_trace import emit as autonomy_trace, span as autonomy_span
+        with autonomy_span("autonomous_loop"):
+            autonomy_trace("autonomous.iteration.start", source="autonomous_loop")
+            result = bool(orchestrator.run_iteration())
+            autonomy_trace("autonomous.iteration.end", status="active" if result else "stopped")
+            return result
 
     def run_loop(self):
         """Chạy runtime production duy nhất: Architecture C + semantic_frame.v1."""
