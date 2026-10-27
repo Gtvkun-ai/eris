@@ -756,3 +756,37 @@ xác nhận toàn bộ UI/transport và mọi nguyên nhân thiếu chữ đã �
 Đã đồng bộ hai file `chat_cycle.py` và `public_output_runtime.py` sang portable,
 kiểm hash trước/sau; không có process Eris khi triển khai. Backup và receipt:
 `Documents/eris/backups/voice-text-ownership-20261027_152836/receipt.json`.
+
+## 22. Phiên 15:29 ngày 27/10: đổi ngôn ngữ đến muộn, cắt audio đang đọc
+
+Nguồn: `Documents/eris/logs/eris_run_20261027_152957.txt`, observability cùng
+phiên, source settings handler/TtsEngine và autonomous loop. Điều tra theo
+phản ánh mới “đang chạy mà giọng bị rơi rồi hư luôn”; chưa sửa runtime.
+
+- **Bổ sung kiểm chứng live cho mục 21:** hai lượt chat có playback bắt đầu,
+  gửi text và kết thúc thành công: 15:32:35–15:33:13 và 15:34:08–15:34:28.
+  Không thấy warning `stale audio_start rejected` trong phiên này. Receipt gửi
+  transport không tự chứng minh bubble đã render hay người dùng nghe rõ.
+- Panel gửi đổi JA → VI lúc 15:34:36.171 nhưng Brain chỉ apply 15:35:09.807
+  (trễ 33,6 giây), sau khi câu autonomous bắt đầu đọc 15:35:06.194. Reload
+  gọi `supersede_all(reason="tts_configuration_changed")`, hủy câu đó.
+- Panel gửi VI → JA lúc 15:35:26.847; Brain apply 15:35:55.892 (trễ 29,0 giây),
+  lại cắt câu bắt đầu 15:35:48.948. Đây là hai lần ngắt có nguyên nhân cụ thể;
+  không quy cho JSON repair hoặc provider TTS chết. Yêu cầu live-switch lịch
+  sử vẫn là đổi ngôn ngữ thu hồi audio cũ; vấn đề mới là độ trễ nhận control,
+  không tự thay policy thành để câu ngôn ngữ cũ đọc tiếp.
+- Bật/tắt ở panel 15:36:05.996/06.294 chỉ được apply 15:36:37.781/38.354.
+  Control được poll cùng vòng foreground, trong khi autonomous Root/Writer
+  chạy đồng bộ. Vì vậy lệnh có thể tồn trong queue qua cả một lượt sinh thoại.
+- TTS vẫn synth thành công và có audio_start + gửi text lúc 15:36:36.069.
+  Lượt này bị input toán của user ngắt 15:36:39; app thoát theo context menu
+  15:36:47 khi Root đang trả lời. Chưa có bằng chứng worker chết vĩnh viễn.
+  Snapshot settings cuối: enabled=true, language=ja, volume=1.0. Không suy từ
+  snapshot cuối thành mức âm lượng ở mọi thời điểm hoặc âm thanh thật ở loa.
+- Latency còn rõ: lượt chào context mất 32.968 ms, riêng typed-memory context
+  32.888 ms. Điều này thu hẹp khoảng block trước Root vào memory context;
+  chưa xác định thao tác con, không coi warm-up embedding ở mục 20 đã sửa hết.
+
+Đây là cập nhật chẩn đoán, không có build/deploy hoặc thay đổi runtime trong
+lượt điều tra này. Cần xử lý control kịp thời mà vẫn giữ quyền single-speaker,
+language contract và việc gom input; không bỏ cancellation để che triệu chứng.
