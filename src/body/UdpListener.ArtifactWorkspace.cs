@@ -147,9 +147,23 @@ public partial class UdpListener
                 {
                     if (!TryAddArtifactImage(group, artifact)) AddArtifactLabel(group, "Không thể xác thực ảnh artifact.");
                 }
+                else if (type == "section")
+                {
+                    // Mục tiêu: chia lời giải thành các bước dễ đọc, không xả một khối text.
+                    var step = new Label
+                    {
+                        Text = ArtifactText(artifact, "text", 240),
+                        AutowrapMode = TextServer.AutowrapMode.WordSmart,
+                        SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                    };
+                    step.AddThemeFontSizeOverride("font_size", 18);
+                    step.AddThemeColorOverride("font_color", new Color("ef78ac"));
+                    group.AddChild(step);
+                }
                 else if (type == "formula")
                 {
-                    AddArtifactLabel(group, "LaTeX: " + ArtifactText(artifact, "latex", 1200));
+                    // Công thức gốc có thể sao chép; hình raster (nếu có) xuất qua image.
+                    AddArtifactLabel(group, "Công thức: " + ArtifactText(artifact, "latex", 1200));
                 }
                 else if (type == "text" || type == "code")
                 {

@@ -70,7 +70,7 @@ def _save_figure(fig, folder: Path, filename: str, artifacts: list[dict]):
                       'alt': 'Hình ảnh được tính toán và dựng từ Python'})
 
 
-def _formula(latex: str, folder: Path, artifacts: list[dict]):
+def _formula(latex: str, folder: Path, artifacts: list[dict], *, filename: str = "formula.png"):
     """Dùng mathtext cho tập LaTeX được hỗ trợ; trả chữ thay thế khi lỗi."""
     import matplotlib.pyplot as plt
     from matplotlib.font_manager import FontProperties
@@ -80,7 +80,7 @@ def _formula(latex: str, folder: Path, artifacts: list[dict]):
     try:
         ax.text(.03, .55, '$' + latex + '$', fontsize=22, color='white', va='center', transform=ax.transAxes)
         fig.canvas.draw()  # Phát hiện cú pháp LaTeX mà mathtext không hỗ trợ.
-        _save_figure(fig, folder, 'formula.png', artifacts)
+        _save_figure(fig, folder, filename, artifacts)
     except Exception:
         plt.close(fig)
         artifacts.append({'type': 'text', 'text': 'Công thức LaTeX (trình dựng ảnh không hỗ trợ cú pháp này): ' + latex[:400]})
@@ -160,6 +160,59 @@ def _matrix(rows, folder: Path, artifacts: list[dict]):
     _save_figure(fig, folder, 'matrix.png', artifacts)
 
 
+
+def _binary_determinant_max(request: dict, folder: Path, artifacts: list[dict]) -> None:
+    """Tìm định thức lớn nhất cho ma trận 0/1 cấp 3, kèm chứng minh tổng quát.
+
+    Kiểm hết 512 ma trận để chọn ví dụ; chứng minh chặn trên dùng bất đẳng
+    thức Hadamard trên ma trận dấu cấp 4, không dùng vét cạn làm chứng minh duy nhất.
+    """
+    import itertools
+    import sympy as sp
+    n = request.get('size', 3)
+    if type(n) is not int or n != 3:
+        raise ValueError('Hiện chỉ hỗ trợ ma trận 0/1 cấp 3 cho loại bài toán này')
+    maximum = -1000
+    minimum = 1000
+    witness = None
+    count = 0
+    for bits in itertools.product((0, 1), repeat=9):
+        a,b,c,d,e,f,g,h,i = bits
+        determinant = a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g)
+        count += 1
+        if determinant > maximum:
+            maximum, witness = determinant, [list(bits[j:j+3]) for j in (0, 3, 6)]
+        minimum = min(minimum, determinant)
+    if maximum != 2 or minimum != -2 or witness is None or count != 512:
+        raise RuntimeError('Kết quả vét cạn không khớp tính chất toán học đã kiểm chứng')
+    artifacts.extend([
+        {'type':'section', 'text':'Bước 1 · Kết luận'},
+        {'type':'text', 'text':'Giá trị lớn nhất của định thức ma trận 0–1 cấp 3 là 2.'},
+        {'type':'formula', 'latex':r'\max_{a_{ij}\in\{0,1\}}\det(A)=2'},
+        {'type':'section', 'text':'Bước 2 · Một ma trận đạt dấu bằng'},
+    ])
+    _formula(r'\max\mathrm{det}(A)=2', folder, artifacts, filename='formula_1.png')
+    _matrix(witness, folder, artifacts)
+    artifacts.append({'type':'text', 'text':'Ma trận ở trên có det(A) = 2 (đã kiểm tra chính xác).'} )
+    artifacts.extend([
+        {'type':'section', 'text':'Bước 3 · Vì sao không thể lớn hơn 2?'},
+        {'type':'text', 'text':(
+            'Với ma trận A cấp 3 chỉ gồm 0 và 1, dựng ma trận H cấp 4: '
+            'hàng đầu tiên toàn số 1; cột đầu tiên toàn số 1; '
+            'khối 3×3 còn lại là 1−2A (chỉ gồm −1 và 1). '
+            'Trừ hàng đầu tiên khỏi ba hàng còn lại ta có |det(H)| = 8|det(A)|.' )},
+        {'type':'text', 'text':(
+            'Mỗi hàng của H gồm bốn số ±1 nên có độ dài Euclid bằng 2. '
+            'Bất đẳng thức Hadamard cho |det(H)| ≤ 2⁴ = 16. '
+            'Suy ra 8|det(A)| ≤ 16 và |det(A)| ≤ 2. '
+            'Vì đã tìm thấy ma trận đạt 2 nên giá trị lớn nhất đúng bằng 2.')},
+        {'type':'formula', 'latex':r'8|\det(A)|=|\det(H)|\leq 16\Rightarrow |\det(A)|\leq 2'},
+        {'type':'section', 'text':'Bước 4 · Kiểm tra độc lập bằng máy'},
+        {'type':'text', 'text':'Đã xét đủ 2⁹ = 512 ma trận 0–1 cấp 3, giá trị nhỏ nhất là −2 và lớn nhất là 2.'},
+    ])
+    _formula(r'|\mathrm{det}(A)|\leq 2', folder, artifacts, filename='formula_2.png')
+
+
 def run(request: dict, folder: Path) -> dict:
     import sympy as sp
     import matplotlib
@@ -167,7 +220,9 @@ def run(request: dict, folder: Path) -> dict:
     folder.mkdir(parents=True, exist_ok=True)
     kind = str(request.get('kind') or '')
     artifacts = []
-    if kind == 'matrix':
+    if kind == 'binary_determinant_max':
+        _binary_determinant_max(request, folder, artifacts)
+    elif kind == 'matrix':
         _matrix(request.get('rows'), folder, artifacts)
     elif kind in {'simplify','differentiate','integrate','solve','plot'}:
         source = str(request.get('expression') or '')

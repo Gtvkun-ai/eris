@@ -885,11 +885,29 @@ public partial class UdpListener
             user ? 0 : 1,
             12f));
 
-        Label message = ConversationLabel(entry.Text, 15, ErisText);
+        // Tránh bức tường chữ: lời giải dài có thể thu gọn; nút sao chép vẫn giữ nguyên bản.
+        // Đây là lớp trình bày, không tự cắt nội dung nguồn hoặc làm thay đổi transcript.
+        bool longReply = !user && entry.Text.Length > 450;
+        var content = new VBoxContainer();
+        string preview = longReply ? entry.Text.Substring(0, Math.Min(420, entry.Text.Length)).TrimEnd() + "…" : entry.Text;
+        var message = ConversationLabel(preview, 15, ErisText);
         message.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        message.AddThemeConstantOverride("line_spacing", 4);
+        message.AddThemeConstantOverride("line_spacing", 5);
         message.CustomMinimumSize = new Vector2(EstimateConversationBubbleWidth(entry.Text), 0f);
-        bubble.AddChild(message);
+        content.AddChild(message);
+        if (longReply)
+        {
+            bool expanded = false;
+            var toggle = WorkspaceButton("Xem toàn bộ lời giải", "history", () => { });
+            toggle.Pressed += () =>
+            {
+                expanded = !expanded;
+                message.Text = expanded ? entry.Text : preview;
+                toggle.Text = expanded ? "Thu gọn" : "Xem toàn bộ lời giải";
+            };
+            content.AddChild(toggle);
+        }
+        bubble.AddChild(content);
         cluster.AddChild(bubble);
 
         if (user)

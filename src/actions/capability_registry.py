@@ -360,7 +360,8 @@ _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
         "code": _string("Source Python <= 12 KB, chạy trong Docker không mạng"),
     }, ("code",)), "json"),
     "math_workspace": (_object_schema({
-        "kind": _string("matrix / simplify / differentiate / integrate / solve / plot", enum=("matrix","simplify","differentiate","integrate","solve","plot")),
+        "kind": _string("matrix / simplify / differentiate / integrate / solve / plot / binary_determinant_max", enum=("matrix","simplify","differentiate","integrate","solve","plot","binary_determinant_max")),
+        "size": _integer("Cấp của ma trận 0/1; binary_determinant_max hỗ trợ size=3", minimum=3, maximum=3),
         "expression": _string("Biểu thức toán chỉ dùng x,y; với ma trận, dùng rows"),
         "rows": {"type": "array", "description": "Ma trận 2 chiều, tối đa 8x8"},
         "xmin": {"type": "number"},

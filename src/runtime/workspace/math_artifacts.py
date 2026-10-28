@@ -41,7 +41,7 @@ class MathWorkspaceService:
     @staticmethod
     def _validate_request(request: Mapping[str, Any]) -> dict:
         data = dict(request)
-        if data.get('kind') not in {'matrix','simplify','differentiate','integrate','solve','plot'}:
+        if data.get('kind') not in {'matrix','simplify','differentiate','integrate','solve','plot','binary_determinant_max'}:
             raise ValueError('Loại tác vụ toán chưa hỗ trợ')
         serialized = json.dumps(data, ensure_ascii=False, allow_nan=False)
         if len(serialized.encode('utf-8')) > 12_000:
@@ -92,7 +92,7 @@ class MathWorkspaceService:
         for item in result.get('artifacts', []):
             if item.get('type') != 'image': continue
             filename = str(item.get('path',''))
-            if filename not in {'plot.png','matrix.png','formula.png'}:
+            if filename not in {'plot.png','matrix.png','formula.png','formula_1.png','formula_2.png'}:
                 raise ValueError('Tên asset chưa được cấp phép')
             asset = (output / filename).resolve()
             if not asset.is_file() or asset.stat().st_size > 3_000_000:

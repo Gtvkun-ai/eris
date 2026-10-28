@@ -1738,6 +1738,9 @@ class AIRuntimeModelRouter:
             # (2) Hai bề mặt + khoá ngôn ngữ, viết giọng thường.
             f"Trả đúng MỘT JSON với ba field bắt buộc: should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
             "text là câu hiển thị cho người đọc; speech_text là câu ERIS thực sự cất tiếng, cùng nghĩa và cùng tông với text. "
+            "Nếu Root.say chỉ mời người dùng xem các bước trên Workspace/Panel sau khi tool đã hoàn tất, "
+            "giữ lời thoại ngắn tự nhiên: KHÔNG tự viết lại toàn bộ lời giải hoặc đọc các công thức dài trong text/speech_text. "
+            "Không tự nhận đã tạo artifact nếu Root.say và receipt chưa xác nhận. "
             f"Giữ nguyên text trong {display_language}: đừng chuyển cả câu sang một ngôn ngữ khác, một mẩu loại khác chen vào cũng không. "
             # (3) Ý đã do Root quyết; writer nói ra tự nhiên, không tự đẻ intent.
             "Ý và hướng của lượt này đã do RootAgent chọn sẵn trong `say`; việc của bạn là nói nó ra cho thật tự nhiên và đúng cảm, "
