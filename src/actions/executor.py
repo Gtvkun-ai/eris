@@ -383,15 +383,17 @@ class ActionExecutor:
         runner = DockerPythonWorkspace(Path(os.getenv('ERIS_ARTIFACT_WORKSPACE', 'logs/eris_artifacts')),
                                        image=os.getenv('ERIS_ARTIFACT_DOCKER_IMAGE', 'python:3.12-slim'))
         payload = runner.execute(str(request.get('code') or ''))
+        shown = False
         try:
-            send_artifacts_udp(payload)
+            shown = send_artifacts_udp(payload)
         except OSError:
             pass
         return ActionExecutionResult(
             action_name='python_workspace',action_input='[code Python đã gửi sang container]',
             success=True,observed=True,
             message='Đã thực thi mã Python trong Docker và lưu artifact.',
-            data={'job_id':payload['job_id'], 'artifact_count':str(len(payload['artifacts']))},
+            data={'job_id':payload['job_id'], 'artifact_count':str(len(payload['artifacts'])),
+                  'panel_rendered':shown},
             evidence=(f"artifact-job:{payload['job_id']}",),
         )
 
@@ -406,8 +408,9 @@ class ActionExecutor:
             service = MathWorkspaceService(Path(root))
             self._math_workspace_service = service
         payload = service.execute_sync(request)
+        shown = False
         try:
-            send_artifacts_udp(payload)
+            shown = send_artifacts_udp(payload)
         except OSError:
             # Khi Godot chưa khởi chạy, các artifact vẫn được lưu trên đĩa.
             pass
@@ -416,7 +419,7 @@ class ActionExecutor:
             observed=True,
             message=f"Đã tính toán và tạo {len(payload['artifacts'])} artifact: {payload['title']}",
             data={'job_id':payload['job_id'], 'title':payload['title'],
-                  'artifact_count':str(len(payload['artifacts']))},
+                  'artifact_count':str(len(payload['artifacts'])), 'panel_rendered':shown},
             evidence=(f"artifact-job:{payload['job_id']}",),
         )
 

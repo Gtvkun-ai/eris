@@ -160,36 +160,11 @@ public partial class UdpListener
                     step.AddThemeColorOverride("font_color", new Color("ef78ac"));
                     group.AddChild(step);
                 }
-                else if (type == "formula")
+                else if (type == "formula" || type == "text" || type == "code" || type == "table")
                 {
-                    // Công thức gốc có thể sao chép; hình raster (nếu có) xuất qua image.
-                    AddArtifactLabel(group, "Công thức: " + ArtifactText(artifact, "latex", 1200));
-                }
-                else if (type == "text" || type == "code")
-                {
-                    AddArtifactLabel(group, ArtifactText(artifact, "text", 6000), type == "code");
-                }
-                else if (type == "table")
-                {
-                    var lines = new List<string>();
-                    if (artifact.TryGetProperty("headers", out var headers) && headers.ValueKind == JsonValueKind.Array)
-                    {
-                        var h = new List<string>();
-                        foreach (var cell in headers.EnumerateArray()) h.Add(cell.ToString());
-                        lines.Add(string.Join("    |    ", h));
-                    }
-                    if (artifact.TryGetProperty("rows", out var rows) && rows.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var row in rows.EnumerateArray())
-                        {
-                            if (lines.Count > 18) break;
-                            if (row.ValueKind != JsonValueKind.Array) continue;
-                            var cells = new List<string>();
-                            foreach (var cell in row.EnumerateArray()) cells.Add(cell.ToString());
-                            lines.Add(string.Join("    |    ", cells));
-                        }
-                    }
-                    AddArtifactLabel(group, string.Join("\n", lines), true);
+                    // Cùng một renderer với Conversation Panel; artifact không còn
+                    // là chuỗi text thô và không cần hardcode từng bài toán.
+                    RenderStructuredBlock(group, artifact);
                 }
             }
         }
@@ -199,6 +174,27 @@ public partial class UdpListener
             var old = _artifactWorkspaceRows.GetChild(0);
             _artifactWorkspaceRows.RemoveChild(old);
             old.QueueFree();
+        }
+    }
+
+    private void AcknowledgeArtifactJob(string jobId)
+    {
+        // Receipt xác nhận Godot đã dựng nhóm artifact trong UI, không phải
+        // xác nhận nội dung toán học đúng hay người dùng đã đọc.
+        try
+        {
+            string ip = _udp.GetPacketIP();
+            int port = _udp.GetPacketPort();
+            if ((ip != "127.0.0.1" && ip != "::1") || port < 1 || port > 65535)
+                return;
+            using var reply = new PacketPeerUdp();
+            if (reply.SetDestAddress(ip, port) != Error.Ok) return;
+            var ack = new { parse_mode = "workspace_artifact_ack", job_id = jobId, status = "rendered" };
+            reply.PutPacket(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ack)));
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr("[artifact] ACK thất bại: " + ex.Message);
         }
     }
 
@@ -214,7 +210,12 @@ public partial class UdpListener
                 !root.TryGetProperty("parse_mode", out var parseMode) ||
                 parseMode.GetString() != "workspace_artifact") return false;
             string jobId = ArtifactText(root, "job_id", 64);
-            if (jobId.Length == 0 || _artifactWorkspaceSeenJobs.Contains(jobId)) return true;
+            if (jobId.Length == 0) return true;
+            if (_artifactWorkspaceSeenJobs.Contains(jobId))
+            {
+                AcknowledgeArtifactJob(jobId);
+                return true;
+            }
             if (!root.TryGetProperty("workspace_version", out var version) || version.GetInt32() != 1)
                 return true;
             EnsureArtifactWorkspacePanel();
@@ -222,6 +223,7 @@ public partial class UdpListener
             _artifactWorkspaceSeenJobs.Add(jobId);
             _artifactWorkspacePanel.Visible = true;
             UpdateMousePassthrough();
+            AcknowledgeArtifactJob(jobId);
             return true;
         }
         catch (Exception ex)

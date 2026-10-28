@@ -976,6 +976,9 @@ public partial class UdpListener : Node2D
 			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
 			if (HandleLive2DControlPacket(raw))
 				continue;
+			// V5: nội dung panel không đi vào bộ phân tích thoại/Live2D.
+			if (TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))
+				continue;
 			ForwardPacketToLive2D(raw);
 			ParseAndApply(raw);
 		}
@@ -4884,6 +4887,8 @@ public partial class UdpListener : Node2D
 		TryCaptureRuntimePresence(raw);
 		if (TryHandleTtsEvent(raw))
 			return;
+		if (TryHandleWorkspaceDocumentPacket(raw))
+			return;
 		if (TryHandleWorkspaceArtifactPacket(raw))
 			return;
 		if (TryHandleAutonomyGoalsPacket(raw))
@@ -4955,7 +4960,13 @@ public partial class UdpListener : Node2D
 		}
 
 		if ((payload.HasTextField || !payload.ParsedJson) && !string.IsNullOrWhiteSpace(payload.Text))
-			ApplyTypewriterEffect(payload.Text);
+		{
+			// Liên kết nội dung panel theo turn_id có sẵn trên stage packet.
+			// Không thay đổi text, hash hay cấu trúc public sealed datagram.
+			_conversationIncomingTurnId = ExtractConversationTurnId(raw);
+			try { ApplyTypewriterEffect(payload.Text); }
+			finally { _conversationIncomingTurnId = ""; }
+		}
 	}
 
 

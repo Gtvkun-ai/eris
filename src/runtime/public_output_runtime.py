@@ -730,6 +730,24 @@ class PublicOutputRuntimeMixin:
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
+                # V5: panel nhận nội dung đầy đủ qua một lane độc lập.
+                # Không đưa Markdown/LaTeX vào TTS hay lọc lần hai.
+                # Worker không được block luồng phát giọng hoặc thay quyết định Root.
+                try:
+                    from runtime.workspace.structured_output import dispatch_committed_document
+                    _doc_session = str(getattr(prepared, "session_id", "") or getattr(stage_frame, "turn_id", "") or "surface")
+                    _doc_generation = int(getattr(prepared, "generation", 0) or 0)
+                    _doc_run = str(getattr(prepared, "run_id", "") or "autonomous")
+                    _doc_delivery = str(getattr(prepared, "delivery_id", "") or getattr(stage_frame, "turn_id", "") or "public")
+                    dispatch_committed_document(
+                        text=str(body_payload.get("text", "") or ""),
+                        session_id=_doc_session, generation=_doc_generation,
+                        run_id=_doc_run, delivery_id=_doc_delivery,
+                        turn_id=str(stage_frame.turn_id or ""),
+                        transport=self.transport, logger=self.logger,
+                    )
+                except Exception as _workspace_err:
+                    self.logger.debug("[workspace-v5] tài liệu bổ trợ bỏ qua: %s", _workspace_err)
                 self.logger.info(
                     "[public-text] sent turn=%s reason=%s chars=%d",
                     stage_frame.turn_id, release_reason, len(str(body_payload.get("text", ""))),

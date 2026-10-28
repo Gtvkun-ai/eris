@@ -110,11 +110,27 @@ class MathWorkspaceService:
         return asyncio.run(self.execute(request, job_id=job_id))
 
 
-def send_artifacts_udp(payload: Mapping[str, Any], *, host: str = '127.0.0.1', port: int = 4242) -> None:
-    """Đẩy artifact riêng ra Godot, không đi qua đường speech/bubble."""
+def send_artifacts_udp(payload: Mapping[str, Any], *, host: str = '127.0.0.1',
+                       port: int = 4242, timeout: float = .35, retries: int = 2) -> bool:
+    """Gửi artifact và đợi ACK hiển thị từ Godot; không nhập nhằng với tool success.
+
+    Caller vẫn giữ artifact trên đĩa khi panel chưa mở hoặc Godot không chạy.
+    """
     import socket
     packet = json.dumps(dict(payload), ensure_ascii=False).encode('utf-8')
     if len(packet) >= 48_000:
         raise ValueError('Gói UDP quá lớn; hãy chia trang artifact')
+    job_id = str(payload.get('job_id',''))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(packet, (host, port))
+        sock.settimeout(timeout)
+        for _ in range(max(1,min(int(retries),4))):
+            sock.sendto(packet, (host, port))
+            try:
+                ack,_=sock.recvfrom(2048)
+                parsed=json.loads(ack)
+                if (parsed.get('parse_mode') == 'workspace_artifact_ack' and
+                        parsed.get('job_id') == job_id):
+                    return parsed.get('status') == 'rendered'
+            except (socket.timeout, ValueError, OSError):
+                continue
+    return False

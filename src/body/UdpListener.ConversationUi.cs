@@ -13,6 +13,8 @@ public partial class UdpListener
         public string Text { get; set; } = "";
         public string Date { get; set; } = "";
         public string Time { get; set; } = "";
+        public string StructuredDocumentJson { get; set; } = "";
+        public string TurnId { get; set; } = "";
     }
 
     // Schema cũ chỉ lưu một ngày. Giữ lại để tự động di chuyển dữ liệu hiện có.
@@ -44,6 +46,7 @@ public partial class UdpListener
     private static readonly Color ErisBorder = new("eeeaf2");
 
     private readonly List<ConversationEntry> _conversationEntries = new();
+    private string _conversationIncomingTurnId = "";
     private Panel _conversationHistoryPanel;
     private Label _conversationHeaderDate;
     private PanelContainer _conversationDaySidebar;
@@ -228,6 +231,8 @@ public partial class UdpListener
     private void ClearConversationHistory()
     {
         _conversationEntries.Clear();
+        _workspacePendingDocuments.Clear();
+        _workspaceSeenDocuments.Clear();
         _lastAssistantConversationText = "";
         _lastAssistantConversationAtMs = 0;
         _conversationStoreDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -823,7 +828,9 @@ public partial class UdpListener
             Text = cleaned,
             Date = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             Time = now.ToString("HH:mm", CultureInfo.InvariantCulture),
+            TurnId = role == "assistant" ? _conversationIncomingTurnId : "",
         };
+        TryAttachPendingWorkspaceDocument(entry);
         _conversationEntries.Add(entry);
         while (_conversationEntries.Count > ConversationHistoryLimit)
             _conversationEntries.RemoveAt(0);
@@ -832,6 +839,12 @@ public partial class UdpListener
         RebuildConversationMessages();
         RefreshConversationEmptyState();
         RefreshConversationHeaderDate();
+        // UDP có thể gửi document trước bubble: vẫn tự mở panel cho lượt mới
+        // sau khi entry đã được commit, không mở vì gói nội dung chưa có lời thoại.
+        if (entry.Role == "assistant" && entry.Text.Length > 480 &&
+            !string.IsNullOrWhiteSpace(entry.StructuredDocumentJson) &&
+            _conversationHistoryPanel != null && !_conversationHistoryPanel.Visible)
+            ShowConversationHistoryPanel();
         if ((_conversationHistoryPanel?.Visible ?? false) && ConversationShowsLiveDay())
             CallDeferred(nameof(ScrollConversationToBottom));
     }
@@ -885,8 +898,17 @@ public partial class UdpListener
             user ? 0 : 1,
             12f));
 
-        // Tránh bức tường chữ: lời giải dài có thể thu gọn; nút sao chép vẫn giữ nguyên bản.
-        // Đây là lớp trình bày, không tự cắt nội dung nguồn hoặc làm thay đổi transcript.
+        // Nếu đã có tài liệu V5, hiển thị trực tiếp Markdown/toán/code tại đây.
+        // Không động tới text nguyên bản trong lịch sử và TTS.
+        if (!user && !string.IsNullOrWhiteSpace(entry.StructuredDocumentJson))
+        {
+            bubble.AddChild(RenderStructuredConversationDocument(entry.StructuredDocumentJson, entry.Text));
+            cluster.AddChild(bubble);
+            row.AddChild(cluster);
+            row.AddChild(spacer);
+            return row;
+        }
+        // Dữ liệu đời cũ: giữ fallback thu gọn, không xóa lịch sử.
         bool longReply = !user && entry.Text.Length > 450;
         var content = new VBoxContainer();
         string preview = longReply ? entry.Text.Substring(0, Math.Min(420, entry.Text.Length)).TrimEnd() + "…" : entry.Text;
@@ -1365,6 +1387,8 @@ public partial class UdpListener
 
             entry.Role = entry.Role == "user" ? "user" : "assistant";
             entry.Text = NormalizeConversationText(entry.Text);
+            if (entry.StructuredDocumentJson != null && entry.StructuredDocumentJson.Length > 48_000)
+                entry.StructuredDocumentJson = "";
             entry.Date = NormalizeConversationDate(entry.Date, fallbackDate);
             entry.Time = NormalizeConversationTime(entry.Time);
             if (!string.IsNullOrWhiteSpace(entry.Text))
