@@ -809,6 +809,7 @@ public partial class UdpListener : Node2D
 			|| TryGetVisibleControlMouseRect(_capabilityPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_autonomyGoalsPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_artifactWorkspacePanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_plannerReminderToast, mouse, out rect))
 			return true;
 
@@ -835,6 +836,7 @@ public partial class UdpListener : Node2D
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _autonomyGoalsPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _artifactWorkspacePanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _plannerReminderToast, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, ActiveSpeechBubble(), 4f);
 	}
@@ -4881,6 +4883,8 @@ public partial class UdpListener : Node2D
 	{
 		TryCaptureRuntimePresence(raw);
 		if (TryHandleTtsEvent(raw))
+			return;
+		if (TryHandleWorkspaceArtifactPacket(raw))
 			return;
 		if (TryHandleAutonomyGoalsPacket(raw))
 			return;

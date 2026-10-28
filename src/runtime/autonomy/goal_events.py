@@ -243,7 +243,8 @@ class GoalEventLedger:
         """Pure JSON projection, not UI control / permission to open panels."""
         return [{'goal_id': g.goal_id, 'title': g.title, 'status': g.status,
                  'revision': g.revision, 'success_criteria': g.success_criteria,
-                 'last_outcome_status': g.payload.get('last_outcome', {}).get('outcome_status', '')}
+                 'last_outcome_status': g.payload.get('last_outcome', {}).get('outcome_status', ''),
+                 'last_reflection': g.payload.get('last_reflection', {}).get('assessment', '')}
                 for g in self.list_goals()]
 
     def attach_outcome(self, goal_id: str, *, expected_revision: int, event_id: str,
@@ -281,3 +282,33 @@ class GoalEventLedger:
                 (revision, _canonical(data), now, goal_id))
             return self._snap(conn.execute('SELECT * FROM autonomy_goals WHERE goal_id=?', (goal_id,)).fetchone())
         return self._transaction(write)
+
+
+    # V3: kết luận phải có bằng chứng, không tự tuyên bố đạt mục tiêu dài hạn.
+    def record_reflection(self, goal_id: str, *, expected_revision: int,
+                       event_id: str, assessment: str, evidence_ref: str) -> GoalSnapshot:
+        if assessment not in {'workspace_verified', 'needs_review'} or not evidence_ref:
+            raise ValueError('Thiếu bằng chứng phản tỉnh hợp lệ')
+        now = self.clock()
+        data_event = {'assessment': assessment, 'evidence_ref': evidence_ref}
+        def commit(conn):
+            row = conn.execute('SELECT * FROM autonomy_goals WHERE goal_id=?', (goal_id,)).fetchone()
+            goal = self._snap(row)
+            if goal is None or goal.status != 'active':
+                raise GoalConflict('Mục tiêu không còn hoạt động')
+            prior = conn.execute('SELECT payload_json FROM autonomy_goal_events WHERE event_id=?', (event_id,)).fetchone()
+            if prior:
+                if prior['payload_json'] != _canonical(data_event):
+                    raise GoalConflict('Event phản tỉnh trùng id khác nội dung')
+                return goal
+            if goal.revision != expected_revision:
+                raise GoalConflict('Kết luận dựa trên revision đã hết hiệu lực')
+            rev = goal.revision + 1
+            self._event(conn, event_id, goal_id, rev, 'reflection', data_event, now)
+            data = dict(goal.payload)
+            data['last_reflection'] = data_event
+            conn.execute('UPDATE autonomy_goals SET revision=?,epoch=epoch+1,data_json=?,updated_at=? WHERE goal_id=?',
+                         (rev, _canonical(data), now, goal_id))
+            return self._snap(conn.execute('SELECT * FROM autonomy_goals WHERE goal_id=?', (goal_id,)).fetchone())
+        return self._transaction(commit)
+

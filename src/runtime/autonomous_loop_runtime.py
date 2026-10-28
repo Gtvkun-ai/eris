@@ -94,7 +94,7 @@ class AutonomousLoopRuntimeMixin:
             self._autonomous_wakeup_event = wake_event
         wake_event.set()
         # V2: chỉ chuyển tín hiệu sự kiện đã rút gọn, không chép frame/ảnh.
-        _autonomy = getattr(self, "_autonomy_v2", None)
+        _autonomy = getattr(self, "_autonomy_v3", None)
         if _autonomy is not None:
             _autonomy.note_event(reason)
         logger = getattr(self, "logger", None)
@@ -199,13 +199,13 @@ class AutonomousLoopRuntimeMixin:
             return False
         # V2: pump không đợi LLM/tool; job chậm chạy trên single-flight worker.
         # Không dùng đường này để sinh lời thoại hay claim Stage/SpeechAuthority.
-        from runtime.autonomy.agency_v2 import ensure_autonomy_v2
+        from runtime.autonomy.agency_v3 import ensure_autonomy_v3
         try:
-            _autonomy = ensure_autonomy_v2(self)
+            _autonomy = ensure_autonomy_v3(self)
             if _autonomy is not None:
                 _autonomy.pump()
         except Exception as _exc:
-            self.logger.warning("[autonomy-v2] degraded: %s", _exc)
+            self.logger.warning("[autonomy-v3] degraded: %s", _exc)
         from runtime.autonomy.authority_trace import emit as autonomy_trace, span as autonomy_span
         with autonomy_span("autonomous_loop"):
             autonomy_trace("autonomous.iteration.start", source="autonomous_loop")

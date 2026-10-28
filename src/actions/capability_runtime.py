@@ -171,6 +171,14 @@ def refresh_runtime_capabilities(
                 capability_id, False, "windows_only", "platform"
             )
             continue
+        if capability_id == "python_workspace":
+            from runtime.workspace.python_docker import DockerPythonWorkspace
+            ready = DockerPythonWorkspace.available()
+            statuses[capability_id] = CapabilityRuntimeStatus(
+                capability_id, ready,
+                'docker_cli_detected' if ready else 'docker_not_installed', 'runtime'
+            )
+            continue
         if capability_id == "get_weather":
             available, reason = _remote_tool_credential_available(capability_id)
             statuses[capability_id] = CapabilityRuntimeStatus(

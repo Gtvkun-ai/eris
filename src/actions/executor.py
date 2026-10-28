@@ -374,6 +374,52 @@ class ActionExecutor:
         result = runtime.execute(capability_id, action_input)
         return result.to_action_result(action_input=action_input)
 
+    def _python_workspace(self, action_input: str) -> ActionExecutionResult:
+        """Chạy code Python trong Docker; không bao giờ fallback sang host Python."""
+        from runtime.workspace.python_docker import DockerPythonWorkspace
+        from runtime.workspace import send_artifacts_udp
+        from pathlib import Path
+        request = json.loads(action_input)
+        runner = DockerPythonWorkspace(Path(os.getenv('ERIS_ARTIFACT_WORKSPACE', 'logs/eris_artifacts')),
+                                       image=os.getenv('ERIS_ARTIFACT_DOCKER_IMAGE', 'python:3.12-slim'))
+        payload = runner.execute(str(request.get('code') or ''))
+        try:
+            send_artifacts_udp(payload)
+        except OSError:
+            pass
+        return ActionExecutionResult(
+            action_name='python_workspace',action_input='[code Python đã gửi sang container]',
+            success=True,observed=True,
+            message='Đã thực thi mã Python trong Docker và lưu artifact.',
+            data={'job_id':payload['job_id'], 'artifact_count':str(len(payload['artifacts']))},
+            evidence=(f"artifact-job:{payload['job_id']}",),
+        )
+
+    def _math_workspace(self, action_input: str) -> ActionExecutionResult:
+        """Tính toán thật trong worker riêng, gửi artifact riêng cho Godot."""
+        from pathlib import Path
+        from runtime.workspace import MathWorkspaceService, send_artifacts_udp
+        request = json.loads(action_input)
+        service = getattr(self, '_math_workspace_service', None)
+        if service is None:
+            root = os.getenv('ERIS_ARTIFACT_WORKSPACE', 'logs/eris_artifacts')
+            service = MathWorkspaceService(Path(root))
+            self._math_workspace_service = service
+        payload = service.execute_sync(request)
+        try:
+            send_artifacts_udp(payload)
+        except OSError:
+            # Khi Godot chưa khởi chạy, các artifact vẫn được lưu trên đĩa.
+            pass
+        return ActionExecutionResult(
+            action_name='math_workspace', action_input=action_input, success=True,
+            observed=True,
+            message=f"Đã tính toán và tạo {len(payload['artifacts'])} artifact: {payload['title']}",
+            data={'job_id':payload['job_id'], 'title':payload['title'],
+                  'artifact_count':str(len(payload['artifacts']))},
+            evidence=(f"artifact-job:{payload['job_id']}",),
+        )
+
     def _project_list_files(self, action_input: str) -> ActionExecutionResult:
         return self._execute_project("project_list_files", action_input)
 

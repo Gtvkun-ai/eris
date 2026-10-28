@@ -44,6 +44,16 @@ _OBSERVATIONAL_CAPABILITY_IDS = (
 
 
 _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
+    "python_workspace": CapabilityDefinition(
+        id="python_workspace", effect="control", public_name_vi="chạy Python sandbox Docker",
+        description_vi="Chạy code Python do Eris viết trong Docker không mạng; xuất stdout và ảnh PNG lên Workspace Panel. Chỉ khả dụng khi có Docker",
+        risk_level="medium", visible_in_ui_group="knowledge",
+    ),
+    "math_workspace": CapabilityDefinition(
+        id="math_workspace", effect="control", public_name_vi="tính toán và vẽ đồ thị",
+        description_vi="Thực thi SymPy/NumPy để tính ma trận, đạo hàm, tích phân, nghiệm và dựng đồ thị/công thức vào Workspace Panel; nhận JSON có cấu trúc, không chạy Python tùy ý",
+        risk_level="medium", visible_in_ui_group="knowledge",
+    ),
     "get_local_time": CapabilityDefinition(
         id="get_local_time", effect="observe", public_name_vi="xem thời gian hệ thống",
         description_vi="đọc giờ/ngày hiện tại từ runtime hệ thống",
@@ -346,6 +356,17 @@ def _boolean(description: str = "") -> dict[str, Any]:
 _EMPTY_INPUT = _object_schema()
 
 _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
+    "python_workspace": (_object_schema({
+        "code": _string("Source Python <= 12 KB, chạy trong Docker không mạng"),
+    }, ("code",)), "json"),
+    "math_workspace": (_object_schema({
+        "kind": _string("matrix / simplify / differentiate / integrate / solve / plot", enum=("matrix","simplify","differentiate","integrate","solve","plot")),
+        "expression": _string("Biểu thức toán chỉ dùng x,y; với ma trận, dùng rows"),
+        "rows": {"type": "array", "description": "Ma trận 2 chiều, tối đa 8x8"},
+        "xmin": {"type": "number"},
+        "xmax": {"type": "number"},
+        "title": _string("Tiêu đề trên panel"),
+    }, ("kind",)), "json"),
     "get_local_time": (_EMPTY_INPUT, "none"),
     "get_now_playing": (_EMPTY_INPUT, "none"),
     "focus_window": (_object_schema({"title": _string("Window title or application name")}, ("title",)), "field:title"),

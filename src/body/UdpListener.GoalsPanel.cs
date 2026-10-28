@@ -5,7 +5,7 @@ using System.Text.Json;
 
 public partial class UdpListener
 {
-    // V2: Goals Panel chỉ hiển thị projection; không phải nơi duyệt hay quyết định mục tiêu.
+    // V3: Goals Panel chỉ hiển thị projection; không phải nơi duyệt hay quyết định mục tiêu.
     // Giao thức riêng `parse_mode=autonomy_goals`, không đi qua Speech/TTS parser.
     private PanelContainer _autonomyGoalsPanel;
     private VBoxContainer _autonomyGoalRows;
@@ -83,12 +83,15 @@ public partial class UdpListener
                 string title = GoalText(item, "title", 210);
                 string status = GoalText(item, "status", 40);
                 string outcome = GoalText(item, "last_outcome_status", 40);
+                string reflection = GoalText(item, "last_reflection", 45);
                 int rev = item.TryGetProperty("revision", out var r) && r.TryGetInt32(out var rv) ? rv : 0;
                 if (!string.IsNullOrEmpty(id)) _autonomyGoalRevisions[id] = rev;
                 _autonomyGoalRows.AddChild(new Label
                 {
                     Text = $"• {title}\n  {status} · phiên bản {rev}" +
-                        (string.IsNullOrEmpty(outcome) ? "" : $" · kết quả: {outcome}"),
+                        (string.IsNullOrEmpty(outcome) ? "" : $" · kết quả: {outcome}") +
+                        (reflection == "workspace_verified" ? " · Đã kiểm tra bàn làm việc" :
+                         reflection == "needs_review" ? " · Cần xem lại kết quả" : ""),
                     AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 });
             }

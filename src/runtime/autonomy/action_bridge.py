@@ -76,6 +76,7 @@ class GoalActionBridge:
             'outcome_id': str(getattr(outcome, 'outcome_id', '')),
             'status': str(getattr(outcome, 'status', '')),
             'denial_reason': str(getattr(outcome, 'denial_reason', '') or ''),
+            'observed_changes': list(getattr(outcome, 'observed_changes', ()) or ())[:16],
         })
         return outcome
 
