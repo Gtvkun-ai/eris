@@ -56,7 +56,7 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
     ),
     "parallel_work": CapabilityDefinition(
         id="parallel_work", effect="control", public_name_vi="giao việc nền",
-        description_vi="Giao nhiệm vụ dài cho Work Lane; Root vẫn nói bình thường. start/status/recent/cancel không khóa chat.",
+        description_vi="Giao nhiệm vụ nền, xem goals đã adopt, chạy start_goal, đọc tiến độ và sửa Panel. Skills và context tồn tại qua các bước; Root vẫn giữ quyền nói.",
         risk_level="medium", visible_in_ui_group="knowledge",
     ),
     "math_workspace": CapabilityDefinition(
@@ -377,10 +377,15 @@ _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
         "block": {"type":"object", "description":"Khối paragraph, heading, formula, code, list hoặc table"},
     }, ("document_id","operation")), "json"),
     "parallel_work": (_object_schema({
-        "operation": _string("start / status / recent / resume / cancel", enum=("start", "status", "recent", "resume", "cancel")),
+        "operation": _string("start / status / recent / resume / cancel / document / edit_document / goals / goal_status / start_goal", enum=("start", "status", "recent", "resume", "cancel", "document", "edit_document", "goals", "goal_status", "start_goal")),
         "task": _string("Nhiệm vụ mà Root/Identity tự quyết định giao; không phải lời thoại"),
         "job_id": _string("Định danh công việc đã nhận từ start/recent"),
+        "goal_id": _string("Goal do Eris đã commit trong Goal Ledger; start_goal không tự adopt"),
         "answer": _string("Thông tin mới từ người dùng để resume job đang waiting_user"),
+        "document_operation": _string("insert_block / replace_block / remove_block", enum=("insert_block", "replace_block", "remove_block")),
+        "block_id": _string("ID khối tài liệu của phiên Work"),
+        "base_revision": _integer("Phiên bản tài liệu đã đọc (CAS)", minimum=0),
+        "block": {"type": "object", "description": "Khối heading/paragraph/formula/code/table"},
     }, ("operation",)), "json"),
     "math_workspace": (_object_schema({
         "kind": _string("matrix / simplify / differentiate / integrate / solve / plot / binary_determinant_max", enum=("matrix","simplify","differentiate","integrate","solve","plot","binary_determinant_max")),

@@ -420,7 +420,8 @@ class ActionExecutor:
     def _parallel_work(self, action_input: str) -> ActionExecutionResult:
         """Giao/đọc/hủy work job, không đợi kết quả suy luận dài."""
         from pathlib import Path
-        from runtime.workspace.parallel_work import ParallelWorkService, plan_with_router
+        from runtime.workspace.parallel_work import plan_with_router
+        from runtime.agent_harness.unified_sessions import UnifiedAgentSessions
         from runtime.workspace import send_artifacts_udp
         request = json.loads(action_input)
         op = str(request.get("operation", "") or "")
@@ -430,35 +431,60 @@ class ActionExecutor:
             router = getattr(owner, "ai_model_router", None)
             planner = (lambda ctx: plan_with_router(router, ctx)) if router is not None else None
             def publish(event):
+                # Work chỉ đánh thức Root khi có kết quả/đề nghị nói mới;
+                # callback này KHÔNG được tự phát giọng hay tạo lượt công khai.
+                if event.get("kind") in {"tool_result", "complete", "wait_user", "speech_suggestion"}:
+                    wake = getattr(self.cognitive_runtime, "_wake_autonomous_loop", None)
+                    if callable(wake):
+                        try:
+                            wake("work_session_" + str(event["kind"]))
+                        except Exception:
+                            pass
                 # Work Lane chỉ gửi trạng thái ra Workspace; TUYỆT ĐỐI không phát TTS.
                 content = str(event.get("text", "") or "").strip()
-                if content:
+                if content and event.get("kind") != "speech_suggestion":
                     from runtime.workspace import send_artifacts_udp
+                    artifacts = event.get("artifacts")
+                    if artifacts is None:
+                        artifacts = [{"type": "section", "text": "Bước " + str(event["revision"])},
+                                     {"type": "text", "text": content[:3000]}]
+                    else:
+                        # MathText render ảnh cho công thức, fallback giữ LaTeX để sao chép.
+                        artifacts = [dict(item) for item in artifacts]
+                        if any(item.get("type") == "formula" for item in artifacts):
+                            try:
+                                from runtime.workspace.structured_output import _render_math
+                                root_dir = Path(os.getenv("ERIS_ARTIFACT_WORKSPACE", "logs/eris_artifacts"))
+                                path_key = str(event["job_id"]).replace("-", "_") + "_" + str(event.get("document_revision", 0))
+                                _render_math(artifacts, root_dir, path_key)
+                            except (OSError, ImportError, ValueError):
+                                pass
+                    ui_revision = int(event["revision"]) * 1000 + int(event.get("document_revision", 0))
                     payload = {"parse_mode": "workspace_artifact", "workspace_version": 1,
-                               "job_id": f"{event['job_id']}-{event['revision']}",
-                               "work_id": event["job_id"], "work_revision": event["revision"],
+                               "job_id": f"{event['job_id']}-{ui_revision}",
+                               "work_id": event["job_id"], "work_revision": ui_revision,
+                               "document_revision": event.get("document_revision", 0),
                                "title": "Eris đang làm việc · " + event["status"],
-                               "artifacts": [{"type": "section", "text": "Bước " + str(event["revision"])},
-                                             {"type": "text", "text": content[:3000]}]}
+                               "artifacts": artifacts}
                     send_artifacts_udp(payload, timeout=.12, retries=1)
             root = Path(os.getenv("ERIS_WORK_LANE_DB", "logs/work_lane/jobs.sqlite"))
-            service = ParallelWorkService(root, planner=planner, tool=self.execute_capability,
-                                          publish=publish)
+            service = UnifiedAgentSessions(root, planner=planner, tool=self.execute_capability,
+                                           publish=publish,
+                                           goal_ledger_path=os.getenv("ERIS_AUTONOMY_V3_DB", "logs/eris_goals_v3.sqlite"))
             self._parallel_work_service = service
-        if op == "start":
-            result = service.start(str(request.get("task", "")))
-        elif op == "status":
-            job_id = str(request.get("job_id", ""))
-            result = service.snapshot(job_id) or {"error": "job_not_found"}
-            if "error" not in result: result["events"] = service.events(job_id, 6)
-        elif op == "recent":
-            result = {"jobs": service.recent()}
-        elif op == "resume":
-            result = service.resume(str(request.get("job_id", "")), str(request.get("answer", "")))
-        elif op == "cancel":
-            result = service.cancel(str(request.get("job_id", "")))
-        else:
-            raise ValueError("operation không hỗ trợ")
+        result = service.execute(request)
+        # Đường chỉnh tài liệu từ Root/Writer cũng phát bản cập nhật đã commit.
+        if op == "edit_document" and "error" not in result:
+            work_store = getattr(service, "work", service)
+            event = {"job_id": result["job_id"],
+                     "revision": (service.snapshot(result["job_id"]) or {}).get("revision", 0),
+                     "status": "working", "kind": "workspace",
+                     "text": "Đã sửa tài liệu đang hiển thị.",
+                     "document_revision": result["revision"],
+                     "artifacts": work_store._artifacts(result["blocks"])}
+            publisher = getattr(work_store, "publish", None)
+            if callable(publisher):
+                publisher(event)
         ok = "error" not in result
         return ActionExecutionResult(
             action_name="parallel_work", action_input=action_input,
