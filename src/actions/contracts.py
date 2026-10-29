@@ -55,6 +55,8 @@ VALID_SYSTEM_ACTION_LIST = (
     "workspace_leave",
     "math_workspace",
     "python_workspace",
+    "live_workspace_edit",
+    "parallel_work",
 )
 
 VALID_SYSTEM_ACTIONS = set(VALID_SYSTEM_ACTION_LIST)
@@ -81,7 +83,7 @@ _OBSERVED_ACTIONS = {
     "project_run_tests", "project_run_command", "project_rollback",
     "project_package_patch", "project_execute_task",
     "workspace_join", "workspace_switch", "workspace_list", "workspace_leave",
-    "math_workspace", "python_workspace",
+    "math_workspace", "python_workspace", "live_workspace_edit", "parallel_work",
 }
 
 

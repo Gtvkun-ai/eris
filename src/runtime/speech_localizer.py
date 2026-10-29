@@ -314,15 +314,8 @@ class SpeechLocalizer:
                 )
                 if not plan.allowed:
                     raise SpeechLocalizationError(f"speech_localizer_budget_denied:{plan.reason}")
-                # Token-pressure phải TỪ CHỐI nếu không đủ chỗ, không được cắt
-                # câu mà TTS vẫn hiển thị thành công. Chunking được làm trước
-                # tại localize(); không để một model silently omit nửa văn bản.
-                from llm.token_budget import estimate_tokens
-                full_prompt_tokens = estimate_tokens([{"role": "user", "content": budgeted_text}])
-                if full_prompt_tokens > max(80, plan.prompt_limit - 220):
-                    raise SpeechLocalizationError(
-                        f"speech_localizer_budget_insufficient:{full_prompt_tokens}>{plan.prompt_limit - 220}"
-                    )
+                # Chunking tại localize() giữ đủ transcript; không dùng prompt
+                # estimate để chặn bản dịch và thay cả lời đọc bằng filler.
             except SpeechLocalizationError:
                 raise
             except Exception:

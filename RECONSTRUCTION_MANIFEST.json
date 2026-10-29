@@ -1,0 +1,28 @@
+{
+  "base_zip": "eris-ai-20261028_224738_047.zip",
+  "base_sha256": "cdb8a64cb24b33faf17db543ea190294c6ffd19c3d700c55f7c529246a84910b",
+  "scope": "Song song Work Lane/Conversation Lane, nguồn speech/document độc lập, live progress",
+  "selected_tests": "111 passed",
+  "live_godot_verified": false,
+  "live_inference_verified": false,
+  "changes": [
+    "README_RUNTIME_RECONSTRUCTION_VI.md",
+    "docs/knowledge/2026-10-28-parallel-work-runtime-reconstruction.md",
+    "src/actions/capability_registry.py",
+    "src/actions/contracts.py",
+    "src/actions/executor.py",
+    "src/body/UdpListener.ArtifactWorkspace.cs",
+    "src/runtime/conversation/agent.py",
+    "src/runtime/conversation/contracts.py",
+    "src/runtime/conversation/kernel.py",
+    "src/runtime/conversation/public_output_artifact.py",
+    "src/runtime/conversation/runtime_writer.py",
+    "src/runtime/inference_broker.py",
+    "src/runtime/public_output_runtime.py",
+    "src/runtime/workspace/live_document.py",
+    "src/runtime/workspace/parallel_work.py",
+    "src/tests/conversation/test_root_choice_freedom_v12.py",
+    "src/tests/workspace/test_parallel_work_reconstruction.py",
+    "tools/parallel_work_probe.py"
+  ]
+}

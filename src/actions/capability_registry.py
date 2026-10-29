@@ -49,6 +49,16 @@ _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
         description_vi="Chạy code Python do Eris viết trong Docker không mạng; xuất stdout và ảnh PNG lên Workspace Panel. Chỉ khả dụng khi có Docker",
         risk_level="medium", visible_in_ui_group="knowledge",
     ),
+    "live_workspace_edit": CapabilityDefinition(
+        id="live_workspace_edit", effect="control", public_name_vi="sửa tài liệu đang hiển thị",
+        description_vi="Đọc revision hoặc chèn, thay, xóa khối trong Panel đang mở. Không thay transcript/TTS; dùng document_id và revision để chống ghi đè.",
+        risk_level="low", visible_in_ui_group="knowledge",
+    ),
+    "parallel_work": CapabilityDefinition(
+        id="parallel_work", effect="control", public_name_vi="giao việc nền",
+        description_vi="Giao nhiệm vụ dài cho Work Lane; Root vẫn nói bình thường. start/status/recent/cancel không khóa chat.",
+        risk_level="medium", visible_in_ui_group="knowledge",
+    ),
     "math_workspace": CapabilityDefinition(
         id="math_workspace", effect="control", public_name_vi="tính toán và vẽ đồ thị",
         description_vi="Thực thi SymPy/NumPy để tính ma trận, đạo hàm, tích phân, nghiệm và dựng đồ thị/công thức vào Workspace Panel; nhận JSON có cấu trúc, không chạy Python tùy ý",
@@ -359,6 +369,19 @@ _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
     "python_workspace": (_object_schema({
         "code": _string("Source Python <= 12 KB, chạy trong Docker không mạng"),
     }, ("code",)), "json"),
+    "live_workspace_edit": (_object_schema({
+        "document_id": _string("ID tài liệu hiện có"),
+        "operation": _string("inspect / insert_block / replace_block / remove_block", enum=("inspect","insert_block","replace_block","remove_block")),
+        "block_id": _string("ID khối cần thay đổi"),
+        "base_revision": _integer("Phiên bản đã đọc; không dùng revision cũ", minimum=0),
+        "block": {"type":"object", "description":"Khối paragraph, heading, formula, code, list hoặc table"},
+    }, ("document_id","operation")), "json"),
+    "parallel_work": (_object_schema({
+        "operation": _string("start / status / recent / resume / cancel", enum=("start", "status", "recent", "resume", "cancel")),
+        "task": _string("Nhiệm vụ mà Root/Identity tự quyết định giao; không phải lời thoại"),
+        "job_id": _string("Định danh công việc đã nhận từ start/recent"),
+        "answer": _string("Thông tin mới từ người dùng để resume job đang waiting_user"),
+    }, ("operation",)), "json"),
     "math_workspace": (_object_schema({
         "kind": _string("matrix / simplify / differentiate / integrate / solve / plot / binary_determinant_max", enum=("matrix","simplify","differentiate","integrate","solve","plot","binary_determinant_max")),
         "size": _integer("Cấp của ma trận 0/1; binary_determinant_max hỗ trợ size=3", minimum=3, maximum=3),

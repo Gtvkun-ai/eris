@@ -76,6 +76,7 @@ LANE_POLICIES: dict[str, LanePolicy] = {
     "memory_digest": LanePolicy(70, True, 2, 25.0, 1),
     "private_mind": LanePolicy(80, True, 1, 20.0, 1),
     "private_mind_optional": LanePolicy(80, True, 1, 20.0, 1),
+    "work_background": LanePolicy(65, True, 2, 45.0, 1),
     "tutor_background": LanePolicy(85, True, 2, 20.0, 1),
     "micro_presence": LanePolicy(90, True, 1, 8.0, 1),
     # Rare conflict-resolution call from the neuro action gate. It is optional

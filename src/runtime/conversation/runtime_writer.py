@@ -46,6 +46,19 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     Hàm này không cập nhật history/body, chỉ yêu cầu một transcript candidate.
     """
     result = dict(payload)
+    if result.get("_separate_document"):
+        # Không bao giờ lấy tài liệu hoặc display dài làm nguồn dịch khi có doc riêng.
+        nested = result.get("utterance") if isinstance(result.get("utterance"), Mapping) else {}
+        nested_speech = nested.get("speech") if isinstance(nested, Mapping) else None
+        explicit = str(result.get("speech_text", "") or "").strip()
+        if not explicit and isinstance(result.get("speech"), str):
+            explicit = result["speech"].strip()
+        if not explicit and isinstance(result.get("speech"), Mapping):
+            explicit = str(result["speech"].get("text", "") or "").strip()
+        if not explicit and isinstance(nested_speech, Mapping):
+            explicit = str(nested_speech.get("text", "") or "").strip()
+        if not explicit:
+            raise RuntimeError("v03_document_speech_missing")
     from runtime.stage_contracts import _contains_japanese_script
     from runtime.utterance_spec import UtteranceSpec
 
@@ -286,6 +299,9 @@ class RuntimeConversationWriter:
                     display, str(base.get('language_hint', 'vi') or 'vi')):
                 raise RuntimeError('v03_display_language_mismatch')
             stage = 'localize'
+            if turn.move.document_source:
+                # Tài liệu không đi qua localizer; thiếu speech độc lập thì fail-fast.
+                payload = {**payload, "_separate_document": True}
             payload = _prelocalize_v03_speech(
                 payload, host=self.host, language_hint=speech_language,
             )
@@ -300,6 +316,9 @@ class RuntimeConversationWriter:
                 turn=turn, event=event, payload=dict(payload),
                 source_fingerprint=getattr(evidence_registry, 'fingerprint', ''),
             )
+            if turn.move.document_source:
+                from dataclasses import replace as _replace_public_doc
+                prepared = _replace_public_doc(prepared, document_source=turn.move.document_source)
             from .public_output_artifact import validate_prepared
             validate_prepared(prepared)
             self._log_v03('info', turn=turn, attempt=1, stage='prepared',
@@ -355,9 +374,11 @@ class RuntimeConversationWriter:
             raise RuntimeError("public_writer_unavailable")
 
         move_payload = turn.move.to_dict()
+        # Writer cần biết ý định nói, KHÔNG đọc nguyên tài liệu thành lời thoại.
+        writer_brief = {k: v for k, v in move_payload.items() if k != "document_source"}
         root_context = (
             "ROOT_CONVERSATION_MOVE_V12: "
-            + json.dumps(move_payload, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(writer_brief, ensure_ascii=False, separators=(",", ":"))
             + ". Realize this move with natural cadence. Small reactions, fragments or "
               "expressive pauses are fine; do not add a new topic, steering question, "
               "teaching step or continuation. The `after` field is lifecycle metadata."

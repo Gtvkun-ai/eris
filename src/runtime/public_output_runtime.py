@@ -730,24 +730,30 @@ class PublicOutputRuntimeMixin:
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
-                # V5: panel nhận nội dung đầy đủ qua một lane độc lập.
-                # Không đưa Markdown/LaTeX vào TTS hay lọc lần hai.
-                # Worker không được block luồng phát giọng hoặc thay quyết định Root.
+                # V6: Bubble được gửi trước; nhánh trình bày viết và sửa panel
+                # bất đồng bộ trong lúc TTS vẫn đang chạy. Không chạy lại Root.
                 try:
-                    from runtime.workspace.structured_output import dispatch_committed_document
+                    from runtime.workspace.live_document import dispatch_live_document
                     _doc_session = str(getattr(prepared, "session_id", "") or getattr(stage_frame, "turn_id", "") or "surface")
                     _doc_generation = int(getattr(prepared, "generation", 0) or 0)
                     _doc_run = str(getattr(prepared, "run_id", "") or "autonomous")
                     _doc_delivery = str(getattr(prepared, "delivery_id", "") or getattr(stage_frame, "turn_id", "") or "public")
-                    dispatch_committed_document(
-                        text=str(body_payload.get("text", "") or ""),
+                    # Tài liệu Root đã quyết được giữ riêng; không lấy lại Bubble
+                    # đã lọc code làm nguồn khi document_source tồn tại.
+                    _bubble_text = str(body_payload.get("text", "") or "")
+                    _document_text = str(getattr(prepared, "document_source", "") or "") if prepared is not None else ""
+                    dispatch_live_document(
+                        text=_document_text or _bubble_text,
+                        bubble_text=_bubble_text,
                         session_id=_doc_session, generation=_doc_generation,
                         run_id=_doc_run, delivery_id=_doc_delivery,
                         turn_id=str(stage_frame.turn_id or ""),
-                        transport=self.transport, logger=self.logger,
+                        transport=self.transport,
+                        router=getattr(self, "ai_model_router", None),
+                        is_current=v03_current, logger=self.logger,
                     )
                 except Exception as _workspace_err:
-                    self.logger.debug("[workspace-v5] tài liệu bổ trợ bỏ qua: %s", _workspace_err)
+                    self.logger.debug("[workspace-v6] bỏ qua cập nhật panel: %s", _workspace_err)
                 self.logger.info(
                     "[public-text] sent turn=%s reason=%s chars=%d",
                     stage_frame.turn_id, release_reason, len(str(body_payload.get("text", ""))),

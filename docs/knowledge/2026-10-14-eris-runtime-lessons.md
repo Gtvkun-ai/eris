@@ -790,3 +790,99 @@ phản ánh mới “đang chạy mà giọng bị rơi rồi hư luôn”; chư
 Đây là cập nhật chẩn đoán, không có build/deploy hoặc thay đổi runtime trong
 lượt điều tra này. Cần xử lý control kịp thời mà vẫn giữ quyền single-speaker,
 language contract và việc gom input; không bỏ cancellation để che triệu chứng.
+
+## 23. Phiên 22:00 ngày 28/10: budget localizer thay cả lời đọc bằng filler
+
+Nguồn mới: `Documents/eris/logs/eris_run_20261028_220050.txt`, observability
+trace `4d6587aea3b44b0b9c4227ac57b052a4`, raw wire
+`C:/eris_debug/deepseek_raw/events_20261028T150052Z_pid20732.jsonl` và
+`Documents/ErisLive/logs/autonomous_trace.jsonl`. Bốn module speech_localizer,
+runtime_writer, token_pressure và token_budget trùng SHA-256 giữa dev/portable.
+
+- **Không áp nguyên nhân live-switch của mục 22 cho phiên này:** 22:01:33.853
+  có `v03_speech_localizer_fallback_ja_filler`. Surface HTTP 200 trả public text
+  và speech Việt giống nhau, dài 236 ký tự. Không có request `tts_localizer`
+  trong raw wire của phiên; failure xảy ra trước HTTP dịch.
+- Observability ghi `requested_prompt=258`, `prompt_limit=258`,
+  `requested_output=428`, `output_limit=384`, pressure `normal`. Source xin
+  budget bằng `len(text)//3 + 180` nhưng guard lại trừ 220 khỏi prompt_limit,
+  rồi so transcript với `max(80, prompt_limit - 220)`. `estimate_tokens` còn
+  cộng 4 token overhead. Vì vậy transcript này là 82 token, vượt ngưỡng 80.
+  Lỗi format thông báo `82>38`, dù ngưỡng so sánh thật có floor 80. Không coi
+  output clamp 384 hoặc provider hết quota là nguyên nhân đã xác nhận.
+- Replay offline bằng đúng portable Python/source và payload Surface thật,
+  inject plan 258/384 đúng log, tái hiện lần lượt
+  `speech_localizer_budget_insufficient:82>38` và
+  `japanese_localization_recently_failed`. Localizer cache lỗi 15 giây nên
+  retry tức thì không dịch lại. Credential/network path được mock để chặn,
+  số lần vào path này bằng 0. Kết quả cuối: speech `えっと…`, display 236 ký tự.
+- ElevenLabs synth completed khoảng 2,31 giây; audio_start 22:01:38.475,
+  audio_done 22:01:41.170, text được gửi khi bắt đầu audio. Ledger ghi
+  `tts=done/outcome=delivered`. **Trong phiên này, delivered chỉ xác nhận clip
+  fallback hoàn tất, không chứng minh nội dung bubble đã được đọc đầy đủ.**
+  Không có bằng chứng TTS worker chết; app thoát bằng context menu 22:01:48.
+
+Đây là chẩn đoán và replay offline, không gọi LLM/TTS remote hoặc loa thật,
+không sửa/build/deploy runtime. Hướng sửa cần thống nhất cách tính budget với
+prompt thực tế và không biến retry thành lần đọc failure cache; không bỏ
+language contract hoặc text/audio ownership để che mất nội dung lời đọc.
+
+### Thay đổi theo yêu cầu user sau điều tra 28/10
+
+User yêu cầu bỏ guard vừa chẩn đoán. Đã xóa phép từ chối transcript dựa trên
+`max(80, plan.prompt_limit - 220)` trong `speech_localizer.py`; không thay bằng
+ngưỡng khác. Chunking giữ nguyên nội dung, validation tiếng Nhật, cancellation
+và admission của broker tiếp tục hoạt động.
+
+Regression mới dùng đúng lời thoại Surface 236 ký tự và plan 258/384 của phiên:
+trước sửa trả filler (RED), sau sửa gọi transport giả đúng một lần với toàn bộ
+transcript rồi giữ bản Nhật trả về. Nhóm speech-reading và writer-localizer
+fail-soft: **11 passed**; không gọi mạng hoặc phát audio live.
+
+Đã đồng bộ một file Python sang `Documents/eris`, đối chiếu portable trước sửa
+khớp HEAD và hash sau copy khớp dev, không có process Eris lúc triển khai.
+Backup/receipt:
+`Documents/eris/backups/localizer-budget-guard-20261028_220745/receipt.json`.
+Thay đổi có hiệu lực khi mở lại Eris; chưa xác nhận bản dịch hoặc audio live.
+Phần này thay trạng thái "chưa sửa/build/deploy runtime" ở trên trong phạm vi
+guard đó; failure cache cho lỗi dịch thật vẫn chưa thay đổi.
+
+## 24. Đối chiếu đường panel và lời đọc ngày 28/10
+
+Theo câu hỏi user về việc đọc công thức/code, đã đọc source hiện tại; không có
+phiên live mới hơn 22:00, không sửa runtime.
+
+- Tool math_workspace/python_workspace có đường xuất artifact riêng. Root và
+  public writer đã có prompt nhắc nói ngắn khi tool đưa lời giải lên panel;
+  đây là chỉ dẫn model, không phải bảo đảm mọi response đều tách lời đọc đúng.
+- Panel V6 trong `public_output_runtime.py` nhận chính public `text` sau khi
+  audio_start nhả bubble. Presenter định dạng/chỉnh block không gọi lại TTS.
+  Vì vậy không có vòng tự đọc lại panel mỗi khi công thức/code được chỉnh.
+- Tuy nhiên `UtteranceSpec` và `_prelocalize_v03_speech` vẫn fallback từ lời
+  đọc thiếu sang display text; localizer dịch đầy đủ transcript được giao.
+  Nếu response dùng cả lời giải/công thức/code làm speech hoặc chỉ có display
+  dài, nội dung đó vẫn có thể vào localizer/TTS. Bỏ guard ở mục 23 không tách
+  nội dung panel khỏi lời nói. Đây là giới hạn từ đọc source, chưa quan sát
+  một request live mới có công thức/code để khẳng định payload cụ thể.
+
+### Nghiên cứu tiếp theo yêu cầu user
+
+Chi tiết: [nghiên cứu tách lời nói và tài liệu](2026-10-28-speech-panel-separation-study.md).
+Đã probe offline và đọc raw response PID 22680 của phiên 16:16 cùng ngày:
+
+- **Thu hẹp phát biểu code ở trên:** code nguyên fence/backtick có bộ lọc trước
+  synth, nhưng localizer chạy trước bộ lọc này và có thể nhận cả code. Công
+  thức còn nguyên qua TTSFilter. Speech Nhật có công thức bypass localizer.
+- **Bổ sung lỗi nguồn panel V6 từ source/probe:** DisplayFilter thay fenced
+  code bằng `[code]`, làm phẳng cấu trúc, rồi public output mới gửi text đó
+  cho presenter. Vì vậy tách riêng speech vẫn chưa giữ được toàn bộ tài liệu.
+  Artifact của math/python tool dùng đường riêng, không áp kết luận mất code
+  này cho mọi loại panel.
+- Raw Surface lúc 16:18:03 có speech Nhật chứa bất phương trình/tập nghiệm;
+  lifecycle playback hoàn tất 16:19:20. Đây là phiên trước build 21:55, chưa
+  phải xác nhận lỗi toán/code trong phiên mới sau bỏ guard. Không có recording
+  để đánh giá phát âm, không xác nhận tính đúng của lời giải.
+
+Đề xuất tách document khỏi bubble/narration ngay ở Root, giữ presenter chỉ dàn
+trang và localizer chỉ dịch lời nói. Đây là nghiên cứu, chưa triển khai thay
+đổi contract hoặc runtime; probe không gọi LLM/TTS remote.

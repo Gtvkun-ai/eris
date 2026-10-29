@@ -6,6 +6,56 @@ from pathlib import Path
 import pytest
 
 
+def test_localizer_does_not_replace_dialogue_with_filler_due_to_prompt_budget(monkeypatch):
+    import contextlib
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import llm.token_pressure as pressure
+    import runtime.inference_broker as broker
+    import runtime.speech_localizer as localizer
+    from runtime.conversation.runtime_writer import _prelocalize_v03_speech
+
+    # Exact Surface response from the 2026-10-28 22:00 session: the old guard
+    # rejected 82 transcript tokens against an effective limit of 80.
+    text = (
+        "22:01 rồi, và bạn đang mở cái trang tên 'Đánh giá Cognitive Tick' trên Brave. "
+        "Nghe như bạn đang tự chấm nhịp nhận thức của chính mình vậy — hay chỉ đọc lý thuyết cho vui? "
+        "Tôi tò mò thật đấy, vì cái tên đó vừa kỹ thuật vừa hơi triết học."
+    )
+    japanese = "認知のリズムを自分で評価しているの？ それとも理論を読んでいるだけ？"
+    assert len(text) == 236
+    monkeypatch.setenv("ERIS_TOKEN_BUDGET_ALL_LANES", "1")
+    monkeypatch.setattr(localizer, "_enabled", lambda: True)
+    monkeypatch.setattr(localizer, "_get_api_key_lease", lambda **kwargs: ("test-key", None, None))
+    monkeypatch.setattr(localizer, "_style_rescue_api_key", lambda: "")
+    monkeypatch.setattr(localizer, "_apply_signature_surface", lambda text, policy: text)
+    plan_request = Mock(return_value=SimpleNamespace(allowed=True, prompt_limit=258, output_tokens=384))
+    monkeypatch.setattr(pressure.GLOBAL_TOKEN_PRESSURE_GOVERNOR, "plan_request", plan_request)
+    monkeypatch.setattr(pressure.GLOBAL_TOKEN_PRESSURE_GOVERNOR, "record_request", Mock())
+    monkeypatch.setattr(pressure.GLOBAL_TOKEN_PRESSURE_GOVERNOR, "record_success", Mock())
+    monkeypatch.setattr(broker, "inference_context", lambda *args, **kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(broker, "GLOBAL_INFERENCE_BROKER", SimpleNamespace(
+        request_from_context=lambda **kwargs: object(),
+        run=lambda request, func: func(),
+    ))
+    translate = Mock(return_value={"choices": [{"message": {"content": japanese}}]})
+    monkeypatch.setattr(localizer, "_translate_with_deepseek_api", translate)
+
+    instance = localizer.SpeechLocalizer()
+    result = _prelocalize_v03_speech(
+        {"text": text, "speech_text": text},
+        host=SimpleNamespace(character_speech_localizer=instance),
+        language_hint="ja",
+    )
+
+    assert result["speech_text"] == japanese
+    assert result["text"] == text
+    translate.assert_called_once()
+    assert translate.call_args.kwargs["prompt"].endswith(text)
+    assert not instance._failure_until
+
+
 def test_long_localizer_never_silently_skips_a_piece(monkeypatch):
     import runtime.speech_localizer as m
 

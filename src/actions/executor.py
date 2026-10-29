@@ -397,6 +397,78 @@ class ActionExecutor:
             evidence=(f"artifact-job:{payload['job_id']}",),
         )
 
+    def _live_workspace_edit(self, action_input: str) -> ActionExecutionResult:
+        """Writer chủ động đọc hoặc sửa tài liệu đang có, không động transcript."""
+        from runtime.workspace.live_document import writer_edit_live_document
+        payload = json.loads(action_input)
+        result = writer_edit_live_document(
+            str(payload.get('document_id', '')),
+            str(payload.get('operation', '')),
+            block_id=str(payload.get('block_id', '')),
+            block=payload.get('block'),
+            base_revision=payload.get('base_revision'),
+        )
+        return ActionExecutionResult(
+            action_name='live_workspace_edit', action_input=action_input,
+            success=bool(result.get('ok')), observed=bool(result.get('ok')),
+            message='Đã cập nhật tài liệu.' if result.get('ok') else
+                    'Không cập nhật được tài liệu: ' + str(result.get('reason', 'unknown')),
+            data={'revision': str(result.get('revision', '')),
+                  'snapshot': json.dumps(result.get('state', {}), ensure_ascii=False)[:8000]},
+        )
+
+    def _parallel_work(self, action_input: str) -> ActionExecutionResult:
+        """Giao/đọc/hủy work job, không đợi kết quả suy luận dài."""
+        from pathlib import Path
+        from runtime.workspace.parallel_work import ParallelWorkService, plan_with_router
+        from runtime.workspace import send_artifacts_udp
+        request = json.loads(action_input)
+        op = str(request.get("operation", "") or "")
+        service = getattr(self, "_parallel_work_service", None)
+        if service is None:
+            owner = self.cognitive_runtime
+            router = getattr(owner, "ai_model_router", None)
+            planner = (lambda ctx: plan_with_router(router, ctx)) if router is not None else None
+            def publish(event):
+                # Work Lane chỉ gửi trạng thái ra Workspace; TUYỆT ĐỐI không phát TTS.
+                content = str(event.get("text", "") or "").strip()
+                if content:
+                    from runtime.workspace import send_artifacts_udp
+                    payload = {"parse_mode": "workspace_artifact", "workspace_version": 1,
+                               "job_id": f"{event['job_id']}-{event['revision']}",
+                               "work_id": event["job_id"], "work_revision": event["revision"],
+                               "title": "Eris đang làm việc · " + event["status"],
+                               "artifacts": [{"type": "section", "text": "Bước " + str(event["revision"])},
+                                             {"type": "text", "text": content[:3000]}]}
+                    send_artifacts_udp(payload, timeout=.12, retries=1)
+            root = Path(os.getenv("ERIS_WORK_LANE_DB", "logs/work_lane/jobs.sqlite"))
+            service = ParallelWorkService(root, planner=planner, tool=self.execute_capability,
+                                          publish=publish)
+            self._parallel_work_service = service
+        if op == "start":
+            result = service.start(str(request.get("task", "")))
+        elif op == "status":
+            job_id = str(request.get("job_id", ""))
+            result = service.snapshot(job_id) or {"error": "job_not_found"}
+            if "error" not in result: result["events"] = service.events(job_id, 6)
+        elif op == "recent":
+            result = {"jobs": service.recent()}
+        elif op == "resume":
+            result = service.resume(str(request.get("job_id", "")), str(request.get("answer", "")))
+        elif op == "cancel":
+            result = service.cancel(str(request.get("job_id", "")))
+        else:
+            raise ValueError("operation không hỗ trợ")
+        ok = "error" not in result
+        return ActionExecutionResult(
+            action_name="parallel_work", action_input=action_input,
+            success=ok, observed=ok,
+            message=("Đã tiếp nhận work job, có thể tiếp tục trò chuyện." if op == "start"
+                     else "Đã đọc/cập nhật trạng thái công việc." if ok else "Không tìm thấy công việc."),
+            data={"job": json.dumps(result, ensure_ascii=False)[:7500]},
+            evidence=(("work-job:" + str(result.get("job_id"))) if result.get("job_id") else "",),
+        )
+
     def _math_workspace(self, action_input: str) -> ActionExecutionResult:
         """Tính toán thật trong worker riêng, gửi artifact riêng cho Godot."""
         from pathlib import Path

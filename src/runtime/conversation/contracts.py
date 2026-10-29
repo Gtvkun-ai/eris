@@ -67,6 +67,8 @@ class NextConversationMove:
     after: ConversationAfter = ConversationAfter.WAIT_USER
     move_id: str = field(default_factory=lambda: f"move:{uuid.uuid4().hex}")
     literal_dialogue: bool = False
+    # Tài liệu do Root quyết định, KHÔNG dùng làm nguồn TTS.
+    document_source: str = ""
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "NextConversationMove":
@@ -88,6 +90,7 @@ class NextConversationMove:
             after=after,
             move_id=_text(data.get("move_id"), 180) or f"move:{uuid.uuid4().hex}",
             literal_dialogue=data.get("_runtime_literal_dialogue") is True,
+            document_source=str(data.get("document_source", "") or "")[:12000],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +102,7 @@ class NextConversationMove:
             "say": self.say,
             "delivery": self.delivery,
             "after": self.after.value,
+            **({"document_source": self.document_source} if self.document_source else {}),
         }
 
 

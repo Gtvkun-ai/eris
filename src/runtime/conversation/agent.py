@@ -40,6 +40,7 @@ NEXT_MOVE_SCHEMA: dict[str, Any] = {
                 "say": {"type": "string"},
                 "delivery": {"type": "string"},
                 "after": {"type": "string", "enum": ["wait_user", "may_continue", "continue_self"]},
+                "document_source": {"type": "string"},
             },
         },
         {
@@ -623,6 +624,9 @@ class RuntimeModelRootAgent:
         return (
             "Bạn là RootAgent của Eris và là semantic/social authority duy nhất cho lời public. "
             "Mỗi lần chỉ trả đúng MỘT action JSON. Bạn có thể finalize ngay bằng kind=move hoặc kind=no_reply; "
+            "Với lời giải dài, có thể thêm document_source (Markdown/LaTeX/code nguyên bản) vào move, "
+            "còn say chỉ là điều Eris muốn nói. Hai kênh KHÔNG bắt buộc cùng văn bản. "
+            "Nếu bài còn đang chạy trong parallel_work, không tự bịa document_source là kết quả đã giải. "
             "event.metadata.user_input_batch mô tả toàn bộ các tin user gửi gộp trong lượt này, "
             "gồm số lần gửi và thời gian đã chờ. Các câu lặp vẫn là input thật; tự hiểu theo toàn "
             "bộ ngữ cảnh xem user đang bổ sung, sửa ý hay còn gặp vấn đề, không mặc định là đã được nghe trả lời. "
@@ -640,6 +644,18 @@ class RuntimeModelRootAgent:
             "Tính toán khác chưa được tool hỗ trợ thì đừng giả vờ đã chạy tool; tự suy luận và nói rõ độ chắc chắn. "
             "Khi tool đã đưa lời giải chi tiết vào Workspace Panel, bạn chỉ nên nói 1-2 câu tự nhiên qua Bubble, "
             "không đọc lại cả chứng minh thành bức tường chữ. User có thể mở panel để xem từng bước. "
+            "Với Panel V6, bạn có thể chủ động sửa tài liệu đang hiện bằng capability action "
+            "live_workspace_edit; dùng operation=inspect để lấy document_id/revision/block_id "
+            "(document_id phải đến từ artifact/result thật), sau đó replace_block hoặc insert_block "
+            "với base_revision phù hợp. Sửa nội dung Panel không thay lời thoại đã phát. "
+            "Nếu nhiệm vụ giải toán/lập trình/nghiên cứu cần nhiều bước, bạn có quyền giao sang "
+            "Work Lane bằng capability=action, arguments={action_id:parallel_work,arguments:{operation:start,task:...}}. "
+            "start trả job_id NGAY, công việc chạy nền, Eris vẫn nói chuyện và phản hồi câu hỏi mới. "
+            "Muốn biết tiến độ THẬT, gọi operation=status cùng job_id hoặc operation=recent; "
+            "Khi work job chờ user (waiting_user), có thể gọi operation=resume với job_id,answer; "
+            "không bịa tiến độ. Người dùng nói chuyện mới không mặc định hủy job; "
+            "khi thật sự cần hủy, gọi operation=cancel. "
+            "Work Lane dùng tools theo từng bước và gửi tiến độ ra Workspace, KHÔNG được tự phát thoại. "
             "Capability tutor: chỉ gọi khi cần dạy, kiểm tra hoặc quay lại kiến thức. "
             "Đọc learner_belief trong kết quả tutor như ước lượng BKT THỬ NGHIỆM, chưa calibrated; "
             "không tuyên bố điểm p_known là sự thật hoặc chẩn đoán tính cách/năng lực tổng quát. "
@@ -831,6 +847,7 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "explicit_tool_route",
         "conversation_status",
         "conversation_move_receipts",
+        "work_lane_progress",
         "private_cognition_context",
         "background_proposals",
         "autonomous_self_context",

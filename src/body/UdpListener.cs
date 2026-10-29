@@ -966,6 +966,7 @@ public partial class UdpListener : Node2D
 		TickCapabilityPanelStatus();
 		TickRuntimePresencePanel();
 		TickConversationUi();
+		TickLiveWorkspaceUi();
 
 		// Một số tick phía trên có thể auto-hide/show panel. Đồng bộ hit-test lần
 		// nữa ngay trong cùng frame để không giữ một rectangle click cũ.
@@ -977,7 +978,7 @@ public partial class UdpListener : Node2D
 			if (HandleLive2DControlPacket(raw))
 				continue;
 			// V5: nội dung panel không đi vào bộ phân tích thoại/Live2D.
-			if (TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))
+			if (TryHandleWorkspaceLivePacket(raw) || TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))
 				continue;
 			ForwardPacketToLive2D(raw);
 			ParseAndApply(raw);
@@ -4886,6 +4887,8 @@ public partial class UdpListener : Node2D
 	{
 		TryCaptureRuntimePresence(raw);
 		if (TryHandleTtsEvent(raw))
+			return;
+		if (TryHandleWorkspaceLivePacket(raw))
 			return;
 		if (TryHandleWorkspaceDocumentPacket(raw))
 			return;

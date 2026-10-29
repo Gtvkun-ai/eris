@@ -831,6 +831,7 @@ public partial class UdpListener
             TurnId = role == "assistant" ? _conversationIncomingTurnId : "",
         };
         TryAttachPendingWorkspaceDocument(entry);
+        TryAttachPendingLiveWorkspace(entry);
         _conversationEntries.Add(entry);
         while (_conversationEntries.Count > ConversationHistoryLimit)
             _conversationEntries.RemoveAt(0);

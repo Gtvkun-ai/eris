@@ -55,6 +55,8 @@ class PreparedPublicOutput:
     # Decision được chuẩn bị cùng frame, giữ riêng trong process; tuyệt đối
     # không serialize object này vào UDP/memory.
     decision: Any = None
+    # Sidecar trong process, không serialize vào gói Bubble/TTS.
+    document_source: str = ""
 
     @property
     def display_hash(self) -> str:

@@ -13,6 +13,9 @@ public partial class UdpListener
     private VBoxContainer _artifactWorkspaceRows;
     private Label _artifactWorkspaceTitle;
     private readonly HashSet<string> _artifactWorkspaceSeenJobs = new();
+    // Một công việc có nhiều mốc tiến độ nhưng chỉ chiếm MỘT vùng hiển thị.
+    private readonly Dictionary<string, VBoxContainer> _workDisplayGroups = new();
+    private readonly Dictionary<string, int> _workDisplayRevisions = new();
 
     private string ArtifactWorkspaceRoot()
     {
@@ -45,6 +48,8 @@ public partial class UdpListener
             foreach (Node child in _artifactWorkspaceRows.GetChildren())
             { _artifactWorkspaceRows.RemoveChild(child); child.QueueFree(); }
             _artifactWorkspaceSeenJobs.Clear();
+            _workDisplayGroups.Clear();
+            _workDisplayRevisions.Clear();
         };
         var hide = new Button { Text = "Ẩn" };
         hide.Pressed += () =>
@@ -168,6 +173,22 @@ public partial class UdpListener
                 }
             }
         }
+        // Gói tiến độ cùng work_id cập nhật lại card hiện có thay vì spam card mới.
+        string workId = ArtifactText(doc, "work_id", 64);
+        int workRevision = 0;
+        if (doc.TryGetProperty("work_revision", out var workRev))
+            workRev.TryGetInt32(out workRevision);
+        if (workId.StartsWith("work-", StringComparison.Ordinal) && workRevision > 0)
+        {
+            if (_workDisplayGroups.TryGetValue(workId, out var oldGroup) &&
+                GodotObject.IsInstanceValid(oldGroup))
+            {
+                _artifactWorkspaceRows.RemoveChild(oldGroup);
+                oldGroup.QueueFree();
+            }
+            _workDisplayGroups[workId] = group;
+            _workDisplayRevisions[workId] = workRevision;
+        }
         _artifactWorkspaceRows.AddChild(group);
         while (_artifactWorkspaceRows.GetChildCount() > 12)
         {
@@ -218,6 +239,16 @@ public partial class UdpListener
             }
             if (!root.TryGetProperty("workspace_version", out var version) || version.GetInt32() != 1)
                 return true;
+            // Bỏ bản cập nhật công việc đến muộn, không cho lùi trạng thái UI.
+            string workId = ArtifactText(root, "work_id", 64);
+            if (workId.StartsWith("work-", StringComparison.Ordinal) &&
+                root.TryGetProperty("work_revision", out var revElement) &&
+                revElement.TryGetInt32(out int incomingRev) &&
+                _workDisplayRevisions.TryGetValue(workId, out int knownRev) && incomingRev <= knownRev)
+            {
+                AcknowledgeArtifactJob(jobId);
+                return true;
+            }
             EnsureArtifactWorkspacePanel();
             AppendArtifactJob(root);
             _artifactWorkspaceSeenJobs.Add(jobId);

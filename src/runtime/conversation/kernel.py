@@ -838,6 +838,21 @@ class ConversationKernel:
         # Không đi qua model session transcript hay public history: dù Writer
         # chưa từng commit, Root vẫn được biết outcome trước đó.
         context['conversation_move_receipts'] = self.outcomes.feedback(sid)
+        # Root biết tiến độ công việc thật ở mỗi lượt chat; không phải đợi worker
+        # xong mới được phát lời. Không đưa raw log/tool input vào Writer/TTS.
+        executor = getattr(getattr(self.writer, "host", None), "action_executor", None)
+        work_lane = getattr(executor, "_parallel_work_service", None)
+        if work_lane is not None:
+            try:
+                context["work_lane_progress"] = [
+                    {"job_id": x["job_id"], "status": x["status"],
+                     "summary": str(x.get("summary", ""))[:600],
+                     "revision": x["revision"]}
+                    for x in work_lane.recent(limit=3)
+                ]
+            except Exception:
+                pass
+
         context["__conversation_note_tools"] = ConversationNoteTools(
             set_note=lambda text: self.store.set_note(sid, text),
             clear_note=lambda: self.store.clear_note(sid),

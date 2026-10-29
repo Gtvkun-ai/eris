@@ -209,7 +209,18 @@ public partial class UdpListener
             case "heading":
                 int level = 2;
                 if (block.TryGetProperty("level", out var l) && l.TryGetInt32(out int lv)) level = lv;
-                column.AddChild(RenderRichParagraph("**" + text + "**", level <= 2 ? 19 : 16));
+                // Tiêu đề là mốc điều hướng, không phải một dòng chữ bị hòa vào đoạn văn.
+                var section = new PanelContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+                var sectionStyle = new StyleBoxFlat {
+                    BgColor = new Color("fff4f9"), BorderColor = new Color("f4cce1"),
+                    BorderWidthLeft = 3, ContentMarginLeft = 14, ContentMarginRight = 12,
+                    ContentMarginTop = 9, ContentMarginBottom = 9,
+                    CornerRadiusTopLeft = 7, CornerRadiusTopRight = 7,
+                    CornerRadiusBottomLeft = 7, CornerRadiusBottomRight = 7,
+                };
+                section.AddThemeStyleboxOverride("panel", sectionStyle);
+                section.AddChild(RenderRichParagraph("**" + text + "**", level <= 2 ? 19 : 16));
+                column.AddChild(section);
                 break;
             case "paragraph":
                 column.AddChild(RenderRichParagraph(text));
@@ -241,12 +252,26 @@ public partial class UdpListener
                 break;
             case "formula":
                 string latex = DocumentString(block, "latex", 1800);
-                column.AddChild(RenderRichParagraph("Công thức: " + latex, 14));
-                var copyMath = new Button { Text = "Sao chép LaTeX" };
+                // Ưu tiên kết quả toán đã được dựng thành ảnh, không phơi raw LaTeX
+                // ở đầu mỗi công thức khiến bài giải trông như một đoạn log.
+                bool hasFormulaPicture = block.TryGetProperty("path", out _) && TryAddArtifactImage(column, block);
+                if (!hasFormulaPicture)
+                    column.AddChild(RenderRichParagraph(latex, 15));
+                var formulaFooter = new HBoxContainer();
+                var copyMath = new Button { Text = "Sao chép công thức" };
                 copyMath.Pressed += () => DisplayServer.ClipboardSet(latex);
-                column.AddChild(copyMath);
-                if (block.TryGetProperty("path", out _) && !TryAddArtifactImage(column, block))
-                    column.AddChild(RenderRichParagraph("Không mở được ảnh toán; LaTeX gốc vẫn còn ở trên.", 12, true));
+                formulaFooter.AddChild(copyMath);
+                if (hasFormulaPicture)
+                {
+                    var showRaw = new Button { Text = "Xem LaTeX" };
+                    var raw = RenderRichParagraph(latex, 12, true);
+                    raw.Visible = false;
+                    showRaw.Pressed += () => { raw.Visible = !raw.Visible; };
+                    formulaFooter.AddChild(showRaw);
+                    column.AddChild(formulaFooter);
+                    column.AddChild(raw);
+                }
+                else column.AddChild(formulaFooter);
                 break;
             case "table":
                 if (!block.TryGetProperty("headers", out var headers) || headers.ValueKind != JsonValueKind.Array)
@@ -292,6 +317,13 @@ public partial class UdpListener
                     if (block.ValueKind == JsonValueKind.Object) RenderStructuredBlock(column, block);
                 }
                 if (count > 0) return column;
+                // Tài liệu sống có thể bắt đầu trước khi nhánh trình bày gửi
+                // khối đầu tiên; đừng đổ nguyên wall-of-text ở trạng thái này.
+                if (root.TryGetProperty("revision", out var liveRev) && liveRev.TryGetInt32(out int r) && r > 0)
+                {
+                    column.AddChild(RenderRichParagraph("Eris đang viết lên bảng…", 14, true));
+                    return column;
+                }
             }
         }
         catch (Exception ex) { GD.PrintErr("[V5] Fallback text do lỗi render: " + ex.Message); }
