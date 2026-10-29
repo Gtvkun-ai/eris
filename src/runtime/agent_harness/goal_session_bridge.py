@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +27,14 @@ class GoalSessionBridge:
             db.execute('''CREATE TABLE IF NOT EXISTS work_goal_links (
                 goal_id TEXT PRIMARY KEY, job_id TEXT UNIQUE, state TEXT NOT NULL,
                 outcome_ref TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+            db.execute('''CREATE TABLE IF NOT EXISTS work_goal_link_history (
+                job_id TEXT PRIMARY KEY, goal_id TEXT NOT NULL,
+                outcome_ref TEXT NOT NULL, archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+            # Schema migration: epoch tại lúc claim ngăn job cũ sống lại
+            # nếu goal bị suspend -> resume trong khi tool cũ vẫn đang trả kết quả.
+            columns = {r[1] for r in db.execute('PRAGMA table_info(work_goal_links)')}
+            if 'goal_epoch' not in columns:
+                db.execute('ALTER TABLE work_goal_links ADD COLUMN goal_epoch INTEGER NOT NULL DEFAULT -1')
 
     def _db(self):
         return sqlite3.connect(str(self.work_db_path), timeout=8)
@@ -72,7 +81,7 @@ class GoalSessionBridge:
                 db.rollback()
                 return {"goal_id": goal_id, "job_id": existing[0] or "",
                         "status": existing[1], "already_claimed": True}
-            db.execute("INSERT INTO work_goal_links(goal_id,job_id,state) VALUES(?,NULL,'claiming')", (goal_id,))
+            db.execute("INSERT INTO work_goal_links(goal_id,job_id,state,goal_epoch) VALUES(?,NULL,'claiming',?)", (goal_id,goal.epoch))
             db.commit()
         candidate = goal.payload.get("candidate", {})
         motives = ", ".join(str(v)[:60] for v in candidate.get("motive_ids", ())[:6])
@@ -98,6 +107,80 @@ class GoalSessionBridge:
         # Worker có thể hoàn thành trước lúc ghi link, nên reconcile ngay.
         self.reconcile(job["job_id"])
         return {"goal_id": goal_id, "job_id": job["job_id"], "status": job["status"]}
+
+
+    def job_count(self, goal_id: str) -> int:
+        """Số Work Session đã bắt đầu cho goal, kể cả các phiên đã lưu lịch sử."""
+        with self._db() as db:
+            old = db.execute(
+                "SELECT COUNT(*) FROM work_goal_link_history WHERE goal_id=?", (goal_id,)
+            ).fetchone()[0]
+            current = db.execute(
+                "SELECT job_id FROM work_goal_links WHERE goal_id=?", (goal_id,)
+            ).fetchone()
+        return int(old) + int(bool(current and current[0]))
+
+    def continue_goal(self, goal_id: str) -> dict[str, Any]:
+        """Executive đã chọn tiếp tục: tạo job kế tiếp có evidence từ job trước.
+
+        Không replay job cũ hoặc tool đã chạy. Chỉ cho chuyển khi outcome đã
+        được ghi vào Goal Ledger; `claiming` sau crash phải kiểm tra thủ công.
+        """
+        goal = self.goals.get(str(goal_id))
+        if goal is None or goal.status != "active":
+            return {"error": "goal_not_active"}
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            # Giới hạn tài nguyên của phiên tự chủ, không phải luật tính cách.
+            # Không để model complete trống khiến Eris tiêu token vô hạn.
+            used = int(db.execute(
+                "SELECT COUNT(*) FROM work_goal_link_history WHERE goal_id=?", (goal_id,)
+            ).fetchone()[0])
+            maximum = max(1, min(50, int(os.getenv("ERIS_GOAL_MAX_JOBS", "6"))))
+            if used + 1 >= maximum:
+                db.rollback()
+                return {"error": "goal_work_budget_exhausted", "used": used + 1, "max": maximum}
+            row = db.execute(
+                "SELECT job_id,state,outcome_ref FROM work_goal_links WHERE goal_id=?",
+                (goal_id,),
+            ).fetchone()
+            if not row or row[1] != "outcome_recorded" or not row[2]:
+                db.rollback()
+                return {"error": "previous_outcome_not_recorded"}
+            old_job, _, prior_ref = row
+            snap = self._snapshot_work(old_job)
+            if not snap or snap.get("status") not in {"completed", "failed", "needs_review", "cancelled"}:
+                db.rollback()
+                return {"error": "previous_job_not_terminal"}
+            db.execute(
+                "INSERT OR IGNORE INTO work_goal_link_history(job_id,goal_id,outcome_ref) VALUES(?,?,?)",
+                (old_job, goal_id, prior_ref),
+            )
+            db.execute("UPDATE work_goal_links SET job_id=NULL,state='claiming',outcome_ref='',goal_epoch=? WHERE goal_id=?",
+                       (goal.epoch, goal_id))
+            db.commit()
+        # Từ đây nếu process crash, để `claiming` cho người dùng kiểm tra.
+        # Không tự tạo lại side effect khi chưa xác định job mới đã được tạo chưa.
+        latest = self.goals.get(goal_id)
+        if latest is None or latest.status != "active":
+            return {"error": "goal_changed_before_continue"}
+        try:
+            job = self._start_work(
+                f"Tiếp tục mục tiêu của Eris [{goal_id}]: {goal.title}\n"
+                f"Kết quả trước: {prior_ref}.\n"
+                "Dựa trên evidence cũ, chọn bước tiếp theo; không lặp lại thao tác đã hoàn thành. "
+                "Báo bằng chứng, không tự tuyên bố mục tiêu đạt."
+            )
+        except Exception:
+            with self._db() as db:
+                db.execute("UPDATE work_goal_links SET state='needs_review' WHERE goal_id=?", (goal_id,))
+            raise
+        with self._db() as db:
+            db.execute("UPDATE work_goal_links SET job_id=?,state='linked' WHERE goal_id=?",
+                       (job["job_id"], goal_id))
+        self.reconcile(job["job_id"])
+        return {"goal_id": goal_id, "job_id": job["job_id"], "status": job["status"],
+                "continued_from": old_job}
 
     def reconcile(self, job_id: str) -> None:
         """Receipt job → outcome của goal; không tự đổi trạng thái achieved."""
@@ -143,11 +226,15 @@ class GoalSessionBridge:
         công việc đã được giao. Tool đang chạy cần tự xử lý hủy riêng.
         """
         with self._db() as db:
-            row = db.execute('SELECT goal_id FROM work_goal_links WHERE job_id=?', (job_id,)).fetchone()
+            row = db.execute('SELECT goal_id,goal_epoch FROM work_goal_links WHERE job_id=?', (job_id,)).fetchone()
         if not row:
-            return True  # Job do user/Root giao trực tiếp, không gắn goal.
+            # Nếu job thuộc link đã lưu lịch sử thì không được chạy tiếp,
+            # kể cả sau khi goal được mở lại trong một epoch mới.
+            with self._db() as db:
+                old = db.execute('SELECT 1 FROM work_goal_link_history WHERE job_id=?', (job_id,)).fetchone()
+            return not bool(old)
         goal = self.goals.get(row[0])
-        return bool(goal and goal.status == 'active')
+        return bool(goal and goal.status == 'active' and (int(row[1]) < 0 or goal.epoch == int(row[1])))
 
     def reconcile_all(self) -> None:
         """Khôi phục link/outcome đã commit sau restart, không chạy lại action."""

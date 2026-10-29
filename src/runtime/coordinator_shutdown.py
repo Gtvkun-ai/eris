@@ -84,6 +84,13 @@ class CoordinatorShutdownMixin:
         if callable(repair_close):
             repair_close()
         self.running = False
+        # P2: ngắt quyết định goal nền trước khi tháo Subject/Work Session.
+        goal_driver = getattr(self, "_identity_goal_driver", None)
+        if goal_driver is not None:
+            try:
+                goal_driver.close()
+            except Exception as exc:
+                self.logger.debug("[identity-goal] stop error: %s", exc)
         # IDE gateway giữ socket/thread riêng. Dừng nó trước khi tháo runtime để
         # client không nhận thêm event trong lúc các subsystem đang shutdown.
         agent_ws = getattr(self, "agent_ws_service", None)

@@ -1559,6 +1559,10 @@ class ExecutiveCortex:
             self._log("debug", "[life-horizon-v74] arbiter degraded: %s", exc)
 
         autonomous_mode = str(mode or "").startswith("autonomous")
+        # P2: V103 motor chỉ sở hữu *public expression* (speech/body/silence).
+        # Goal adoption/review là quyết định công việc có cấu trúc của Subject;
+        # không cho một lệnh SILENCE của expression motor phủ quyết Work Lane.
+        goal_work_mode = str(mode or "").startswith("autonomous_goal")
         if autonomous_mode:
             # V95: lifecycle validity đứng *trước* utility competition. Một motive
             # stale/self-owned không được quyền sống sót chỉ vì pressure/score cao.
@@ -1586,7 +1590,7 @@ class ExecutiveCortex:
         # motor. Neuro frame vẫn tồn tại để giữ typed contracts V93-V97, nhưng
         # motor trả SelectionResult one-hot theo action family đã commit; không
         # đọc coalition.score/softmax và không mời semantic critic vote winner.
-        if autonomous_mode:
+        if autonomous_mode and not goal_work_mode:
             _nervous_authority = getattr(self.owner, "nervous_system_v103", None)
             _nervous_select = getattr(_nervous_authority, "selection_for_frame", None)
             if callable(_nervous_select):

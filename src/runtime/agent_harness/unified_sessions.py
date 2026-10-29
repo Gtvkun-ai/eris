@@ -80,12 +80,14 @@ class UnifiedAgentSessions:
     def execute(self, command: Mapping[str, Any]) -> dict:
         """Một contract điều khiển chung, dùng implementation của Work Store."""
         op = str(command.get("operation", "") or "")
-        if op in {"goals", "goal_status", "start_goal"}:
+        if op in {"goals", "goal_status", "start_goal", "continue_goal"}:
             if self._goal_bridge is None:
                 return {"error": "goal_registry_unavailable"}
             if op == "goals":
                 return self._goal_bridge.list()
             if op == "goal_status":
                 return self._goal_bridge.state(str(command.get("goal_id", "")))
+            if op == "continue_goal":
+                return self._goal_bridge.continue_goal(str(command.get("goal_id", "")))
             return self._goal_bridge.start_goal(str(command.get("goal_id", "")))
         return self.work.execute(command)

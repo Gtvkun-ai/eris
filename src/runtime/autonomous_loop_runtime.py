@@ -197,15 +197,15 @@ class AutonomousLoopRuntimeMixin:
             )
             self.stop()
             return False
-        # V2: pump không đợi LLM/tool; job chậm chạy trên single-flight worker.
-        # Không dùng đường này để sinh lời thoại hay claim Stage/SpeechAuthority.
-        from runtime.autonomy.agency_v3 import ensure_autonomy_v3
+        # P2: nối goal từ chính quyết định Subject/Executive sang Work Lane.
+        # Legacy V3 sandbox pilot không chạy song song, tránh hai nơi tự adopt goal.
         try:
-            _autonomy = ensure_autonomy_v3(self)
-            if _autonomy is not None:
-                _autonomy.pump()
+            from runtime.agent_harness.identity_goal_runtime import ensure_identity_goal_driver
+            _goal_driver = ensure_identity_goal_driver(self)
+            if _goal_driver is not None:
+                _goal_driver.pump()
         except Exception as _exc:
-            self.logger.warning("[autonomy-v3] degraded: %s", _exc)
+            self.logger.warning("[identity-goal-runtime] degraded: %s", _exc)
         from runtime.autonomy.authority_trace import emit as autonomy_trace, span as autonomy_span
         with autonomy_span("autonomous_loop"):
             autonomy_trace("autonomous.iteration.start", source="autonomous_loop")
