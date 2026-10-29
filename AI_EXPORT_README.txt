@@ -5,7 +5,7 @@ Excludes local state, known credential files, binaries, media, caches and model 
 This is a code review snapshot, not a complete runnable distribution.
 Filename filters do not detect secrets hardcoded inside source. Review before sharing.
 
-Included files: 1915
+Included files: 1976
 .editorconfig
 .env.example
 .gitattributes
@@ -30,6 +30,8 @@ docs/knowledge/2026-10-18-five-module-study.md
 docs/knowledge/2026-10-18-runtime-entrypoints-and-managers.md
 docs/knowledge/2026-10-18-runtime-module-map.md
 docs/knowledge/2026-10-23-gemma-runtime-audit.md
+docs/knowledge/2026-10-28-parallel-work-runtime-reconstruction.md
+docs/knowledge/2026-10-28-speech-panel-separation-study.md
 env-examples/.env.cloud.example
 env-examples/.env.local-smoke.example
 env-examples/.env.minimal.example
@@ -52,7 +54,12 @@ installer/ErisPatch.iss
 project.godot
 pyproject.toml
 pytest.ini
+README_P2_IDENTITY_WORK_VI.md
+README_RUNTIME_RECONSTRUCTION_VI.md
+README_V3_THU_NGHIEM.md
+README_V4_MATH_WORKSPACE_TIENG_VIET.md
 requirements.txt
+requirements-artifact-workspace.txt
 requirements-deep-environment-windows.txt
 requirements-live2d.txt
 run_build.py
@@ -142,6 +149,8 @@ src/body/SubjectPerformanceFrame.cs
 src/body/SubjectPerformanceFrame.cs.uid
 src/body/UdpDecisionParser.cs
 src/body/UdpDecisionParser.cs.uid
+src/body/UdpListener.ArtifactWorkspace.cs
+src/body/UdpListener.ArtifactWorkspace.cs.uid
 src/body/UdpListener.CapabilityPanel.cs
 src/body/UdpListener.CapabilityPanel.cs.uid
 src/body/UdpListener.CompanionWorkspace.cs
@@ -152,10 +161,14 @@ src/body/UdpListener.cs
 src/body/UdpListener.cs.uid
 src/body/UdpListener.DepthPanel.cs
 src/body/UdpListener.DepthPanel.cs.uid
+src/body/UdpListener.GoalsPanel.cs
+src/body/UdpListener.GoalsPanel.cs.uid
 src/body/UdpListener.IdentityPrivateMind.cs
 src/body/UdpListener.IdentityPrivateMind.cs.uid
 src/body/UdpListener.Live2D.cs
 src/body/UdpListener.Live2D.cs.uid
+src/body/UdpListener.LiveWorkspace.cs
+src/body/UdpListener.LiveWorkspace.cs.uid
 src/body/UdpListener.MaintenanceUiSync.cs
 src/body/UdpListener.MaintenanceUiSync.cs.uid
 src/body/UdpListener.MemoryPanel.cs
@@ -170,6 +183,8 @@ src/body/UdpListener.SettingsPanel.cs
 src/body/UdpListener.SettingsPanel.cs.uid
 src/body/UdpListener.SettingsSchemaPanel.cs
 src/body/UdpListener.SettingsSchemaPanel.cs.uid
+src/body/UdpListener.StructuredOutput.cs
+src/body/UdpListener.StructuredOutput.cs.uid
 src/body/udpListener.tscn
 src/body/UdpListener.TutorPanel.cs
 src/body/UdpListener.TutorPanel.cs.uid
@@ -605,8 +620,11 @@ src/runtime/agent_harness/event_bus.py
 src/runtime/agent_harness/event_sinks.py
 src/runtime/agent_harness/gemini_cli_executor.py
 src/runtime/agent_harness/gemini_pool.py
+src/runtime/agent_harness/goal_session_bridge.py
 src/runtime/agent_harness/graph_builder.py
 src/runtime/agent_harness/graph_state.py
+src/runtime/agent_harness/identity_goal_driver.py
+src/runtime/agent_harness/identity_goal_runtime.py
 src/runtime/agent_harness/native_tool_adapter.py
 src/runtime/agent_harness/official_api_executor.py
 src/runtime/agent_harness/permission_gate.py
@@ -617,6 +635,8 @@ src/runtime/agent_harness/spec_manager.py
 src/runtime/agent_harness/steering_loader.py
 src/runtime/agent_harness/supervisor_bridge.py
 src/runtime/agent_harness/task_store.py
+src/runtime/agent_harness/unified_sessions.py
+src/runtime/agent_harness/work_skill_context.py
 src/runtime/agent_harness/workspace_checkpoint_store.py
 src/runtime/agent_service/__init__.py
 src/runtime/agent_service/ide_rpc.py
@@ -681,6 +701,17 @@ src/runtime/audit/contracts.py
 src/runtime/audit/forensic_store.py
 src/runtime/audit/replay.py
 src/runtime/autonomous_loop_runtime.py
+src/runtime/autonomy/__init__.py
+src/runtime/autonomy/action_bridge.py
+src/runtime/autonomy/agency_v2.py
+src/runtime/autonomy/agency_v3.py
+src/runtime/autonomy/authority_trace.py
+src/runtime/autonomy/goal_contracts.py
+src/runtime/autonomy/goal_events.py
+src/runtime/autonomy/goal_projection.py
+src/runtime/autonomy/goal_registry.py
+src/runtime/autonomy/initiative_bridge.py
+src/runtime/autonomy/live_shadow.py
 src/runtime/background_memory_digest.py
 src/runtime/background_memory_digest_kernel.py
 src/runtime/banter_arbiter.py
@@ -1013,6 +1044,13 @@ src/runtime/voice_policy.py
 src/runtime/voice_profile_compiler.py
 src/runtime/vtuber_stage_version.py
 src/runtime/work_keys.py
+src/runtime/workspace/__init__.py
+src/runtime/workspace/live_document.py
+src/runtime/workspace/math_artifacts.py
+src/runtime/workspace/math_worker.py
+src/runtime/workspace/parallel_work.py
+src/runtime/workspace/python_docker.py
+src/runtime/workspace/structured_output.py
 src/runtime/workspace_manager.py
 src/runtime/workspace_project_bundle.py
 src/runtime/world/__init__.py
@@ -1045,6 +1083,7 @@ src/telemetry/__init__.py
 src/telemetry/content_metadata.py
 src/telemetry/service.py
 src/telemetry/system.py
+src/tests/agent_harness/test_identity_goal_integration.py
 src/tests/audit/test_forensic_replay.py
 src/tests/conversation/test_20261015_loop_receipts.py
 src/tests/conversation/test_20261015_provider_recovery_full.py
@@ -1146,6 +1185,10 @@ src/tests/test_agent_harness_v2.py
 src/tests/test_agent_ide_bridge_v2.py
 src/tests/test_agent_vscode_attachments.py
 src/tests/test_architecture_c_runtime_regressions.py
+src/tests/test_autonomy_agency_v2.py
+src/tests/test_autonomy_goal_registry_shadow.py
+src/tests/test_autonomy_large_bundle.py
+src/tests/test_autonomy_v3_experimental.py
 src/tests/test_background_living_user_observer.py
 src/tests/test_basic_settings_main_brain.py
 src/tests/test_bootstrap_pipeline_v14.py
@@ -1348,6 +1391,12 @@ src/tests/test_vision_route_stance_patch.py
 src/tests/test_voice_director_elevenlabs.py
 src/tests/test_web_session_guard_v1.py
 src/tests/test_world_state_v1.py
+src/tests/workspace/test_live_workspace_v6.py
+src/tests/workspace/test_math_artifact_real_chat_case.py
+src/tests/workspace/test_math_workspace_v4.py
+src/tests/workspace/test_p1_skills_identity_context.py
+src/tests/workspace/test_parallel_work_reconstruction.py
+src/tests/workspace/test_structured_output_v5.py
 src/tests/world/test_fenced_capabilities.py
 src/tests/world/test_mutation_journal_v24.py
 src/tests/world/test_native_sandbox.py
@@ -1522,6 +1571,11 @@ tools/account_hub/static/app.js
 tools/account_hub/static/index.css
 tools/account_hub/static/index.html
 tools/apply_deepseek_pool_to_secrets.py
+tools/autonomy_inspect.py
+tools/autonomy_proof.py
+tools/autonomy_v2_probe.py
+tools/autonomy_v3_probe.py
+tools/eris_math_chat_case_probe.py
 tools/export_ai_zip.ps1
 tools/gemini_cookie_extension/manifest.json
 tools/gemini_cookie_extension/popup.html
@@ -1530,7 +1584,12 @@ tools/gemini_vision_docker/docker-compose.yml
 tools/gemini_vision_docker/Dockerfile
 tools/gemini_vision_docker/requirements.txt
 tools/gemini_vision_docker/server.py
+tools/goal_shadow_probe.py
+tools/math_workspace_probe.py
 tools/open_url_when_ready.ps1
+tools/p2_identity_goal_probe.py
+tools/package_v4.py
+tools/parallel_work_probe.py
 tools/repo_context/cli.py
 tools/repo_context/knowledge_cache.py
 tools/repo_context/lang_parsers.py
@@ -1541,6 +1600,8 @@ tools/repo_context/tiered_loader.py
 tools/test_gemini_web_ping.py
 tools/ui-preview/companion_preview.tscn
 tools/ui-preview/CompanionPreview.cs
+tools/v5_workspace_probe.py
+tools/v6_live_workspace_probe.py
 tools/whale2api/.dockerignore
 tools/whale2api/.env.example
 tools/whale2api/.gitignore

@@ -311,7 +311,10 @@ public partial class UdpListener
 	{
 		Control liveBubble = Live2DSpeechBubbleControl();
 		if (!_isLive2DMode || liveBubble == null)
+		{
+			HideCompanionBubbleTail();
 			return;
+		}
 		EnsureControlOnCanvasLayer(liveBubble, 999);
 		// Live2D không lật cả sprite như body pixel. Giữ bubble và chữ không bị
 		// mirror theo trạng thái facing còn sót lại của MotionController.
@@ -321,7 +324,10 @@ public partial class UdpListener
 		if (_hasLive2DWindowRect)
 			PositionLive2DBubbleBesideModel(liveBubble);
 		else
+		{
 			liveBubble.Position = _bubbleBasePos;
+			HideCompanionBubbleTail();
+		}
 	}
 
 	private void PositionLive2DBubbleBesideModel(Control liveBubble)
@@ -340,7 +346,7 @@ public partial class UdpListener
 			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
 		Vector2 bubbleSize = liveBubble.Size;
 		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
-			bubbleSize = new Vector2(560f, 230f);
+			bubbleSize = new Vector2(380f, 110f);
 
 		float margin = 8f;
 		float gap = Mathf.Clamp(Live2DBubbleGap, 8f, 96f);
@@ -350,7 +356,9 @@ public partial class UdpListener
 		bool canPlaceLeft = leftSpace >= bubbleSize.X + gap + margin;
 
 		float x;
-		if (canPlaceRight || (!canPlaceLeft && rightSpace >= leftSpace))
+		bool rightOfModel = canPlaceRight;
+		bool besideModel = canPlaceLeft || canPlaceRight;
+		if (canPlaceRight)
 			x = liveRect.End.X + gap;
 		else if (canPlaceLeft)
 			x = liveRect.Position.X - bubbleSize.X - gap;
@@ -359,9 +367,13 @@ public partial class UdpListener
 
 		float y = liveRect.Position.Y
 			+ liveRect.Size.Y * Mathf.Clamp(Live2DBubbleSideAnchorY, 0.05f, 0.75f);
+		// Small desktops: avoid covering Eris when neither side fits.
+		if (!besideModel && liveRect.Position.Y >= bubbleSize.Y + gap + margin)
+			y = liveRect.Position.Y - bubbleSize.Y - gap;
 		x = Mathf.Clamp(x, margin, Math.Max(margin, viewportSize.X - bubbleSize.X - margin));
-		y = Mathf.Clamp(y, margin, Math.Max(margin, viewportSize.Y - bubbleSize.Y - margin));
+		y = Mathf.Clamp(y + _companionBubbleEntranceOffsetY, margin, Math.Max(margin, viewportSize.Y - bubbleSize.Y - margin));
 		liveBubble.GlobalPosition = new Vector2(x, y);
+		PositionCompanionBubbleTail(liveBubble, besideModel, rightOfModel);
 	}
 
 	private void SendLive2DControl(string type, bool visible = true)

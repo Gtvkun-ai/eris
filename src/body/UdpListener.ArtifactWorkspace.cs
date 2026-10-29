@@ -94,7 +94,7 @@ public partial class UdpListener
         group.AddChild(label);
     }
 
-    private bool TryAddArtifactImage(VBoxContainer group, JsonElement item)
+    private bool TryAddArtifactImage(VBoxContainer group, JsonElement item, bool inlineFormula = false)
     {
         string relative = ArtifactText(item, "path", 256);
         string expectedHash = ArtifactText(item, "sha256", 64);
@@ -120,7 +120,11 @@ public partial class UdpListener
                 Texture = texture,
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-                CustomMinimumSize = new Vector2(700, Mathf.Clamp(picture.GetHeight(), 160, 480)),
+                // Công thức trong chat phải co theo bề ngang; không ép tối thiểu
+                // 700px như đồ thị trên bảng artifact độc lập.
+                CustomMinimumSize = inlineFormula
+                    ? new Vector2(0, Mathf.Clamp(picture.GetHeight(), 52, 190))
+                    : new Vector2(700, Mathf.Clamp(picture.GetHeight(), 160, 480)),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                 TooltipText = ArtifactText(item, "alt", 160),
             };

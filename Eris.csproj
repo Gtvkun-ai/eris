@@ -5,6 +5,7 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="src/body/richchat/**/*" Exclude="src/body/richchat/**/*.txt" />
     <Compile Remove="src\integration\body_contracts\**" />
   </ItemGroup>
 </Project>

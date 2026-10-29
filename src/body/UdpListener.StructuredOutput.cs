@@ -254,7 +254,7 @@ public partial class UdpListener
                 string latex = DocumentString(block, "latex", 1800);
                 // Ưu tiên kết quả toán đã được dựng thành ảnh, không phơi raw LaTeX
                 // ở đầu mỗi công thức khiến bài giải trông như một đoạn log.
-                bool hasFormulaPicture = block.TryGetProperty("path", out _) && TryAddArtifactImage(column, block);
+                bool hasFormulaPicture = block.TryGetProperty("path", out _) && TryAddArtifactImage(column, block, inlineFormula: true);
                 if (!hasFormulaPicture)
                     column.AddChild(RenderRichParagraph(latex, 15));
                 var formulaFooter = new HBoxContainer();

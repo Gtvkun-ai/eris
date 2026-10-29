@@ -101,6 +101,11 @@ public partial class UdpListener
             UpdateCompanionColumns();
         });
         row.AddChild(_workspacePlannerToggle);
+        var richChat = WorkspaceButton("Rich Chat", "history", OpenRichChatPortal);
+        richChat.TooltipText = "Mở chat mới: Markdown, LaTeX, code, bảng · vẫn kết nối Eris đang chạy";
+        richChat.Disabled = _companionPreview;
+        row.AddChild(richChat);
+
         var settings = WorkspaceButton("", "settings", () =>
         {
             CloseConversationHistoryPanel();

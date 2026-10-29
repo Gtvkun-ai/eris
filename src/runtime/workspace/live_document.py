@@ -269,7 +269,9 @@ class LiveWorkspaceService:
                     return False
                 block = dict(block)
                 if block.get("type") == "formula":
-                    try: _render_math([block], self.workspace, doc.document_id)
+                    # Mỗi block có PNG riêng; dùng cùng document_id sẽ ghi đè math_0.png
+                    # và khiến các block trước không còn khớp SHA-256 khi Godot đọc.
+                    try: _render_math([block], self.workspace, f"{doc.document_id}_b{index:03d}")
                     except (ImportError, OSError, ValueError): pass
                 if not self.revise(doc, operation="insert_block", block_id=f"b{index:03d}", block=block,
                                    owner="presenter", host=host, port=port):

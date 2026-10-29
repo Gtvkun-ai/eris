@@ -114,13 +114,55 @@ def _paragraphs(lines: list[str]) -> list[dict]:
     return result[:_MAX_BLOCKS]
 
 
+# Một số phiên TTS/Root xuất toán bằng ký tự Unicode (∫₀¹, x²), thay vì
+# LaTeX có dấu $. Đổi CHỈ biểu thức tích phân có cận và vi phân đủ rõ thành
+# formula để panel dựng toán; phần chữ xung quanh vẫn giữ nguyên.
+_SUB = str.maketrans('₀₁₂₃₄₅₆₇₈₉₋', '0123456789-')
+_SUP = str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹⁻', '0123456789-')
+_UNICODE_INTEGRAL = (
+    r'∫\s*[₀₁₂₃₄₅₆₇₈₉₋]+\s*[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+\s*'
+    r'[a-zA-Z0-9²³⁰¹^*/+().\- ]{1,70}?\s*d[a-zA-Z]\b'
+    r'(?:\s*=\s*[0-9a-zA-Z²³⁰¹₀₁₂₃₄₅₆₇₈₉ |^*/+().\-]+){0,3}'
+)
+_INLINE_MATH = re.compile(
+    r'(?<!\\)\$(?!\$)(.+?)(?<!\\)\$|\\\((.+?)\\\)|(?P<unicode>' + _UNICODE_INTEGRAL + r')'
+)
+
+
+def _unicode_integral_latex(expression: str) -> str:
+    match = re.match(
+        r'∫\s*([₀₁₂₃₄₅₆₇₈₉₋]+)\s*([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)\s*(.*)',
+        expression, re.S,
+    )
+    if not match:
+        return expression
+    lower, upper, rest = match.groups()
+    rest = re.sub(
+        r'\|([₀₁₂₃₄₅₆₇₈₉₋]+)([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)',
+        lambda m: r'\vert_{' + m.group(1).translate(_SUB) + '}^{' + m.group(2).translate(_SUP) + '}',
+        rest,
+    )
+    rest = re.sub(
+        r'([a-zA-Z0-9])([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+|[²³]+)',
+        lambda m: m.group(1) + '^{' + m.group(2).translate(_SUP).replace('²','2').replace('³','3') + '}',
+        rest,
+    )
+    rest = re.sub(
+        r'(?<![\w{}])([0-9]+|[a-zA-Z](?:\^\{[0-9]+\})?)/([0-9]+)(?!\w)',
+        lambda m: r'\frac{' + m.group(1) + '}{' + m.group(2) + '}',
+        rest,
+    )
+    rest = re.sub(r'\bd([a-zA-Z])\b', r'\\,d\1', rest, count=1)
+    return r'\int_{' + lower.translate(_SUB) + '}^{' + upper.translate(_SUP) + '} ' + rest.strip()
+
+
 def parse_markdown(text: str) -> list[dict]:
     """Chuyển transcript sang khối, không bắt Root phải gọi tool."""
     if not isinstance(text, str) or len(text) > _MAX_TEXT:
         raise ValueError("Transcript quá dài hoặc không hợp lệ")
     initial = _paragraphs(text.splitlines())
     output: list[dict] = []
-    pattern = re.compile(r'(?<!\\)\$(?!\$)(.+?)(?<!\\)\$|\\\((.+?)\\\)')
+    pattern = _INLINE_MATH
     for block in initial:
         if block.get('type') != 'paragraph':
             output.append(block)
@@ -131,7 +173,10 @@ def parse_markdown(text: str) -> list[dict]:
         for found in matches[:15]:
             if content[end:found.start()].strip():
                 output.append({'type':'paragraph', 'text':content[end:found.start()].strip()})
-            output.append({'type':'formula', 'latex':(found.group(1) or found.group(2)).strip()})
+            latex = (found.group(1) or found.group(2) or '').strip()
+            if found.group('unicode'):
+                latex = _unicode_integral_latex(found.group('unicode'))
+            output.append({'type':'formula', 'latex':latex})
             end = found.end()
         if matches:
             if content[end:].strip(): output.append({'type':'paragraph', 'text':content[end:].strip()})
@@ -251,6 +296,18 @@ def dispatch_committed_document(*, text: str, session_id: str, generation: int,
         try:
             doc=prepare_document(text=text,session_id=session_id,generation=generation,
                                  run_id=run_id,delivery_id=delivery_id,turn_id=turn_id,workspace=workspace)
+            # P0: publish a local contract fixture for the future presentation
+            # runtime, without changing/depending on the existing UDP ACK.
+            from .artifact_protocol import (
+                protocol_enabled, adapter_document_source, write_bundle_sidecar,
+            )
+            if protocol_enabled():
+                try:
+                    bundle = adapter_document_source(doc, source_text=text)
+                    write_bundle_sidecar(bundle, workspace)
+                except (ValueError, OSError, TypeError) as exc:
+                    if logger is not None:
+                        logger.warning('[presentation-p0] document sidecar failed: %s', exc)
             ok=send_document_acknowledged(doc,host=host,port=port)
             if logger is not None and not ok:
                 logger.debug('[workspace-v5] chưa có xác nhận hiển thị document=%s',doc['document_id'])

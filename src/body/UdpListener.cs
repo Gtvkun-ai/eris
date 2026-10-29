@@ -918,6 +918,7 @@ public partial class UdpListener : Node2D
 	{
 		RunLogger.Log($"[Lifecycle] _ExitTree: reason={_shutdownReason}");
 		ShutdownLive2DMode();
+		StopRichChatPortal();
 		StopVisionProcess();
 		_udp.Close();
 		_chatSend.Close();
@@ -966,6 +967,7 @@ public partial class UdpListener : Node2D
 		TickCapabilityPanelStatus();
 		TickRuntimePresencePanel();
 		TickConversationUi();
+		TickRichChatPortal();
 		TickLiveWorkspaceUi();
 
 		// Một số tick phía trên có thể auto-hide/show panel. Đồng bộ hit-test lần
@@ -1334,92 +1336,8 @@ public partial class UdpListener : Node2D
 		}
 	}
 
-	private void BuildLive2DSpeechBubble()
-	{
-		Control root = UiOverlayRoot();
-		if (root == null || _live2DSpeechBubble != null)
-			return;
-
-		_live2DSpeechBubble = new PanelContainer
-		{
-			Name = "Live2DSpeechBubbleV2",
-			Visible = false,
-			Size = new Vector2(500f, 174f),
-			CustomMinimumSize = new Vector2(500f, 174f),
-			MouseFilter = Control.MouseFilterEnum.Pass,
-			ZIndex = 999,
-		};
-		_live2DSpeechBubble.AddThemeStyleboxOverride("panel", MakeFlatStyle(
-			new Color(0.035f, 0.10f, 0.065f, 0.97f),
-			new Color(0.20f, 0.72f, 0.41f, 0.95f),
-			18,
-			1,
-			18f,
-			shadow: true));
-		root.AddChild(_live2DSpeechBubble);
-		_live2DSpeechBubble.AddChild(BuildSpeechBubbleContent(out _live2DSpeechStatus, out _live2DSpeechLabel, darkText: false));
-		ConfigureLive2DSpeechBubbleVisual();
-	}
-
-	private VBoxContainer BuildSpeechBubbleContent(out Label status, out RichTextLabel text, bool darkText)
-	{
-		var root = new VBoxContainer
-		{
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-		};
-		root.AddThemeConstantOverride("separation", 8);
-
-		var header = new HBoxContainer();
-		header.AddThemeConstantOverride("separation", 8);
-		root.AddChild(header);
-
-		var dot = new Label { Text = "◆" };
-		dot.AddThemeColorOverride("font_color", new Color(0.20f, 0.72f, 0.41f, 1f));
-		dot.AddThemeFontSizeOverride("font_size", 13);
-		header.AddChild(dot);
-
-		var name = new Label { Text = "ERIS" };
-		name.AddThemeColorOverride("font_color", darkText ? new Color(0.12f, 0.27f, 0.18f, 1f) : new Color(0.91f, 0.98f, 0.94f, 1f));
-		name.AddThemeFontSizeOverride("font_size", 13);
-		header.AddChild(name);
-
-		status = new Label
-		{
-			Text = "đang trả lời",
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			HorizontalAlignment = HorizontalAlignment.Left,
-		};
-		status.AddThemeColorOverride("font_color", darkText ? new Color(0.36f, 0.49f, 0.41f, 1f) : new Color(0.64f, 0.66f, 0.69f, 1f));
-		status.AddThemeFontSizeOverride("font_size", 12);
-		header.AddChild(status);
-
-		// Đóng bubble thủ công: lời dài không tự biến mất và không chắn màn hình mãi.
-		var closeSpeech = new Button
-		{
-			Text = "×", TooltipText = "Đóng lời thoại (lịch sử chat vẫn được lưu)",
-			CustomMinimumSize = new Vector2(24f, 24f),
-			MouseFilter = Control.MouseFilterEnum.Stop,
-		};
-		closeSpeech.Pressed += () => DismissSpeechBubble();
-		header.AddChild(closeSpeech);
-
-		text = new RichTextLabel
-		{
-			BbcodeEnabled = true,
-			FitContent = false,
-			ScrollActive = true,
-			ScrollFollowing = false,
-			AutowrapMode = TextServer.AutowrapMode.WordSmart,
-			SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-			SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-			MouseFilter = Control.MouseFilterEnum.Stop,
-		};
-		text.AddThemeColorOverride("default_color", darkText ? new Color(0.08f, 0.16f, 0.11f, 1f) : new Color(0.91f, 0.98f, 0.94f, 1f));
-		text.AddThemeFontSizeOverride("normal_font_size", 17);
-		root.AddChild(text);
-		return root;
-	}
+	// The companion bubble is a dedicated presenter, separate from the legacy 2D speech frame.
+	private void BuildLive2DSpeechBubble() => BuildCompanionSpeechBubble();
 
 	private Control UiOverlayRoot()
 	{
@@ -1569,7 +1487,7 @@ public partial class UdpListener : Node2D
 		Control activeBubble = ActiveSpeechBubble();
 		if (activeBubble == null || !activeBubble.Visible)
 			return;
-		if (_bubbleHideAtMs == 0 || _speechIsBeingRead || _ttsBodyAudioTurnId.Length > 0)
+		if (_bubbleHideAtMs == 0 || _speechIsBeingRead || _ttsAudioIsPlaying || _ttsBodyAudioTurnId.Length > 0)
 			return;
 		if (Time.GetTicksMsec() < _bubbleHideAtMs)
 			return;
@@ -4255,7 +4173,9 @@ public partial class UdpListener : Node2D
 		_lastSpeechBubbleTextAtMs = nowMs;
 		_speechSentences = SplitSpeechSentences(normalizedText);
 		_speechIsLong = normalizedText.Length > LongSpeechImmediateChars || _speechSentences.Count > 1;
-		_speechIsBeingRead = _speechIsLong;
+		// The Live2D bubble is a short preview; full text remains in conversation history.
+		// Keep legacy 2D's manual-read behavior unchanged.
+		_speechIsBeingRead = _speechIsLong && !_isLive2DMode;
 
 		if (_textTween != null && _textTween.IsValid())
 		{
@@ -4291,22 +4211,26 @@ public partial class UdpListener : Node2D
 			return;
 
 		activeLabel.ClipContents = true;
-		activeLabel.ScrollActive = true;
+		activeLabel.ScrollActive = !_isLive2DMode;
 		activeLabel.ScrollFollowing = false;
 		activeLabel.VisibleCharacters = -1;
 		activeLabel.Text = "";
 		if (activeStatus != null)
-			activeStatus.Text = "đang trả lời";
+			activeStatus.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
 
+		bool bubbleWasVisible = activeBubble.Visible;
 		activeBubble.Visible = true;
+		if (_isLive2DMode && !bubbleWasVisible)
+			AnimateCompanionBubbleEntrance();
 		if (_isLive2DMode)
 			ApplyLive2DBubbleVisualState();
 		else
 			SyncLegacySpeechBubbleOverlayTransform();
 		ScheduleTransientOverlayRefresh();
 	
-		// Với lời dài hoặc nhiều câu: hiện ĐỦ NGAY, không ép user đuổi theo ký tự và giọng
-		// Nhật. Highlight theo câu đang nói; user tự đọc và tự cuộn. Không auto-hide.
+		// Legacy 2D keeps the complete, scrollable text. The Live2D companion
+		// shows a compact preview while the full utterance stays in history.
+		// Sentence tracking follows TTS without dimming the companion's text.
 		if (_speechIsLong)
 		{
 			if (_speechSentences.Count > 1)
@@ -4319,19 +4243,22 @@ public partial class UdpListener : Node2D
 				{
 					ApplySentenceHighlightToLabels(0, preserveScroll: false);
 					if (activeStatus != null)
-						activeStatus.Text = $"đang nói (1/{_speechSentences.Count})";
+						activeStatus.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
 				}
 			}
 			else
 			{
 				SetSpeechLabelText(_label, EscapeBbcode(normalizedText));
-				SetSpeechLabelText(_live2DSpeechLabel, EscapeBbcode(normalizedText));
+				SetLive2DSpeechPreview(normalizedText);
 				if (activeStatus != null)
-					activeStatus.Text = "cứ đọc theo nhịp của bạn";
+					activeStatus.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
 			}
 			ResetSpeechScrollToTop(_label);
 			ResetSpeechScrollToTop(_live2DSpeechLabel);
-			_bubbleHideAtMs = 0;
+			if (_isLive2DMode)
+				ScheduleCompanionBubbleAutoHide();
+			else
+				_bubbleHideAtMs = 0;
 			return;
 		}
 
@@ -4362,7 +4289,7 @@ public partial class UdpListener : Node2D
 		// giữa lúc đang gõ, tween không tiếp tục viết vào bubble đã bị ẩn.
 		string escaped = EscapeBbcode(partial);
 		SetSpeechLabelText(_label, escaped);
-		SetSpeechLabelText(_live2DSpeechLabel, escaped);
+		SetLive2DSpeechPreview(partial);
 	}
 
 	private static void SetSpeechLabelText(RichTextLabel target, string text, bool preserveScroll = false)
@@ -4446,8 +4373,9 @@ public partial class UdpListener : Node2D
 	{
 		if (_label != null)
 			SetSpeechLabelText(_label, RenderSpeechSentencesBbcode(activeIndex, darkBackground: false), preserveScroll);
-		if (_live2DSpeechLabel != null)
-			SetSpeechLabelText(_live2DSpeechLabel, RenderSpeechSentencesBbcode(activeIndex, darkBackground: true), preserveScroll);
+		// Never dim unread/read sentences on the companion bubble.
+		// When speech is long, follow the speaking sentence instead of scrolling a text box.
+		SetLive2DSpeechPreview(_lastSpeechBubbleText, activeIndex);
 	}
 
 	private void StartSentenceHighlightTracking(float durationMs)
@@ -4482,9 +4410,7 @@ public partial class UdpListener : Node2D
 		_currentSpeechSentenceIndex = 0;
 		ApplySentenceHighlightToLabels(0, preserveScroll: false);
 		if (ActiveSpeechStatusLabel() is { } status)
-		{
-			status.Text = $"đang nói (1/{count})";
-		}
+			status.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
 
 		float durationSec = durationMs / 1000f;
 		_sentenceHighlightTween = CreateTween();
@@ -4505,9 +4431,7 @@ public partial class UdpListener : Node2D
 					_currentSpeechSentenceIndex = activeIdx;
 					ApplySentenceHighlightToLabels(activeIdx, preserveScroll: true);
 					if (ActiveSpeechStatusLabel() is { } st)
-					{
-						st.Text = $"đang nói ({activeIdx + 1}/{count})";
-					}
+						st.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
 				}
 			}),
 			0f, durationMs, durationSec
@@ -4531,8 +4455,11 @@ public partial class UdpListener : Node2D
 			ApplySentenceHighlightToLabels(-1, preserveScroll: true);
 		}
 		if (ActiveSpeechStatusLabel() is { } status)
+			status.Text = _ttsAudioIsPlaying ? "đang nói…" : "vừa nói";
+		if (_isLive2DMode)
 		{
-			status.Text = _speechIsLong ? "giọng đã dừng • bạn cứ đọc tiếp" : "đã nói xong";
+			SetLive2DSpeechPreview(_lastSpeechBubbleText);
+			ScheduleCompanionBubbleAutoHide();
 		}
 	}
 
@@ -5013,13 +4940,9 @@ public partial class UdpListener : Node2D
 				_lastTtsAudioDurationMs = durationMs;
 
 				if (_speechSentences != null && _speechSentences.Count > 1)
-				{
 					StartSentenceHighlightTracking(durationMs);
-				}
-				else if (!_speechIsLong && ActiveSpeechStatusLabel() is { } status)
-				{
-					status.Text = "đang nói";
-				}
+				if (ActiveSpeechStatusLabel() is { } status)
+					status.Text = "đang nói…";
 				return true;
 			}
 
@@ -5042,11 +4965,15 @@ public partial class UdpListener : Node2D
 
 			if (eventType == "audio_failed" || eventType == "audio_cancelled")
 			{
+				// An outdated TTS event must not change the new turn's visible bubble.
+				if (!string.IsNullOrWhiteSpace(turnId) && !string.IsNullOrWhiteSpace(_ttsBodyAudioTurnId)
+					&& !string.Equals(turnId, _ttsBodyAudioTurnId, StringComparison.Ordinal))
+					return true;
 				_ttsAudioIsPlaying = false;
 				ClearTtsBodyAudioMute();
 				CompleteSentenceHighlight();
 				if (ActiveSpeechStatusLabel() is { } status)
-					status.Text = _speechIsLong ? "đã ngắt giọng • vẫn đọc được" : "giọng đã ngắt";
+					status.Text = "giọng bị ngắt";
 				return true;
 			}
 

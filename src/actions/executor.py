@@ -506,6 +506,26 @@ class ActionExecutor:
             service = MathWorkspaceService(Path(root))
             self._math_workspace_service = service
         payload = service.execute_sync(request)
+        # P0 sidecar: schema chuẩn, chưa publish sang Rich Chat (P1).
+        # Failure ở adapter KHÔNG được biến thành thất bại của math tool/TTS.
+        protocol_data = {}
+        from runtime.workspace.artifact_protocol import (
+            protocol_enabled, adapter_math_workspace, write_bundle_sidecar,
+        )
+        if protocol_enabled():
+            try:
+                bundle = adapter_math_workspace(payload)
+                write_bundle_sidecar(bundle, service.workspace)
+                protocol_data = {
+                    'artifact_bundle_id': bundle['intent_id'],
+                    'artifact_refs': json.dumps(
+                        [a['artifact_id'] for a in bundle['artifacts']], ensure_ascii=False),
+                    'artifact_turn_binding': 'job_provisional',
+                }
+            except (ValueError, OSError, TypeError) as exc:
+                protocol_data = {'artifact_protocol_error': type(exc).__name__ + ': ' + str(exc)[:250]}
+                if self.logger is not None:
+                    self.logger.warning('[presentation-p0] math sidecar failed: %s', exc)
         shown = False
         try:
             shown = send_artifacts_udp(payload)
@@ -517,7 +537,8 @@ class ActionExecutor:
             observed=True,
             message=f"Đã tính toán và tạo {len(payload['artifacts'])} artifact: {payload['title']}",
             data={'job_id':payload['job_id'], 'title':payload['title'],
-                  'artifact_count':str(len(payload['artifacts'])), 'panel_rendered':shown},
+                  'artifact_count':str(len(payload['artifacts'])), 'panel_rendered':shown,
+                  **protocol_data},
             evidence=(f"artifact-job:{payload['job_id']}",),
         )
 

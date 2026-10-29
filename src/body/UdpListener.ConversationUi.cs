@@ -112,6 +112,13 @@ public partial class UdpListener
             return;
         _bodyAutonomy?.RecordUserInteraction();
         CloseCharacterContextMenu();
+        // Windows: use Rich Chat as the main conversation surface.
+        // Keep the Godot panel for planner/reminders and non-Windows builds.
+        if (OS.GetName() == "Windows" && !_companionPreview)
+        {
+            OpenRichChatPortal();
+            return;
+        }
         if (_conversationHistoryPanel.Visible)
             CloseConversationHistoryPanel();
         else
@@ -911,8 +918,12 @@ public partial class UdpListener
         }
         // Dữ liệu đời cũ: giữ fallback thu gọn, không xóa lịch sử.
         bool longReply = !user && entry.Text.Length > 450;
+        bool openFullFromCompanion = longReply && _expandRecentAssistantFromCompanion
+            && string.Equals(entry.Text, NormalizeConversationText(_lastSpeechBubbleText), StringComparison.Ordinal);
         var content = new VBoxContainer();
-        string preview = longReply ? entry.Text.Substring(0, Math.Min(420, entry.Text.Length)).TrimEnd() + "…" : entry.Text;
+        string preview = longReply && !openFullFromCompanion
+            ? entry.Text.Substring(0, Math.Min(420, entry.Text.Length)).TrimEnd() + "…"
+            : entry.Text;
         var message = ConversationLabel(preview, 15, ErisText);
         message.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         message.AddThemeConstantOverride("line_spacing", 5);
@@ -920,8 +931,8 @@ public partial class UdpListener
         content.AddChild(message);
         if (longReply)
         {
-            bool expanded = false;
-            var toggle = WorkspaceButton("Xem toàn bộ lời giải", "history", () => { });
+            bool expanded = openFullFromCompanion;
+            var toggle = WorkspaceButton(expanded ? "Thu gọn" : "Xem toàn bộ lời giải", "history", () => { });
             toggle.Pressed += () =>
             {
                 expanded = !expanded;
@@ -1228,46 +1239,40 @@ public partial class UdpListener
 
     private void SyncSpeechBubbleMode()
     {
-        bool twoDVisible = _bubble != null && _bubble.Visible;
-        bool liveVisible = _live2DSpeechBubble != null && _live2DSpeechBubble.Visible;
-        bool shouldRemainVisible = twoDVisible || liveVisible;
-
-        string visibleText = twoDVisible
-            ? (_label?.Text ?? "")
-            : liveVisible
-                ? (_live2DSpeechLabel?.Text ?? "")
-                : !string.IsNullOrWhiteSpace(_live2DSpeechLabel?.Text)
-                    ? _live2DSpeechLabel.Text
-                    : (_label?.Text ?? "");
-        string statusText = !string.IsNullOrWhiteSpace(_live2DSpeechStatus?.Text)
-            ? _live2DSpeechStatus.Text
-            : "đang trả lời";
+        bool shouldRemainVisible = (_bubble?.Visible ?? false) || (_live2DSpeechBubble?.Visible ?? false);
+        string fullText = _lastSpeechBubbleText;
+        if (string.IsNullOrWhiteSpace(fullText))
+        {
+            // Only relevant during an early renderer switch, before the first committed utterance.
+            fullText = _label?.Text ?? _live2DSpeechLabel?.Text ?? "";
+        }
+        _speechIsBeingRead = _speechIsLong && !_isLive2DMode;
 
         if (_isLive2DMode)
         {
             BuildLive2DSpeechBubble();
-            if (_live2DSpeechLabel != null && !string.IsNullOrWhiteSpace(visibleText))
-                _live2DSpeechLabel.Text = visibleText;
+            SetLive2DSpeechPreview(fullText, _ttsAudioIsPlaying ? _currentSpeechSentenceIndex : -1);
             if (_live2DSpeechStatus != null)
-                _live2DSpeechStatus.Text = statusText;
+                _live2DSpeechStatus.Text = _ttsAudioIsPlaying ? "đang nói…" : "trò chuyện";
             if (_bubble != null)
                 _bubble.Visible = false;
             if (_live2DSpeechBubble != null)
             {
-                _live2DSpeechBubble.Visible = shouldRemainVisible && !string.IsNullOrWhiteSpace(visibleText);
+                _live2DSpeechBubble.Visible = shouldRemainVisible && !string.IsNullOrWhiteSpace(fullText);
                 if (_live2DSpeechBubble.Visible)
                     ApplyLive2DBubbleVisualState();
             }
         }
         else
         {
-            if (_label != null && !string.IsNullOrWhiteSpace(visibleText))
-                _label.Text = visibleText;
+            if (_label != null && !string.IsNullOrWhiteSpace(fullText))
+                SetSpeechLabelText(_label, EscapeBbcode(fullText));
             if (_live2DSpeechBubble != null)
                 _live2DSpeechBubble.Visible = false;
+            HideCompanionBubbleTail();
             if (_bubble != null)
             {
-                _bubble.Visible = shouldRemainVisible && !string.IsNullOrWhiteSpace(visibleText);
+                _bubble.Visible = shouldRemainVisible && !string.IsNullOrWhiteSpace(fullText);
                 if (_bubble.Visible)
                 {
                     PromoteLegacySpeechBubbleToUiOverlay();
@@ -1275,7 +1280,6 @@ public partial class UdpListener
                 }
             }
         }
-
         ScheduleTransientOverlayRefresh();
     }
 
@@ -1285,6 +1289,7 @@ public partial class UdpListener
             _bubble.Visible = false;
         if (_live2DSpeechBubble != null)
             _live2DSpeechBubble.Visible = false;
+        HideCompanionBubbleTail();
         if (_label != null)
             _label.Text = "";
         if (_live2DSpeechLabel != null)
