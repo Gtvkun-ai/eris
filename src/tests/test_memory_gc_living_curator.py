@@ -164,7 +164,7 @@ class _FakeCritic:
         return {"choices": [{"message": {"content": '{"decisions": []}'}}]}
 
 
-def test_gc_uses_critic_worker_and_defaults_to_ten_minutes(tmp_path, monkeypatch):
+def test_gc_uses_gemini_curator_and_defaults_to_ten_minutes(tmp_path, monkeypatch):
     monkeypatch.delenv("ERIS_MEMORY_GC_INTERVAL_SEC", raising=False)
     critic = _FakeCritic()
     llm = _FakeLLMService(critic)
@@ -172,5 +172,7 @@ def test_gc_uses_critic_worker_and_defaults_to_ten_minutes(tmp_path, monkeypatch
     service = MemoryGCService(memory_core=core, llm_service=llm)
 
     assert service.interval_seconds == 600
-    assert service._get_critic_client() is critic
-    assert llm._process_manager.roles == ["critic"]
+    from memory.living_user.gemini_adapter import GeminiWebUserProfileAdapter
+    monkeypatch.setenv("ERIS_MEMORY_GEMINI_ENABLED", "1")
+    assert isinstance(service._get_curator_client(), GeminiWebUserProfileAdapter)
+    assert llm._process_manager.roles == []

@@ -59,7 +59,7 @@ class CuratorInbox:
     def due(self) -> tuple[str, Mapping[str, Any], str, list[dict[str, Any]]] | None:
         with self._lock, self._db() as db:
             row = db.execute("""SELECT envelope_id, payload, status, operations FROM curator_inbox
-                WHERE next_at <= ? AND status='pending' ORDER BY updated_at ASC LIMIT 1""", (time.time(),)).fetchone()
+                WHERE next_at <= ? AND status IN ('pending','proposed') ORDER BY updated_at ASC LIMIT 1""", (time.time(),)).fetchone()
         if not row:
             return None
         return row[0], json.loads(row[1]), row[2], json.loads(row[3])

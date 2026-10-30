@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 from memory.event_ledger import EventLedger
 from memory.living_user import (
@@ -60,8 +61,12 @@ def test_multi_value_profile_keeps_distinct_preferences(tmp_path):
     assert values == {"phân tích kỹ", "không nói máy móc"}
 
 
-def test_service_observes_delivery_and_comment_preferences(tmp_path):
-    service = LivingUserMemoryService(tmp_path)
+def test_service_observes_model_delivery_and_comment_preferences(tmp_path):
+    adapter = SimpleNamespace(propose_profile_operations=lambda payload: {"operations": [
+        {"op":"add", "path":"workflow.delivery_preference", "value":"file hoàn chỉnh", "confidence":0.9, "explicitness":"explicit"},
+        {"op":"add", "path":"technical.code_comment_language", "value":"vi", "confidence":0.9, "explicitness":"explicit"},
+    ]})
+    service = LivingUserMemoryService(tmp_path, model_adapter=adapter)
     result = service.observe_turn(
         "Làm bản lớn rồi gửi file cho tôi, có chú thích tiếng Việt.",
         evidence_ids=("turn_1",),

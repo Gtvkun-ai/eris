@@ -275,6 +275,7 @@ class TurnMemoryPipeline:
         evidence_ids = (actual_turn_id,) if actual_turn_id else ()
         # Mọi lane (semantic/curator/preview) dùng cùng nguồn của turn.
         actual_context = dict(context or {})
+        actual_context["role"] = "user"
         actual_context["claim_provenance"] = classify_ingress(source, turn_id=actual_turn_id)
         envelope = TurnMemoryEnvelope(
             text=raw,
@@ -326,6 +327,17 @@ class TurnMemoryPipeline:
         )
         self._remember_receipt(receipt, dropped=not accepted)
         return receipt
+
+    def enqueue_assistant_turn(self, text: str, *, turn_id: str,
+                               context: Mapping[str, Any] | None = None) -> bool:
+        """Chỉ gọi sau delivery; curator đọc lời assistant, không ingest user fact."""
+        if not self.enabled or not str(text or "").strip() or not str(turn_id or "").strip():
+            return False
+        return self._enqueue_curator(TurnMemoryEnvelope(
+            text=str(text), turn_id=turn_id, evidence_ids=(turn_id,),
+            source="delivered_assistant", priority="low",
+            context={**dict(context or {}), "role": "assistant"},
+        ))
 
     def _enqueue_curator(self, envelope: TurnMemoryEnvelope) -> bool:
         if not self.curator_enabled:
@@ -402,9 +414,13 @@ class TurnMemoryPipeline:
                         time.sleep(0.20)
                         continue
                     # Có proposal đã lưu nhưng mutation reducer chưa ACK (restart
-                    # hoặc queue đầy). Khôi phục ops, KHÔNG gọi lại DeepSeek.
+                    # hoặc queue đầy). Khôi phục ops, KHÔNG gọi lại model.
                     from memory.living_user.models import ProfileOperation
-                    operations = tuple(ProfileOperation.from_dict(op) for op in serialized_ops)
+                    from memory.living_user.action_memory import ActionMemoryOperation
+                    operations = tuple(
+                        ActionMemoryOperation.from_dict(op) if op.get("memory_kind") == "action"
+                        else ProfileOperation.from_dict(op) for op in serialized_ops
+                    )
                     self._enqueue_mutation(TurnMemoryMutation(
                         kind="profile_ops", envelope_id=envelope_id, payload=operations,
                         priority=data.get("priority", "normal"), context=data.get("context", {})))
@@ -438,6 +454,7 @@ class TurnMemoryPipeline:
             "source": envelope.source,
             "turn_memory_envelope_id": envelope.envelope_id,
             "background_lane": "memory_curator",
+            "evidence_created_at": envelope.created_at,
         }
         operations = tuple(proposer(
             envelope.text,

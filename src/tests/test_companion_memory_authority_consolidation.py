@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from memory.living_user import LivingUserMemoryService
 from runtime.adaptive_companion import AdaptiveCompanionService
@@ -14,9 +15,16 @@ class _Owner:
         self.living_user = living_user
 
 
+def _learning_model(topic, activity):
+    return SimpleNamespace(propose_profile_operations=lambda payload: {"operations": [
+        {"op":"add", "path":"learning.active_topics", "value":topic, "confidence":0.9, "explicitness":"explicit", "cardinality":"multi"},
+        {"op":"add", "path":"projects.current_activities", "value":activity, "confidence":0.9, "explicitness":"explicit", "cardinality":"multi"},
+    ]})
+
+
 def test_living_user_is_canonical_owner_for_explicit_learning_and_current_activity(tmp_path: Path) -> None:
     """Learning/activity phải đi vào Living User Memory, không nằm riêng ở Companion."""
-    living = LivingUserMemoryService(tmp_path / "living")
+    living = LivingUserMemoryService(tmp_path / "living", model_adapter=_learning_model("C# / .NET", "DocMind"))
 
     result = living.observe_turn(
         "Tôi đang học C# và .NET, còn đồ án hiện tại đang làm DocMind.",
@@ -35,7 +43,7 @@ def test_living_user_is_canonical_owner_for_explicit_learning_and_current_activi
 
 def test_adaptive_companion_reads_canonical_living_user_context_after_restart(tmp_path: Path) -> None:
     """Companion mới vẫn hiểu user sau restart dù không có state shadow riêng."""
-    living = LivingUserMemoryService(tmp_path / "living")
+    living = LivingUserMemoryService(tmp_path / "living", model_adapter=_learning_model("ASP.NET Core", "DocMind"))
     living.observe_turn(
         "Tôi đang học ASP.NET Core và đang làm project DocMind.",
         evidence_ids=("turn-1",),

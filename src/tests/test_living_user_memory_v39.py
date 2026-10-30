@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from types import SimpleNamespace
 
 from memory.living_user import (
     GoalRecord,
@@ -49,35 +50,27 @@ def test_goal_and_workflow_memory_are_injected_into_context(tmp_path):
     assert "ACTIVE USER WORK" in rendered
 
 
-def test_record_turn_extracts_explicit_goal_and_procedural_workflow(tmp_path):
-    service = LivingUserMemoryService(tmp_path)
-    service.record_conversation_turn(
-        "user",
-        "Tôi muốn hoàn thiện memory, giữ tương thích ngược, chạy test và gửi file hoàn chỉnh có chú thích tiếng Việt.",
-        session_id="s1",
-        turn_id="u1",
-        context={"project_id": "eris"},
-    )
+def test_ai_extracts_goal_and_workflow_only_at_apply_boundary(tmp_path):
+    adapter = SimpleNamespace(propose_profile_operations=lambda payload: {"operations": [], "action_operations": [
+        {"op":"add", "kind":"goal", "text":"Hoàn thiện memory", "status":"active"},
+        {"op":"add", "kind":"workflow", "text":"Bàn giao source", "steps":["chạy kiểm thử hồi quy", "gửi file hoàn chỉnh"]},
+    ]})
+    service = LivingUserMemoryService(tmp_path, model_adapter=adapter)
+    text = "Tôi muốn hoàn thiện memory, giữ tương thích ngược, chạy test và gửi file hoàn chỉnh."
+    service.record_conversation_turn("user", text, session_id="s1", turn_id="u1", context={"project_id":"eris"})
+    assert not service.action_store.goals()
+    proposal = service.propose_turn_operations(text, evidence_ids=("u1",), context={"project_id":"eris"})
+    assert not service.action_store.goals()
+    service.apply_turn_operations(proposal)
     assert service.action_store.goals(scope=UserMemoryScope("project", "eris"))
-    workflows = service.action_store.workflows(scope=UserMemoryScope("project", "eris"))
-    assert workflows
-    assert "chạy kiểm thử hồi quy" in workflows[0].steps
+    assert "chạy kiểm thử hồi quy" in service.action_store.workflows()[0].steps
 
 
-def test_assistant_commitment_is_recorded_then_completed(tmp_path):
+def test_assistant_journal_does_not_interpret_promises_or_completion(tmp_path):
     service = LivingUserMemoryService(tmp_path)
-    service.record_conversation_turn(
-        "assistant", "Tôi sẽ refactor source và gửi ZIP.",
-        session_id="s1", turn_id="a1", context={"project_id": "eris"},
-    )
-    commitments = service.action_store.commitments(scope=UserMemoryScope("project", "eris"))
-    assert commitments and commitments[0].status == "active"
-    service.record_conversation_turn(
-        "assistant", "Đã xong và đã gửi ZIP.",
-        session_id="s1", turn_id="a2", context={"project_id": "eris"},
-    )
-    all_commitments = service.action_store.commitments(scope=UserMemoryScope("project", "eris"), include_inactive=True)
-    assert any(item.status == "completed" for item in all_commitments)
+    for i, text in enumerate(("Tôi sẽ refactor source và gửi ZIP.", "Đã xong và đã gửi ZIP.")):
+        service.record_conversation_turn("assistant", text, session_id="s1", turn_id=f"a{i}", context={"project_id":"eris"})
+    assert not service.action_store.commitments(include_inactive=True)
 
 
 def test_uncertain_inference_is_marked_for_clarification(tmp_path):
@@ -110,7 +103,10 @@ def test_conflicting_memory_is_never_silently_selected(tmp_path):
 
 
 def test_trace_and_replay_explain_pipeline(tmp_path):
-    service = LivingUserMemoryService(tmp_path)
+    adapter = SimpleNamespace(propose_profile_operations=lambda payload: {"operations": [
+        {"op":"add", "path":"technical.code_comment_language", "value":"vi", "confidence":0.9, "explicitness":"explicit"}
+    ]})
+    service = LivingUserMemoryService(tmp_path, model_adapter=adapter)
     service.observe_turn(
         "Làm source có chú thích tiếng Việt và gửi file hoàn chỉnh.",
         evidence_ids=("turn_1",),

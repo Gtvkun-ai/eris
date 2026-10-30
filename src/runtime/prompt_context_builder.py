@@ -426,12 +426,15 @@ class PromptContextBuilderMixin:
                     or getattr(self, "active_project_id", "")
                     or ""
                 )
-                recorder(
+                evidence_id = recorder(
                     role,
                     content,
                     session_id=session_id,
                     context={"project_id": project_id},
                 )
+                enqueue = getattr(getattr(self, "turn_memory_pipeline", None), "enqueue_assistant_turn", None)
+                if role in {"assistant", "eris"} and evidence_id and callable(enqueue):
+                    enqueue(content, turn_id=evidence_id, context={"project_id": project_id, "session_id": session_id})
             except Exception:
                 # Episode journal là enrichment; không được làm hỏng chat history.
                 pass

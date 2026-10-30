@@ -27,6 +27,37 @@ ActionStatus = Literal["candidate", "active", "blocked", "completed", "cancelled
 CommitmentActor = Literal["user", "assistant", "shared"]
 
 
+@dataclass(slots=True)
+class ActionMemoryOperation:
+    """Đề xuất AI + ranh giới evidence do ingress cấp, không do model tự cấp."""
+
+    proposal: dict[str, Any]
+    evidence_ids: tuple[str, ...]
+    scope: UserMemoryScope
+    role: str
+    allowed_record_ids: tuple[str, ...] = ()
+    source_created_at: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_kind": "action", "proposal": self.proposal,
+            "evidence_ids": list(self.evidence_ids), "scope": self.scope.to_dict(),
+            "role": self.role, "allowed_record_ids": list(self.allowed_record_ids),
+            "source_created_at": self.source_created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, row: Mapping[str, Any]) -> "ActionMemoryOperation":
+        return cls(
+            proposal=dict(row.get("proposal") or {}),
+            evidence_ids=tuple(row.get("evidence_ids") or ()),
+            scope=UserMemoryScope.from_value(row.get("scope")),
+            role=str(row.get("role") or "user"),
+            allowed_record_ids=tuple(row.get("allowed_record_ids") or ()),
+            source_created_at=float(row.get("source_created_at") or 0.0),
+        )
+
+
 def _now() -> float:
     return time.time()
 
@@ -227,6 +258,9 @@ class ActionMemoryStore:
         self._goals: dict[str, GoalRecord] = {}
         self._commitments: dict[str, CommitmentRecord] = {}
         self._workflows: dict[str, WorkflowRecord] = {}
+        self._ai_audit: list[dict[str, Any]] = []
+        self._applied_ai_keys: list[str] = []
+        self.reset_before = 0.0
         self._lock = threading.RLock()
         self.load()
 
@@ -314,33 +348,6 @@ class ActionMemoryStore:
             self._trim_save()
             return saved
 
-    def observe_turn(self, role: str, text: str, *, evidence_id: str, scope: UserMemoryScope | None = None) -> dict[str, tuple[str, ...]]:
-        """Extractor deterministic bảo thủ cho goal/commitment/workflow.
-
-        Nó chỉ bắt các tín hiệu rõ; model/dreamer có thể làm giàu sau. Không biến
-        mọi câu mệnh lệnh ngắn thành mục tiêu đời người.
-        """
-        active_scope = scope or UserMemoryScope()
-        clean = compact_text(text, 1400)
-        norm = normalize_text(clean)
-        created: dict[str, list[str]] = {"goals": [], "commitments": [], "workflows": []}
-        if role == "user":
-            goal = _extract_goal(clean, norm, evidence_id, active_scope)
-            if goal:
-                created["goals"].append(self.upsert_goal(goal).id)
-            workflow = _extract_workflow(clean, norm, evidence_id, active_scope)
-            if workflow:
-                created["workflows"].append(self.upsert_workflow(workflow).id)
-            commitment = _extract_user_commitment(clean, norm, evidence_id, active_scope)
-            if commitment:
-                created["commitments"].append(self.upsert_commitment(commitment).id)
-        elif role in {"assistant", "eris"}:
-            commitment = _extract_assistant_commitment(clean, norm, evidence_id, active_scope)
-            if commitment:
-                created["commitments"].append(self.upsert_commitment(commitment).id)
-            self._mark_completed_from_assistant(clean, norm, evidence_id, active_scope)
-        return {key: tuple(value) for key, value in created.items()}
-
     def context(self, query: str, *, scope: UserMemoryScope | None = None, max_goals: int = 5, max_commitments: int = 4, max_workflows: int = 4) -> ActionContext:
         active_scope = scope or UserMemoryScope()
         q = normalize_text(query)
@@ -392,13 +399,127 @@ class ActionMemoryStore:
                 self.save()
         return removed
 
-    def snapshot(self) -> dict[str, Any]:
-        return {
+    def apply_model_operations(self, operations: Iterable[ActionMemoryOperation]) -> dict[str, Any]:
+        """AI quyết định meaning; store chỉ kiểm nguồn, schema, actor, scope và ID.
+
+        Không dò cue, không fuzzy-merge mục tiêu, không tự kết luận hoàn tất từ
+        lời assistant. Dedupe theo proposal đã lưu để replay outbox an toàn.
+        """
+        applied: list[str] = []
+        rejected: list[str] = []
+        with self._lock:
+            previous = self.snapshot(include_audit=True)
+            for operation in operations:
+                row = operation.proposal
+                kind, op = str(row.get("kind") or ""), str(row.get("op") or "")
+                if kind not in {"goal", "commitment", "workflow"} or op not in {"add", "set_status"}:
+                    rejected.append("invalid_action_schema")
+                    continue
+                if not operation.evidence_ids or operation.role not in {"user", "assistant", "curator"}:
+                    rejected.append("missing_action_evidence_or_actor")
+                    continue
+                if operation.source_created_at < self.reset_before:
+                    rejected.append("action_evidence_precedes_reset")
+                    continue
+                key = hashlib.sha256(json.dumps(operation.to_dict(), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+                if key in self._applied_ai_keys:
+                    continue
+                bucket = {"goal": self._goals, "commitment": self._commitments, "workflow": self._workflows}[kind]
+                before = None
+                if op == "add":
+                    actor = str(row.get("actor", operation.role))
+                    if operation.role == "curator":
+                        rejected.append("curator_cannot_invent_action")
+                        continue
+                    if (kind != "commitment" and operation.role != "user") or (
+                        kind == "commitment" and actor != operation.role
+                    ):
+                        rejected.append("action_actor_mismatch")
+                        continue
+                    text = row.get("text")
+                    status = str(row.get("status", "active"))
+                    if not isinstance(text, str) or not text.strip() or status not in {"active", "candidate", "blocked"}:
+                        rejected.append("invalid_action_content")
+                        continue
+                    common = dict(
+                        id=_stable_id(kind, operation.scope.identity, *operation.evidence_ids, text),
+                        scope=operation.scope, evidence_ids=operation.evidence_ids,
+                        status=status, confidence=clamp01(row.get("confidence"), 0.5),
+                        metadata={"source": "gemini_memory_curator", "reason": compact_text(row.get("reason"), 420)},
+                    )
+                    if kind == "goal":
+                        record = GoalRecord(title=text, **common)
+                    elif kind == "commitment":
+                        record = CommitmentRecord(actor=actor, action=text, **common)
+                    else:
+                        steps = row.get("steps")
+                        if not isinstance(steps, list) or not steps or any(not isinstance(x, str) or not x.strip() for x in steps):
+                            rejected.append("invalid_workflow_steps")
+                            continue
+                        record = WorkflowRecord(trigger=text, steps=tuple(steps), **common)
+                    # Exact deterministic ID only; cross-turn consolidation belongs to AI.
+                    if record.id in bucket:
+                        continue
+                    bucket[record.id] = record
+                else:
+                    record_id = str(row.get("record_id") or "")
+                    record = bucket.get(record_id)
+                    status = str(row.get("status") or "")
+                    if record is None or record_id not in operation.allowed_record_ids or not record.scope.matches(operation.scope):
+                        rejected.append("action_target_not_in_supplied_scope")
+                        continue
+                    if status not in {"candidate", "active", "blocked", "completed", "cancelled", "archived"}:
+                        rejected.append("invalid_action_status")
+                        continue
+                    if status == "completed" and operation.role != "user":
+                        rejected.append("assistant_words_are_not_completion_receipt")
+                        continue
+                    if operation.role == "curator" and status not in {"candidate", "archived"}:
+                        rejected.append("curator_can_only_deactivate_or_request_review")
+                        continue
+                    before = record.to_dict()
+                    record.status = status
+                    record.updated_at = _now()
+                    record.evidence_ids = tuple(dict.fromkeys((*record.evidence_ids, *operation.evidence_ids)))[:96]
+                    if status == "completed":
+                        record.completed_at = record.updated_at
+                    else:
+                        record.completed_at = None
+                self._applied_ai_keys.append(key)
+                self._ai_audit.append({
+                    "key": key, "at": _now(), "evidence_ids": list(operation.evidence_ids),
+                    "reason": compact_text(row.get("reason"), 420),
+                    "before": before, "after": record.to_dict(),
+                })
+                applied.append(record.id)
+            if applied:
+                self._applied_ai_keys = self._applied_ai_keys[-2048:]
+                self._ai_audit = self._ai_audit[-128:]
+                try:
+                    self.save()
+                except Exception:
+                    self._restore_snapshot(previous)
+                    raise
+        return {"applied": len(applied), "record_ids": applied, "rejected": rejected}
+
+    def snapshot(self, *, include_audit: bool = False) -> dict[str, Any]:
+        result = {
             "schema_version": 1,
             "goals": [x.to_dict() for x in self.goals(include_inactive=True)],
             "commitments": [x.to_dict() for x in self.commitments(include_inactive=True)],
             "workflows": [x.to_dict() for x in self.workflows(include_inactive=True)],
         }
+        if include_audit:
+            result.update(ai_audit=list(self._ai_audit), applied_ai_keys=list(self._applied_ai_keys), reset_before=self.reset_before)
+        return result
+
+    def _restore_snapshot(self, raw: Mapping[str, Any]) -> None:
+        self._goals = {x.id: x for x in (GoalRecord.from_dict(row) for row in raw.get("goals", []) if isinstance(row, Mapping))}
+        self._commitments = {x.id: x for x in (CommitmentRecord.from_dict(row) for row in raw.get("commitments", []) if isinstance(row, Mapping))}
+        self._workflows = {x.id: x for x in (WorkflowRecord.from_dict(row) for row in raw.get("workflows", []) if isinstance(row, Mapping))}
+        self._ai_audit = list(raw.get("ai_audit") or [])
+        self._applied_ai_keys = list(raw.get("applied_ai_keys") or [])
+        self.reset_before = float(raw.get("reset_before") or 0.0)
 
     def load(self) -> None:
         if not self.path.is_file() or self.path.stat().st_size <= 0:
@@ -406,14 +527,12 @@ class ActionMemoryStore:
         try:
             with locked_path(self.path):
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
-            self._goals = {x.id: x for x in (GoalRecord.from_dict(row) for row in raw.get("goals", []) if isinstance(row, Mapping))}
-            self._commitments = {x.id: x for x in (CommitmentRecord.from_dict(row) for row in raw.get("commitments", []) if isinstance(row, Mapping))}
-            self._workflows = {x.id: x for x in (WorkflowRecord.from_dict(row) for row in raw.get("workflows", []) if isinstance(row, Mapping))}
+            self._restore_snapshot(raw)
         except Exception:
             self._goals, self._commitments, self._workflows = {}, {}, {}
 
     def save(self) -> None:
-        atomic_write_json(self.path, self.snapshot())
+        atomic_write_json(self.path, self.snapshot(include_audit=True))
 
     def _trim_save(self) -> None:
         self._goals = _trim_dict(self._goals, self.max_goals, lambda x: (x.status == "active", x.priority, x.updated_at))
@@ -432,61 +551,6 @@ class ActionMemoryStore:
     def _find_workflow(self, trigger: str, scope: UserMemoryScope) -> WorkflowRecord | None:
         target = normalize_text(trigger)
         return next((x for x in self._workflows.values() if x.scope.identity == scope.identity and _similar_text(target, normalize_text(x.trigger)) >= 0.72 and x.status != "archived"), None)
-
-    def _mark_completed_from_assistant(self, text: str, norm: str, evidence_id: str, scope: UserMemoryScope) -> None:
-        raw_lower = text.lower()
-        if not (
-            any(cue in norm for cue in ("da xong", "hoan tat", "da gui", "da dong goi", "completed", "done"))
-            or any(cue in raw_lower for cue in ("đã xong", "hoàn tất", "đã gửi", "đã đóng gói"))
-        ):
-            return
-        for commitment in self.commitments(scope=scope):
-            if _similar_text(norm, normalize_text(commitment.action)) >= 0.20 or len(self.commitments(scope=scope)) == 1:
-                commitment.status = "completed"
-                commitment.completed_at = commitment.updated_at = _now()
-                commitment.evidence_ids = tuple(dict.fromkeys((*commitment.evidence_ids, evidence_id)))[:96]
-        self.save()
-
-
-def _extract_goal(text: str, norm: str, evidence_id: str, scope: UserMemoryScope) -> GoalRecord | None:
-    cues = ("toi muon ", "tui muon ", "minh muon ", "muc tieu ", "du dinh ", "ke hoach ", "se chuyen ", "can lam ", "lam tiep ")
-    if not any(cue in norm for cue in cues):
-        return None
-    # Bỏ câu hỏi chung quá ngắn, vì "còn làm gì được" chưa phải một mục tiêu bền.
-    if len(norm.split()) < 4 or norm.endswith(" gi"):
-        return None
-    return GoalRecord(id="", title=text.rstrip(".!?"), description=text, status="active", priority=0.72, confidence=0.90, scope=scope, evidence_ids=(evidence_id,), metadata={"source": "explicit_user_goal"})
-
-
-def _extract_user_commitment(text: str, norm: str, evidence_id: str, scope: UserMemoryScope) -> CommitmentRecord | None:
-    if not any(cue in norm for cue in ("toi se ", "tui se ", "minh se ", "de toi ", "toi tu ")):
-        return None
-    return CommitmentRecord(id="", actor="user", action=text.rstrip(".!?"), status="active", confidence=0.92, scope=scope, evidence_ids=(evidence_id,), metadata={"source": "explicit_user_commitment"})
-
-
-def _extract_assistant_commitment(text: str, norm: str, evidence_id: str, scope: UserMemoryScope) -> CommitmentRecord | None:
-    if not any(cue in norm for cue in ("toi se ", "minh se ", "eris se ", "se gui ", "se lam ")):
-        return None
-    return CommitmentRecord(id="", actor="assistant", action=text.rstrip(".!?"), status="active", confidence=0.93, scope=scope, evidence_ids=(evidence_id,), metadata={"source": "assistant_commitment"})
-
-
-def _extract_workflow(text: str, norm: str, evidence_id: str, scope: UserMemoryScope) -> WorkflowRecord | None:
-    steps: list[str] = []
-    if "gui file" in norm or "file hoan chinh" in norm:
-        steps.append("gửi file hoàn chỉnh")
-    if "chu thich tieng viet" in norm or "co chu thich" in norm:
-        steps.append("viết chú thích tiếng Việt")
-    if "chay test" in norm or "regression" in norm or "kiem thu" in norm:
-        steps.append("chạy kiểm thử hồi quy")
-    if "patch" in norm:
-        steps.append("kèm patch đối chiếu")
-    if "giu tuong thich" in norm or "tuong thich nguoc" in norm:
-        steps.append("giữ tương thích ngược")
-    if len(steps) < 2:
-        return None
-    trigger = "sửa hoặc bàn giao source dự án"
-    return WorkflowRecord(id="", trigger=trigger, steps=tuple(steps), scope=scope, confidence=0.88, evidence_ids=(evidence_id,), metadata={"source": "explicit_workflow_request"})
-
 
 def _rank_textual(rows: Sequence[Any], query: str, text_getter: Any) -> list[Any]:
     if not query:

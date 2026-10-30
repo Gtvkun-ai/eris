@@ -20,7 +20,28 @@ Không chẩn đoán tâm lý. Không suy diễn thuộc tính nhạy cảm. Ph�
 - observed: pattern hành vi lặp lại;
 - inferred: suy luận thận trọng.
 Không chép nguyên văn hội thoại dài. Chỉ giữ thứ giúp tương tác tương lai.
-Output: {"operations":[{"op":"add|reinforce|update|weaken|supersede|merge|archive|delete","path":"...","value":...,"old_value":...,"confidence":0..1,"explicitness":"explicit|observed|inferred","sensitivity":"normal|personal|private|sensitive","cardinality":"single|multi","evidence_ids":[...],"reason":"..."}]}"""
+Profile chỉ giữ thông tin có ích lâu dài; chỉ dẫn cho một lượt, trò đùa, nhập vai,
+câu trích dẫn, chủ đề vừa hỏi không tự thành tính cách/sở thích/quy tắc vĩnh viễn.
+
+Đồng thời quyết định goal/commitment/workflow từ ý nghĩa của CURRENT turn:
+- Đọc context.role để biết ai thực sự đang nói. Không dùng từ khóa làm bằng chứng.
+- Phân biệt mục tiêu thật, câu hỏi, suy tư, giả định, điều kiện chưa xảy ra, nhập vai,
+  lời trích dẫn và việc nhờ diễn lại câu. Không biến chúng thành cam kết thật.
+- Lời assistant không phải dữ kiện về user. context.role=assistant: operations=[];
+  chỉ tạo commitment actor=assistant khi có lời hứa thật, vô điều kiện và còn mở.
+- User turn chỉ tạo commitment actor=user. Goal/workflow phải do user nói thật.
+- existing_actions là các record đã có trong đúng scope; cập nhật status theo ID,
+  không thêm bản diễn đạt lại. Không tự coi việc cũ đã xong chỉ vì lâu không nhắc.
+- Chỉ user xác nhận hoàn tất mới đề xuất completed ở đây. Lời assistant tự nói
+  "đã làm" không thay được receipt thực thi.
+- recent_conversation chỉ giúp hiểu ngữ cảnh; không tái tạo goal/commitment từ
+  những lượt cũ. Mọi đề xuất phải được CURRENT turn hỗ trợ.
+- Không có gì đáng lưu: trả cả hai danh sách rỗng. Khi chưa chắc về commitment,
+  không tạo active; có thể dùng candidate nếu vẫn là đầu việc có căn cứ.
+
+Output JSON có đủ hai danh sách:
+{"operations":[{"op":"add|reinforce|update|weaken|supersede|merge|archive|delete","path":"...","value":...,"old_value":...,"confidence":0..1,"explicitness":"explicit|observed|inferred","sensitivity":"normal|personal|private|sensitive","cardinality":"single|multi","evidence_ids":[...],"reason":"..."}],
+ "action_operations":[{"op":"add|set_status","kind":"goal|commitment|workflow","record_id":"ID trong existing_actions khi set_status","text":"mục tiêu/hành động hoặc trigger workflow ngắn gọn","actor":"user|assistant","steps":["các bước nếu là workflow"],"status":"candidate|active|blocked|completed|cancelled|archived","confidence":0..1,"reason":"giải thích dựa trên evidence hiện tại"}]}"""
 
 _EPISODE_SYSTEM = """Bạn là episode summarizer cho ERIS. Chỉ xuất JSON.
 Tóm tắt phiên theo sự kiện, quyết định, outcome, việc còn mở và tín hiệu user.

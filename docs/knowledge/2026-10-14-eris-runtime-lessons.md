@@ -977,3 +977,311 @@ trước intake. Chưa có căn cứ quy toàn bộ 30 giây cho hai lane nền 
 
 Chỉ phân tích log/source/raw request, không gọi model hoặc sửa runtime trong
 lượt chẩn đoán này.
+
+### Phân biệt ký tự và token trong cùng phiên
+
+Đã khôi phục raw response của bootstrap Root và user turn để đọc `usage`.
+Gateway báo bootstrap: `prompt_tokens=465018`, `completion_tokens=69`
+(reasoning 58); user turn 13:57:33: `prompt_tokens=472031`,
+`completion_tokens=655` (reasoning 408). Số **1.295.109 là ký tự** của message
+Self, không phải token; 30 giây context là thời gian, không phải lượng token.
+
+Đây là usage **do Whale2API báo**, chưa phải chứng cứ billing/tokenizer chính
+thức của DeepSeek. Source gateway hiện tại trong `format/openai/render_usage.go`
+tự dựng usage bằng `util.CountPromptTokens`; hàm này lấy max của heuristic và
+tokenizer rồi cộng padding bảo thủ. Không nâng số 465.018/472.031 thành số
+token chính xác DeepSeek đã tính tiền. Raw request của lượt SAU bootstrap vẫn
+chứa full Self; vì vậy mô tả “gửi Full Self đúng một lần rồi chỉ gửi delta”
+chưa phản ánh kích thước HTTP request thực tế của phiên này.
+
+### Thành phần Self trong raw request 13:57:33 ngày 30/10
+
+Đã parse trực tiếp message bootstrap của đúng raw request user turn, kiểm hash
+payload, đo độ dài JSON compact bằng `ensure_ascii=False`, không in giá trị
+trí nhớ cá nhân. Bootstrap 1.295.109 ký tự bao gồm `eris_self_full` 1.294.605
+ký tự và wrapper/instruction. Trong `eris_self_full`:
+
+| Thành phần | Ký tự JSON | Nội dung cấu trúc |
+|---|---:|---|
+| `memory_state` | 1.286.853 | 22 trường của snapshot memory |
+| `mind_state` | 7.182 | personality, identity, relationship, appraisal và state khác |
+| `long_term_memory` | 255 | 2 mục trong view đang được host nạp |
+| `subject_self` | 248 | 7 trường của subject self-view |
+
+Riêng `memory_state.concept_graph` chiếm **1.127.980 ký tự**, khoảng **87,1%**
+kích thước ký tự message Self: 728 nodes (193.798 ký tự) và 5.000 edges
+(934.151 ký tự), kèm version. Nodes/edges chứa label hoặc source/target,
+weight, occurrences, evidence/record ID, updated_at và khóa JSON lặp lại.
+Không đồng nhất tỷ lệ ký tự này với tỷ lệ token đã đo riêng cho graph.
+
+`memory_state.living_user` 133.223 ký tự: profile 80 records (63.685 ký tự),
+replay/debug 41.928 ký tự (timeline 120 entries), actions 18.336 ký tự
+(5 goals, 23 commitments), 8 recent episodes 9.134 ký tự và metadata nhỏ.
+Các phần memory còn lại khoảng 25.650 ký tự, gồm agent mind, active/internal
+state, semantic/procedural memory và các trường rỗng. Vì vậy không diễn giải
+toàn bộ 1,3 triệu ký tự là văn bản nhân cách hoặc transcript đời sống.
+
+Ngoài Self, request có system 14.967 ký tự, event/context/delta hiện tại
+23.614 ký tự, bootstrap acknowledgement 42 và lời mở đầu đã phát 353 ký tự.
+Tổng content của 5 messages là 1.334.085 ký tự. Đây là phân rã kích thước,
+chưa phải kết luận graph tạo ra bao nhiêu giây trong 30 giây memory context.
+
+## 26. Ngày 30/10: gỡ cơ chế concept graph khỏi runtime theo yêu cầu user
+
+User đã chọn rõ **gỡ cả cơ chế graph trong runtime**, không chỉ lọc prompt.
+Phạm vi là `ConceptGraphStore` của memory và liên tưởng qua graph trong Living
+User. Các số đo graph ở mục 25 là trạng thái **trước thay đổi này**.
+
+- Bỏ tạo store, cập nhật graph khi commit belief/worldview/profile/episode,
+  multi-hop recall, điểm cộng associative và gợi ý chủ động từ graph. Bỏ graph
+  khỏi snapshot `MemoryCognitionCore.load`; xóa implementation graph khỏi source.
+- `_read_self` còn chặn khóa `concept_graph` của snapshot legacy để nó không
+  quay lại qua bootstrap hoặc Self delta; không mutate dữ liệu owner khi đọc.
+  Các belief/worldview, semantic/episodic memory, profile, goal/commitment và
+  truy xuất lexical/embedding vẫn giữ cơ chế hiện hành.
+- Replay offline đúng request cũ: bootstrap **1.295.109 → 167.112 ký tự**,
+  giảm **87,1%**; deep-compare xác nhận các phần Self ngoài graph không đổi.
+  Đây là giảm kích thước trên fixture thật, chưa phải đo token/latency live mới.
+- Nhóm memory/profile/provenance/bootstrap/projector/batch: **105 passed**,
+  **2 failed** ở test V39 về inferred/conflicting record. Hai lỗi này tái hiện
+  trên bản memory lấy từ HEAD trước thay đổi trong thư mục test cô lập. Test
+  hard-cap bootstrap đã cố định env fixture để không phụ thuộc setting local
+  đang tắt cap; không thay policy/cap của runtime.
+- Đồng bộ 4 module Python sang portable, đối chiếu hash trước với HEAD, backup
+  source cũ tại `Documents/eris/backups/retire-concept-graph-20261030/`.
+  87 file dữ liệu/cấu hình được kiểm hash không đổi. Smoke trên bản sao của
+  memory thật bằng module portable đã deploy: snapshot không có graph, public
+  context vẫn dựng được, số lần mở graph bằng 0. Không gọi LLM/TTS live.
+- Lệnh triển khai ban đầu có bước xóa graph/module cũ bị kiểm duyệt tự động
+  từ chối với thông báo `blocked by policy`. Đã dùng phương án chỉ đồng bộ mã,
+  giữ file graph và module legacy trên đĩa; runtime không import hoặc đọc chúng.
+  Không tìm cách thực hiện lại thao tác xóa bị chặn qua công cụ khác.
+
+Receipt đo payload và triển khai nằm trong artifact
+`eris-retire-concept-graph-20261030/` của chat này. Cần phiên Eris mới để dùng
+module vừa triển khai; chưa xác nhận phản hồi live nhanh hơn bao nhiêu và chưa
+coi nút thắt `memory_context_ms≈30s` đã được giải quyết.
+
+## 27. Ngày 30/10: kiểm tra 167.112 ký tự Self còn lại sau bỏ graph
+
+User hỏi “167k token còn cao không”. Đã nhắc lại đây là **ký tự**, không phải
+token, và chưa có run/raw trace live mới sau mục 26. Các số dưới là phân rã
+offline đúng request đã lưu, chỉ bỏ graph như code đã triển khai.
+
+- Bootstrap Self: 167.112 ký tự. Tổng content của 5 messages còn 206.088 ký tự.
+  Bộ heuristic `llm.token_budget.estimate_tokens` hiện tại báo **55.708 token
+  cho riêng message Self**, **68.716 cho toàn messages**. Cùng bộ đếm báo
+  444.715 cho messages trước bỏ graph. Đây là chars/3 cộng overhead, không phải
+  tokenizer DeepSeek và không phải usage live từ gateway; không trộn nó với
+  số 472.031 gateway từng báo cho request cũ chưa bỏ graph.
+- `living_user.profile`: 63.685 ký tự cho 80 record active, mỗi record 21
+  trường. Các value cộng 7.847 ký tự, metadata cộng 11.487 (reason 9.777),
+  còn lại là path, evidence/source/scope, timestamp, trạng thái, khóa JSON...
+  Có 47 record communication, trong đó 19 `communication.response_rules`;
+  11 `learning.active_topics`, 5 negative-feedback patterns. 80 cặp path/value
+  khác nhau; không gọi chúng là duplicate hoàn toàn chỉ vì cùng path.
+- `living_user.replay`: 41.928 ký tự, có timeline 120 chuỗi debug gồm 50 context,
+  39 conversation_turn, 20 observe và 11 dream. `summary()` lấy trực tiếp
+  `replay_debugger.report().to_dict()`, rồi `core.load()` đưa summary vào Self.
+  Đây là đường báo cáo chẩn đoán đi vào prompt, không phải chỉ có ký ức đã chọn.
+- Actions 18.336 ký tự: 5 goal active, 23 commitment (22 active, 1 completed).
+  Recent episodes 9.134 ký tự (8 mục); agent mind 7.852; mind state 7.182.
+- `active_state.metadata.internal_state` và `memory_state.internal_state`
+  có cùng 75 key, các giá trị bằng nhau theo deep-compare Python. Mỗi bản
+  khoảng 5,8 nghìn ký tự; có dư một biểu diễn state trong snapshot.
+
+Ưu tiên có thể xem xét: tách replay/debug khỏi Self, bỏ biểu diễn internal
+state lặp và compact view profile mà giữ giá trị/provenance cần thiết. Lần
+này chỉ kiểm tra; chưa đổi runtime, xóa record hay thay cách truy xuất memory.
+
+## 28. Ngày 30/10: rà toàn bộ profile active và action memory
+
+Theo yêu cầu “rà đi”, đã đọc từng record active trong hai file portable
+`living_user_profile.json` và `living_user_actions.json`; đối chiếu source và
+replay các helper bằng dữ liệu tổng hợp trong sandbox. Không sửa runtime hoặc
+canonical data trong lượt rà; hash hai file giữ nguyên.
+
+- **Đính chính phạm vi mục 27:** 80 là snapshot trong raw request, không phải
+  toàn kho. File hiện có 147 record, trong đó **118 active**, 24 superseded,
+  2 deleted, 3 disputed. Trong active có 77 communication, 30 response_rules,
+  15 learning.active_topics. Cả 118 scope global. `snapshot(limit=80)` chọn
+  trust/recency, không phải relevance của câu user hiện tại.
+- Đề xuất review đủ 118 mục: 18 thông tin có ích giữ có nguồn; 32 ứng viên
+  gộp thành 6 nhóm chỉ dẫn có điều kiện; 27 record đùa/nhập vai theo ngữ cảnh;
+  36 record phù hợp episode/chủ đề lịch sử; 5 cần đối chiếu phát ngôn gốc.
+  Đây là phân loại đề xuất, không phải số lượng đã xóa. Có cặp gần trùng:
+  đau đớn/bản sắc; giải thích lại khi chưa hiểu; cười/khóc thử; feedback vẽ và
+  sở thích sáng tạo; nhiều rule idol/cute; yêu cầu nói cụ thể và feedback mơ hồ.
+- Silence có thể là suy tư hoặc phép thử, nhưng không được biến khả năng thứ
+  hai thành mặc định. Các yêu cầu cute/lạnh trong các cảnh khác nhau không
+  tự chứng minh user mâu thuẫn. Lời tự chê cũng không tự thành nhãn năng lực.
+- **Action admission:** `_extract_user_commitment` có cue “tôi tự”; replay
+  “tôi tự hỏi tôi tạo Eris để làm gì” tạo active commitment/confidence 0,92.
+  Lời đưa thoại “nói câu này: tôi tự nguyện…” cũng thành commitment user.
+  Câu hỏi “tôi muốn hỏi … đang phân vân” thành goal active/0,90; một biến thể
+  kết thúc “gì” bị guard chặn. Offer “Nếu bạn gửi lỗi thì tôi sẽ đọc giúp”
+  thành commitment assistant active/0,93. Kho thật có mẫu tương ứng.
+- `archive_stale()` không xử lý active; sandbox goal active cũ 400 ngày vẫn
+  active. `snapshot()` không scope và gồm cả inactive; summary đưa snapshot
+  này vào Self. Đường `goals(scope=...)` có lọc đúng nhưng không phải đường
+  summary hiện tại. Kho có 5 goal active, 22 commitment active, 1 completed.
+- Nhiều evidence cũ dạng `session_turn:<n>` đứng riêng không định danh phiên;
+  chưa kết luận từng record bị reinforce sai khi chưa đối chiếu transcript.
+  Không nhầm helper idempotency public delivery đã có namespace phiên với
+  provenance của memory: đó là hai đường khác nhau.
+
+Artifact `eris-memory-audit-20261030/` của chat có review từng record ID,
+đề xuất gộp, lý do và probe. Ưu tiên sửa nguồn admission/vòng đời trước khi
+dọn record cũ để tránh tái sinh dữ liệu sai; không mặc định được phép xóa
+toàn bộ memory từ việc user yêu cầu rà soát.
+
+## 29. Ngày 30/10: AI curator đã tồn tại, Gemini không phải owner của phiên đã rà
+
+User nhớ đã gắn Gemini cho memory. Đối chiếu code và portable xác nhận **đã có
+AI xử lý memory**; không được diễn giải các lỗi ở mục 28 thành “chưa có AI dọn”.
+
+- `coordinator_bootstrap.py` ưu tiên `GeminiWebUserProfileAdapter` khi import
+  được `gemini_webapi` và tìm được cookie/credentials theo đường adapter hỗ trợ.
+  Adapter được bind vào profile extractor, episode builder và dreamer. Nếu
+  không khả dụng, bootstrap dùng DeepSeek curator lane.
+- Log `eris_run_20261030_135451.txt:59` ghi owner thực tế **DeepSeek curator lane**.
+  Probe chỉ đọc bằng Python portable hiện tại: không có package `gemini_webapi`,
+  không thấy hai biến cookie Gemini hoặc file credentials tại đường discovery
+  mà adapter dùng. Không in giá trị bí mật. Đây là trạng thái kiểm tra hiện tại,
+  không chứng minh Gemini chưa từng chạy ở bản cũ hoặc service Gemini khác.
+- AI GC riêng trong `memory_gc_service.py` có review semantic/profile và
+  `LivingUserMemoryCurator` có thao tác merge/rewrite/archive/delete... kèm audit.
+  Tuy nhiên GC tự lấy DeepSeek curator/critic, không dùng adapter Gemini của
+  Living User. Service có lịch chạy khi idle (startup delay mặc định 120 giây,
+  interval 600 giây); log phiên đã rà có startup, chưa thấy receipt xác nhận
+  một lượt dọn thành công. Không suy diễn rằng GC chưa bao giờ chạy.
+- Kho goal/commitment vẫn nhận trực tiếp qua `action_store.observe_turn()` và
+  cue extraction. AI review profile không tự review các record action này.
+  Vì vậy có AI curator vẫn không ngăn được lỗi actor, câu giả định hoặc “tôi tự
+  hỏi” biến thành commitment active đã tái hiện ở mục 28.
+
+Hướng sửa là nối phán đoán ngữ nghĩa của AI vào đúng admission/review action,
+giữ kiểm tra evidence, actor, scope, trạng thái và audit ở code; đồng thời làm
+rõ provider/coverage và receipt chạy curator. Không cần tạo lại AI cleaner từ
+đầu hay mặc định thêm regex sẽ giải quyết được. Lượt kiểm tra này chưa cài
+package, đổi routing, gọi model live hoặc sửa canonical memory.
+
+## 30. Ngày 30/10: nối memory vào service Gemini Web theo chỉ định mới
+
+User đính chính: dùng lane Gemini Web dọn memory, đã bỏ DeepSeek cho việc này.
+**Thay thế diễn giải ở mục 29 rằng thiếu package/cookie trong portable có nghĩa
+lane Gemini Web của hệ thống không khả dụng.** Mục 29 chỉ kiểm adapter direct
+cookie cũ; đã bỏ sót service Gemini riêng đang chạy.
+
+- GET `http://127.0.0.1:8000/v1/models` quảng bá `gemini-flash` và
+  `gemini-flash-lite`; GET `/api/status` báo authenticated và cached credentials
+  đều true. Source service là `tools/gemini_vision_docker/server.py`, hỗ trợ chat
+  text qua `/v1/chat/completions`. Không đọc hoặc sao chép cookie sang portable.
+- `GeminiWebUserProfileAdapter` chuyển sang gọi HTTP service này; cấu hình
+  `ERIS_MEMORY_GEMINI_ENABLED`, `ERIS_MEMORY_GEMINI_BASE_URL`,
+  `ERIS_MEMORY_GEMINI_MODEL`, `ERIS_MEMORY_GEMINI_TIMEOUT_SEC`. Factory chỉ đọc
+  cấu hình, chưa gọi mạng nên log bootstrap là owner được chọn, không phải
+  receipt provider đã trả lời. Mặc định cổng 8000/model `gemini-flash`, timeout
+  120 giây. Profile/dream/GC chia sẻ lock trong process.
+- `build_curator_client`, bootstrap Living User và GC dùng Gemini Web; bỏ
+  fallback sang DeepSeek critic/inner/chat. Nhánh maintenance
+  `MemoryAICurator._call_llm()` trước đó mượn inner/client cũng đã chuyển sang
+  Gemini curator. Không đổi owner của Root, writer, observer hay TTS.
+- Timeout, lỗi HTTP, output rỗng/sai schema hoặc bị truncate không phải kết quả
+  operations rỗng hợp lệ. GC lỗi response/parse không chốt throttle 24 giờ.
+  Validator profile chỉ cho phép ID trong batch thực sự gửi model; checkpoint
+  mới dùng nhãn trung tính `model_curator_living_user_gc`.
+- Smoke live với evidence **tổng hợp** về sở thích câu trả lời ngắn: Gemini
+  trả JSON operations hợp lệ sau **4,73 giây**. Không gửi kho memory thật trong
+  smoke và không ghi canonical memory. Bộ test cô lập credentials: **86 passed,
+  1 failed** ở `test_research_client_no_longer_falls_back_to_main_or_fallback`.
+  Lỗi research fallback tái hiện bằng chính `LlmService` lấy từ HEAD, không do
+  thay đổi memory routing. Ba lỗi ban đầu khác trong suite rộng đến từ config
+  local lọt vào test; chạy cô lập không còn ba lỗi đó.
+- Đồng bộ 6 module runtime sang portable, backup source trước đó tại
+  `Documents/eris/backups/gemini-memory-service-20261030/`; 26 file memory/config
+  được kiểm hash giữ nguyên. Import probe từ chính portable xác nhận process
+  manager và GC chọn Gemini adapter, cả 6 module parse được. Chưa mở lại toàn
+  app hoặc chạy cleanup lên kho thật; cần phiên Eris mới để dùng module đã sửa.
+
+Phạm vi sửa này là routing/receipt lỗi của memory AI. **Chưa sửa** admission
+goal/commitment bằng cue, vòng đời active cũ, replay/debug vào Root Self hoặc
+snapshot profile chưa theo relevance. Không coi Gemini đã tự dọn được những
+kho mà code chưa gửi nó review; không coi smoke tổng hợp là receipt dọn kho thật.
+
+## 31. Ngày 30/10: AI sở hữu admission hội thoại, reset action active và đo prompt
+
+User yêu cầu bỏ việc bắt từ khóa, để AI quyết định memory; reset active cũ và
+nghiên cứu phần prompt phình. Phạm vi reset đã thông báo là **goal/commitment
+active trong action store**, không phải toàn bộ active profile hay lịch sử đời sống.
+
+- Bỏ extractor cue goal/user commitment/assistant commitment/workflow, cùng
+  rule tự đánh dấu hoàn tất từ câu assistant. Journal chỉ ghi lượt có evidence ID.
+  Bỏ rule tự sinh profile từ từ khóa về ngôn ngữ, feedback, style, học tập và
+  công việc. Bỏ các bộ regex phân loại ẩn dụ/nhập vai/ephemeral khỏi model,
+  extractor, profile admission và deterministic curator; không dùng từ trong
+  value để tự phong core_anchor. Giữ kiểm schema, nguồn, evidence, scope, expiry,
+  typed path/tier, authority ledger và bảo vệ core anchor hiện có.
+- Một lần Gemini inference đề xuất cả `operations` profile và `action_operations`.
+  Curator worker chỉ propose; reducer mới mutate. Action proposal mang role,
+  scope và evidence do ingress cấp; model không tự cấp chúng. Assistant đã
+  delivered mới vào curator, không đi qua user semantic parser và không được
+  viết user profile. Lời assistant tự nói “đã xong” không đóng commitment.
+- Action store có audit/undo data và dedupe proposal bền qua restart. AI có thể
+  thêm action hoặc đổi status của ID đã được cung cấp trong đúng scope; không
+  fuzzy-merge mục tiêu theo chữ. Lỗi ghi action rollback RAM. Audit không nằm
+  trong snapshot prompt. Idle GC Gemini được review action, chỉ hạ về candidate
+  hoặc archive; không tự bịa completion, cancellation hay action mới.
+- Sửa `CuratorInbox.due()` lấy cả trạng thái `proposed`: nhánh khôi phục outbox
+  đã tồn tại nhưng query cũ chỉ lấy pending nên proposal sau restart bị kẹt.
+  Model lỗi/không khả dụng không được biến thành “không có gì đáng nhớ”.
+- Backup rồi reset **5 goal active, 22 commitment active** trong portable.
+  Còn 0 goal, 1 commitment completed, 0 workflow. `reset_before` ngăn action
+  proposal từ evidence trước reset quay lại. 25 file memory/config khác được
+  kiểm hash không đổi; profile vẫn 118 active. Không có Eris runtime đang chạy
+  lúc thao tác. Backup tại `Documents/eris/backups/ai-memory-reset-20261030/`.
+  Đã đồng bộ 14 module Python, import smoke từ chính portable trên bản sao của
+  memory thật xác nhận reset, chặn outbox cũ, graph vắng mặt và dữ liệu gốc không
+  đổi trong smoke. Cần mở lại Eris để runtime dùng code mới.
+- Test liên quan: **147 passed, 3 failed**; ba lỗi retrieval/clarification và
+  competence context đều tái hiện với package memory lấy từ HEAD trong thư mục
+  tạm cô lập. Nhóm Root/bootstrap/graph thêm **23 passed**. Smoke Gemini thật
+  bằng 4 evidence tổng hợp: suy tư, lời trích dẫn, offer có điều kiện đều trả 0
+  action; lời chốt bàn giao tạo 1 commitment user. Mỗi inference 2,66–3,73 giây.
+  Không coi 4 probe là chứng minh model luôn phân loại đúng.
+
+**Prompt đã đo, chưa đổi projection/cắt memory trong lượt này:**
+
+- Raw request user-turn cũ vẫn là `a9ef0a39abd240c59c038b6c9adad92f`, manifest
+  hash được kiểm lại. Bootstrap sau loại graph offline: 167.112 **ký tự**.
+  Profile 63.685, replay 41.928, actions 18.336, 8 episode 9.134. Riêng profile
+  có 80 record × 21 trường; tổng value 7.847, metadata 11.487 (reason 9.777),
+  evidence 4.195, khóa/dấu JSON của mảng record 21.601 ký tự.
+- `living_user.summary()` đưa snapshot đầy đủ và `replay_debugger.report()` vào
+  `MemoryCognitionCore.load()`, Root `_read_self()` lấy nguyên memory_state.
+  Đây là đường debug/audit view đi vào bootstrap, chưa phải context được chọn
+  theo query. Profile snapshot vẫn lấy trust/recency, không relevance.
+- Hai biểu diễn internal state có cùng 75 key và value, mỗi bản khoảng 5,8k:
+  `active_state.metadata.internal_state` và `memory_state.internal_state`.
+- Event hiện tại 23.614 ký tự: runtime context delta 10.049 (grounding 5.685),
+  Self delta 12.991. Trong Self delta có thêm `memory_state.ai_orchestrated_state`
+  9.932 ký tự bên cạnh `mind_state` delta 3.002. Reconstruct mind_state từ
+  bootstrap + delta rồi compare: hai bản khác đúng `relationship.last_event`.
+  Nguồn bản persistence là `runtime/ai_orchestrated/bootstrap.py:persist()`;
+  không xóa một bản trước khi hợp nhất khác biệt có nghĩa đó.
+- Snapshot offline mới từ portable sau reset: profile **63.685**, replay
+  **41.402**, actions **972**, episodes **9.545** ký tự. Đây là component của
+  fresh memory load, không phải request Root live mới. Replay/debug và full
+  profile serialization vẫn là hai nguồn lớn nhất còn lại.
+- Bootstrap còn được projector đưa lại vào messages của request sau. “Delta”
+  không tự làm prefix Self miễn phí. Chỉ bỏ replay trong fixture cũ giảm
+  bootstrap 167.112 → 125.174 ký tự; giả lập thêm reset active cũ còn 107.810.
+  Đây là scenario phân tích, **chưa triển khai** việc bỏ replay. Log Root mới
+  ghi `self_component_chars` và `request_size` (chars/message và token heuristic
+  chars/3), không log nội dung memory; không nhầm heuristic với usage tính tiền.
+
+Artifact `eris-ai-memory-reset-20261030/` của chat chứa breakdown theo field,
+probe Gemini, receipt backup/deploy/reset và smoke portable. Ưu tiên projection
+tiếp theo: tách debug report khỏi prompt, compact profile nhưng giữ meaning và
+provenance, hợp nhất state trùng sau khi đối chiếu owner; không hard-cap/cắt
+belief tùy tiện rồi tuyên bố đã giữ nguyên Self.

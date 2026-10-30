@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Test suite cho 4 nấc kiến trúc bộ nhớ ERIS:
-1. Entity Grounding & Metaphor Guard (chặn từ đệm cô lập, token rác, ẩn dụ/trêu đùa).
+"""Test các cơ chế bộ nhớ ERIS còn hoạt động:
+1. AI curator quyết định meaning; admission chỉ kiểm cấu trúc và provenance.
 2. Proactive Associative Recall (gợi ý chủ động theo nhịp sinh học, cảm xúc, việc dang dở).
-3. Concept Knowledge Graph Integration (truy hồi liên tưởng đa bước qua ConceptGraphStore).
-4. Memory Tiering & Core Anchors (working, habit, core_anchor với decay immunity & curator protection).
+3. Memory Tiering & Core Anchors (working, habit, core_anchor với decay immunity & curator protection).
 """
 import time
 from pathlib import Path
 
-from memory.concept_graph import ConceptGraphStore, extract_concepts
 from memory.living_user.curator import LivingUserCuratorConfig, LivingUserMemoryCurator
 from memory.living_user.models import (
     ProfileContextPacket,
@@ -16,12 +14,7 @@ from memory.living_user.models import (
     ProfileRecord,
     UserEpisode,
     UserMemoryScope,
-    clean_durable_interest,
     determine_memory_tier,
-    is_ephemeral_directive,
-    is_ephemeral_micro_activity,
-    is_fragment_or_noise,
-    is_metaphor_or_sarcasm_leak,
 )
 from memory.living_user.service import LivingUserMemoryConfig, LivingUserMemoryService
 from memory.living_user.store import UserProfileStore
@@ -32,45 +25,7 @@ from memory.memory_admission import MemoryAdmissionPolicy
 # Nấc 1: Entity Grounding & Metaphor Guard
 # ==============================================================================
 
-def test_tier1_noise_and_fragment_guard():
-    # Filler particles isolated
-    assert is_fragment_or_noise("learning.active_topics", "nè") is True
-    assert is_fragment_or_noise("learning.active_topics", "á") is True
-    assert is_fragment_or_noise("learning.active_topics", "ủa") is True
-    assert is_fragment_or_noise("learning.active_topics", "ik") is True
-    assert is_fragment_or_noise("learning.active_topics", "nha!") is True
-    assert is_fragment_or_noise("state.mood", "ừ") is True
-
-    # Token debris / technical fragments
-    assert is_fragment_or_noise("communication.assistant_identifier", "$232232930220") is True
-    assert is_fragment_or_noise("general.token", "upr_8a045838a1e30e74db") is True
-    assert is_fragment_or_noise("general.noise", "983749283472") is True
-
-    # Preserved ISO language codes and real values
-    assert is_fragment_or_noise("communication.preferred_language", "vi") is False
-    assert is_fragment_or_noise("communication.preferred_language", "en") is False
-    assert is_fragment_or_noise("communication.preferred_language", "ja") is False
-    assert is_fragment_or_noise("technical.skill", "AI") is False
-    assert is_fragment_or_noise("gaming.stat", "EV") is False
-    assert is_fragment_or_noise("learning.active_topics", "Machine Learning") is False
-
-
-def test_tier1_metaphor_and_joke_guard():
-    # Metaphor joke leaks in personal/identity domains
-    patent_joke = "chủ sở hữu bằng sáng chế được nhắc tới có quan hệ tình thân với người dùng"
-    assert is_metaphor_or_sarcasm_leak("personal.relation_to_patent", patent_joke) is True
-    assert is_metaphor_or_sarcasm_leak("relationship.patent_owner", "bằng sáng chế tình thân") is True
-    assert is_metaphor_or_sarcasm_leak("personal.goal", "xây dựng đế chế sao hỏa") is True
-    assert is_metaphor_or_sarcasm_leak("relationship.team", "chi nhánh vô dụng") is True
-    assert is_metaphor_or_sarcasm_leak("identity.trait", "trùm vũ trụ thống trị thế giới") is True
-
-    # Legitimate non-metaphor facts must be preserved
-    assert is_metaphor_or_sarcasm_leak("personal.location", "Hà Nội") is False
-    assert is_metaphor_or_sarcasm_leak("personal.hobby", "chơi game Pokemmo và nghe nhạc") is False
-    assert is_metaphor_or_sarcasm_leak("identity.role", "người tạo ra ERIS") is False
-
-
-def test_tier1_admission_policy_rejects_noise_and_metaphor():
+def test_admission_does_not_guess_meaning_from_keywords():
     policy = MemoryAdmissionPolicy()
 
     # Noise record
@@ -83,8 +38,7 @@ def test_tier1_admission_policy_rejects_noise_and_metaphor():
         evidence_ids=("ev1",),
     )
     decision = policy.decide_profile_record(rec_noise)
-    assert decision.admitted is False
-    assert "fragment_or_noise" in decision.reason
+    assert decision.admitted is True  # Meaning belongs to AI, not a word list.
 
     # Metaphor record
     rec_joke = ProfileRecord(
@@ -96,8 +50,7 @@ def test_tier1_admission_policy_rejects_noise_and_metaphor():
         evidence_ids=("ev2",),
     )
     decision_joke = policy.decide_profile_record(rec_joke)
-    assert decision_joke.admitted is False
-    assert "metaphor_or_sarcasm_leak" in decision_joke.reason
+    assert decision_joke.admitted is True
 
 
 def test_tier1_curator_cleans_noise_and_metaphor(tmp_path: Path):
@@ -114,9 +67,13 @@ def test_tier1_curator_cleans_noise_and_metaphor(tmp_path: Path):
         profile_store = store
         embedding_index = None
 
-    curator = LivingUserMemoryCurator(MockLivingUser(), reviewer=None)
+    import json
+    ids = [r.id for r in store.all() if r.path != "communication.preferred_language"]
+    def reviewer(system, user, max_tokens):
+        return json.dumps({"operations":[{"action":"delete", "record_ids":[rid], "reason":"AI review of supplied evidence"} for rid in ids]})
+    curator = LivingUserMemoryCurator(MockLivingUser(), reviewer=reviewer)
     result = curator.run()
-    # 3 invalid records must be deleted by deterministic curator GC
+    # Only the AI proposal may decide the meaning of these records.
     assert result.deleted >= 3
     remaining = store.all()
     assert len(remaining) == 1
@@ -206,63 +163,11 @@ def test_tier4_core_anchor_protected_from_curator_deletion(tmp_path: Path):
 
 
 # ==============================================================================
-# Nấc 3: Concept Knowledge Graph Integration
-# ==============================================================================
-
-def test_tier3_concept_graph_multi_hop_neighbors(tmp_path: Path):
-    graph = ConceptGraphStore(str(tmp_path / "concept_graph.json"))
-
-    # Ingest: Pokemmo connected to Route 12
-    graph.ingest_commit({"content": "Pokemmo farming route 12 speed evs", "confidence": 0.9, "evidence_ids": ["ev1"]})
-    # Ingest: Route 12 connected to Pidgeot and Rapidash
-    graph.ingest_commit({"content": "route 12 rapidash unova exp speed", "confidence": 0.85, "evidence_ids": ["ev2"]})
-
-    # Multi-hop retrieval from 'pokemmo'
-    neighbors = graph.multi_hop_neighbors(["pokemmo"], limit=10, max_hops=2)
-    assert "route" in neighbors
-    assert "rapidash" in neighbors
-    # Hop 1 (route) should have higher associative weight than Hop 2 (rapidash)
-    assert neighbors["route"] > neighbors["rapidash"]
-
-
-def test_tier3_service_associative_recall_boost(tmp_path: Path):
-    concept_graph = ConceptGraphStore(str(tmp_path / "concept_graph.json"))
-    service = LivingUserMemoryService(tmp_path, concept_graph=concept_graph)
-
-    # Ingest associative knowledge into concept graph
-    concept_graph.ingest_commit(
-        {"content": "pokemmo unova route 12 ev train", "confidence": 0.95, "evidence_ids": ["cg1"]}
-    )
-
-    # Add profile record that mentions 'route 12' but DOES NOT contain 'pokemmo'
-    service.apply_turn_operations([
-        ProfileOperation(
-            op="add",
-            path="gaming.favorite_spot",
-            value="thường cày speed ở Route 12",
-            confidence=0.85,
-            explicitness="explicit",
-            evidence_ids=("ev_spot",),
-        )
-    ])
-
-    # Query using 'Pokemmo'
-    packet = service.compile_context("chỉ tôi chỗ train Pokemmo", include_sensitive=False)
-    # The associative link pokemmo <-> route 12 elevates 'gaming.favorite_spot'
-    matched_paths = [item.path for item in packet.items]
-    assert "gaming.favorite_spot" in matched_paths
-    item = next(it for it in packet.items if it.path == "gaming.favorite_spot")
-    assert "assoc=" in item.reason
-    assert item.score >= 0.20
-
-
-# ==============================================================================
 # Nấc 2: Proactive Associative Recall
 # ==============================================================================
 
 def test_tier2_proactive_memory_cue_generation(tmp_path: Path):
-    concept_graph = ConceptGraphStore(str(tmp_path / "concept_graph.json"))
-    service = LivingUserMemoryService(tmp_path, concept_graph=concept_graph)
+    service = LivingUserMemoryService(tmp_path)
 
     # Setup state continuity: user was bored/tired in previous session
     service.apply_turn_operations([
@@ -307,17 +212,8 @@ def test_tier2_proactive_memory_cue_generation(tmp_path: Path):
     assert "[PROACTIVE_MEMORY_NUDGE]" not in task_packet.render_prompt_context()
 
 
-def test_tier1_gaming_micro_activity_guard(tmp_path: Path):
-    # 1. Helper detection
+def test_ai_curator_rewrites_contextual_interest(tmp_path: Path):
     complex_val = "Chơi Pokemmo; quan tâm farm EV Speed ở Route 12 Unova, dùng Sweet Scent; biết Dunsparce cho HP EV nên cần tránh đánh."
-    assert is_ephemeral_micro_activity("interests.games.pokemmo", complex_val) is True
-    cleaned = clean_durable_interest(complex_val)
-    assert cleaned == "Chơi Pokemmo"
-
-    # Pure ephemeral micro activity
-    pure_val = "farm con ngựa ở route 12 unova"
-    assert is_ephemeral_micro_activity("gaming.task", pure_val) is True
-
     # 2. Curator rewrites bloated interest to durable preference
     store = UserProfileStore(tmp_path / "living_user_profile.json")
     store.apply([
@@ -334,7 +230,11 @@ def test_tier1_gaming_micro_activity_guard(tmp_path: Path):
         profile_store = store
         embedding_index = None
 
-    curator = LivingUserMemoryCurator(MockLivingUser(), reviewer=None)
+    import json
+    rid = store.all()[0].id
+    def reviewer(system, user, max_tokens):
+        return json.dumps({"operations":[{"action":"rewrite", "record_ids":[rid], "value":"Chơi Pokemmo", "reason":"AI distinguishes durable interest from one scene"}]})
+    curator = LivingUserMemoryCurator(MockLivingUser(), reviewer=reviewer)
     result = curator.run()
     assert result.rewritten >= 1
     recs = store.all()
@@ -412,15 +312,6 @@ def test_topical_relevance_gate_prevents_unrelated_interest_leak(tmp_path: Path)
     game_packet = service.compile_context("bạn có nhớ tôi chơi game gì không")
     game_paths = [it.path for it in game_packet.items]
     assert "interests.games.pokemmo" in game_paths
-
-
-def test_tier1_playful_trolling_and_sarcasm_guard():
-    # Trolling/sarcasm patterns must be blocked from leaking into identity/relationship
-    assert is_metaphor_or_sarcasm_leak("identity.origin", "người ngoài hành tinh bị bắt cóc lên sao hỏa") is True
-    assert is_metaphor_or_sarcasm_leak("personal.occupation", "điệp viên CIA ngầm") is True
-    assert is_metaphor_or_sarcasm_leak("relationship.family", "tao là bố mày nè") is True
-    assert is_metaphor_or_sarcasm_leak("identity.nature", "robot AI từ tương lai cấp cao hơn") is True
-    assert is_metaphor_or_sarcasm_leak("identity.alias", "chúa tể bóng tối") is True
 
 
 def test_tier4_initiative_permission_tiering():

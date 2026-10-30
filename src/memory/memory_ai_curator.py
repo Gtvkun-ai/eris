@@ -454,49 +454,21 @@ class MemoryAICurator:
     # ------------------------------------------------------------------
 
     def _call_llm(self, system: str, user: str, *, max_tokens: int = 256) -> str | None:
-        """Gọi LLM qua llm_service.client (Gemini).
+        """Chỉ dùng Gemini Web curator, không mượn inner/chat chính."""
+        from memory.living_user.gemini_adapter import GeminiWebUserProfileAdapter
+        from memory.living_user.runtime_adapter import _extract_text
 
-        Dùng thẳng client, không qua generate_chat_reply để tránh bị wrap
-        bởi toàn bộ persona/prompt/fe/ni/ti context. Curator chỉ cần plain JSON.
-        """
-        client = getattr(self.llm_service, "inner_client", None) or getattr(self.llm_service, "client", None)
-        if not callable(getattr(client, "create_chat_completion", None)):
+        client = getattr(self.llm_service, "curator_client", None)
+        if not isinstance(client, GeminiWebUserProfileAdapter):
+            client = GeminiWebUserProfileAdapter.create_if_available()
+        if client is None:
             return None
         try:
-            # PDF annotation, pages 7-9: memory maintenance is optional,
-            # coalesced background work and never competes with chat_main.
-            from runtime.inference_broker import inference_context
-            with inference_context(
-                "memory_digest",
-                optional=True,
-                timeout_seconds=10.0,
-                cancel_scope="background:memory_digest",
-                coalesce_key="memory_digest:latest",
-                metadata={"curator": True},
-            ):
-                response = client.create_chat_completion(
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=0.0,
-                    frequency_penalty=0.0,
-                    presence_penalty=0.0,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                    grammar=None,
-                    timeout=10.0,
-                )
-            # Extract content từ response — hỗ trợ Gemini và OpenAI-compat
-            extract = getattr(self.llm_service, "_extract_content", None)
-            if callable(extract):
-                return str(extract(response) or "")
-            # Fallback manual extract
-            choices = response.get("choices") if isinstance(response, dict) else None
-            if choices and isinstance(choices, list):
-                msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-                return str(msg.get("content", "") or "")
-            return None
+            response = client.create_chat_completion(
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=max_tokens,
+            )
+            return _extract_text(response)
         except Exception as exc:
             logger.warning("AI curator LLM call failed: %s", exc)
             return None

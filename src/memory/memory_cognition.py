@@ -46,7 +46,6 @@ from .repair_memory import RepairMemoryItem, RepairMemoryStore
 from .semantic_memory import SemanticMemoryItem, SemanticMemoryStore
 from .predicate_registry import PredicateRegistry, get_default_registry
 from .unresolved_memory import UnresolvedMemoryCandidate, UnresolvedMemoryStore
-from .concept_graph import ConceptGraphStore
 from .canonical_long_term import (
     BeliefStore,
     WorldviewMemoryStore,
@@ -242,7 +241,6 @@ class MemoryCognitionCore:
         self.tom_history = ToMHistoryStore(os.path.join(base_dir, "tom_history.json"))
         self.self_continuity = SelfContinuityMemoryStore(os.path.join(base_dir, "self_continuity_memory.json"))
         self.homeostatic_baseline = HomeostaticBaselineStore(os.path.join(base_dir, "homeostatic_baseline.json"))
-        self.concept_graph = ConceptGraphStore(os.path.join(base_dir, "concept_graph.json"))
         self.agent_mind = PersistentAgentMindStore(agent_mind_path_for_memory_core(base_dir))
 
         self.cue_builder = MemoryCueBuilder()
@@ -270,7 +268,6 @@ class MemoryCognitionCore:
             event_ledger=self.event_ledger,
             embedding_index=_embedding_index,
             memory_feed_trace=self.memory_feed_trace,
-            concept_graph=self.concept_graph,
         )
 
     # ------------------------------------------------------------------
@@ -403,17 +400,6 @@ class MemoryCognitionCore:
                 evidence_ids=evidence_ids,
             )
 
-        # Belief/worldview đã qua permission, confidence và evidence gate mới được
-        # đưa vào concept graph. Graph là chỉ mục liên kết, không phải một đường
-        # ghi lén vòng qua StateCommitter.
-        if stored_id and target in {"belief_core", "worldview_memory"}:
-            try:
-                graph_result = self.concept_graph.ingest_commit(request, record_id=stored_id)
-                if graph_result.get("nodes", 0) <= 0:
-                    warnings.append("concept_graph_no_extractable_concepts")
-            except Exception as exc:
-                warnings.append(f"concept_graph_failed:{type(exc).__name__}")
-
         return MemoryCommitDecision(
             outcome=outcome,
             target=target,
@@ -512,7 +498,6 @@ class MemoryCognitionCore:
             "tom_history": [item.to_dict() for item in self.tom_history.load()],
             "self_continuity": [item.to_dict() for item in self.self_continuity.load()],
             "homeostatic_baseline": [item.to_dict() for item in self.homeostatic_baseline.load()],
-            "concept_graph": self.concept_graph.load(),
             "agent_mind": self.agent_mind.to_dict(),
             "living_user": self.living_user.summary(include_sensitive=False, limit=80),
         }

@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .action_memory import ActionMemoryStore, GoalRecord, CommitmentRecord, WorkflowRecord
+from .action_memory import ActionMemoryStore, ActionMemoryOperation, GoalRecord, CommitmentRecord, WorkflowRecord
 from .authority import UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig
@@ -60,7 +60,7 @@ class LivingUserMemoryConfig:
 class UserTurnObservation:
     applied: int = 0
     rejected: int = 0
-    operations: tuple[ProfileOperation, ...] = ()
+    operations: tuple[ProfileOperation | ActionMemoryOperation, ...] = ()
     diagnostics: tuple[str, ...] = ()
 
 
@@ -79,7 +79,6 @@ class LivingUserMemoryService:
         config: LivingUserMemoryConfig | None = None,
         profile_store_config: UserProfileStoreConfig | None = None,
         memory_feed_trace: MemoryFeedTraceJournal | None = None,
-        concept_graph: Any = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -99,8 +98,6 @@ class LivingUserMemoryService:
         self.memory_feed_trace = memory_feed_trace or MemoryFeedTraceJournal(self.base_dir / "memory_feed_trace.jsonl")
         self.replay_debugger = MemoryReplayDebugger(self.trace_journal)
         self.clarification_policy = MemoryClarificationPolicy()
-        from memory.concept_graph import ConceptGraphStore
-        self.concept_graph = concept_graph or ConceptGraphStore(self.base_dir / "concept_graph.json")
         self.extractor = UserProfileExtractor(model_adapter=model_adapter)
         self.episode_builder = UserEpisodeBuilder(model_adapter=model_adapter)
         self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter)
@@ -110,7 +107,6 @@ class LivingUserMemoryService:
             embedding_index=embedding_index,
             action_store=self.action_store,
             clarification_policy=self.clarification_policy,
-            concept_graph=self.concept_graph,
             config=ProfileContextCompilerConfig(default_token_budget=self.config.context_token_budget),
         )
         self.sources = MemorySourceTracker(
@@ -143,7 +139,7 @@ class LivingUserMemoryService:
         session_id: str = "",
         turn_id: str = "",
         context: Mapping[str, Any] | None = None,
-    ) -> None:
+    ) -> str | None:
         """Ghi lượt vào journal ngắn để episode builder có đủ hai phía hội thoại."""
         if not self.config.enabled:
             return
@@ -152,9 +148,9 @@ class LivingUserMemoryService:
             return
         sid = str(session_id or self._active_session_id or "runtime_session").strip()
         action_scope = _scope_from_context(context, session_id=sid)
-        action_result = self.action_store.observe_turn(role, clean, evidence_id=str(turn_id or f"turn_{uuid.uuid4().hex[:16]}"), scope=action_scope)
+        evidence_id = str(turn_id or f"conversation:{sid}:{uuid.uuid4().hex}")
         self.trace_journal.append("conversation_turn", {
-            "role": role, "session_id": sid, "action_ids": action_result,
+            "role": role, "session_id": sid, "evidence_id": evidence_id,
             "project_id": action_scope.key if action_scope.kind == "project" else "",
         })
         with self._turn_buffer_lock:
@@ -162,7 +158,7 @@ class LivingUserMemoryService:
                 self._flush_buffer_locked(run_dream=True)
             self._active_session_id = sid
             self._turn_buffer.append({
-                "id": str(turn_id or f"turn_{uuid.uuid4().hex[:16]}"),
+                "id": evidence_id,
                 "role": "assistant" if role == "eris" else role,
                 "text": clean[:1800],
                 "timestamp": time.time(),
@@ -174,6 +170,7 @@ class LivingUserMemoryService:
             # lượt cuối để mạch tiếp theo không bị cắt cụt.
             if len(self._turn_buffer) >= 28 and role in {"assistant", "eris"}:
                 self._flush_buffer_locked(run_dream=False, keep_tail=4)
+        return evidence_id
 
     def flush_session(self, *, run_dream: bool = True) -> UserEpisode | None:
         with self._turn_buffer_lock:
@@ -224,7 +221,7 @@ class LivingUserMemoryService:
         *,
         evidence_ids: Iterable[str],
         context: Mapping[str, Any] | None = None,
-    ) -> tuple[ProfileOperation, ...]:
+    ) -> tuple[ProfileOperation | ActionMemoryOperation, ...]:
         """Extract profile operations without mutating living-user state.
 
         Curator/model work belongs on a proposal lane.  Authority checks and
@@ -234,17 +231,36 @@ class LivingUserMemoryService:
         """
         if not self.config.enabled or not self.config.auto_observe_turns:
             return ()
+        if self.model_adapter is None:
+            from .runtime_adapter import CuratorInferenceError
+            raise CuratorInferenceError("unavailable")
+        proposal_context = dict(context or {})
+        action_scope = _scope_from_context(proposal_context, session_id=str(proposal_context.get("session_id") or self._active_session_id))
+        supplied_actions = [
+            row.to_dict() for row in (
+                *self.action_store.goals(scope=action_scope),
+                *self.action_store.commitments(scope=action_scope),
+                *self.action_store.workflows(scope=action_scope),
+            )
+        ]
+        proposal_context["action_scope"] = action_scope.to_dict()
+        proposal_context["existing_actions"] = supplied_actions
+        with self._turn_buffer_lock:
+            proposal_context["recent_conversation"] = [
+                {"id": row["id"], "role": row["role"], "text": row["text"]}
+                for row in self._turn_buffer[-6:]
+            ]
         ops = self.extractor.from_turn(
             user_text,
             evidence_ids=evidence_ids,
-            context=context,
+            context=proposal_context,
             existing_profile=self.profile_store.snapshot(limit=100),
         )
         return tuple(ops or ())
 
     def apply_turn_operations(
         self,
-        operations: Iterable[ProfileOperation],
+        operations: Iterable[ProfileOperation | ActionMemoryOperation],
         *,
         trace_context: Mapping[str, Any] | None = None,
     ) -> UserTurnObservation:
@@ -252,25 +268,27 @@ class LivingUserMemoryService:
         if not self.config.enabled or not self.config.auto_observe_turns:
             return UserTurnObservation(diagnostics=("living_user_disabled",))
         ops = tuple(operations or ())
-        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
+        profile_ops = tuple(op for op in ops if isinstance(op, ProfileOperation))
+        action_ops = tuple(op for op in ops if isinstance(op, ActionMemoryOperation))
+        guarded_ops, authority_rejected = self.authority_ledger.guard_operations(profile_ops)
         result = self.profile_store.apply(guarded_ops, checkpoint_reason="observe_user_turn")
         self._reapply_authority_projection()
-        if result.record_ids:
-            self._ingest_operations_to_concept_graph(guarded_ops, result.record_ids)
-        rejected = tuple((*result.rejected, *authority_rejected))
+        action_result = self.action_store.apply_model_operations(action_ops)
+        rejected = tuple((*result.rejected, *authority_rejected, *action_result["rejected"]))
         payload = {
-            "applied": len(result.record_ids), "rejected_count": len(rejected),
+            "applied": len(result.record_ids) + action_result["applied"], "rejected_count": len(rejected),
             "operation_count": len(ops), "paths": [op.path for op in guarded_ops],
             "operations": [op.to_dict() for op in guarded_ops],
             "authority_rejected": list(authority_rejected),
+            "action_record_ids": action_result["record_ids"],
         }
         if trace_context:
             payload["context"] = dict(trace_context)
         self.trace_journal.append("observe_turn", payload)
         return UserTurnObservation(
-            applied=len(result.record_ids),
+            applied=len(result.record_ids) + action_result["applied"],
             rejected=len(rejected),
-            operations=guarded_ops,
+            operations=(*guarded_ops, *action_ops),
             diagnostics=rejected,
         )
 
@@ -372,8 +390,6 @@ class LivingUserMemoryService:
         guarded_ops, authority_rejected = self.authority_ledger.guard_operations(ops)
         result = self.profile_store.apply(guarded_ops, checkpoint_reason="semantic_sync")
         self._reapply_authority_projection()
-        if result.record_ids:
-            self._ingest_operations_to_concept_graph(guarded_ops, result.record_ids)
         if authority_rejected:
             return ApplyResult(
                 result.changed,
@@ -403,15 +419,6 @@ class LivingUserMemoryService:
         if episode is None:
             return None
         saved = self.episode_store.add(episode)
-        if self.concept_graph is not None and saved is not None:
-            try:
-                content = f"{saved.title}: {saved.summary} {' '.join(saved.topics)} {' '.join(saved.open_loops)}"
-                self.concept_graph.ingest_commit(
-                    {"content": content, "confidence": max(0.5, saved.importance), "evidence_ids": [saved.id]},
-                    record_id=saved.id,
-                )
-            except Exception:
-                pass
         if run_dream:
             semantic_ops = self._semantic_operations(scope=scope)
             self.last_dream_report = self.dreamer.consolidate((saved,), semantic_operations=semantic_ops, reason="session_end", scope=scope)
@@ -516,25 +523,6 @@ class LivingUserMemoryService:
         """Biên dịch gợi ý chủ động dựa trên nhịp thời gian, cảm xúc phiên trước và việc còn mở."""
         scope = UserMemoryScope("project", project_id) if project_id else (UserMemoryScope("session", session_id) if session_id else UserMemoryScope())
         return self.context_compiler.compile_proactive_cue(scope, now=now, session_context=session_context)
-
-    def _ingest_operations_to_concept_graph(
-        self,
-        operations: Iterable[ProfileOperation],
-        record_ids: Iterable[str],
-    ) -> None:
-        if self.concept_graph is None:
-            return
-        id_list = list(record_ids)
-        for i, op in enumerate(operations):
-            rid = id_list[i] if i < len(id_list) else ""
-            try:
-                content = f"{op.path}: {op.value}"
-                self.concept_graph.ingest_commit(
-                    {"content": content, "confidence": op.confidence, "evidence_ids": list(op.evidence_ids)},
-                    record_id=rid,
-                )
-            except Exception:
-                pass
 
     def summary(self, *, include_sensitive: bool = False, limit: int = 60) -> dict[str, Any]:
         records = self.profile_store.snapshot(include_sensitive=include_sensitive, limit=limit)

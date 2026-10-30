@@ -61,6 +61,10 @@ def _read_self(host: Any) -> dict[str, Any]:
     for key in ("memory_state", "long_term_memory"):
         raw = getattr(host, key, None)
         if raw is not None:
+            # Older restored snapshots may still carry the retired graph index.
+            # Keep canonical memories while preventing its return in bootstrap/delta.
+            if key == "memory_state" and isinstance(raw, Mapping):
+                raw = {k: v for k, v in raw.items() if k != "concept_graph"}
             result[key] = _jsonable(raw)
     return result
 
@@ -281,6 +285,8 @@ class RootConversationSession:
         self, *, router: Any, client: Any, system: str,
         schema: Mapping[str, Any], messages: list[dict[str, str]],
     ) -> tuple[dict[str, Any], str]:
+        self._log("info", "[root-session] request_size messages=%d message_chars=%s estimated_tokens=%d estimator=chars3",
+                  len(messages), [len(message.get("content", "")) for message in messages], estimate_tokens(messages))
         raw: list[str] = []
         result = router.invoke_structured_worker(
             client, system=system, payload={}, schema=schema,
@@ -303,6 +309,17 @@ class RootConversationSession:
             return False
         # content_json bất biến; không tóm tắt, chọn top-k hay cắt belief.
         content_json = json.dumps(self_context, ensure_ascii=False, separators=(",", ":"))
+        breakdown: dict[str, int] = {}
+        for prefix, section in (
+            ("self", self_context),
+            ("memory", self_context.get("memory_state")),
+            ("living_user", (self_context.get("memory_state") or {}).get("living_user")
+             if isinstance(self_context.get("memory_state"), Mapping) else None),
+        ):
+            if isinstance(section, Mapping):
+                for key, value in section.items():
+                    breakdown[f"{prefix}.{key}"] = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        self._log("info", "[root-session] self_component_chars=%s", json.dumps(breakdown, ensure_ascii=False, separators=(",", ":")))
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": bootstrap_content(content_json)},

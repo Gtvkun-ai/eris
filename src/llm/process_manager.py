@@ -440,8 +440,10 @@ class RemoteModelProcessManager:
         return client
 
     def build_curator_client(self):
-        """Worker chuyên trách dọn dẹp Memory và tổng hợp Identity."""
-        return self.build_deepseek_worker_client("curator")
+        """Memory curator dùng service Gemini Web; không mượn DeepSeek account."""
+        from memory.living_user.gemini_adapter import GeminiWebUserProfileAdapter
+
+        return GeminiWebUserProfileAdapter.create_if_available()
 
     def build_research_client(self):
         # Retired lane. Keep the method as a compatibility shim so old startup

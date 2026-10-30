@@ -46,7 +46,6 @@ class ProfileContextCompiler:
         clarification_policy: MemoryClarificationPolicy | None = None,
         config: ProfileContextCompilerConfig | None = None,
         admission_policy: MemoryAdmissionPolicy | None = None,
-        concept_graph: Any | None = None,
     ) -> None:
         self.profile_store = profile_store
         self.episode_store = episode_store
@@ -55,7 +54,6 @@ class ProfileContextCompiler:
         self.clarification_policy = resolve_dependency(clarification_policy, lambda: MemoryClarificationPolicy())
         self.config = resolve_dependency(config, lambda: ProfileContextCompilerConfig())
         self.admission_policy = resolve_dependency(admission_policy, lambda: MemoryAdmissionPolicy())
-        self.concept_graph = concept_graph
 
     def compile(
         self,
@@ -96,17 +94,6 @@ class ProfileContextCompiler:
         else:
             dense_scores = [0.0] * len(records)
 
-        # Concept graph associative retrieval (Nấc 3)
-        associative_map: dict[str, float] = {}
-        if self.concept_graph is not None and query:
-            try:
-                from memory.concept_graph import extract_concepts
-                q_concepts = extract_concepts(query)
-                if q_concepts and hasattr(self.concept_graph, "multi_hop_neighbors"):
-                    associative_map = self.concept_graph.multi_hop_neighbors(q_concepts, limit=14, max_hops=2)
-            except Exception:
-                associative_map = {}
-
         scored: list[tuple[float, ProfileRecord, str]] = []
         for i, record in enumerate(records):
             dense = dense_scores[i] if q_vec else 0.0
@@ -116,7 +103,6 @@ class ProfileContextCompiler:
                 domain=resolved_domain,
                 dense=dense,
                 active_scope=active_scope,
-                associative_map=associative_map,
             )
             if score >= self.config.min_score:
                 scored.append((score, record, reason))
@@ -275,20 +261,6 @@ class ProfileContextCompiler:
             if parts:
                 screen_cue = " | ".join(parts)
 
-        # 6. Concept Graph associative link
-        assoc_context = ""
-        if self.concept_graph is not None and (recent_mood or open_loops):
-            try:
-                from memory.concept_graph import extract_concepts
-                seed_text = f"{recent_mood} {' '.join(open_loops)}"
-                seed_c = extract_concepts(seed_text)
-                if seed_c and hasattr(self.concept_graph, "multi_hop_neighbors"):
-                    assoc_concepts = self.concept_graph.multi_hop_neighbors(seed_c, limit=4, max_hops=1)
-                    if assoc_concepts:
-                        assoc_context = ", ".join(assoc_concepts.keys())
-            except Exception:
-                assoc_context = ""
-
         lines = [f"- Thời điểm: {time_nudge}"]
         if recent_mood:
             lines.append(f"- Trạng thái phiên gần nhất: {recent_mood}")
@@ -301,8 +273,6 @@ class ProfileContextCompiler:
             )
         if screen_cue:
             lines.append(f"- Quan sát màn hình thực tế: {screen_cue}. Dùng thông tin này làm chất liệu gợi mở câu chuyện một cách tự nhiên nếu thích hợp.")
-        if assoc_context:
-            lines.append(f"- Khái niệm liên quan: {assoc_context}")
         lines.append("- Định hướng: Giao tiếp tự nhiên, đồng hành chân thành theo cá tính INFJ (ấm áp, hơi trêu nhẹ, tinh tế, không gượng gạo như bot CSKH).")
         return "\n".join(lines)
 
@@ -314,7 +284,6 @@ class ProfileContextCompiler:
         domain: str,
         dense: float,
         active_scope: UserMemoryScope,
-        associative_map: Mapping[str, float] | None = None,
     ) -> tuple[float, str]:
         path_domain = record.path.split(".", 1)[0]
         domain_score = 1.0 if path_domain == domain else _domain_affinity(domain, record.path)
@@ -323,23 +292,12 @@ class ProfileContextCompiler:
         recency = _recency(record.last_confirmed_at)
         trust = record.trust_weight
 
-        # Concept graph associative recall (Nấc 3)
-        assoc_score = 0.0
-        if associative_map:
-            try:
-                from memory.concept_graph import extract_concepts
-                rec_concepts = extract_concepts(f"{record.path} {record.value}")
-                if rec_concepts:
-                    assoc_score = max((associative_map.get(c, 0.0) for c in rec_concepts), default=0.0)
-            except Exception:
-                assoc_score = 0.0
-
         # Topical Relevance Gate:
         # Nếu record không thuộc nhóm persona/giao tiếp cốt lõi (communication, identity, relationship)
-        # mà hoàn toàn không có liên hệ ngữ nghĩa hay từ vựng với query (domain_score <= 0.15, lexical == 0, dense < 0.20, assoc == 0)
+        # mà hoàn toàn không có liên hệ ngữ nghĩa hay từ vựng với query (domain_score <= 0.15, lexical == 0, dense < 0.20)
         # thì KHÔNG được kéo vào context của turn chỉ nhờ trust cao.
         if path_domain not in {"communication", "identity", "relationship"}:
-            if domain_score <= 0.15 and lexical == 0.0 and dense < 0.20 and assoc_score == 0.0:
+            if domain_score <= 0.15 and lexical == 0.0 and dense < 0.20:
                 return 0.0, f"no_topical_relevance (domain={domain_score:.2f})"
 
         score = (
@@ -347,11 +305,10 @@ class ProfileContextCompiler:
             + domain_score * 0.20
             + lexical * 0.16
             + dense * 0.12
-            + assoc_score * 0.10
             + scope_score * 0.06
             + recency * 0.04
         )
-        reason = f"trust={trust:.2f}, domain={domain_score:.2f}, lexical={lexical:.2f}, dense={dense:.2f}, assoc={assoc_score:.2f}"
+        reason = f"trust={trust:.2f}, domain={domain_score:.2f}, lexical={lexical:.2f}, dense={dense:.2f}"
         return max(0.0, min(1.0, score)), reason
 
     def _query_vector(self, query: str) -> tuple[float, ...] | None:

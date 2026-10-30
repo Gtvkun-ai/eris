@@ -1,119 +1,103 @@
 # -*- coding: utf-8 -*-
-"""Adapter Gemini Web -> Living User Memory Operations.
+"""Living User/GC dùng lane Gemini Web của service đang giữ phiên đăng nhập.
 
-Dùng Gemini Web (2.5 Flash) làm Memory Curator & Dreamer, giải phóng DeepSeek
-khỏi việc bị spam đè lane khi tổng hợp hồ sơ người dùng.
+Cookie và gemini_webapi thuộc service Gemini, không thuộc Python portable.
+Không fallback sang DeepSeek khi service lỗi: caller phải giữ evidence và retry.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
 import threading
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .runtime_adapter import _PROFILE_SYSTEM, _EPISODE_SYSTEM, _parse_json, CuratorInferenceError
+from .runtime_adapter import (
+    _PROFILE_SYSTEM, _EPISODE_SYSTEM, _extract_text, _parse_json, CuratorInferenceError,
+)
 
-logger = logging.getLogger(__name__)
-
-
-def _find_credentials_path() -> Path | None:
-    env_path = os.environ.get("GEMINI_CREDENTIALS_PATH")
-    if env_path and Path(env_path).is_file():
-        return Path(env_path)
-    # Check repo paths
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        cand = parent / "tools" / "gemini_vision_docker" / "data_cache" / "gemini_credentials.json"
-        if cand.is_file():
-            return cand
-        cand2 = parent / ".eris_home" / "gemini_credentials.json"
-        if cand2.is_file():
-            return cand2
-    return None
+# Profile extraction, dream và GC cùng chia sẻ một lane, kể cả khi factory được
+# gọi từ hai owner. Không mở hai phiên cookie độc lập trong portable.
+_LANE_LOCK = threading.Lock()
 
 
 @dataclass
 class GeminiWebUserProfileAdapter:
-    """Model adapter cho living user memory dùng Gemini Web."""
-
-    psid: str = ""
-    psidts: str = ""
-    timeout: float = 60.0
-    _client: Any = field(default=None, repr=False)
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    base_url: str = "http://127.0.0.1:8000/v1"
+    model_name: str = "gemini-flash"
+    timeout: float = 120.0
+    provider_name: str = "gemini_web"
+    worker_role: str = "curator"
 
     @classmethod
-    def create_if_available(cls, *, timeout: float = 60.0) -> GeminiWebUserProfileAdapter | None:
-        """Khởi tạo nếu có gemini_webapi và file credentials/cookie."""
-        try:
-            import gemini_webapi  # type: ignore # noqa: F401
-        except ImportError:
+    def create_if_available(cls, *, timeout: float | None = None) -> GeminiWebUserProfileAdapter | None:
+        """Đọc cấu hình; không gọi mạng hoặc đòi cookie ở runtime khi bootstrap."""
+        if os.getenv("ERIS_MEMORY_GEMINI_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
             return None
-
-        psid = os.environ.get("GEMINI_SECURE_1PSID", "").strip()
-        psidts = os.environ.get("GEMINI_SECURE_1PSIDTS", "").strip()
-
-        if not psid:
-            cred_file = _find_credentials_path()
-            if cred_file and cred_file.is_file():
-                try:
-                    data = json.loads(cred_file.read_text(encoding="utf-8"))
-                    psid = str(data.get("psid") or "").strip()
-                    psidts = str(data.get("psidts") or "").strip()
-                except Exception as exc:
-                    logger.warning("[gemini_adapter] Không đọc được credentials file %s: %s", cred_file, exc)
-
-        if not psid:
-            return None
-
-        return cls(psid=psid, psidts=psidts, timeout=timeout)
-
-    def propose_profile_operations(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        prompt = (
-            f"{_PROFILE_SYSTEM}\n\n"
-            f"User Turn Evidence:\n"
-            f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+        return cls(
+            base_url=(os.getenv("ERIS_MEMORY_GEMINI_BASE_URL", "").strip()
+                      or "http://127.0.0.1:8000/v1").rstrip("/"),
+            model_name=os.getenv("ERIS_MEMORY_GEMINI_MODEL", "").strip() or "gemini-flash",
+            timeout=float(timeout if timeout is not None else os.getenv("ERIS_MEMORY_GEMINI_TIMEOUT_SEC", "120")),
         )
-        return self._generate_json(prompt, operation="living_user_profile")
 
-    def summarize_episode(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        prompt = (
-            f"{_EPISODE_SYSTEM}\n\n"
-            f"Episode Evidence:\n"
-            f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
-        )
-        return self._generate_json(prompt, operation="living_user_episode")
+    def propose_profile_operations(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        parsed = self._generate_json(_PROFILE_SYSTEM, payload)
+        if not isinstance(parsed.get("operations"), list) or not isinstance(parsed.get("action_operations"), list):
+            raise CuratorInferenceError("parse_error")
+        return parsed
 
-    def _generate_json(self, prompt: str, *, operation: str) -> Mapping[str, Any] | None:
-        with self._lock:
-            try:
-                raw_text = asyncio.run(self._async_call(prompt))
-            except Exception as exc:
-                logger.warning("[gemini_adapter] %s failed: %s", operation, exc)
-                raise CuratorInferenceError(f"gemini_{type(exc).__name__}") from exc
+    def summarize_episode(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        parsed = self._generate_json(_EPISODE_SYSTEM, payload)
+        if not isinstance(parsed.get("summary"), str) or not parsed["summary"].strip():
+            raise CuratorInferenceError("parse_error")
+        return parsed
 
-        if not raw_text or not raw_text.strip():
-            raise CuratorInferenceError("empty_output")
-
-        parsed = _parse_json(raw_text)
+    def _generate_json(self, system: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        response = self.create_chat_completion(messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+        ])
+        parsed = _parse_json(_extract_text(response))
         if not isinstance(parsed, Mapping):
             raise CuratorInferenceError("parse_error")
         return parsed
 
-    async def _async_call(self, prompt: str) -> str:
-        from gemini_webapi import GeminiClient  # type: ignore
+    def create_chat_completion(self, *, messages: list[dict[str, Any]], max_tokens: int = 1800,
+                               timeout: float | None = None, **_kwargs: Any) -> Mapping[str, Any]:
+        """Giao diện chung cho curator/GC; chỉ chấp nhận response hoàn chỉnh."""
+        import requests
+        from runtime.inference_broker import inference_context
 
-        if self._client is None:
-            self._client = GeminiClient(
-                secure_1psid=self.psid,
-                secure_1psidts=self.psidts,
-                timeout=int(self.timeout),
-            )
-            await self._client.init(auto_refresh=False)
-
-        resp = await self._client.generate_content(prompt)
-        return getattr(resp, "text", str(resp))
+        deadline = float(timeout if timeout is not None else self.timeout)
+        payload = {
+            "model": self.model_name, "messages": messages, "temperature": 0.0,
+            "max_tokens": max_tokens, "stream": False,
+        }
+        with _LANE_LOCK, inference_context(
+            "memory_curator", optional=False, timeout_seconds=deadline,
+            cancel_scope="background:gemini_memory", project="memory_curator",
+            credential_pool="gemini_web", metadata={"provider": self.provider_name},
+        ):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions", json=payload, timeout=(5.0, deadline),
+                )
+                response.raise_for_status()
+                data = response.json()
+            except requests.Timeout as exc:
+                raise CuratorInferenceError("timeout") from exc
+            except requests.RequestException as exc:
+                raise CuratorInferenceError("provider_error") from exc
+            except ValueError as exc:
+                raise CuratorInferenceError("parse_error") from exc
+        if not isinstance(data, Mapping):
+            raise CuratorInferenceError("parse_error")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+            raise CuratorInferenceError("parse_error")
+        if choices[0].get("finish_reason") not in {None, "stop"}:
+            raise CuratorInferenceError("incomplete_output")
+        if not _extract_text(data).strip():
+            raise CuratorInferenceError("empty_output")
+        return data

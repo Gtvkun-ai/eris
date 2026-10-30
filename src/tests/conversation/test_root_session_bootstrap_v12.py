@@ -136,6 +136,29 @@ def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
     assert "eris_self_full" not in new_delta
 
 
+def test_restored_graph_is_excluded_from_bootstrap_and_self_delta(monkeypatch):
+    monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
+    monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
+    host, router = FakeHost(), FakeRouter()
+    host.memory_state["concept_graph"] = {"nodes": {"legacy": {"weight": 0.9}}}
+    session = RootConversationSession()
+    session._host = host
+    assert session._prime(router=router, client=router.executive_client, system="system", schema=ROOT_STEP_SCHEMA)
+    bootstrap = json.loads(router.calls[0]["conversation_messages"][1]["content"])
+    assert bootstrap["eris_self_full"]["memory_state"] == {"long_term": ["one", "two"]}
+    assert "concept_graph" in host.memory_state  # Reading Self does not mutate the owner.
+
+    host.memory_state["concept_graph"]["nodes"]["new"] = {"weight": 1.0}
+    host.memory_state["long_term"].append("new canonical memory")
+    assert ask(session, router)["kind"] == "move"
+    messages = router.calls[-1]["conversation_messages"]
+    assert not any("concept_graph" in message["content"] for message in messages)
+    delta = json.loads(messages[-1]["content"])
+    assert delta["self_changes_since_last_step"]["memory_state"] == {
+        "long_term": ["one", "two", "new canonical memory"],
+    }
+
+
 def test_failure_resets_and_reloads_full_self(monkeypatch):
     monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
     monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
@@ -183,6 +206,9 @@ def test_root_preflight_allows_large_self_but_writer_cap_unchanged(monkeypatch):
     monkeypatch.setenv("ERIS_ROOT_SESSION_BOOTSTRAP", "1")
     monkeypatch.setenv("ERIS_WEB_SESSION_MODE", "isolated")
     monkeypatch.setenv("ERIS_ROOT_SESSION_PROMPT_CAP_TOKENS", "90000")
+    # Keep this policy test independent of local settings disabling all caps.
+    monkeypatch.setenv("ERIS_DISABLE_PROMPT_HARD_CAP", "0")
+    monkeypatch.setenv("ERIS_LLM_PROMPT_HARD_CAP_TOKENS_LOCAL", "4800")
     original = [{"role": "system", "content": "full root context " * 1900},
                 {"role": "user", "content": "test"}]
     with inference_context("chat_tool_required", metadata={"cognitive_lane": "root_conversation"}):

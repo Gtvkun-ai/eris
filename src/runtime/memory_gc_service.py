@@ -3,11 +3,11 @@
 
 Luồng mới:
 1. Chạy maintenance deterministic/canonical hiện có.
-2. Dùng DeepSeek worker ``critic`` để rà semantic memory.
+2. Dùng service Gemini Web curator để rà semantic memory.
 3. Dọn Living User Memory:
    - rule deterministic xử lý null/open-loop chắc chắn;
-   - Qwen embedding gom duplicate/near-duplicate;
-   - DeepSeek curator có toàn quyền cấu trúc working profile: delete/archive/merge/
+   - embedding gom duplicate/near-duplicate;
+   - Gemini Web curator có toàn quyền cấu trúc working profile: delete/archive/merge/
      rewrite/canonicalize, kể cả representation từng được user xác nhận;
    - store giữ audit/undo và evidence để quyền cấu trúc không biến thành quyền bịa fact.
 4. Thu gọn undo history và anchor journal.
@@ -81,6 +81,18 @@ _SEMANTIC_GC_USER = """Semantic memory entries to review ({count} items):
 
 Return a decision for every supplied entry."""
 
+_ACTION_GC_SYSTEM = """You review ERIS action memory. Output JSON only.
+Use meaning and the supplied evidence, never word matching. Each record has an
+actor, scope, timestamps and evidence IDs. Review each record on its own evidence.
+Keep real unfinished goals/commitments/workflows. Age or silence alone does not
+prove completion or abandonment. Distinguish quoted speech, introspection,
+roleplay and untriggered conditional offers from real pending work.
+Archive false extractions or records whose supplied evidence supports retirement.
+When the evidence is incomplete, keep the record or mark candidate for review.
+Do not invent new actions, facts, receipts or completion/cancellation events.
+Schema: {"decisions":[{"id":"supplied ID","status":"keep|candidate|archived","reason":"evidence-based explanation"}]}.
+"""
+
 
 # ── Result ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +111,8 @@ class MemoryGCResult:
     living_hidden: int = 0
     living_canonicalized: int = 0
     living_history_removed: int = 0
+    actions_reviewed: int = 0
+    actions_applied: int = 0
     pruned_total: int = 0
     journal_compacted: bool = False
     behavior_removed: int = 0
@@ -122,6 +136,8 @@ class MemoryGCResult:
             "living_hidden": self.living_hidden,
             "living_canonicalized": self.living_canonicalized,
             "living_history_removed": self.living_history_removed,
+            "actions_reviewed": self.actions_reviewed,
+            "actions_applied": self.actions_applied,
             "pruned_total": self.pruned_total,
             "journal_compacted": self.journal_compacted,
             "behavior_removed": self.behavior_removed,
@@ -191,7 +207,7 @@ class MemoryGCService:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="ERIS-MemoryGC", daemon=True)
         self._thread.start()
-        logger.info("[memory_gc] started; interval=%.0fs role=critic", self.interval_seconds)
+        logger.info("[memory_gc] started; interval=%.0fs provider=gemini_web role=curator", self.interval_seconds)
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
@@ -213,7 +229,7 @@ class MemoryGCService:
     def run_once(self, *, force: bool = True) -> MemoryGCResult:
         """Chạy cleanup thủ công. ``force`` bỏ throttle version của Living User.
 
-        DeepSeek curator là authority cấu trúc của working profile; store chỉ kiểm tra
+        Gemini Web curator là authority cấu trúc của working profile; store chỉ kiểm tra
         operation có hợp lệ và giữ audit/evidence. Đây là root đối với *representation*,
         không phải giấy phép bịa meaning trái evidence.
         """
@@ -273,6 +289,7 @@ class MemoryGCService:
             "last_run_at": float(self._last_run_at),
             "run_count": int(self.run_count),
             "last_result": dict(self.last_result or {}),
+            "provider": "gemini_web",
         }
 
     def _load_runtime_settings(self) -> None:
@@ -389,12 +406,17 @@ class MemoryGCService:
             result.warnings.append(f"semantic_review_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] semantic review failed: %s", exc)
 
-        # 3. Living-user curator: Qwen gom cụm, DeepSeek critic phán, rule áp dụng.
+        # 3. Living-user curator: embedding gom cụm, Gemini Web phán, store áp dụng.
         try:
             self._run_living_user_review(result, curator)
         except Exception as exc:
             result.warnings.append(f"living_review_failed:{type(exc).__name__}:{exc}")
             logger.warning("[memory_gc] living-user review failed: %s", exc)
+
+        try:
+            self._run_action_review(result, curator)
+        except Exception as exc:
+            result.warnings.append(f"action_review_failed:{type(exc).__name__}")
 
         # 4. Dọn transient cognition/audit-adjacent stores. Đây là deterministic
         # hygiene, không biến thought/behavior thành semantic memory.
@@ -509,9 +531,52 @@ class MemoryGCService:
 
         # Nếu critic tạm chết thì thử lại ở chu kỳ kế tiếp, không khóa 24 giờ chỉ
         # vì một process worker vừa hắt hơi.
-        if report.skipped_reason != "no_critic_reviewer":
+        if report.skipped_reason != "no_critic_reviewer" and not report.warnings:
             self._last_living_user_review_version = int(getattr(store, "version", version))
             self._last_living_user_review_at = now
+
+    def _run_action_review(self, result: MemoryGCResult, curator: Any | None) -> None:
+        living = getattr(self.memory_core, "living_user", None)
+        store = getattr(living, "action_store", None)
+        if curator is None or store is None:
+            result.notes.append("action_review_skipped:no_curator_or_store")
+            return
+        rows = [
+            (kind, record) for kind, records in (
+                ("goal", store.goals()), ("commitment", store.commitments()),
+                ("workflow", store.workflows()),
+            ) for record in records
+        ][:max(1, _env_int("ERIS_MEMORY_GC_ACTION_LIMIT", 40))]
+        if not rows:
+            return
+        raw = self._call_model(curator, _ACTION_GC_SYSTEM, json.dumps({
+            "now": time.time(), "records": [{"kind": kind, **record.to_dict()} for kind, record in rows],
+        }, ensure_ascii=False), max_tokens=2400)
+        from memory.living_user.runtime_adapter import _parse_json
+        from memory.living_user.action_memory import ActionMemoryOperation
+        parsed = _parse_json(raw or "")
+        decisions = parsed.get("decisions") if isinstance(parsed, dict) else None
+        if not isinstance(decisions, list):
+            result.warnings.append("action_review_parse_failed")
+            return
+        by_id = {record.id: (kind, record) for kind, record in rows}
+        proposals = []
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            pair = by_id.get(str(decision.get("id") or ""))
+            if pair is None or decision.get("status") not in {"candidate", "archived"}:
+                continue
+            kind, record = pair
+            proposals.append(ActionMemoryOperation(
+                proposal={"op": "set_status", "kind": kind, "record_id": record.id,
+                          "status": decision["status"], "reason": str(decision.get("reason") or "")},
+                evidence_ids=record.evidence_ids, scope=record.scope, role="curator",
+                allowed_record_ids=(record.id,), source_created_at=time.time(),
+            ))
+        applied = store.apply_model_operations(proposals)
+        result.actions_reviewed = len(rows)
+        result.actions_applied = applied["applied"]
 
     def _compact_transient_stores(self, result: MemoryGCResult) -> None:
         base_dir = str(getattr(self.memory_core, "base_dir", "") or os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"))
@@ -558,52 +623,21 @@ class MemoryGCService:
     # ── Client/model helpers ───────────────────────────────────────────────────
 
     def _get_critic_client(self) -> Any | None:
-        try:
-            pm = getattr(self.llm_service, "_process_manager", None)
-            if pm is None:
-                pm = getattr(self.llm_service, "process_manager", None)
-            if pm is not None:
-                client = pm.build_deepseek_worker_client("critic", required=False)
-                if client is not None:
-                    return client
-        except Exception:
-            pass
-        return getattr(self.llm_service, "critic_client", None) or getattr(self.llm_service, "social_critic_client", None)
+        # Compatibility cho caller cũ; không được tái mở đường DeepSeek critic.
+        return self._get_curator_client()
 
     def _get_curator_client(self) -> Any | None:
-        """Lấy đúng DeepSeek curator worker, nếu không có thì fallback sang critic."""
-        try:
-            from llm.process_manager import RemoteModelProcessManager
+        """Dùng cùng lane Gemini với extractor/dream; không fallback DeepSeek."""
+        from memory.living_user.gemini_adapter import GeminiWebUserProfileAdapter
 
-            pm = getattr(self.llm_service, "_process_manager", None)
-            if pm is None:
-                pm = getattr(self.llm_service, "process_manager", None)
-            if pm is None and isinstance(self.llm_service, RemoteModelProcessManager):
-                pm = self.llm_service
-            if pm is not None:
-                client = pm.build_deepseek_worker_client("curator", required=False)
-                if client is not None:
-                    return client
-                client = pm.build_deepseek_worker_client("critic", required=False)
-                if client is not None:
-                    return client
-        except Exception:
-            pass
-
-        client = (
-            getattr(self.llm_service, "critic_client", None)
-            or getattr(self.llm_service, "social_critic_client", None)
-        )
-        if client is not None:
-            return client
-
-        # Fallback bị tắt mặc định để không dựng Gemma lên chỉ để làm sổ sách.
-        if _env_flag("ERIS_MEMORY_GC_ALLOW_MODEL_FALLBACK", False):
-            return (
-                getattr(self.llm_service, "inner_client", None)
-                or getattr(self.llm_service, "client", None)
-            )
-        return None
+        living_user = getattr(self.memory_core, "living_user", None)
+        for client in (
+            getattr(living_user, "model_adapter", None),
+            getattr(self.llm_service, "curator_client", None),
+        ):
+            if isinstance(client, GeminiWebUserProfileAdapter):
+                return client
+        return GeminiWebUserProfileAdapter.create_if_available()
 
     def _call_model(self, client: Any, system: str, user: str, *, max_tokens: int) -> str | None:
         try:
@@ -615,7 +649,7 @@ class MemoryGCService:
                 temperature=0.0,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
-                timeout=_env_float("ERIS_MEMORY_GC_CRITIC_TIMEOUT_SEC", 45.0),
+                timeout=_env_float("ERIS_MEMORY_GC_CRITIC_TIMEOUT_SEC", getattr(client, "timeout", 120.0)),
             )
             extract = getattr(self.llm_service, "_extract_content", None)
             if callable(extract):

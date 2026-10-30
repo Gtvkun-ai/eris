@@ -130,23 +130,12 @@ class MemoryAdmissionPolicy:
             return MemoryAdmissionDecision(False, "profile_source_is_runtime_audit", "audit_runtime", 1.0)
 
         value_raw = getattr(record, "value", None)
-        value_str = str(value_raw or "")
-        from memory.living_user.models import (
-            clean_durable_interest,
-            is_ephemeral_directive,
-            is_ephemeral_micro_activity,
-            is_fragment_or_noise,
-            is_invalid_response_rule,
-            is_metaphor_or_sarcasm_leak,
-        )
-        if is_fragment_or_noise(path, value_raw):
-            return MemoryAdmissionDecision(False, "fragment_or_noise_token", "user_memory", 0.95)
-        if is_metaphor_or_sarcasm_leak(path, value_str):
-            return MemoryAdmissionDecision(False, "metaphor_or_sarcasm_leak", "user_memory", 0.95)
-        if is_ephemeral_directive(value_str) or (
-            path.endswith("response_rules") and is_invalid_response_rule(path, value_str)
-        ):
-            return MemoryAdmissionDecision(False, "ephemeral_turn_directive", "user_memory", 0.95)
+        # Diễn giải ẩn dụ/nhập vai/chỉ thị tạm thuộc AI curator. Admission chỉ
+        # kiểm ranh giới cấu trúc và provenance, không đoán meaning bằng từ khóa.
+        if value_raw is None or (isinstance(value_raw, str) and not value_raw.strip()):
+            return MemoryAdmissionDecision(False, "empty_profile_value", "user_memory", 1.0)
+        if not evidence_ids:
+            return MemoryAdmissionDecision(False, "profile_missing_evidence", "user_memory", 1.0)
         expires_at = getattr(record, "expires_at", None)
         if expires_at is not None and float(expires_at) <= time.time():
             return MemoryAdmissionDecision(False, "record_expired", "user_memory", 0.95)

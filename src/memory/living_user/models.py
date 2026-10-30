@@ -496,70 +496,6 @@ class DreamReport:
     diagnostics: tuple[str, ...] = ()
 
 
-_EPHEMERAL_PATTERNS = (
-    # 1. Pacing & turn constraints
-    re.compile(r"(?i)\b(?:trong|qua|sau)?\s*\d+\s*lượt\b"),
-    re.compile(r"(?i)\b(?:mỗi|từng|nhiều|vài)\s*lượt\b"),
-    re.compile(r"(?i)\b(?:lượt\s*(?:này|tới|sau)|lần\s*này)\b"),
-    re.compile(r"(?i)\b(?:chỉ\s*lần\s*này|chỉ\s*lượt\s*này|tạm\s*thời)\b"),
-    re.compile(r"(?i)\b(?:chia|dồn)\b.*?\blượt\b"),
-    re.compile(r"(?i)\btheo\s*lượt\b"),
-    re.compile(r"(?i)\bcuộc\s*trò\s*chuyện\s*này\b"),
-
-    # 2. One-off speech / recitation commands
-    re.compile(r"(?i)\b(?:chỉ\s*nói|chỉ\s*đọc)\s*(?:đúng|vậy|nguyên\s*văn|câu|thế|như\s*vậy)\b"),
-    re.compile(r"(?i)\b(?:đọc|nói)\s*đúng\s*nguyên\s*văn\b"),
-    re.compile(r"(?i)\bkhông\s*thêm\s*bình\s*luận\b"),
-    re.compile(r"(?i)\bnói\s*(?:lại\s*)?(?:câu\s*[\"\'\“\‘]|[\"\'\“\‘]).*?(?:[\"\'\”\’]|\bchỉ\s*nói\b|\bđi\b)"),
-    re.compile(r"(?i)\byêu\s*cầu\s*(?:nói|đọc)\s*(?:dõng\s*dạc\s*)?(?:câu|trích\s*dẫn)\b"),
-    re.compile(r"(?i)\bnói\s*lại\s*câu/trích\s*dẫn\b"),
-    re.compile(r"(?i)\bbạn\s*nói\s*câu\s*này\s*:"),
-)
-
-_INVALID_RULE_PATTERNS = (
-    # Questions / casual non-rules
-    re.compile(r"(?i)\?(?:\s*$)"),
-    re.compile(r"(?i)\b(?:hay\s*ko|ntn|sao\s*á|sao\s*mà)\b"),
-    # Gaming / Riddle leaks
-    re.compile(r"(?i)\b(?:100\s*tù\s*nhân|bóng\s*đèn|quản\s*ngục|luật\s*chơi)\b"),
-    re.compile(r"(?i)\b(?:farm\s*con|route\s*\d+|unova)\b"),
-    # Casual chat utterances
-    re.compile(r"(?i)\b(?:nghĩ\s*mình\s*có\s*khả\s*năng|tư\s*duy\s*ntn|thấy\s*mình\s*hơn\s*hẳn)\b"),
-    re.compile(r"(?i)\b(?:mở\s*bạn\s*lên\s*bạn\s*phải\s*kiếm\s*gì\s*nói|ALO)\b"),
-    re.compile(r"(?i)\b(?:ý\s*là\s*sao\s*bạn\s*lại\s*nghĩ|đang\s*muốn\s*nói\s*gì\s*\.\s*hay\s*định\s*sao)\b"),
-    re.compile(r"(?i)\b(?:thôi\s*thôi\s*mò|tui\s*chỉ\s*trầm\s*ngâm)\b"),
-    re.compile(r"(?i)\bnói\s*v[eê]\s*cuộc\s*đời\s*những\s*người\s*bất\s*tử\b"),
-)
-
-_FILLER_PARTICLES = {
-    "nè", "á", "ủa", "ừ", "hả", "ik", "nha", "nhe", "ơ", "vậy", "nhé",
-    "ha", "hén", "à", "uh", "um", "oki", "oke", "rồi", "đó", "ấy", "đấy",
-    "chứ", "coi", "thế", "nào", "dị", "dc", "ko", "k", "rep",
-}
-_TECHNICAL_ID_PATTERNS = (
-    re.compile(r"^\$[0-9]{3,}$"),
-    re.compile(r"^upr_[0-9a-f]{6,}$", re.IGNORECASE),
-    re.compile(r"^[0-9a-f]{16,64}$", re.IGNORECASE),
-)
-
-_METAPHOR_JOKE_PATTERNS = (
-    re.compile(r"(?i)\bbằng\s*sáng\s*chế\b.*?\b(?:tình\s*thân|gia\s*đình)\b"),
-    re.compile(r"(?i)\b(?:tình\s*thân|gia\s*đình)\b.*?\bbằng\s*sáng\s*chế\b"),
-    re.compile(r"(?i)\bđế\s*chế\s*sao\s*hỏa\b"),
-    re.compile(r"(?i)\bchi\s*nhánh\s*vô\s*dụng\b"),
-    re.compile(r"(?i)\b(?:thống\s*trị\s*(?:thế\s*giới|vũ\s*trụ)|trùm\s*vũ\s*trụ)\b"),
-    re.compile(r"(?i)\bmất\s*trí\s*nhớ\s*vĩnh\s*viễn\b"),
-    re.compile(r"(?i)\b(?:con\s*dâu|chồng\s*hờ|vợ\s*hờ|bồ\s*nhí)\b"),
-    re.compile(r"(?i)\b(?:thế\s*lực\s*ngầm|tổ\s*chức\s*áo\s*đen)\b"),
-    re.compile(r"(?i)\bbảo\s*hiểm\s*tình\s*thân\b"),
-    re.compile(r"(?i)\b(?:người\s*ngoài\s*hành\s*tinh|bị\s*bắt\s*cóc\s*lên\s*sao\s*hỏa)\b"),
-    re.compile(r"(?i)\b(?:điệp\s*viên\s*(?:ngầm|cia|kgb)|tổng\s*thống\s*ngầm|chủ\s*tịch\s*giấu\s*nghề)\b"),
-    re.compile(r"(?i)\b(?:tao|tôi)\s*(?:là|chính\s*là)\s*(?:bố|mẹ|ông\s*cố|cụ\s*cố)\s*(?:mày|của\s*eris|mầy)\b"),
-    re.compile(r"(?i)\b(?:robot|ai)\s*(?:từ\s*tương\s*lai|cấp\s*cao\s*hơn)\b"),
-    re.compile(r"(?i)\b(?:siêu\s*nhân|thần\s*thánh|chúa\s*tể\s*bóng\s*tối|người\s*dơi)\b"),
-)
-
-
 def determine_memory_tier(
     path: str,
     explicitness: str = "inferred",
@@ -568,15 +504,12 @@ def determine_memory_tier(
 ) -> MemoryTier:
     """Xác định nấc lưu trữ: core_anchor (bất biến), habit (thói quen lặp lại), working (tạm thời)."""
     norm_p = normalize_path(path)
-    val_str = str(value or "").lower()
 
     # 1. Core Anchor: Bản sắc cốt lõi, quan hệ nền tảng với ERIS, danh tính creator, thỏa thuận chủ động rõ ràng
     if (
         norm_p.startswith(("identity.role", "identity.name", "identity.creator", "relationship.creator"))
         or any(k in norm_p for k in ("role_as_creator", "creator_relationship", "core_bond", "eris_creation"))
     ):
-        return "core_anchor"
-    if any(k in val_str for k in ("người tạo ra eris", "nhà phát triển", "tạo ra extension eris", "làm bạn/tạo ra eris")):
         return "core_anchor"
     if (
         explicitness == "explicit"
@@ -610,111 +543,6 @@ def determine_memory_tier(
     return "working"
 
 
-def is_fragment_or_noise(path: str, value: Any) -> bool:
-    """Nhận diện mẩu từ đệm rời rạc, ký tự vô nghĩa hoặc token rác không mang ngữ nghĩa fact."""
-    if value is None:
-        return True
-    if not isinstance(value, str):
-        if isinstance(value, (list, tuple)) and not value:
-            return True
-        return False
-    text = value.strip()
-    if not text:
-        return True
-
-    norm_path = normalize_path(path)
-    # Bảo tồn mã ngôn ngữ ISO hợp lệ
-    if norm_path in {"communication.preferred_language", "preferred_language"}:
-        if text.lower() in {"vi", "en", "ja", "zh", "fr", "de", "ko", "es", "ru"}:
-            return False
-
-    # Chặn token kỹ thuật / ID vô nghĩa
-    if any(p.match(text) for p in _TECHNICAL_ID_PATTERNS):
-        return True
-    if text.isdigit() and len(text) >= 5 and not any(k in norm_path for k in ("port", "year", "phone", "number", "count", "id", "age")):
-        return True
-
-    # Chặn từ đệm cô lập
-    cleaned = re.sub(r"^[^\wÀ-ỹ]+|[^\wÀ-ỹ]+$", "", text.lower())
-    if cleaned in _FILLER_PARTICLES:
-        return True
-
-    # Ký tự đơn lẻ vô nghĩa
-    if len(text) == 1 and not text.isalnum():
-        return True
-
-    return False
-
-
-def is_metaphor_or_sarcasm_leak(path: str, value: Any) -> bool:
-    """Nhận diện lời nói đùa, châm biếm, ẩn dụ bị trích xuất nhầm thành quan hệ/nhân thân."""
-    norm_path = normalize_path(path)
-    if not norm_path.startswith(("personal.", "identity.", "relationship.", "social.", "family.")):
-        return False
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    return any(p.search(text) for p in _METAPHOR_JOKE_PATTERNS)
-
-
-def is_ephemeral_directive(value: Any) -> bool:
-    """Nhận diện các chỉ thị tạm thời theo lượt, lệnh đọc nguyên văn một câu hoặc ràng buộc một lần."""
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    return any(p.search(text) for p in _EPHEMERAL_PATTERNS)
-
-
-def is_invalid_response_rule(path: str, value: Any) -> bool:
-    """Nhận diện record không hợp lệ cho communication.response_rules (bao gồm ephemeral và rò rỉ prompt chat)."""
-    norm_path = normalize_path(path)
-    if not (norm_path == "communication.response_rules" or norm_path.endswith(".response_rules")):
-        return False
-    if is_ephemeral_directive(value):
-        return True
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    return any(p.search(text) for p in _INVALID_RULE_PATTERNS)
-
-
-_GAMING_MICRO_PATTERNS = (
-    re.compile(r"(?i)\b(?:farm|cày)\s*(?:ev|exp|iv|bãi|route\s*\d+|quái|con|ngựa|boss|sweet\s*scent)\b"),
-    re.compile(r"(?i)\b(?:route\s*\d+|unova\s*route|sweet\s*scent|dunsparce)\b"),
-    re.compile(r"(?i)\b(?:bãi\s*farm|chỗ\s*train|farm\s*ở\s*route)\b"),
-    re.compile(r"(?i)\b(?:đang\s*farm|chuẩn\s*bị\s*farm|vừa\s*farm)\b"),
-)
-
-
-def is_ephemeral_micro_activity(path: str, value: Any) -> bool:
-    """Nhận diện hành vi/nhiệm vụ vi mô nhất thời (bãi farm game, quest tạm, micro-task một buổi)."""
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    norm_p = normalize_path(path)
-    if any(k in norm_p for k in ("interest", "game", "gaming", "activity", "task", "state")):
-        return any(p.search(text) for p in _GAMING_MICRO_PATTERNS)
-    return False
-
-
-def clean_durable_interest(value: Any) -> str:
-    """Tách sở thích dài hạn bền vững ra khỏi các chi tiết micro-task/bãi farm tạm thời."""
-    if not isinstance(value, str):
-        return str(value or "")
-    text = value.strip()
-    if ";" in text:
-        parts = [p.strip() for p in text.split(";") if p.strip()]
-        durable = [p for p in parts if not any(pat.search(p) for pat in _GAMING_MICRO_PATTERNS)]
-        if durable:
-            return "; ".join(durable)
-    for pat in _GAMING_MICRO_PATTERNS:
-        if pat.search(text):
-            m_game = re.match(r"(?i)^(chơi\s+[\w\s]+?)(?:,|;|\.|\s+và|\s+quan\s+tâm|\s+đang)", text)
-            if m_game:
-                return m_game.group(1).strip()
-    return text
-
-
 __all__ = [
     "Cardinality",
     "DreamReport",
@@ -731,14 +559,8 @@ __all__ = [
     "UserEpisode",
     "UserMemoryScope",
     "clamp01",
-    "clean_durable_interest",
     "compact_text",
     "determine_memory_tier",
-    "is_ephemeral_directive",
-    "is_ephemeral_micro_activity",
-    "is_fragment_or_noise",
-    "is_invalid_response_rule",
-    "is_metaphor_or_sarcasm_leak",
     "normalize_path",
     "now_ts",
     "value_fingerprint",

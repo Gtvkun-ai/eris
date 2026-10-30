@@ -303,26 +303,15 @@ class CoordinatorBootstrapMixin:
             living_user = getattr(self.memory_kernel, "living_user", None)
             if living_user is not None:
                 try:
-                    from memory.living_user import LlmServiceUserProfileAdapter, GeminiWebUserProfileAdapter
-                    gemini_curator = GeminiWebUserProfileAdapter.create_if_available()
+                    from memory.living_user import GeminiWebUserProfileAdapter
+                    gemini_curator = getattr(llm_service, "curator_client", None)
+                    if not isinstance(gemini_curator, GeminiWebUserProfileAdapter):
+                        gemini_curator = GeminiWebUserProfileAdapter.create_if_available()
+                    living_user.bind_model_adapter(gemini_curator)
                     if gemini_curator is not None:
-                        living_user.bind_model_adapter(gemini_curator)
-                        self.logger.info("Living user memory model owner: Gemini Web (2.5 Flash) curator.")
+                        self.logger.info("Living user memory model owner: Gemini Web service; model=%s.", gemini_curator.model_name)
                     else:
-                        curator_client = getattr(llm_service, "curator_client", None)
-                        living_user.bind_model_adapter(LlmServiceUserProfileAdapter(
-                            llm_service,
-                            client=curator_client,
-                            fallback_to_service_client=False,
-                            inference_lane="memory_curator",
-                            inference_optional=False,
-                            project="memory_curator",
-                            credential_pool="curator",
-                        ))
-                        self.logger.info(
-                            "Living user memory model owner: %s.",
-                            "DeepSeek curator lane" if curator_client is not None else "deterministic only",
-                        )
+                        self.logger.info("Living user memory model owner: disabled; no DeepSeek fallback.")
 
                     # V12 Memory Portrait: canonical truth vẫn do curator sở hữu,
                     # nhưng câu chữ public của panel phải qua đúng Surface worker.

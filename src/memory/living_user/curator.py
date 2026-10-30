@@ -3,14 +3,14 @@
 
 Phân vai V68:
 - Extractor/dreamer chỉ tạo evidence-backed working records.
-- Qwen embedding chỉ gom hàng xóm gần nghĩa để DeepSeek nhìn được cụm.
-- DeepSeek curator là authority duy nhất của *cấu trúc working memory*: được quyền
+- Embedding chỉ gom hàng xóm gần nghĩa để Gemini Web nhìn được cụm.
+- Gemini Web curator là authority duy nhất của *cấu trúc working memory*: được quyền
   archive/delete/merge/rewrite/canonicalize mọi record, kể cả record user-confirmed.
 - User authority vẫn là evidence có trọng lượng cao về *meaning*, không phải ổ khóa
   bảo vệ một path/value representation khỏi việc dọn dẹp.
 
 Store vẫn áp operation theo ID và giữ audit/undo window. Quyền lực tuyệt đối ở đây
-nghĩa là DeepSeek có toàn quyền dọn projection đang sống, không phải được quyền bịa
+nghĩa là Gemini Web có toàn quyền dọn projection đang sống, không phải được quyền bịa
 meaning trái evidence. Hộp đen vẫn còn; cái phòng khách thì không cần chất rác.
 """
 from __future__ import annotations
@@ -25,12 +25,6 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .models import (
     ProfileRecord,
-    clean_durable_interest,
-    is_ephemeral_directive,
-    is_ephemeral_micro_activity,
-    is_fragment_or_noise,
-    is_invalid_response_rule,
-    is_metaphor_or_sarcasm_leak,
     value_fingerprint,
 )
 
@@ -146,7 +140,7 @@ class LivingUserCuratorResult:
 
 
 class LivingUserMemoryCurator:
-    """Qwen gom cụm, DeepSeek đề xuất, validator deterministic áp dụng."""
+    """Embedding gom cụm, Gemini Web đề xuất, validator deterministic áp dụng."""
 
     def __init__(
         self,
@@ -236,7 +230,7 @@ class LivingUserMemoryCurator:
             records=self._format_records(selected, protected_ids),
             clusters=self._format_clusters(clusters, selected),
         )
-        # 80 record + cross-path clusters cần đủ ngân sách để DeepSeek thực sự
+        # 80 record + cross-path clusters cần đủ ngân sách để Gemini Web thực sự
         # canonicalize thay vì hết token giữa JSON rồi để nguyên bãi rác.
         raw = self.reviewer(_LIVING_CURATOR_SYSTEM, prompt, 3600)
         if not raw:
@@ -244,11 +238,16 @@ class LivingUserMemoryCurator:
             result.history_removed = self._compact_history(store)
             return result
 
-        operations = self._parse_operations(raw)
+        try:
+            operations = self._parse_operations(raw)
+        except ValueError:
+            result.warnings.append("critic_parse_failed")
+            result.history_removed = self._compact_history(store)
+            return result
         result.proposed = len(operations)
         safe_ops = self._validate_operations(
             operations,
-            records={r.id: r for r in active},
+            records={r.id: r for r in selected},
             protected_ids=protected_ids,
             cluster_sets=[set(x) for x in clusters],
         )
@@ -256,7 +255,7 @@ class LivingUserMemoryCurator:
             applied = store.apply_curator_operations(
                 safe_ops,
                 protected_record_ids=protected_ids,
-                checkpoint_reason="deepseek_critic_living_user_gc",
+                checkpoint_reason="model_curator_living_user_gc",
             )
             self._accumulate_apply_result(result, applied)
         elif operations:
@@ -287,30 +286,6 @@ class LivingUserMemoryCurator:
                 # Open loop thuộc conversation/action continuity, không phải chân dung user.
                 action = "delete"
                 reason = "Open loop là state hội thoại, không phải canonical user memory."
-            elif is_fragment_or_noise(record.path, record.value):
-                action = "delete"
-                reason = "Mẩu token rác, ký tự vô nghĩa hoặc từ đệm hội thoại rời rạc."
-            elif is_metaphor_or_sarcasm_leak(record.path, value):
-                action = "delete"
-                reason = "Trêu đùa, ẩn dụ hoặc nói bóng gió bị trích xuất nhầm thành quan hệ/nhân thân."
-            elif is_ephemeral_directive(value) or (
-                record.path.endswith("response_rules") and is_invalid_response_rule(record.path, value)
-            ):
-                action = "delete"
-                reason = "Chỉ thị tạm thời theo lượt hoặc rò rỉ prompt hội thoại, không phải canonical response rule."
-            elif is_ephemeral_micro_activity(record.path, value):
-                cleaned = clean_durable_interest(value)
-                if cleaned and cleaned != value:
-                    operations.append({
-                        "action": "rewrite",
-                        "record_ids": [record.id],
-                        "value": cleaned,
-                        "reason": "Bóc tách hành vi vi mô/bãi farm game nhất thời ra khỏi sở thích bền vững.",
-                    })
-                    continue
-                else:
-                    action = "delete"
-                    reason = "Hành vi/nhiệm vụ vi mô nhất thời trong game không thuộc chân dung dài hạn."
             if reason:
                 operations.append({"action": action, "record_ids": [record.id], "reason": reason})
         return operations
@@ -352,7 +327,7 @@ class LivingUserMemoryCurator:
                 suspicion += 2
             if record.path.startswith(("needs.", "relationship.")) and record.source in {"profile_model", "dream_model"}:
                 suspicion += 2
-            # DeepSeek phải được nhìn cả record "trông sạch" để canonicalize
+            # Gemini Web phải được nhìn cả record "trông sạch" để canonicalize
             # cross-path. suspicion chỉ quyết định thứ tự, không quyết định quyền review.
             ranked.append((suspicion, record.updated_at, record))
 
@@ -397,7 +372,7 @@ class LivingUserMemoryCurator:
                     score = _cosine(vectors[i], vectors[j])
                     same_family = _path_root(left.path) == _path_root(right.path) or left.path == right.path
                     # Cùng family dùng ngưỡng bình thường; khác path/root chỉ gom
-                    # khi similarity rất cao. DeepSeek mới là người quyết định merge/canonicalize.
+                    # khi similarity rất cao. Gemini Web mới là người quyết định merge/canonicalize.
                     threshold = self.config.duplicate_cosine if same_family else max(0.90, self.config.duplicate_cosine + 0.04)
                     if score >= threshold:
                         near.append(right.id)
@@ -443,7 +418,7 @@ class LivingUserMemoryCurator:
         """Validator cấu trúc, không phải authority semantic thứ hai.
 
         V68 cố ý không veto operation vì record được user xác nhận, khác path hay
-        khác root. DeepSeek đã là curator authority; validator chỉ chặn schema hỏng,
+        khác root. Gemini Web đã là curator authority; validator chỉ chặn schema hỏng,
         ID không tồn tại và mutation mơ hồ.
         """
         del cluster_sets
@@ -558,12 +533,14 @@ class LivingUserMemoryCurator:
         start = text.find("{")
         end = text.rfind("}") + 1
         if start < 0 or end <= start:
-            return []
+            raise ValueError("curator_invalid_json")
         try:
             payload = json.loads(text[start:end])
         except Exception:
-            return []
-        rows = payload.get("operations", []) if isinstance(payload, Mapping) else []
+            raise ValueError("curator_invalid_json") from None
+        rows = payload.get("operations") if isinstance(payload, Mapping) else None
+        if not isinstance(rows, list):
+            raise ValueError("curator_missing_operations")
         return [dict(row) for row in rows if isinstance(row, Mapping)]
 
 

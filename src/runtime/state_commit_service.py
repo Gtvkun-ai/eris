@@ -448,6 +448,8 @@ class StateCommitServiceMixin:
                     priority="normal",
                     context={
                         "channel": "chat",
+                        "session_id": str(getattr(self, "runtime_session_id", "") or ""),
+                        "project_id": str(getattr(getattr(self, "workspace_manager", None), "active_project_id", "") or getattr(self, "active_project_id", "") or ""),
                         # Nguồn do user ingress cấp, không lấy từ nội dung model.
                         "claim_provenance": classify_ingress("chat_turn", turn_id=str(turn_id or "")),
                     },
