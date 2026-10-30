@@ -147,7 +147,8 @@ def test_explicit_runtime_boundary_releases_commitment_lock():
 
 
 def test_vision_bootstrap_no_longer_installs_monkey_patch():
-    source = open("vision.py", "r", encoding="utf-8").read()
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "vision.py").read_text(encoding="utf-8")
     assert "install_expression_commitment_authority" not in source
     assert "from expression_commitment_authority" not in source
 

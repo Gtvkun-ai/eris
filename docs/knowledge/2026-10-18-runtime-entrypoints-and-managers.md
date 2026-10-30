@@ -122,3 +122,13 @@ khỏi khả năng của embedding provider.
 `C:/Users/Gtvkun/Documents/eris`, không chạy full build để tránh copy lại state,
 memory hoặc account DB trong lúc dọn. Hai EXE manager/setup cũ vẫn được giữ;
 thiếu `ErisManager.spec` nên không coi chúng là binary được build mới.
+
+## Cập nhật 30/10/2026: Dọn dẹp repo diện rộng và thống nhất source of truth
+
+Theo yêu cầu dọn dẹp các tài liệu ít đọc và chức năng/file lỗi thời:
+- **Thống nhất mã nguồn `src/`:** Đã loại bỏ các file helper trùng lặp ở thư mục gốc (`app_logging.py`, `eris_secrets.py`, `failure_meta.py`, `guard_config.py`, `secret_versions.py`, `semantic_authority.py`, `sender.py`) và bản cũ `vision.py` ở root (21KB). `src/vision.py` (28KB) là entry point duy nhất. Cập nhật test `test_v66_native_expression_commitment.py` trỏ trực tiếp `src/vision.py`.
+- **Dọn patch, diff, log và manifest cũ:** Đã xóa `CHANGES_V2.diff`, `eris_richchat_changes.patch`, `production_hooks.diff`, `@AutomationLog.txt`, `feat003_full.txt`, `AI_EXPORT_README.txt`, cùng các file manifest/SHA đã merge (`MANIFEST.json`, `MANIFEST_SHA256.txt`, `PATCH_MANIFEST.json`, `RECONSTRUCTION_MANIFEST.json`, `ERIS_UI_PATCH_*.txt`).
+- **Dọn tài liệu thuyết trình & báo cáo tạm:** Đã xóa 11 file `README_*.md` lẻ ở root và script `build_eris_docx.py`. Xóa 292 file ảnh/xml trích xuất tạm trong `docs/reports/live2d-rig-work/source-extracted` và `docs/reports/live2d-audit-20261014`.
+- **Dọn script tính năng cũ:** Xóa các script liên quan đến Google Gemini browser login cho Curiosity Tutor (`tutor_login.bat`, `tutor_login.py`, `setup_tutor_browser.bat`), wrapper `run_build.py`, script `tools/package_v4.py` và `tools/test_gemini_web_ping.py`.
+- Giữ nguyên container và service `gemini_vision_docker` đang chạy phục vụ vision.
+
