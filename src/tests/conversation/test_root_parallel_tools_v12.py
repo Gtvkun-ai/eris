@@ -52,16 +52,16 @@ def decide(router, *, text="", kind="user_turn", context=None):
 
 # --- schema ----------------------------------------------------------------
 
-def test_root_step_schema_unchanged_batch_schema_adds_one_kind():
-    # ROOT_STEP_SCHEMA giữ 7 oneOf (test cũ phải vẫn xanh).
-    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 7
+def test_root_internal_guide_and_batch_schemas_do_not_add_public_moves():
+    # Internal guide reading adds one non-public action.
+    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 8
     kinds = set()
     for schema in ROOT_STEP_SCHEMA["oneOf"]:
         kinds.update(schema["properties"]["kind"].get("enum", []))
     assert "batch" not in kinds
 
     # ROOT_BATCH_STEP_SCHEMA = ROOT_STEP_SCHEMA + đúng một kind='batch'.
-    assert len(ROOT_BATCH_STEP_SCHEMA["oneOf"]) == 8
+    assert len(ROOT_BATCH_STEP_SCHEMA["oneOf"]) == 9
     batch_schema = ROOT_BATCH_STEP_SCHEMA["oneOf"][-1]
     assert batch_schema["properties"]["kind"]["enum"] == ["batch"]
     actions = batch_schema["properties"]["actions"]
@@ -70,7 +70,7 @@ def test_root_step_schema_unchanged_batch_schema_adds_one_kind():
     for item in actions["items"]["oneOf"]:
         item_kinds.update(item["properties"]["kind"].get("enum", []))
     # Non-finalize only; move/no_reply bị cấm trong actions.
-    assert item_kinds == {"use_capability", "recall_memory", "continue_thinking", "set_note", "clear_note"}
+    assert item_kinds == {"use_capability", "read_tool_guide", "recall_memory", "continue_thinking", "set_note", "clear_note"}
     assert "move" not in item_kinds and "no_reply" not in item_kinds
 
 

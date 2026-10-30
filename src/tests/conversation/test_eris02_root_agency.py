@@ -201,9 +201,10 @@ def test_root_step_schema_has_internal_actions_but_public_move_contract_unmodifi
     kinds = set()
     for schema in ROOT_STEP_SCHEMA["oneOf"]:
         kinds.update(schema["properties"]["kind"].get("enum", []))
-    assert kinds == {"move", "no_reply", "use_capability", "set_note", "clear_note", "recall_memory", "continue_thinking"}
+    assert kinds == {"move", "no_reply", "use_capability", "read_tool_guide", "set_note", "clear_note", "recall_memory", "continue_thinking"}
     fields = ROOT_STEP_SCHEMA["oneOf"][0]["properties"]
-    assert set(fields) == {"kind", "intent", "say", "delivery", "after"}
+    assert set(ROOT_STEP_SCHEMA["oneOf"][0]["required"]) == {"kind", "intent", "say", "delivery", "after"}
+    assert set(fields) == {"kind", "intent", "say", "delivery", "after", "document_source", "presentation_blocks"}
 
 
 def test_background_event_cannot_override_active_public_delivery_at_kernel_boundary():

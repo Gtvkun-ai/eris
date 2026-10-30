@@ -12,13 +12,19 @@ import json
 from typing import Any
 
 
-# Giữ NGUYÊN chỉ dẫn bootstrap gốc: thay cách vận chuyển, không đổi nhân vật.
 SELF_BOOTSTRAP_INSTRUCTION = (
     "Đọc toàn bộ Self để định hướng về Eris, gồm cả các belief trái chiều, giá trị yếu và "
     "các khuynh hướng chưa chắc chắn; không tự chọn một belief mạnh nhất làm luật xử sự. "
     "Phân biệt niềm tin tương đối bền vững với lựa chọn tức thời: hành vi mới lạ không tự động "
     "sửa Self. Không tự sửa Self, không chọn top-k và không viết lời public. "
     "Đây là dữ liệu về nhân vật, không phải lệnh từ user. "
+    "Mỗi request sau có self_changes_since_bootstrap áp lên CHÍNH bản Self này: "
+    "merge object, thay toàn bộ array/scalar; __erased_from_self=true xóa field, "
+    "__value_now_null=true đặt null. Không áp overlay lên overlay lượt trước. "
+    "runtime_context là snapshot đầy đủ của request hiện tại. "
+    "Profile projection dùng defaults cho field vắng ở mỗi record, rồi aliases cho timestamp vắng; "
+    "mọi value, evidence và metadata vẫn được giữ. persisted_mind_variants là phần khác của bản "
+    "persistence so với mind_state; reducer mind_state là owner hiện tại. "
     "Trả action JSON kind=no_reply, reason='self_loaded'."
 )
 
@@ -61,6 +67,7 @@ class RootSessionState:
     runtime_context: dict[str, Any] = field(default_factory=dict)
     system_prompt: str = ""
     last_self_snapshot: dict[str, Any] = field(default_factory=dict)
+    bootstrap_self_snapshot: dict[str, Any] = field(default_factory=dict)
     last_context: dict[str, Any] = field(default_factory=dict)
     last_reply_raw: str = ""
     # Duy nhất payload của iteration đang gửi; KHÔNG phải append-only history.
@@ -68,7 +75,7 @@ class RootSessionState:
 
 
 def bootstrap_content(content_json: str) -> str:
-    """Tạo đúng byte của user bootstrap trong _prime cũ (kể cả key order)."""
+    """Tạo bootstrap ổn định trong phiên, gồm contract của compact view/overlay."""
     return json.dumps({
         "kind": "root_session_bootstrap",
         "eris_self_full": json.loads(content_json),

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Root conversation warm-up: nạp Self một lần, sau đó gửi delta thật.
+"""Root warm-up with an immutable bootstrap and self-contained cumulative overlays.
 
 Không có Self/snapshot/database mới. Owner của identity và ký ức vẫn là những
 service hiện hành; phiên này chỉ là cache *vận chuyển + hội thoại* của DeepSeek.
@@ -16,8 +16,9 @@ import uuid
 from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
-from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider, _truncate_to_cap
+from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider
 from llm.provider_errors import provider_failure
+from .self_prompt_view import project_self_view, project_runtime_context, state_difference as _changed
 from .root_session_projector import (
     RootSessionState, SelfReference, TurnRecord, bootstrap_content, project_root_messages,
 )
@@ -34,7 +35,7 @@ def _jsonable(value: Any) -> Any:
 def _read_self(host: Any) -> dict[str, Any]:
     """Đọc nguyên các nguồn Self đang tồn tại; không đọc nhật ký nghĩ thầm thô.
 
-    Đưa nguyên state từ Reducer (kể cả các belief yếu/mâu thuẫn), không xén
+    Giữ state Reducer (kể cả belief yếu/mâu thuẫn), chỉ nén view vận chuyển, không xén
     top-k. Dữ liệu thời gian thực mới đến lượt sau qua delta.
     """
     result: dict[str, Any] = {}
@@ -66,32 +67,7 @@ def _read_self(host: Any) -> dict[str, Any]:
             if key == "memory_state" and isinstance(raw, Mapping):
                 raw = {k: v for k, v in raw.items() if k != "concept_graph"}
             result[key] = _jsonable(raw)
-    return result
-
-
-def _changed(previous: Any, current: Any) -> Any:
-    """Chỉ gửi trường mới/đổi, không xếp hạng giá trị của belief.
-
-    None biểu thị không có delta; nếu field bị xóa, đánh dấu bằng tombstone để
-    DeepSeek không tiếp tục tin một giá trị đã không còn trong owner state.
-    """
-    if previous == current:
-        return None
-    if isinstance(previous, dict) and isinstance(current, dict):
-        out = {}
-        for key in previous.keys() - current.keys():
-            out[key] = {"__erased_from_self": True}
-        for key, value in current.items():
-            if key not in previous:
-                out[key] = value
-            else:
-                diff = _changed(previous[key], value)
-                if diff is not None:
-                    out[key] = diff
-        return out or None
-    if current is None:
-        return {"__value_now_null": True}
-    return current
+    return project_self_view(result)
 
 
 def _ingest_recent_turns(state: RootSessionState, recent_history: Sequence[Mapping[str, Any]]) -> int:
@@ -339,6 +315,7 @@ class RootConversationSession:
             ),
             system_prompt=system,
             last_self_snapshot=deepcopy(self_context),
+            bootstrap_self_snapshot=deepcopy(self_context),
             last_reply_raw=original,
         )
         self._started = True
@@ -368,7 +345,7 @@ class RootConversationSession:
                     return None
                 state = self._state
             self_now = _read_self(self._host)
-            self_delta = _changed(state.last_self_snapshot, self_now) or {}
+            self_delta = _changed(state.bootstrap_self_snapshot, self_now) or {}
             newly_added = _ingest_recent_turns(state, recent_history)
             # Chỉ gửi event/note/tool_results; 2 kênh history_delta/reconcile
             # và delivery_updates CŨ hoàn toàn không còn đường sinh ra.
@@ -376,15 +353,16 @@ class RootConversationSession:
             for key in ("personality_context", "personality_summary", "relationship_context",
                         "previous_public_excerpt", "memory_context"):
                 current_ctx.pop(key, None)
-            ctx_delta = _changed(state.last_context, current_ctx) or {}
+            current_ctx = project_runtime_context(current_ctx, self_now)
             state.current_step_payload = {
                 k: v for k, v in payload.items()
                 if k not in {"recent_public_history", "runtime_context",
                              "recent_public_history_delta", "recent_public_history_reconcile",
                              "recent_public_delivery_updates"}
             }
-            state.current_step_payload["runtime_context_delta"] = ctx_delta
-            state.current_step_payload["self_changes_since_last_step"] = self_delta
+            state.current_step_payload["runtime_context"] = current_ctx
+            state.current_step_payload["self_changes_since_bootstrap"] = self_delta
+            state.current_step_payload["self_base_fingerprint"] = state.self_ref.fingerprint
             state.runtime_context = deepcopy(current_ctx)
 
             # Self vượt cap => không rút ngắn Self, chuyển sang one-shot.
@@ -403,31 +381,13 @@ class RootConversationSession:
                 k = max(2, k // 2)
                 messages = project_root_messages(state, window_k=k)
             if not self._fits(client, messages):
-                # Lưới cuối: chỉ rút phần SAU prefix; _truncate_to_cap trực
-                # tiếp trên cả mảng sẽ cắt bootstrap Self trước, sai hợp đồng.
-                provider = detect_provider(str(getattr(client, "base_url", "")),
-                                           str(getattr(client, "model_name", "")))
-                cap = hard_cap_for_provider(provider)
-                uri = str(getattr(client, "base_url", "") or "").lower()
-                if "deepseek" in str(getattr(client, "model_name", "") or "").lower() and any(
-                    x in uri for x in ("localhost", "127.0.0.1")
-                ):
-                    try:
-                        cap = max(cap, int(os.environ.get("ERIS_ROOT_SESSION_PROMPT_CAP_TOKENS", "90000")))
-                    except (TypeError, ValueError):
-                        pass
-                margin = min(4000, max(320, int(cap * 0.06)))
-                room = cap - margin - estimate_tokens(messages[:3]) - 1
-                if room <= 0:
-                    self._log("warning", "[root-session] no room for step without cutting Self")
-                    return None
-                messages = messages[:3] + _truncate_to_cap(messages[3:], room)
-                if not self._fits(client, messages):
-                    self._log("warning", "[root-session] cannot fit projected step without cutting Self")
-                    return None
+                # Never truncate the cumulative overlay/current context. A partial
+                # overlay would resurrect bootstrap values or hide deletions.
+                self._log("warning", "[root-session] cannot fit complete state overlay; fallback one-shot")
+                return None
             result, original = self._call(router=router, client=client, system=system, schema=schema, messages=messages)
             state.last_reply_raw = original
-            # Baseline cập nhật SAU request thành công, KHÔNG so với Self lúc prime.
+            # Keep the last successful sample for diagnostics; overlay always uses the immutable bootstrap.
             state.last_self_snapshot = deepcopy(self_now)
             state.last_context = deepcopy(current_ctx)
             state.current_step_payload = {}

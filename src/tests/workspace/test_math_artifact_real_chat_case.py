@@ -46,10 +46,12 @@ def test_binary_math_kind_is_in_capability_contract():
 
 def test_root_knows_math_tool_action_interface():
     from runtime.conversation.context import RootCapabilityRegistry
+    from runtime.conversation.tool_guides import read_tool_guide
     prompt = RuntimeModelRootAgent._system_prompt(RootCapabilityRegistry({}))
-    assert 'binary_determinant_max' in prompt
+    assert 'binary_determinant_max' not in prompt
     assert 'math_workspace' in prompt
     assert 'kind=use_capability' in prompt
+    assert 'binary_determinant_max' in read_tool_guide('math_workspace')['documentation']
 
 
 def test_root_action_math_then_short_bubble_receives_tool_receipt():

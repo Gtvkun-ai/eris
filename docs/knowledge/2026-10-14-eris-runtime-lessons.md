@@ -1285,3 +1285,149 @@ probe Gemini, receipt backup/deploy/reset và smoke portable. Ưu tiên projecti
 tiếp theo: tách debug report khỏi prompt, compact profile nhưng giữ meaning và
 provenance, hợp nhất state trùng sau khi đối chiếu owner; không hard-cap/cắt
 belief tùy tiện rồi tuyên bố đã giữ nguyên Self.
+
+## 32. Ngày 30/10: điều tra prompt thừa và contract/state không nhất quán
+
+User yêu cầu điều tra prompt có gì thừa. Lượt này chỉ đọc source/trace, dựng
+payload và chạy probe tổng hợp offline; không sửa runtime hoặc memory/config.
+Không có log/raw Root request mới hơn phiên 13:57 đã dùng ở mục 31.
+
+- Thừa rõ: replay/debug khoảng 41,4k ký tự ở snapshot hiện tại; hai bản
+  internal state cùng 75 key/value (5.828 ký tự mỗi bản trong fixture). Ngoài
+  ra xác nhận `latest_observation` 2.643 ký tự giống hệt ở ba chỗ trong event:
+  conversation_status, mind_state delta, memory_state.ai_orchestrated_state.
+  Observation thuộc startup, trước câu user hiện tại. Các khoản reducer/observer
+  có phần lồng nhau, không được cộng như các nguồn độc lập.
+- Profile chưa phải toàn bộ rác: mảng 80 record 63.622 ký tự. Thử encoding
+  columns/rows giữ toàn bộ trường/value, decode deep-equal: còn 44.130 ký tự.
+  View gọn 12 field (bỏ null) còn 32.133, nhưng đây là view có loại trường,
+  chưa được coi lossless về meaning nếu qualifier quan trọng nằm ở metadata.
+  80/80 updated_at bằng last_confirmed_at; 71/80 created_at bằng valid_from;
+  160 trường validity null. Canonical data không bị sửa trong phép thử.
+- System prompt thực tế 14.967 ký tự: core contract 12.951 và inline schema
+  2.014. Rich Chat manual 1.608 + math/work manual 2.478 luôn được nạp, cả ví
+  dụ riêng ma trận 0/1 cấp 3. Có thể tách hướng dẫn chi tiết theo capability
+  Root chọn; không dùng keyword gate quyết định thay Root. Inline JSON schema
+  **cần giữ** vì client hạ response_format xuống json_object, phải mang schema
+  qua system để không mất contract.
+- Grounding tự chèn vision snapshot chưa quá 600 giây, không kiểm relevance
+  ở `_world_context()`. Fixture có đoạn vision 1.943 ký tự dù câu hiện tại là
+  phản ứng xã hội ngắn, các cờ requires_pixels/current_environment/screen_text
+  đều false và SOURCE_GROUNDING giới hạn nguồn ở user_text/runtime_state.
+  Fresh không đồng nghĩa liên quan. Còn duplicate user evidence, clock/focus
+  ở các phần grounding; không vì thế mà bỏ năng lực quan sát màn hình.
+- **Contract mismatch:** system hướng dẫn kind=batch, nhưng Root session dùng
+  ROOT_STEP_SCHEMA không có batch. Chỉ fallback one-shot mở batch schema;
+  hai nhánh hiện dùng chung system. Chưa khẳng định model đã trả batch lỗi live.
+- **Bổ sung quan trọng về delta:** probe chạy chính RootConversationSession.ask
+  với fake router: owner A→B thì request đầu có B; owner không đổi thì request
+  kế mất B, prefix vẫn chứa A. Runtime context không đổi cũng biến mất khỏi
+  request kế. Baseline last_* được cập nhật nhưng prefix vẫn bất biến và
+  projector không giữ các delta trước đó. Router đưa nguyên projected messages
+  vào client; SessionGuard chỉ tiếp tục khi transcript append-only khớp chính
+  xác, không bảo đảm trí nhớ remote bù cho dữ liệu thiếu. Kết quả này giới hạn
+  các kết luận trước về tính đúng của “delta thật”: đo giảm chars không chứng
+  minh request kế giữ đủ state. Chưa đo hậu quả ở một lượt Eris live mới.
+
+Mô phỏng fixture sau graph + thay action đã reset: bootstrap 149.748 ký tự;
+bỏ replay còn 107.810; bỏ thêm internal-state clone còn 101.965; profile table
+lossless còn 82.473, hoặc compact view có loại field còn 70.476. Hai bước đầu
+giảm 47.783 ký tự (~31,9%), không thay canonical memory. Đây là scenario offline,
+không phải projection đã triển khai hay token billing.
+
+Artifact `eris-prompt-audit-20261030/` có result.md, analysis.json và
+delta-continuity-probe.json. Ưu tiên sửa correctness của state/schema trước khi
+rút gọn tiếp; sau đó tách debug, hợp nhất state và compact view có kiểm chứng.
+
+## 33. Ngày 30/10: triển khai dọn prompt bước 1–4; chưa đụng bước 5
+
+User chỉ định làm bước 1,2,3,4 của đề xuất; bước 5 (relevance/detail của màn
+hình) để suy luận sau. Thay đổi này thay thế trạng thái “chỉ điều tra/chưa sửa
+projection” ở mục 31–32, không thay các kết quả đo lịch sử ở đó.
+
+- **State correctness:** Root giữ bootstrap bất biến và gửi
+  `self_changes_since_bootstrap`, `self_base_fingerprint` cùng `runtime_context`
+  đầy đủ ở mỗi request. Overlay luôn so với bootstrap, không phải bước trước.
+  Object merge, array/scalar replace; giữ tombstone xóa và null rõ ràng. Bảo
+  toàn cả thay đổi kiểu JSON như False→0. Không truncate overlay khi vượt cap;
+  chỉ thu hẹp cửa sổ hội thoại rồi dùng fallback hiện có nếu vẫn không vừa.
+- **Loại view chẩn đoán/lặp:** module pure `self_prompt_view.py` bỏ replay,
+  last_dream_report, pending_turns và active_session_id khỏi view gửi Root,
+  không sửa summary/store gốc. Bỏ internal_state clone chỉ khi giống hệt.
+  MindState reducer là owner chính; phần persistence khác được giữ dưới
+  `persisted_mind_variants` thay vì gửi một bản full thứ hai. Observation trùng
+  conversation_status dùng reference tới mind_state.latest_observation; nếu
+  khác thì vẫn giữ dữ liệu riêng.
+- **Compact profile không mất trường:** dùng defaults cho các trường cấu trúc
+  lặp và timestamp aliases, có ngoại lệ trên từng record. Không chọn top-k mới,
+  không xóa value/ID/evidence/scope/uncertainty/qualifier. Chủ động giữ cả
+  metadata.reason vì đây là text tự do có thể chứa điều kiện; không phân loại
+  reason “rác” bằng từ khóa. Decode 80 record thật deep-equal bản gốc.
+- **Hướng dẫn công cụ theo nhu cầu:** system core giữ cá tính, quyền quyết định,
+  receipt/evidence và ranh giới speech/artifact, thêm menu ngắn. Sáu manual
+  rich_chat/research/math_workspace/live_workspace_edit/work/tutor chuyển sang
+  `tool_guides.py`; Root tự chọn `read_tool_guide`. Đây chỉ là đọc documentation,
+  không cấp quyền, không chạy tool và không tạo execution receipt. Guide đã đọc
+  còn trong payload cả event, kể cả sau nhiều tool results. Khi cần đọc manual,
+  có thể có thêm một Root round trip; chat thường không bị ép đọc.
+- **Schema thống nhất:** warm-up, session và fallback cùng dùng
+  ROOT_BATCH_STEP_SCHEMA; batch hợp lệ trên cả hai nhánh. Base internal schema
+  có thêm action đọc guide; public move contract không đổi. Giữ inline JSON
+  schema qua DeepSeek transport, không xóa ràng buộc output.
+
+**Đo offline cùng fixture**, thay action snapshot sau reset cho cả trước/sau;
+dựng lại Self/context hiện tại từ chuỗi request cũ trước khi đo overlay mới:
+
+- Tổng message content **188.724 → 131.613 ký tự (-30,26%)**.
+- Bootstrap **149.748 → 82.750**; profile **63.685 → 44.023**.
+- Event payload **23.614 → 35.461**: lớn hơn vì bản mới phải tự chứa context
+  đầy đủ và các update Self tích lũy; bản cũ thiếu update ở bước tiếp theo.
+  Không đổi số này thành token billing hoặc tuyên bố latency live giảm tương ứng.
+- Kiểm chứng giữ nguyên toàn bộ mind_state, decode đầy đủ 80 record profile,
+  overlay tái dựng đúng Self hiện tại, grounding/vision text giữ nguyên.
+
+**Kiểm tra/triển khai:** bộ liên quan Root, context, writer, delivery và math
+contract: **189 passed, 1 failed** ở test chạy binary determinant worker với
+`command_exit:1`. Probe bằng MathWorkspaceService lấy từ HEAD cũng lỗi như vậy;
+không do thay đổi prompt. Nhóm regression cleanup cuối **8 passed**, gồm unknown
+guide không được coi là tiến triển. Smoke bằng module portable trên bản sao
+memory thật xác nhận compact roundtrip, update còn ở request sau và guide không
+phải receipt. Không gọi LLM/TTS live.
+
+Đã đồng bộ 6 module Python (3 module mới), backup source cũ tại
+`Documents/eris/backups/prompt-cleanup-1234-20261030/`. 28 file bảo vệ giữ hash,
+gồm 26 memory/config và hai module context_assembler/vision_perception_worker.
+Không reset thêm memory, không sửa policy hay detail/relevance màn hình bước 5.
+Cần mở lại Eris để dùng code mới; chưa đo một lượt chat live sau deploy.
+
+Artifact `eris-prompt-cleanup-steps1234-20261030/` có payload-verification.json,
+deployment plan/receipt, portable-smoke.json và result.md.
+
+## 34. Ngày 30/10: đổi tab/cửa sổ nhanh không đồng nghĩa vision theo kịp mọi lần
+
+User hỏi Eris có biết khi làm việc và hay đổi tab/màn hình không. Chỉ đọc code,
+không sửa bước 5 hoặc chạy theo dõi màn hình live trong lượt giải thích này.
+
+- Telemetry có foreground app/process/window, focus_changed và một số metadata
+  tab trình duyệt nếu accessibility/bridge cung cấp. EnvironmentAwarenessHub
+  ưu tiên current telemetry cho focus identity, kể cả semantic worker chưa xong.
+  Chat cycle refresh hub từ machine snapshot rồi đưa vào WorldState. Điều này
+  hỗ trợ biết cửa sổ đang focus; không bảo đảm ghi đủ mọi chuyển tab thoáng qua.
+- Gemini Vision là đường riêng: mặc định poll 6 giây, cooldown 12 giây, chỉ gửi
+  khi title hoặc pixel thay đổi. Không thấy override các biến này trong portable
+  .env đã đọc; không coi đó là đo cadence live. HTTP chạy đồng bộ trong worker
+  nền, còn có thời gian Gemini xử lý; last_sent_at đặt sau khi response thành công.
+- Vì vậy focus có thể đã sang B trong khi vision còn mô tả ảnh A. Chuyển A→B→A
+  nhanh giữa các lần lấy mẫu có thể không được Gemini nhìn thấy. Không được nói
+  Eris đã hiểu từng tab hoặc đang quan sát video realtime.
+- Snapshot captured_at hiện đặt lúc publish response, không phải lúc chụp ảnh;
+  nhãn freshness của vision chưa phản ánh toàn bộ độ trễ phân tích. Cần xem lại
+  khi user yêu cầu bước 5, không âm thầm thay trong lượt hỏi đáp này.
+
+**Làm rõ sau câu hỏi về tích lũy context màn hình:** đường vision trực tiếp chỉ
+lấy `get_latest_snapshot()`; service giữ một `_latest_snapshot` được thay khi
+có snapshot mới. Projector gửi context hiện tại một lần, cửa sổ 24 turn chỉ
+chứa lời public user/assistant và trạng thái delivery, không giữ toàn bộ context
+màn hình của từng turn. Nhiều request có thể gửi lại cùng mô tả ~1,9k ký tự,
+nhưng request thứ mười không tự chứa mười bản mô tả qua đường này. Không suy
+diễn rằng ảnh/vision đang là nguồn context phình lớn; user ưu tiên giữ phần này.

@@ -260,6 +260,18 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
   let messages=[], artifacts=[], currentDay='all', currentSearch='', signature='', pending=false, lastKey='', workspaceMode=false;
   let liveSpeech={phase:'idle',turnId:''}, polling=null;
   const statusEl=document.getElementById('status');
+  const workspaceBtn=document.getElementById('workspaceBtn');
+  // Keep conversation polling alive even if optional UI controls are absent.
+  const setWorkspaceMode = enabled => {
+    workspaceMode=!!enabled;
+    if(workspaceBtn){
+      workspaceBtn.classList.toggle('active',workspaceMode);
+      workspaceBtn.setAttribute('aria-pressed',String(workspaceMode));
+      workspaceBtn.setAttribute('aria-label',workspaceMode?'Quay lại hội thoại':'Xem bàn làm việc và artifact');
+      const label=workspaceBtn.querySelector('span');
+      if(label)label.textContent=workspaceMode?'Hội thoại':'Bàn làm việc';
+    }
+  };
   const connectionDot=document.querySelector('.status .dot');
   function showConnection(connected, message) {
     statusEl.textContent=message;
@@ -373,7 +385,7 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     if(workspaceMode){
       const section=document.createElement('section');section.className='artifact-gallery';
       const heading=document.createElement('h3');heading.textContent='Bàn làm việc tương tác';
-      const note=document.createElement('p');note.textContent='Chọn Chỉnh sửa để xem trước và lưu revision mới. Bản gốc và lời thoại không đổi.';
+      const note=document.createElement('p');note.textContent='Các artifact do Eris tạo. Bạn có thể nhờ Eris chỉnh sửa mà không thay đổi lời thoại gốc.';
       section.append(heading,note);
       if(artifacts.length) addArtifacts(section,artifacts);
       else {const none=document.createElement('p');none.textContent='Chưa có artifact trong các lượt chat gần đây.';section.append(none);}
@@ -401,18 +413,14 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     reportArtifacts(currentArtifacts,thisGeneration);
     // P4: editing is explicit and never rewrites the spoken transcript.
     for(const item of pendingArtifacts){
-      if(!window.ErisWorkspaceEditor || !ErisWorkspaceEditor.editable(item.artifact))continue;
       const a=item.artifact;
       const selector='[data-artifact-id="'+a.artifact_id+'"][data-revision="'+a.revision+'"]';
       const card=root.querySelector(selector);
       if(!card)continue;
-      const button=document.createElement('button');button.type='button';button.className='artifact-edit';
-      button.textContent='✎ Chỉnh sửa';button.setAttribute('aria-label','Chỉnh sửa '+a.kind);
-      card.querySelector('header')?.append(button);
       const ask=document.createElement('button');ask.type='button';ask.className='artifact-edit';ask.textContent='✦ Nhờ Eris sửa';
       card.querySelector('header')?.append(ask);
       ask.addEventListener('click',()=>{
-        workspaceMode=false;document.getElementById('workspaceBtn').classList.remove('active');
+        setWorkspaceMode(false);
         const ref=`intent_id=${item.intent_id}, artifact_id=${a.artifact_id}, revision=${a.revision}`;
         input.value=`Eris, xem artifact này (${ref}) và giúp tôi chỉnh sửa: `;
         input.dispatchEvent(new Event('input'));input.focus();
@@ -422,19 +430,11 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
         const sandbox=document.createElement('button');sandbox.type='button';sandbox.className='artifact-edit';
         sandbox.textContent='▸ Nhờ Eris chạy sandbox';card.querySelector('header')?.append(sandbox);
         sandbox.addEventListener('click',()=>{
-          workspaceMode=false;document.getElementById('workspaceBtn').classList.remove('active');
+          setWorkspaceMode(false);
           input.value=`Eris, hãy inspect artifact mã nguồn intent_id=${item.intent_id}, artifact_id=${a.artifact_id} revision=${a.revision}, rồi nếu phù hợp chạy thử bằng python_workspace trong Docker và báo kết quả thật. `;
           input.dispatchEvent(new Event('input'));input.focus();renderMessages();
         });
       }
-      button.addEventListener('click',()=>ErisWorkspaceEditor.open(item,async payload=>{ 
-        const response=await fetch(endpoint('api/artifact/edit'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        if(response.status===409)throw Error('Artifact đã được chỉnh ở nơi khác. Đóng editor và tải bản mới.');
-        if(!response.ok)throw Error('Không lưu được artifact. Kiểm tra dữ liệu và kết nối.');
-        const result=await response.json();if(!result.ok)throw Error('Không lưu được');
-        toast('Đã lưu revision '+result.revision);
-        signature='';await poll();
-      }));
     }
     root.querySelectorAll('.copy-code').forEach(button=>button.addEventListener('click',()=>{
       const text=button.closest('.code-card').querySelector('code').textContent;
@@ -497,8 +497,8 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     }catch(error){toast('Không gửi được. Kiểm tra Eris đang chạy.');}
     finally{pending=false;send.disabled=!input.value.trim();input.focus()}
   });
-  document.getElementById('workspaceBtn').addEventListener('click',()=>{
-    workspaceMode=!workspaceMode;document.getElementById('workspaceBtn').classList.toggle('active',workspaceMode);
+  workspaceBtn?.addEventListener('click',()=>{
+    setWorkspaceMode(!workspaceMode);
     renderMessages();scroll.scrollTop=0;
   });
   document.getElementById('themeBtn').addEventListener('click',()=>document.body.classList.toggle('dark'));

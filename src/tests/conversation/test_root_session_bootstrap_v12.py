@@ -119,7 +119,7 @@ def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
     assert "personality_context" not in str(first_delta)
     assert "recent_public_history_delta" not in first_delta
     assert messages[3] == {"role": "user", "content": "hi"}
-    assert first_delta["self_changes_since_last_step"] == {}
+    assert first_delta["self_changes_since_bootstrap"] == {}
     assert session._state.last_reply_raw == '{ "kind" : "move" , "intent":"live", "say":"reply", "delivery":"tự nhiên", "after":"wait_user" }'
 
     host.mind.data["identity"]["beliefs"]["belief_0"]["strength"] = 0.9
@@ -129,7 +129,7 @@ def test_delta_turn_does_not_repeat_self_and_retains_raw_response(monkeypatch):
     ))
     assert second["kind"] == "move"
     new_delta = json.loads(router.calls[2]["conversation_messages"][-1]["content"])
-    assert new_delta["self_changes_since_last_step"] == {"mind_state": {"identity": {"beliefs": {"belief_0": {"strength": .9}}}}}
+    assert new_delta["self_changes_since_bootstrap"] == {"mind_state": {"identity": {"beliefs": {"belief_0": {"strength": .9}}}}}
     assert "recent_public_history_delta" not in new_delta
     assert router.calls[2]["conversation_messages"][-2] == {"role": "user", "content": "new"}
     assert len(router.calls[2]["conversation_messages"]) == 7
@@ -154,7 +154,7 @@ def test_restored_graph_is_excluded_from_bootstrap_and_self_delta(monkeypatch):
     messages = router.calls[-1]["conversation_messages"]
     assert not any("concept_graph" in message["content"] for message in messages)
     delta = json.loads(messages[-1]["content"])
-    assert delta["self_changes_since_last_step"]["memory_state"] == {
+    assert delta["self_changes_since_bootstrap"]["memory_state"] == {
         "long_term": ["one", "two", "new canonical memory"],
     }
 

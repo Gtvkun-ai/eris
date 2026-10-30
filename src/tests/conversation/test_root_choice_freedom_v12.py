@@ -47,7 +47,7 @@ def test_root_understands_one_principle_allows_multiple_actions_without_new_form
     assert {"kind", "intent", "say", "delivery", "after"}.issubset(move["properties"])
     assert "document_source" not in set(move["required"])
     assert set(move["required"]) == {"kind", "intent", "say", "delivery", "after"}
-    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 7  # P1: thêm recall_memory và continue_thinking, không thêm public move
+    assert len(ROOT_STEP_SCHEMA["oneOf"]) == 8  # Documentation is internal; public move is unchanged.
 
 
 def test_root_can_voluntarily_agree_while_keeping_its_self_unchanged():

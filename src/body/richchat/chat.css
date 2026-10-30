@@ -48,7 +48,7 @@ body.dark{--bg:#171720;--side:#20202b;--surface:#252633;--text:#f0ecf5;--muted:#
 .workspace-nav{white-space:nowrap;border:1px solid var(--border);border-radius:11px;padding:10px 14px;background:var(--side);color:var(--text);font-size:12px;font-weight:700}
 .workspace-nav:hover,.workspace-nav.active{border-color:var(--accent);color:var(--accent)}
 .artifact-card>header{flex-wrap:wrap}.artifact-card>header small{margin-right:4px}
-@media(max-width:650px){.workspace-nav{font-size:0;padding:9px}.workspace-nav:before{content:'✎';font-size:15px}}
+@media(max-width:650px){.workspace-nav{padding:9px 11px}.workspace-nav span{display:none}}
 /* Live turn authority comes from Eris TTS, never inferred from browser time. */
 .status.disconnected .dot{background:#e27580;box-shadow:0 0 0 3px #e2758030}
 .entry.assistant.speaking-now>.content{border-color:#79b79f;box-shadow:0 0 0 2px #70b9992b,var(--shadow)}

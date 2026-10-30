@@ -109,7 +109,7 @@ def test_self_invariant():
     assert second[1]["content"] == bootstrap_content(session_state.self_ref.content_json)
 
 
-def test_self_delta_is_vs_last_turn():
+def test_self_overlay_is_cumulative_from_bootstrap():
     host, router, client = Host(), Router(), Client()
     session = RootConversationSession()
     session._host = host
@@ -118,12 +118,12 @@ def test_self_delta_is_vs_last_turn():
     assert session.ask(router=router, client=client, system="system", schema={},
                        payload={"event": {"text": "1"}}, runtime_context={}, recent_history=[])
     first = json.loads(router.calls[-1][-1]["content"])
-    assert first["self_changes_since_last_step"] == {"mind_state": {"belief": {"one": 9}}}
+    assert first["self_changes_since_bootstrap"] == {"mind_state": {"belief": {"one": 9}}}
     host.data["belief"]["two"] = 8
     assert session.ask(router=router, client=client, system="system", schema={},
                        payload={"event": {"text": "2"}}, runtime_context={}, recent_history=[])
     second = json.loads(router.calls[-1][-1]["content"])
-    assert second["self_changes_since_last_step"] == {"mind_state": {"belief": {"two": 8}}}
+    assert second["self_changes_since_bootstrap"] == {"mind_state": {"belief": {"one": 9, "two": 8}}}
 
 
 def test_status_single_source():
