@@ -8,6 +8,19 @@ const ErisRender = (() => {
   const sub = {'₀':'0','₁':'1','₂':'2','₃':'3','₄':'4','₅':'5','₆':'6','₇':'7','₈':'8','₉':'9','₋':'-'};
   const sup = {'⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9','⁻':'-'};
   const unicodeIntegral = /∫[₀-₉₋]+[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+\s*[a-zA-Z0-9²³⁰¹^*/+().\- ]{0,70}?\s*d[a-zA-Z]\b(?:\s*=\s*[0-9a-zA-Z²³⁰¹₀-₉ |^*/+().\-]+){0,3}/g;
+  // Some old serialized messages contain double-escaped TeX (\\\\(, \\\\[)
+  // and literal escaped subscripts. Normalize only math regions, never code.
+  function normalizeMathDelimiters(value) {
+    return String(value ?? '').split(/(`[^`\n]+`)/g).map(part =>
+      part.startsWith('`') && part.endsWith('`') ? part :
+        part.replace(/\\\\(?=[\[\]()])/g, '\\')).join('');
+  }
+  function normalizeMathBody(value) {
+    return String(value ?? '').replace(/\\\\(?=[a-zA-Z_])/g, '\\')
+      .replace(/\\\\(?=[,;!])/g, '\\')
+      .replace(/\\_/g, '_');
+  }
+
   function latexUnicode(source) {
     const found = /^∫\s*([₀-₉₋]+)\s*([⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)\s*(.*)$/s.exec(source);
     if (!found) return source;
@@ -32,8 +45,8 @@ const ErisRender = (() => {
       return s;
     }).join('');
   }
-  function inline(text) {
-    const source = String(text ?? '');
+  function inlineText(text) {
+    const source = normalizeMathDelimiters(text);
     const mathRe = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$[^$\n]+\$)/g;
     // First protect math delimiters, then detect Unicode integrals in normal text.
     const parts = [];
@@ -50,7 +63,9 @@ const ErisRender = (() => {
         if (latex.startsWith('$$')) latex = latex.slice(2,-2);
         else if (latex.startsWith('$')) latex = latex.slice(1,-1);
         else latex = latex.slice(2,-2);
-        return `<span class="math-inline">\\(${escape(latex)}\\)</span>`;
+        if(chunk.startsWith('\\[') || chunk.startsWith('$$'))
+          return `<span class="math-block">\\[${escape(normalizeMathBody(latex))}\\]</span>`;
+        return `<span class="math-inline">\\(${escape(normalizeMathBody(latex))}\\)</span>`;
       }
       let pos=0, piece='', found;
       unicodeIntegral.lastIndex = 0;
@@ -62,6 +77,13 @@ const ErisRender = (() => {
       piece += plain(chunk.slice(pos));
       return piece;
     }).join('');
+  }
+  function inline(text) {
+    // Protect inline code before scanning for math delimiters.
+    return String(text ?? '').split(/(`[^`\n]+`)/g).map(part =>
+      part.startsWith('`') && part.endsWith('`')
+        ? `<code>${escape(part.slice(1,-1))}</code>`
+        : inlineText(part)).join('');
   }
   function tableCells(line) { return line.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(x=>x.trim()); }
   function isTableSep(line) {return /^\s*\|?\s*:?-{2,}:?\s*\|/.test(line);}
@@ -162,7 +184,7 @@ const ErisRender = (() => {
     const blocks=[]; let i=0;
     const starter = (line,next='') => /^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+|`{3,}|~{3,}|\$\$\s*$|\\\[\s*$|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line)|| (line.includes('|') && isTableSep(next));
     while(i<lines.length && blocks.length<160){
-      const line=lines[i], t=line.trim();
+      const line=lines[i], t=normalizeMathDelimiters(line.trim());
       if(!t){i++;continue;}
       const fence=/^\s*(`{3,}|~{3,})([\w.+-]*)/.exec(line);
       if(fence){const mark=fence[1][0],len=fence[1].length,lang=fence[2]||'text';i++;let code=[];
@@ -176,9 +198,9 @@ const ErisRender = (() => {
         const encoded=escape(sourceCode);
         blocks.push(`<div class="code-card"><div class="code-head"><span>${escape(safeLang)}</span><button type="button" class="copy-code">Sao chép</button></div><pre class="language-${escape(name)}"><code class="language-${escape(name)}">${encoded}</code></pre></div>`);continue;
       }
-      if(t==='$$'||t==='\\['){const close=t==='$$'?'$$':'\\]';let math=[];i++;while(i<lines.length&&lines[i].trim()!==close)math.push(lines[i++]);if(i<lines.length)i++;blocks.push(`<div class="math-block">\\[${escape(math.join('\n'))}\\]</div>`);continue;}
+      if(t==='$$'||t==='\\['){const close=t==='$$'?'$$':'\\]';let math=[];i++;while(i<lines.length&&normalizeMathDelimiters(lines[i].trim())!==close)math.push(lines[i++]);if(i<lines.length)i++;blocks.push(`<div class="math-block">\\[${escape(normalizeMathBody(math.join('\n')))}\\]</div>`);continue;}
       const equation=/^(?:\$\$([\s\S]+)\$\$|\\\[([\s\S]+)\\\])$/.exec(t);
-      if(equation){blocks.push(`<div class="math-block">\\[${escape(equation[1]||equation[2])}\\]</div>`);i++;continue;}
+      if(equation){blocks.push(`<div class="math-block">\\[${escape(normalizeMathBody(equation[1]||equation[2]))}\\]</div>`);i++;continue;}
       const heading=/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
       if(heading){const lv=Math.min(4,heading[1].length);blocks.push(`<h${lv}>${inline(heading[2])}</h${lv}>`);i++;continue;}
       if(/^(?:-{3,}|\*{3,}|_{3,})$/.test(t)){blocks.push('<hr>');i++;continue;}
@@ -213,9 +235,21 @@ const ErisRender = (() => {
     }
     return blocks.join('');
   }
-  return Object.freeze({render,inline,latexUnicode,escape,chartSvg,safeExpression,plotSvg});
+  return Object.freeze({render,inline,latexUnicode,escape,chartSvg,safeExpression,plotSvg,normalizeMathDelimiters,normalizeMathBody});
 })();
-if(typeof module!=='undefined' && module.exports) module.exports=ErisRender;
+
+const ErisLive = Object.freeze({
+  speech(state) {
+    const raw=state&&typeof state==='object'?state.speech:null;
+    return {phase:['speaking','thinking','idle'].includes(raw?.phase)?raw.phase:'idle',
+      turnId:typeof raw?.turnId==='string'?raw.turnId:''};
+  },
+  matches(message, speech) {
+    return speech.phase==='speaking' && !!speech.turnId &&
+      message?.role==='assistant' && message?.turnId===speech.turnId;
+  }
+});
+if(typeof module!=='undefined' && module.exports) module.exports=Object.assign({},ErisRender,{ErisLive});
 
 if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',()=>{
   const root = document.getElementById('messages'), scroll=document.getElementById('scroll');
@@ -223,7 +257,35 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
   const input=document.getElementById('input'), send=document.getElementById('sendBtn');
   const prefix=/^https?:/.test(window.location.href) ? new URL('.',window.location.href).pathname : '/';
   const endpoint=path=>prefix+path;
-  let messages=[], currentDay='all', currentSearch='', signature='', pending=false, lastKey='';
+  let messages=[], artifacts=[], currentDay='all', currentSearch='', signature='', pending=false, lastKey='', workspaceMode=false;
+  let liveSpeech={phase:'idle',turnId:''}, polling=null;
+  const statusEl=document.getElementById('status');
+  const connectionDot=document.querySelector('.status .dot');
+  function showConnection(connected, message) {
+    statusEl.textContent=message;
+    statusEl.parentElement?.classList.toggle('disconnected',!connected);
+    if(connectionDot) connectionDot.setAttribute('aria-label',connected?'Đã kết nối':'Mất kết nối');
+  }
+  function updateSpeechDecorations() {
+    for(const row of root.querySelectorAll('.entry.assistant[data-turn-id]')) {
+      const active=!!liveSpeech.turnId && liveSpeech.phase==='speaking' &&
+        row.dataset.turnId===liveSpeech.turnId;
+      row.classList.toggle('speaking-now',active);
+      let tag=row.querySelector('.speech-indicator');
+      if(active && !tag){ tag=document.createElement('span');tag.className='speech-indicator';
+        tag.textContent='● Đang nói';row.querySelector('.meta')?.appendChild(tag); }
+      else if(!active && tag)tag.remove();
+    }
+    let activity=root.querySelector('.live-activity');
+    const needsActivity=liveSpeech.phase==='thinking' && !workspaceMode &&
+      currentDay==='all' && !currentSearch;
+    if(needsActivity && !activity){activity=document.createElement('div');
+      activity.className='live-activity';activity.setAttribute('role','status');
+      activity.textContent='✦ Eris đang chuẩn bị câu trả lời…';root.appendChild(activity);}
+    else if(!needsActivity && activity)activity.remove();
+  }
+  const acknowledged=new Set(), ackInFlight=new Set(), retries=new Map();
+  let currentArtifacts=[], renderGeneration=0, mathFirstSeen=0;
   const mathReady=()=>window.MathJax && typeof MathJax.typesetPromise==='function';
   const syncMath=()=>{if(mathReady()) MathJax.typesetPromise([root]).catch(()=>{});};
   const html=ErisRender.escape;
@@ -234,38 +296,195 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     dates.replaceChildren();const items=[['all','Tất cả hội thoại',messages.length],...Object.entries(counts).sort((a,b)=>b[0].localeCompare(a[0])).map(([d,n])=>[d,dateHeading(d),n])];
     for(const [date,label,count] of items){const btn=document.createElement('button');btn.className='date-button'+(date===currentDay?' active':'');btn.innerHTML=`<span>${html(label)}</span><small>${count} tin nhắn</small>`;btn.addEventListener('click',()=>{currentDay=date;renderDates();renderMessages();document.getElementById('sidebar').classList.remove('open')});dates.appendChild(btn)}
   }
-  function renderMessages(){const atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<190;const current=shown();
-    if(!current.length){root.innerHTML='<div class="empty">Chưa có tin nhắn phù hợp. Hãy bắt đầu một cuộc trò chuyện với Eris ✦</div>';return;}
-    const frag=document.createDocumentFragment();
+  // ACK means actual DOM render, not "JavaScript returned HTML".
+  const imageSettled = img => new Promise(resolve => {
+    if(img.complete){resolve(img.naturalWidth > 0);return;}
+    let done=false;
+    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);resolve(ok);};
+    img.addEventListener('load',()=>finish(img.naturalWidth>0),{once:true});
+    img.addEventListener('error',()=>finish(false),{once:true});
+    const timer=setTimeout(()=>finish(false),12000);
+  });
+  async function reportArtifacts(items, generation){
+    if(!items.length || generation!==renderGeneration)return;
+    const now=Date.now();
+    const eligible=items.filter(x=>{
+      const key=x.artifact.artifact_id+':'+x.artifact.revision;
+      const r=retries.get(key);
+      return !acknowledged.has(key+':OK_RENDERED') && (!r || (r.count<3 && now>=r.next));
+    });
+    if(!eligible.length)return;
+    const hasMath=eligible.some(x=>x.result.hasMath);
+    if(hasMath && !mathReady() && (!mathFirstSeen || now-mathFirstSeen<10000)){
+      if(!mathFirstSeen) mathFirstSeen=now;
+      return;
+    }
+    let mathError=hasMath && !mathReady();
+    if(hasMath && mathReady()){
+      try{await MathJax.typesetPromise([root]);}catch(_){mathError=true;}
+    }
+    if(generation!==renderGeneration)return;
+    for(const item of eligible){
+      const a=item.artifact;
+      const selector='[data-artifact-id="'+a.artifact_id+'"][data-revision="'+a.revision+'"]';
+      const card=root.querySelector(selector);
+      let problem=item.result.error || null;
+      if(!problem && !card)continue;
+      if(!problem && item.result.hasMath){
+        if(mathError || !card.querySelector('mjx-container') || card.querySelector('mjx-merror'))problem='E_RENDER';
+      }
+      if(!problem && card){
+        const images=Array.from(card.querySelectorAll('img'));
+        for(const img of images){if(!(await imageSettled(img))){problem='E_RENDER';break;}}
+      }
+      if(generation!==renderGeneration)return;
+      const code=problem||'OK_RENDERED', base=a.artifact_id+':'+a.revision, key=base+':'+code;
+      if(ackInFlight.has(key))continue;
+      if(problem){
+        const prev=retries.get(base)||{count:0,next:0};
+        retries.set(base,{count:prev.count+1,next:Date.now()+5000});
+      } else retries.delete(base);
+      if(acknowledged.has(key))continue;
+      // On rerender, do not downgrade a successful receipt.
+      if(problem && acknowledged.has(a.artifact_id+':'+a.revision+':OK_RENDERED'))continue;
+      const payload={type:'renderer.feedback.v1',renderer_id:'richchat-main',intent_id:item.intent_id,
+        artifact_id:a.artifact_id,revision:a.revision,status:problem?'failed':'rendered',code,retryable:problem==='E_RENDER'};
+      ackInFlight.add(key);
+      try{const response=await fetch(endpoint('api/feedback'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(response.ok)acknowledged.add(key);}catch(_){ /* retry on existing UI polling */ }
+      finally{ackInFlight.delete(key);}
+    }
+  }
+  function renderMessages(){renderGeneration++; const thisGeneration=renderGeneration; const atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<190;const current=workspaceMode?[]:shown();
+    const unbound=(currentDay==='all'&&!currentSearch)?artifacts.filter(a=>a.provisional):[];
+    if(!workspaceMode&&!current.length&&!unbound.length){root.innerHTML='<div class="empty">Chưa có tin nhắn phù hợp. Hãy bắt đầu một cuộc trò chuyện với Eris ✦</div>';updateSpeechDecorations();return;}
+    const frag=document.createDocumentFragment(), pendingArtifacts=[];
+    const mountedTurns=new Set();
+    const addArtifacts=(parent,selected)=>{
+      if(!selected.length)return;
+      const group=document.createElement('div');group.className='artifact-group';
+      for(const b of selected){const result=ErisArtifacts.render(b.artifact,prefix);
+        if(result.html){const holder=document.createElement('div');holder.innerHTML=result.html;group.append(...holder.children);}
+        else {const warning=document.createElement('p');warning.className='artifact-failure';warning.textContent='Không thể hiển thị artifact: '+(result.error||'E_RENDER');group.appendChild(warning);}
+        pendingArtifacts.push({...b,result});
+      }
+      parent.appendChild(group);
+    };
+    if(workspaceMode){
+      const section=document.createElement('section');section.className='artifact-gallery';
+      const heading=document.createElement('h3');heading.textContent='Bàn làm việc tương tác';
+      const note=document.createElement('p');note.textContent='Chọn Chỉnh sửa để xem trước và lưu revision mới. Bản gốc và lời thoại không đổi.';
+      section.append(heading,note);
+      if(artifacts.length) addArtifacts(section,artifacts);
+      else {const none=document.createElement('p');none.textContent='Chưa có artifact trong các lượt chat gần đây.';section.append(none);}
+      frag.appendChild(section);
+    }
     for(const msg of current){const item=document.createElement('article');item.className='entry '+(msg.role==='user'?'user':'assistant');
+      if(msg.role==='assistant' && msg.turnId)item.dataset.turnId=msg.turnId;
       const meta=document.createElement('div');meta.className='meta';meta.textContent=`${msg.role==='user'?'Bạn':'Eris'} · ${msg.time||''}`;
       const content=document.createElement('div');content.className='content';content.innerHTML=ErisRender.render(msg.text);
       const actions=document.createElement('div');actions.className='message-actions';const copy=document.createElement('button');copy.className='copy-button';copy.textContent='Sao chép ↗';copy.addEventListener('click',()=>navigator.clipboard.writeText(msg.text).then(()=>toast('Đã sao chép'),()=>toast('Không thể sao chép')));actions.appendChild(copy);
-      item.append(meta,content,actions);frag.appendChild(item);
+      item.append(meta,content,actions);
+      if(msg.role==='assistant' && msg.turnId && !mountedTurns.has(msg.turnId)){
+        mountedTurns.add(msg.turnId);
+        addArtifacts(item,artifacts.filter(a=>!a.provisional && a.turn_id===msg.turnId));
+      }
+      frag.appendChild(item);
     }
+    if(!workspaceMode && unbound.length){const gallery=document.createElement('section');gallery.className='artifact-gallery';
+      const heading=document.createElement('h3');heading.textContent='Bàn làm việc · kết quả công cụ';
+      const note=document.createElement('p');note.textContent='Các kết quả chưa có ID lượt chat, được giữ riêng để tránh gắn nhầm vào lời thoại.';
+      gallery.append(heading,note);addArtifacts(gallery,unbound);frag.appendChild(gallery);}
     root.replaceChildren(frag);
+    updateSpeechDecorations();
+    currentArtifacts=pendingArtifacts;
+    reportArtifacts(currentArtifacts,thisGeneration);
+    // P4: editing is explicit and never rewrites the spoken transcript.
+    for(const item of pendingArtifacts){
+      if(!window.ErisWorkspaceEditor || !ErisWorkspaceEditor.editable(item.artifact))continue;
+      const a=item.artifact;
+      const selector='[data-artifact-id="'+a.artifact_id+'"][data-revision="'+a.revision+'"]';
+      const card=root.querySelector(selector);
+      if(!card)continue;
+      const button=document.createElement('button');button.type='button';button.className='artifact-edit';
+      button.textContent='✎ Chỉnh sửa';button.setAttribute('aria-label','Chỉnh sửa '+a.kind);
+      card.querySelector('header')?.append(button);
+      const ask=document.createElement('button');ask.type='button';ask.className='artifact-edit';ask.textContent='✦ Nhờ Eris sửa';
+      card.querySelector('header')?.append(ask);
+      ask.addEventListener('click',()=>{
+        workspaceMode=false;document.getElementById('workspaceBtn').classList.remove('active');
+        const ref=`intent_id=${item.intent_id}, artifact_id=${a.artifact_id}, revision=${a.revision}`;
+        input.value=`Eris, xem artifact này (${ref}) và giúp tôi chỉnh sửa: `;
+        input.dispatchEvent(new Event('input'));input.focus();
+        renderMessages();
+      });
+      if(a.kind==='code'){
+        const sandbox=document.createElement('button');sandbox.type='button';sandbox.className='artifact-edit';
+        sandbox.textContent='▸ Nhờ Eris chạy sandbox';card.querySelector('header')?.append(sandbox);
+        sandbox.addEventListener('click',()=>{
+          workspaceMode=false;document.getElementById('workspaceBtn').classList.remove('active');
+          input.value=`Eris, hãy inspect artifact mã nguồn intent_id=${item.intent_id}, artifact_id=${a.artifact_id} revision=${a.revision}, rồi nếu phù hợp chạy thử bằng python_workspace trong Docker và báo kết quả thật. `;
+          input.dispatchEvent(new Event('input'));input.focus();renderMessages();
+        });
+      }
+      button.addEventListener('click',()=>ErisWorkspaceEditor.open(item,async payload=>{ 
+        const response=await fetch(endpoint('api/artifact/edit'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(response.status===409)throw Error('Artifact đã được chỉnh ở nơi khác. Đóng editor và tải bản mới.');
+        if(!response.ok)throw Error('Không lưu được artifact. Kiểm tra dữ liệu và kết nối.');
+        const result=await response.json();if(!result.ok)throw Error('Không lưu được');
+        toast('Đã lưu revision '+result.revision);
+        signature='';await poll();
+      }));
+    }
     root.querySelectorAll('.copy-code').forEach(button=>button.addEventListener('click',()=>{
       const text=button.closest('.code-card').querySelector('code').textContent;
       navigator.clipboard.writeText(text).then(()=>{button.textContent='Đã sao chép ✓';setTimeout(()=>button.textContent='Sao chép',1500)},()=>toast('Không thể sao chép'));
     }));
     if(window.Prism) Prism.highlightAllUnder(root);
-    syncMath();
+    if(!pendingArtifacts.length)syncMath();
     if(atBottom || lastKey==='') requestAnimationFrame(()=>{scroll.scrollTop=scroll.scrollHeight});
-    lastKey=String(current[current.length-1].id);
+    lastKey=current.length?String(current[current.length-1].id):'gallery';
   }
   async function poll(){
-    try{
+    if(polling)return polling;
+    polling=(async()=>{
       let state=window.__ERIS_FIXTURE__;
-      if (!state) {
-        const response=await fetch(endpoint('api/state'),{cache:'no-store'});
-        if(!response.ok)throw new Error('connection');
-        state=await response.json();
+      if(!state){
+        let response;
+        const controller=new AbortController();
+        const deadline=setTimeout(()=>controller.abort(),4500);
+        try{response=await fetch(endpoint('api/state'),{cache:'no-store',signal:controller.signal});}
+        catch(error){showConnection(false,'Mất kết nối · Đang thử lại…');return;}
+        finally{clearTimeout(deadline);}
+        if(!response.ok){showConnection(false,'Eris chưa phản hồi (HTTP '+response.status+')');return;}
+        try{state=await response.json();}
+        catch(error){showConnection(true,'Lỗi dữ liệu từ Eris');return;}
       }
-      document.getElementById('status').textContent=state.status||'Sẵn sàng';
-      const incoming=Array.isArray(state.messages)?state.messages:[];
-      const key=JSON.stringify(incoming.map(m=>[m.id,m.role,m.text,m.date,m.time]));
-      if(key!==signature){signature=key;messages=incoming.map(m=>({id:m.id,role:m.role,text:String(m.text||''),date:String(m.date||''),time:String(m.time||'')}));renderDates();renderMessages();}
-    }catch(error){document.getElementById('status').textContent='Mất kết nối Eris';}
+      try{
+        showConnection(true,state.status||'Sẵn sàng');
+        const incoming=Array.isArray(state.messages)?state.messages:[];
+        const bundleList=Array.isArray(state.bundles)?state.bundles:[];
+        const nextSpeech=ErisLive.speech(state);
+        const changedSpeech=nextSpeech.phase!==liveSpeech.phase||nextSpeech.turnId!==liveSpeech.turnId;
+        liveSpeech=nextSpeech;
+        const key=JSON.stringify([incoming.map(m=>[m.id,m.role,m.text,m.date,m.time,m.turnId]),
+          bundleList.map(b=>[b.intent_id,b.turn_id,b.artifacts?.map(a=>[a.artifact_id,a.revision])])]);
+        if(key!==signature){
+          signature=key;
+          messages=incoming.map(m=>({id:m.id,role:m.role,text:String(m.text||''),
+            date:String(m.date||''),time:String(m.time||''),turnId:String(m.turnId||'')}));
+          artifacts=ErisArtifacts.flatten(bundleList);renderDates();renderMessages();
+        } else {
+          if(changedSpeech)updateSpeechDecorations();
+          if(currentArtifacts.length)reportArtifacts(currentArtifacts,renderGeneration);
+        }
+      }catch(error){
+        // JS/MathJax/DOM failure is NOT a network disconnect.
+        console.error('[Eris Rich Chat] renderer:',error);
+        showConnection(true,'Lỗi hiển thị · Kiểm tra console');
+      }
+    })();
+    try{return await polling;}finally{polling=null;}
   }
   search.addEventListener('input',()=>{currentSearch=search.value.trim().toLocaleLowerCase('vi');renderMessages()});
   input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(210,input.scrollHeight)+'px';send.disabled=pending||!input.value.trim()});
@@ -278,10 +497,14 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     }catch(error){toast('Không gửi được. Kiểm tra Eris đang chạy.');}
     finally{pending=false;send.disabled=!input.value.trim();input.focus()}
   });
+  document.getElementById('workspaceBtn').addEventListener('click',()=>{
+    workspaceMode=!workspaceMode;document.getElementById('workspaceBtn').classList.toggle('active',workspaceMode);
+    renderMessages();scroll.scrollTop=0;
+  });
   document.getElementById('themeBtn').addEventListener('click',()=>document.body.classList.toggle('dark'));
   document.getElementById('menuBtn').addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
   poll();setInterval(()=>{if(!document.hidden)poll();},1100);
-  window.addEventListener('load',()=>{ if(window.MathJax?.startup?.promise) MathJax.startup.promise.then(syncMath).catch(()=>{}); });
+  window.addEventListener('load',()=>{ if(window.MathJax?.startup?.promise) MathJax.startup.promise.then(()=>{syncMath();renderMessages();}).catch(()=>{}); });
 });
 // MathJax lives entirely inside the local portal; source strings are never executed.
 if (typeof window !== 'undefined') window.MathJax={tex:{inlineMath:[['\\(','\\)'],['$','$']],displayMath:[['\\[','\\]'],['$$','$$']],processEscapes:true},svg:{fontCache:'local'},startup:{typeset:false}};

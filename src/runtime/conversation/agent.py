@@ -12,6 +12,7 @@ một action rất nhỏ, và public boundary cuối vẫn luôn là đúng mộ
 from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence
+from dataclasses import replace
 import json
 import uuid
 
@@ -41,6 +42,15 @@ NEXT_MOVE_SCHEMA: dict[str, Any] = {
                 "delivery": {"type": "string"},
                 "after": {"type": "string", "enum": ["wait_user", "may_continue", "continue_self"]},
                 "document_source": {"type": "string"},
+                "presentation_blocks": {"type": "array", "maxItems": 6, "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["kind", "content"],
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["math", "table", "code", "chart", "document"]},
+                        "title": {"type": "string"},
+                        "content": {"type": "object", "additionalProperties": True},
+                    },
+                }},
             },
         },
         {
@@ -259,7 +269,6 @@ class RuntimeModelRootAgent:
                 batch = collect_batch(claim=True)
                 metadata = batch.to_dict()
                 metadata.pop("canonical_text", None)
-                from dataclasses import replace
                 event = replace(event, text=batch.canonical_text,
                                 metadata={**event.metadata, "user_input_batch": metadata})
                 self._log("info", "[root-input] messages=%d wait_seconds=%.1f revision=%d",
@@ -326,7 +335,9 @@ class RuntimeModelRootAgent:
                 # user chen vào giữa chừng thì trả NoReply('root_turn_preempted').
                 if not still_active():
                     return NoReply(reason="root_turn_preempted")
-                return NextConversationMove.from_mapping(raw)
+                from ..workspace.presentation_p2 import verified_math_bundles
+                return replace(NextConversationMove.from_mapping(raw),
+                               tool_artifact_bundles=verified_math_bundles(tool_results))
 
             if kind == "batch":
                 # Nhiều action nội bộ ĐỘC LẬP trong một bước. Bỏ phần tử finalize
@@ -624,7 +635,22 @@ class RuntimeModelRootAgent:
         return (
             "Bạn là RootAgent của Eris và là semantic/social authority duy nhất cho lời public. "
             "Mỗi lần chỉ trả đúng MỘT action JSON. Bạn có thể finalize ngay bằng kind=move hoặc kind=no_reply; "
+            "Rich Chat P1 tự dựng document_source và artifact công cụ sau commit; renderer_feedback trong context "
+            "chỉ xác nhận browser dựng được/chưa được, KHÔNG chứng minh kết quả đúng hoặc user đã đọc. "
+            "Không tự nhận đã hiển thị nếu chưa có receipt thực. "
             "Với lời giải dài, có thể thêm document_source (Markdown/LaTeX/code nguyên bản) vào move, "
+            "P2: Root có thể tự chọn presentation_blocks trong move để đưa math/table/code/chart/document vào Rich Chat. "
+            "Định dạng mỗi block: {kind,title?,content}; math.content={latex}, code.content={language,source}, "
+            "table.content={columns,rows}, chart.content={chart_type:bar|line,series:[{labels:[...],values:[...]}]}, "
+            "document.content={format:markdown,source:text}. Chỉ chọn block khi giúp giải thích, không bắt buộc. "
+            "Chọn biểu thức/đồ thị từ dữ kiện thật; cần kiểm chứng thì gọi math_workspace trước. "
+            "Khi đã gọi math_workspace thành công, kết quả tool sẽ được hệ thống tự gắn dưới lượt trả lời; "
+            "không cần bịa ID artifact và không copy lại kết quả tool vào block. "
+            "P3: presentation_health là trạng thái artifact đã commit được kiểm chứng từ sidecar + browser receipt. "
+            "awaiting_viewer nghĩa là người dùng chưa mở/hiển thị Rich Chat, KHÔNG phải lỗi. "
+            "rendered chỉ xác nhận DOM/MathJax/ảnh đã render, KHÔNG xác nhận nội dung đúng hoặc user đã đọc. "
+            "failed: có thể sửa artifact hoặc chọn cách hiển thị khác nếu phù hợp YÊU CẦU HIỆN TẠI; "
+            "không tự bật lời thoại, không gọi tool hay hỏi lại về chủ đề cũ chỉ vì một feedback lỗi. "
             "còn say chỉ là điều Eris muốn nói. Hai kênh KHÔNG bắt buộc cùng văn bản. "
             "Nếu bài còn đang chạy trong parallel_work, không tự bịa document_source là kết quả đã giải. "
             "event.metadata.user_input_batch mô tả toàn bộ các tin user gửi gộp trong lượt này, "
@@ -884,6 +910,21 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
     for key in allowed:
         if key in context:
             out[key] = _bounded_value(context[key], depth=0)
+    # Passive evidence read on each Root decision; no extra tick/worker/LLM.
+    try:
+        from ..workspace.presentation_feedback import recent_render_feedback
+        receipts = recent_render_feedback(limit=4)
+        if receipts:
+            out['renderer_feedback'] = receipts
+    except (OSError, ValueError, ImportError):
+        pass
+    try:
+        from ..workspace.presentation_health import recent_presentation_health
+        state = recent_presentation_health(limit=4)
+        if state:
+            out['presentation_health'] = state
+    except (OSError, ValueError, ImportError):
+        pass
     return out
 
 

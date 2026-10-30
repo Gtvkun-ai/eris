@@ -730,6 +730,22 @@ class PublicOutputRuntimeMixin:
                     if str(body_payload.get('text', '')) != prepared.display_text:
                         raise RuntimeError('v03_late_public_text_change')
                 self.transport.send_json(body_payload)
+                # P2: publish only after the actual public-text transport send.
+                # The Root has chosen these blocks/tools; no independent presenter
+                # can infer or override the user's conversational turn.
+                if prepared is not None and v03_current() and (
+                    prepared.presentation_blocks or prepared.tool_artifact_bundles
+                ):
+                    try:
+                        from runtime.workspace.presentation_p2 import publish_committed_presentation
+                        publish_committed_presentation(
+                            turn_id=str(stage_frame.turn_id or ""),
+                            delivery_id=prepared.delivery_id,
+                            blocks=prepared.presentation_blocks,
+                            tool_bundles=prepared.tool_artifact_bundles,
+                        )
+                    except (OSError, ValueError, TypeError) as _p2_err:
+                        self.logger.warning("[presentation-p2] sidecar degraded: %s", type(_p2_err).__name__)
                 # V6: Bubble được gửi trước; nhánh trình bày viết và sửa panel
                 # bất đồng bộ trong lúc TTS vẫn đang chạy. Không chạy lại Root.
                 try:

@@ -22,6 +22,11 @@ def _text(value: Any, limit: int) -> str:
     return " ".join(str(value or "").strip().split())[:limit]
 
 
+def _parse_presentation_blocks(raw: Any) -> tuple[dict[str, Any], ...]:
+    from ..workspace.presentation_p2 import normalize_presentation_blocks
+    return normalize_presentation_blocks(raw)
+
+
 class ConversationAfter(str, Enum):
     """Lifecycle duy nhất sau khi lời hiện tại đã được phát thành công."""
 
@@ -69,6 +74,10 @@ class NextConversationMove:
     literal_dialogue: bool = False
     # Tài liệu do Root quyết định, KHÔNG dùng làm nguồn TTS.
     document_source: str = ""
+    # P2: Root-owned structured presentation, separate from the spoken surface.
+    presentation_blocks: tuple[dict[str, Any], ...] = ()
+    # Internal executor receipts only. Never sourced from model-provided IDs.
+    tool_artifact_bundles: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "NextConversationMove":
@@ -91,6 +100,7 @@ class NextConversationMove:
             move_id=_text(data.get("move_id"), 180) or f"move:{uuid.uuid4().hex}",
             literal_dialogue=data.get("_runtime_literal_dialogue") is True,
             document_source=str(data.get("document_source", "") or "")[:12000],
+            presentation_blocks=_parse_presentation_blocks(data.get("presentation_blocks")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +113,7 @@ class NextConversationMove:
             "delivery": self.delivery,
             "after": self.after.value,
             **({"document_source": self.document_source} if self.document_source else {}),
+            **({"presentation_blocks": list(self.presentation_blocks)} if self.presentation_blocks else {}),
         }
 
 

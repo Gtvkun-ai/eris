@@ -7,7 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
-using System.Security.Cryptography;
+using RandomNumberGenerator = System.Security.Cryptography.RandomNumberGenerator;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -26,7 +26,6 @@ public partial class UdpListener
     private string _richChatUrl = "";
     private string _richChatSnapshot = "{\"messages\":[],\"status\":\"Đang kết nối\"}";
     private ulong _richChatLastSnapshotMs;
-
     private void OpenRichChatPortal()
     {
         if (_companionPreview) return;
@@ -69,7 +68,7 @@ public partial class UdpListener
         Assembly assembly = typeof(UdpListener).Assembly;
         var resources = assembly.GetManifestResourceNames();
         string[] files = {
-            "index.html", "chat.css", "chat.js", "vendor/mathjax.js", "vendor/prism.css",
+            "index.html", "chat.css", "chat.js", "artifacts.js", "vendor/mathjax.js", "vendor/prism.css",
             "vendor/prism.js", "vendor/prism-clike.js", "vendor/prism-python.js",
             "vendor/prism-javascript.js", "vendor/prism-typescript.js", "vendor/prism-csharp.js",
             "vendor/prism-c.js", "vendor/prism-cpp.js", "vendor/prism-java.js", "vendor/prism-css.js",
@@ -137,6 +136,10 @@ public partial class UdpListener
                 string[] request = lines[0].Split(' ');
                 if (request.Length != 3) { Reply(net, 400, "text/plain", Array.Empty<byte>()); return; }
                 string method = request[0], path = request[1].Split('?')[0];
+                // Refuse DNS rebinding and cross-origin writes even when the token leaks.
+                string expectedHost = "127.0.0.1:" + ((IPEndPoint)_richChatServer.LocalEndpoint).Port;
+                if (!lines.Any(line => line.Equals("Host: " + expectedHost, StringComparison.OrdinalIgnoreCase)))
+                { Reply(net, 403, "text/plain", Array.Empty<byte>()); return; }
                 string routePrefix = "/" + _richChatToken + "/";
                 if (!path.StartsWith(routePrefix, StringComparison.Ordinal))
                 { Reply(net, 404, "text/plain", Array.Empty<byte>()); return; }
@@ -147,16 +150,23 @@ public partial class UdpListener
                     Reply(net, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(snapshot));
                     return;
                 }
-                if (method == "POST" && relative == "api/send")
+                if (method == "GET" && relative.StartsWith("api/image/", StringComparison.Ordinal))
+                {
+                    if (TryReadRichChatArtifactImage(relative, out var png))
+                        Reply(net, 200, "image/png", png);
+                    else Reply(net, 404, "text/plain", Array.Empty<byte>());
+                    return;
+                }
+                if (method == "POST" && (relative == "api/send" || relative == "api/feedback" || relative == "api/artifact/edit"))
                 {
                     int length = -1;
                     foreach (string line in lines.Skip(1))
                         if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
                             int.TryParse(line.Substring(15).Trim(), out int value)) length = value;
-                    if (length < 1 || length > 12_000)
+                    if (length < 1 || length > (relative == "api/artifact/edit" ? 80_000 : 12_000))
                     { Reply(net, 413, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
                     int contentOffset = headerEnd + 4;
-                    while (data.Length - contentOffset < length && data.Length < 30_000)
+                    while (data.Length - contentOffset < length && data.Length < 100_000)
                     {
                         int read = net.Read(chunk, 0, Math.Min(chunk.Length, length - (int)data.Length + contentOffset));
                         if (read <= 0) return;
@@ -164,6 +174,26 @@ public partial class UdpListener
                     }
                     bytes = data.ToArray();
                     using JsonDocument json = JsonDocument.Parse(bytes.AsMemory(contentOffset, length));
+                    if (relative == "api/feedback")
+                    {
+                        // The page MUST be served by this listener, not a cross-origin page.
+                        string expectedOrigin = "Origin: http://" + expectedHost;
+                        if (!lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)) ||
+                            !RecordRichChatFeedback(json.RootElement))
+                            Reply(net, 400, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}"));
+                        else Reply(net, 202, "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}"));
+                        return;
+                    }
+                    if (relative == "api/artifact/edit")
+                    {
+                        string expectedOrigin = "Origin: http://" + expectedHost;
+                        if (!lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)))
+                        { Reply(net, 403, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                        // The workspace editor backend is not implemented yet.
+                        Reply(net, 501, "application/json; charset=utf-8",
+                            Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"artifact_edit_not_implemented\"}"));
+                        return;
+                    }
                     string message = json.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String
                         ? msg.GetString()?.Trim() ?? "" : "";
                     if (message.Length == 0 || message.Length > 6000 || _richChatOutbox.Count >= 15)
@@ -192,8 +222,9 @@ public partial class UdpListener
 
     private static void Reply(NetworkStream net, int status, string mime, byte[] payload)
     {
-        string label = status switch { 200 => "OK", 202 => "Accepted", 400 => "Bad Request",
-            404 => "Not Found", 405 => "Method Not Allowed", 413 => "Payload Too Large", _ => "Error" };
+        string label = status switch { 200 => "OK", 202 => "Accepted", 409 => "Conflict", 400 => "Bad Request",
+            403 => "Forbidden", 404 => "Not Found", 405 => "Method Not Allowed", 413 => "Payload Too Large",
+            501 => "Not Implemented", _ => "Error" };
         string headers = $"HTTP/1.1 {status} {label}\r\nContent-Type: {mime}\r\nContent-Length: {payload.Length}\r\n" +
             "Connection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n" +
             "Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n" +
@@ -210,9 +241,23 @@ public partial class UdpListener
         // Main thread only. Snapshot is handed atomically to the HTTP reader thread.
         var visible = _conversationEntries.TakeLast(ConversationHistoryLimit).Select((entry, index) => new {
             id = index, role = entry.Role, text = entry.Text, date = entry.Date, time = entry.Time,
+            turnId = entry.Role == "assistant" ? entry.TurnId : "",
         }).ToArray();
+        var activeTurns = _conversationEntries.Where(e => e.Role == "assistant" && !string.IsNullOrEmpty(e.TurnId))
+            .Select(e => e.TurnId).ToHashSet(StringComparer.Ordinal);
+        var bundles = ReadRichChatBundles(activeTurns);
+        // Read the existing stage/TTS authority: no independent browser-side guess
+        // about which turn is speaking. A stale TTS completion never selects a
+        // different transcript row. The page may remain open after Eris exits.
+        bool speaking = _ttsAudioIsPlaying || _runtimePresence.Speaking;
+        bool thinking = !speaking && (_runtimePresence.Thinking ||
+            _conversationState is "thinking" or "preparing" or "buffering");
+        string speechTurnId = !string.IsNullOrWhiteSpace(_ttsBodyAudioTurnId)
+            ? _ttsBodyAudioTurnId : _runtimePresence.TurnId;
+        string phase = speaking ? "speaking" : thinking ? "thinking" : "idle";
         string next = JsonSerializer.Serialize(new {
-            messages = visible, status = _conversationStateLabel, online = true,
+            messages = visible, bundles, status = _conversationStateLabel, online = true,
+            speech = new { phase, turnId = speaking ? speechTurnId : "" },
         });
         Volatile.Write(ref _richChatSnapshot, next);
         _richChatLastSnapshotMs = Time.GetTicksMsec();

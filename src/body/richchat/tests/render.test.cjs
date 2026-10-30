@@ -56,3 +56,30 @@ test('safe mathematical function plot does not evaluate arbitrary JS', () => {
   assert.ok(out.includes('Đồ thị: y = sin(x)'));
   assert.ok(out.includes('chart-line'));
 });
+
+test('double-serialized LaTeX from the real conversation is rendered as math', () => {
+  const raw = String.raw`Lại nhé: \\(\\int\\_0^1 x \\,dx\\), rồi \\[\\frac{1}{2}\\]`;
+  const out = R.render(raw);
+  assert.match(out,/math-inline/);
+  assert.match(out,/math-block/);
+  assert.ok(out.includes(String.raw`\int_0^1`));
+  assert.ok(out.includes(String.raw`\frac{1}{2}`));
+  assert.ok(!out.includes(String.raw`\\(`));
+  assert.ok(!out.includes(String.raw`\\,`));
+});
+test('no destructive backslash normalization in code blocks', () => {
+  const source = String.raw`\(\int\)`;
+  const out = R.render('```text\n' + source + '\n```');
+  assert.ok(out.includes(source));
+  const doubled=String.raw`\\(\\int\\)`;
+  assert.ok(R.render('```text\n'+doubled+'\n```').includes(doubled));
+  assert.ok(R.render('`'+doubled+'`').includes(doubled));
+});
+test('active audio indication uses exact turn id', () => {
+  const L=R.ErisLive;
+  const speaking=L.speech({speech:{phase:'speaking',turnId:'delivery:abc'}});
+  assert.equal(L.matches({role:'assistant',turnId:'delivery:abc'},speaking),true);
+  assert.equal(L.matches({role:'assistant',turnId:'delivery:stale'},speaking),false);
+  assert.equal(L.matches({role:'user',turnId:'delivery:abc'},speaking),false);
+
+});

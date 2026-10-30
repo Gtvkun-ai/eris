@@ -57,6 +57,8 @@ class PreparedPublicOutput:
     decision: Any = None
     # Sidecar trong process, không serialize vào gói Bubble/TTS.
     document_source: str = ""
+    presentation_blocks: tuple[dict[str, Any], ...] = ()
+    tool_artifact_bundles: tuple[str, ...] = ()
 
     @property
     def display_hash(self) -> str:

@@ -301,3 +301,50 @@ def test_revision_retires_voice_and_text_together_with_real_dispatcher(speech_ou
         release.set()
         backend.task_manager.shutdown()
 
+
+
+def test_p2_artifact_publish_only_after_real_audio_start(speech_output, monkeypatch):
+    """End-to-end public-text hook, not merely a sidecar helper fixture."""
+    from dataclasses import replace
+    from runtime.conversation import public_output_artifact as output_module
+    from runtime.workspace import presentation_p2
+    original = output_module.prepare_public_output
+    calls = []
+    blocks = ({'kind': 'math', 'title': 'Giải thích', 'content': {'latex': r'\\frac{1}{2}'}},)
+    monkeypatch.setattr(output_module, 'prepare_public_output',
+                        lambda **kw: replace(original(**kw), presentation_blocks=blocks))
+    monkeypatch.setattr(presentation_p2, 'publish_committed_presentation',
+                        lambda **kw: calls.append(kw))
+    result = speech_output(sealed=True)
+    assert not calls
+    result.event('audio_queued')
+    result.start_hint()
+    assert not calls  # on_first_start is NOT evidence that audio actually played
+    result.event('audio_start')
+    assert len(calls) == 1
+    assert calls[0]['turn_id'] == result.callbacks['frame'].turn_id
+    assert calls[0]['delivery_id'] == result.prepared.delivery_id
+    assert calls[0]['blocks'] == blocks
+    result.event('audio_start')
+    assert len(calls) == 1  # idempotent: send text and artifact only once
+
+
+def test_p2_preempted_or_failed_audio_never_publishes_artifact(speech_output, monkeypatch):
+    from dataclasses import replace
+    from runtime.conversation import public_output_artifact as output_module
+    from runtime.workspace import presentation_p2
+    original = output_module.prepare_public_output
+    calls = []
+    monkeypatch.setattr(output_module, 'prepare_public_output',
+                        lambda **kw: replace(original(**kw),
+                            presentation_blocks=({'kind':'math','title':'T','content':{'latex':'x'}},)))
+    monkeypatch.setattr(presentation_p2, 'publish_committed_presentation',
+                        lambda **kw: calls.append(kw))
+    failed = speech_output(sealed=True)
+    failed.event('audio_failed')
+    failed.event('audio_start')
+    assert not calls
+    preempted = speech_output(sealed=True)
+    preempted.state.generation += 1
+    preempted.event('audio_start')
+    assert not calls

@@ -316,9 +316,13 @@ class RuntimeConversationWriter:
                 turn=turn, event=event, payload=dict(payload),
                 source_fingerprint=getattr(evidence_registry, 'fingerprint', ''),
             )
-            if turn.move.document_source:
+            if turn.move.document_source or turn.move.presentation_blocks or turn.move.tool_artifact_bundles:
                 from dataclasses import replace as _replace_public_doc
-                prepared = _replace_public_doc(prepared, document_source=turn.move.document_source)
+                prepared = _replace_public_doc(
+                    prepared, document_source=turn.move.document_source,
+                    presentation_blocks=turn.move.presentation_blocks,
+                    tool_artifact_bundles=turn.move.tool_artifact_bundles,
+                )
             from .public_output_artifact import validate_prepared
             validate_prepared(prepared)
             self._log_v03('info', turn=turn, attempt=1, stage='prepared',
@@ -375,7 +379,7 @@ class RuntimeConversationWriter:
 
         move_payload = turn.move.to_dict()
         # Writer cần biết ý định nói, KHÔNG đọc nguyên tài liệu thành lời thoại.
-        writer_brief = {k: v for k, v in move_payload.items() if k != "document_source"}
+        writer_brief = {k: v for k, v in move_payload.items() if k not in {"document_source", "presentation_blocks"}}
         root_context = (
             "ROOT_CONVERSATION_MOVE_V12: "
             + json.dumps(writer_brief, ensure_ascii=False, separators=(",", ":"))
