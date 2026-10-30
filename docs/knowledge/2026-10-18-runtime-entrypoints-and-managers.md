@@ -101,3 +101,24 @@ kiện: feature flag, file tồn tại và health check; không mặc định m�
 
 Các kết luận trên chỉ cần đọc source và kiểm tra path/hash; không chạy launcher,
 không mở secret payload, không rebuild và không thay đổi cấu hình/runtime.
+
+## Cập nhật 30/10/2026: dọn payload và bỏ sidecar Cline cũ
+
+Theo yêu cầu dọn repo/bản dev, đã bỏ nhánh cài, deploy, health check và tự mở
+`cline-bridge` khỏi `_fullbuild.py`, `eris_setup.py`, root `run_eris.bat` và VBS
+được sinh. Thay mô tả lịch sử “mở bridge nếu có” ở bảng launcher phía trên:
+launcher hiện không khởi chạy Cline, kể cả khi artifact cũ còn trên đĩa.
+Source runtime hiện không có client Cline; không thay agent harness hoặc routing.
+
+Full/patch build dùng chung bộ lọc `build_payload.py`: không copy `node_modules`,
+`__pycache__`, cache test/lint, `src.zip`, patch/diff, `.bak` và `.tsbuildinfo`.
+Giữ source/test cần cho dev cùng model MiniLM tại
+`src/paraphrase-multilingual-MiniLM-L12-v2/`. Bỏ deploy bản model thứ hai ở root;
+`.env.example` đã khớp đường MiniLM đang dùng ở `.env` local. Các profile custom
+cần tự giữ model mà chúng cấu hình; không suy từ lần dọn này rằng Qwen bị bỏ
+khỏi khả năng của embedding provider.
+
+Đã đồng bộ riêng `eris_setup.py` và tái sinh `run_eris.vbs` trong
+`C:/Users/Gtvkun/Documents/eris`, không chạy full build để tránh copy lại state,
+memory hoặc account DB trong lúc dọn. Hai EXE manager/setup cũ vẫn được giữ;
+thiếu `ErisManager.spec` nên không coi chúng là binary được build mới.

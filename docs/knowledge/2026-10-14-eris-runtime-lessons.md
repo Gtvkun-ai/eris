@@ -886,3 +886,94 @@ Chi tiết: [nghiên cứu tách lời nói và tài liệu](2026-10-28-speech-p
 Đề xuất tách document khỏi bubble/narration ngay ở Root, giữ presenter chỉ dàn
 trang và localizer chỉ dịch lời nói. Đây là nghiên cứu, chưa triển khai thay
 đổi contract hoặc runtime; probe không gọi LLM/TTS remote.
+
+## 25. Phiên 13:54 ngày 30/10: nối chuyện cũ thiếu mốc thời gian, phản hồi chậm
+
+Đánh giá theo yêu cầu user, không sửa runtime hoặc gửi thêm tin tới Eris.
+Nguồn: `Documents/eris/logs/eris_run_20261030_135451.txt`, observability cùng
+phiên, `Documents/ErisLive/logs/autonomous_trace.jsonl` và
+`AppData/Roaming/Godot/app_userdata/Eris/eris_conversation_history.json`.
+
+- History ghi chuyện tích phân gần nhất lúc 23:47 ngày 29/10. Mở lại lúc 13:55
+  ngày 30/10, Eris nói “Tôi vừa kể bạn nghe … xong bạn im” dù đã hơn 14 giờ.
+  Đây là nối đúng chủ đề nhưng diễn đạt sai khoảng cách thời gian, không phải
+  bằng chứng memory mất nội dung. Không lấy việc nhớ chủ đề làm bằng chứng
+  rằng nó đã xử lý đúng ngữ cảnh quay lại.
+- User nhắn “êrm, cái quái j v”. Trace intent nhận ra user bối rối và muốn
+  giải thích một dòng. Public text lại kể tiếp Borwein, thiếu câu xác nhận
+  rõ “tôi đang nối chuyện tối qua”, rồi hỏi ngược user đang làm gì. Đánh giá
+  hội thoại: đã nhận tín hiệu bối rối, nhưng chưa sửa đúng nguyên nhân lạc nhịp.
+- Public text có “mặt mũi kiểu …”. Screen route của lượt ghi mode=none,
+  visual=0, evidence=0. Câu này có thể là lối nói đùa theo lời user; không coi
+  nó là chứng cứ Eris thực sự nhìn thấy khuôn mặt hoặc đã dùng vision.
+- Intake khoảng 13:57:00.525; audio_start 13:58:13.419, text sent 13:58:13.418:
+  khoảng **72,9 giây**. Stage context có `memory_context_ms=30106`, Root được
+  giao input 13:57:32.848 và chốt move 13:57:56.494, Writer khoảng 5,75 giây,
+  từ Writer prepared đến playback khoảng 11,15 giây. Không quy toàn bộ trễ
+  cho TTS hoặc mặc định guard localizer của mục 23 tái phát.
+- Audio_done và lifecycle delivered có trong trace. Đây là receipt phần mềm,
+  chưa nghe bản ghi để đánh giá phát âm hoặc xác nhận người dùng nghe đầy đủ.
+- Log full Self ghi 1.295.109 ký tự, nhưng riêng số này không chứng minh nguyên
+  nhân của stage memory context 30 giây. Bổ sung bằng chứng mới cho giới hạn
+  ở mục 20/22: tối ưu trước đây chưa giải quyết mọi độ trễ context. Cần đo
+  thao tác con trước khi đề xuất cắt Self, đổi thinking hoặc tăng timeout.
+
+### Bổ sung kiểm tra TTS của chính phiên 30/10
+
+User nghi tiếng bị rơi. Đã khôi phục hai response Surface từ raw object store,
+kiểm SHA-256, đối chiếu với lifecycle; không gọi synth lại hoặc phát audio.
+Các module Writer, TTS engine/task manager và public output trùng hash giữa
+checkout và portable tại lúc đối chiếu.
+
+- Sau intake có event `micro:receipt` 13:57:00.586–13:57:02.449, rồi tới
+  13:58:13.380 câu chính mới bắt đầu: khoảng trống **70,93 giây** sau nhịp ngắn.
+  Đây là đường giải thích khả dĩ cho cảm giác phát tiếng ngắn rồi im, chưa
+  chứng minh TTS bị cắt. Micro start được emit trước lời gọi phát audio,
+  không phải callback thiết bị; cần giữ giới hạn chứng cứ này khi đọc log.
+- Câu mở đầu có start/done cách nhau 32,89 giây; câu trả lời 27,71 giây.
+  Không có failed/cancelled cho hai delivery ID này trong trace. Marker
+  Live2D `interrupted` 13:58:02.354 không có turn ID, xuất hiện trước câu chính;
+  không dùng nó để kết luận câu chính bị ngắt giữa chừng.
+- Hai Surface response là HTTP 200/finish_reason=stop, có speech Nhật đầy đủ
+  ở cấp response, không phải filler `えっと…`; không có request tts_localizer
+  trong index của phiên. Source prelocalize giữ speech đã là tiếng Nhật.
+  **Không áp nguyên nhân guard localizer của 28/10 cho phiên này.**
+- Bản speech Nhật của câu mở đầu đã lược mệnh đề cụ thể “tích phân đẹp ve vãn
+  đến thừa số thứ tám rồi vỡ” có trong display Việt. Việc lược xảy ra ngay
+  trong response Writer, trước synth. Đây là khác biệt chữ/lời đọc, chưa phải
+  lỗi mất âm thanh. Speech của câu trả lời sau đó có cả phần thừa số thứ tám
+  và câu hỏi cuối. Chưa có recording để xác nhận nội dung thực phát.
+
+Đánh giá trên bổ sung mục 25; không nâng receipt `delivered` thành xác nhận
+đã đọc đầy đủ hoặc không có giật/mất tiếng ở thiết bị người dùng.
+
+### Bổ sung phân rã latency và request Root ngày 30/10
+
+Theo câu hỏi vì sao mất 73 giây, đã khôi phục và kiểm hash raw request Root
+`a9ef0a39abd240c59c038b6c9adad92f` của đúng user turn. Request bắt đầu
+13:57:33.145603, response 13:57:56.329034; elapsed log 23.188 ms.
+Request gồm 5 message có content lần lượt 14.967, **1.295.109**, 42, 353 và
+23.614 ký tự. Raw JSON index ghi 1.610.353 ký tự; không đồng nhất kích thước
+JSON serialize này với token model. Payload thực tế có `thinking.type=enabled`,
+`reasoning_effort=high`, `max_tokens=1200`, model `deepseek-flash`.
+
+Bằng chứng này **bổ sung** quan sát log Self ở mục 25: Self lớn thực sự đi qua
+request của lượt này, không chỉ tồn tại trong RAM/log startup. Chưa tách thời
+gian gateway/prefill/thinking/network để quy bao nhiêu giây cho kích thước Self,
+và chưa có bằng chứng buộc phải cắt Self hoặc tắt thinking.
+
+Các khoảng nối tiếp theo run log: intake/evidence khoảng 2,1 giây, context
+30,15 giây, Root khoảng 23,65 giây, Writer khoảng 5,77 giây, Writer prepared
+đến audio/text khoảng 11,15 giây; tổng khoảng 72,9 giây. Trong khoảng cuối,
+broker ghi synth 7,70 giây và queue wait khoảng 2 ms, nên không gọi cả khoảng
+11 giây là chờ hàng đợi TTS. Thời gian đọc câu 27,71 giây xảy ra SAU mốc 73 giây.
+
+Phép đo `memory_context_ms` bao trùm `_typed_memory_context`: lấy telemetry,
+core recall/render và compile Living User context; không phải số đo riêng
+SQLite hay riêng embedding. Recall ở evidence assembler chỉ 24 ms. Không gọi
+30 giây đó là “model embedding load” hoặc timeout DB khi chưa đo thao tác con.
+Curator request gần intake trả về sau 6,08 giây; observer trước đó đã trả về
+trước intake. Chưa có căn cứ quy toàn bộ 30 giây cho hai lane nền này.
+
+Chỉ phân tích log/source/raw request, không gọi model hoặc sửa runtime trong
+lượt chẩn đoán này.

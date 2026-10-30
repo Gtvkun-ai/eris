@@ -9,6 +9,7 @@ import compileall
 import os
 import shutil
 import sys
+from build_payload import source_copy_ignore
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO    = os.path.dirname(os.path.abspath(__file__))
@@ -74,7 +75,7 @@ if os.path.exists(src_build):
     shutil.rmtree(src_build, onerror=remove_readonly)
 
 print("  Copy: " + src_repo + "  ->  " + src_build)
-shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
+shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=source_copy_ignore)
 
 for skip in SKIP_HEAVY:
     p = os.path.join(src_build, skip)

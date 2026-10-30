@@ -26,9 +26,6 @@ if not exist "%~dp0config\secrets.json" (
     exit /b 1
 )
 
-if exist "%~dp0cline-bridge\dist\bridge.js" (
-    start "Cline Bridge" cmd /c node "%~dp0cline-bridge\dist\bridge.js"
-)
 
 if exist "%~dp0Eris.exe" (
     start "Eris Runtime" "%~dp0Eris.exe"

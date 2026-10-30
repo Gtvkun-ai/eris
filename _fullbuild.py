@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from build_payload import source_copy_ignore
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO    = os.path.dirname(os.path.abspath(__file__))
@@ -643,7 +644,7 @@ if os.path.exists(src_build):
     shutil.rmtree(src_build, onerror=remove_readonly)
 
 print("  Copy: " + src_repo + "  ->  " + src_build)
-shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", ".pytest_cache"))
+shutil.copytree(src_repo, src_build, dirs_exist_ok=True, ignore=source_copy_ignore)
 assert_live2d_source_contract(OUT)
 if IS_RELEASE:
     pruned_src_dirs = prune_named_dirs(src_build, RELEASE_SRC_PRUNE_DIR_NAMES)
@@ -796,16 +797,8 @@ if os.path.isfile(os.path.join(OUT, "Eris.exe")):
 
 
 
-# Deploy embedding_model directory to build directory if present
-embed_src = os.path.join(REPO, "embedding_model")
-embed_dst = os.path.join(OUT, "embedding_model")
-if os.path.exists(embed_src):
-    print("  Deploying embedding_model to build...")
-    try:
-        shutil.copytree(embed_src, embed_dst, dirs_exist_ok=True)
-        print("  [OK] embedding_model deployed")
-    except Exception as exc:
-        print("  [SKIP] embedding_model copy failed: " + str(exc))
+# The offline MiniLM model is already deployed with src/. Do not duplicate it
+# at the output root or merge obsolete model caches into the runtime payload.
 
 # Deploy memory_core directory to build directory if present
 mem_core_src = os.path.join(REPO, "memory_core")
@@ -909,24 +902,6 @@ else:
     print("  [ERROR] portable_python not found. Please run 'eris_setup.py' -> 'Create Portable Python' first!")
     sys.exit(1)
 
-# ── 4b. Deploy cline-bridge (build truoc, copy ca dist/ + node_modules) ──────
-banner("4b/5  --  Deploy cline-bridge (Cline SDK sidecar)")
-
-cline_src  = os.path.join(REPO, "cline-bridge")
-cline_dst  = os.path.join(OUT,  "cline-bridge")
-
-def try_copy_f(src, dst):
-    if os.path.exists(src):
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copy2(src, dst)
-        print("  [OK] " + os.path.basename(dst))
-
-f_copy = [
-    "package.json"
-]
-for n in f_copy:
-    try_copy_f(os.path.join(REPO, "cline-bridge", n), os.path.join(OUT, "cline-bridge", n))
-
 # ── 4e. Deploy Assets & Voice Presets ────────────────────────────────────────
 banner("4e/5  --  Deploy Assets & Voice Presets")
 def _copy_heavy_dir(dirname: str) -> None:
@@ -944,49 +919,6 @@ def _copy_heavy_dir(dirname: str) -> None:
 _copy_heavy_dir("asset")
 _copy_heavy_dir("voice_presets")
 
-
-if os.path.exists(cline_src):
-    # Buoc 1: build TypeScript -> dist/ (phai co node trong PATH)
-    import subprocess
-    node_ok = False
-    try:
-        node_ver = subprocess.check_output(["node", "--version"], stderr=subprocess.STDOUT, cwd=cline_src).decode().strip()
-        print("  [OK] node " + node_ver)
-        node_ok = True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print("  [WARN] node not found in PATH -- skipping cline-bridge build step")
-        print("  [INFO] Machine can dich can cai Node.js >= 22")
-
-    if node_ok:
-        print("  Building cline-bridge (npm run build)...")
-        build_result = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=cline_src,
-            capture_output=True,
-            text=True,
-            shell=True,
-        )
-        if build_result.returncode == 0:
-            print("  [OK] cline-bridge build OK")
-        else:
-            print("  [WARN] cline-bridge build exit=" + str(build_result.returncode))
-            print("  " + (build_result.stderr or build_result.stdout)[:400])
-
-    # Buoc 2: copy toan bo cline-bridge sang build (bao gom node_modules + dist)
-    print("  Copying cline-bridge -> build... (190MB node_modules, co the mat 1-2 phut)")
-    try:
-        shutil.copytree(
-            cline_src, cline_dst,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(".git", "__pycache__", "src", "tsconfig.json", "*.ts"),
-        )
-    except shutil.Error as e:
-        print("  [WARN] Mot so file trong cline-bridge bi khoa (locked) khong the copy. Bo qua...")
-    except Exception as e:
-        print("  [WARN] Loi khi copy cline-bridge: " + str(e))
-    print("  [OK] cline-bridge deployed (dist/ + node_modules/ + package.json)")
-else:
-    print("  [SKIP] cline-bridge directory not found: " + cline_src)
 
 # ── 4c. Deploy .eris/ (steering files, specs) ────────────────────────────────
 banner("4c/5  --  Deploy .eris/ (steering + specs)")
@@ -1077,7 +1009,7 @@ with open(bat_path, "wb") as fh:
 
 vbs_lines = [
     "Option Explicit",
-    "Dim shell, fso, env, root, python, bridge",
+    "Dim shell, fso, env, root, python",
     "Set shell = CreateObject(\"WScript.Shell\")",
     "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
     "root = fso.GetParentFolderName(WScript.ScriptFullName) & \"\\\"",
@@ -1104,11 +1036,6 @@ vbs_lines = [
     "If Not fso.FileExists(root & \"config\\secrets.json\") Then",
     "    If fso.FileExists(root & \"setup_secrets.bat\") Then shell.Run Q(root & \"setup_secrets.bat\"), 1, False",
     "    WScript.Quit 1",
-    "End If",
-    "",
-    "bridge = root & \"cline-bridge\\dist\\bridge.js\"",
-    "If fso.FileExists(bridge) Then",
-    "    shell.Run \"cmd.exe /c node \" & Q(bridge), 0, False",
     "End If",
     "",
     "If fso.FileExists(root & \"Eris.exe\") Then",
@@ -1204,7 +1131,6 @@ must_exist = [
     os.path.join(OUT, "run_eris_service.bat"),
     os.path.join(OUT, "ErisManager.exe"),
     os.path.join(OUT, "ErisSetup.exe"),
-    os.path.join(OUT, "cline-bridge", "dist",     "bridge.js"),
 ]
 if is_debug:
     must_exist = [p for p in must_exist if not p.endswith(".pyc")]

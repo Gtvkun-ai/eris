@@ -52,7 +52,6 @@ BUILD_OUT = Path(r"C:\Users\Gtvkun\Documents\eris")
 # Service ports
 PORTS = {
     "whale2api":    9090,
-    "cline_bridge": 7832,
     "tts_pool":     9091,
 }
 
@@ -175,17 +174,6 @@ def install_dependencies() -> None:
         print(ok("pip install done"))
     else:
         print(warn("requirements.txt khong tim thay"))
-
-    # cline-bridge npm
-    bridge_dir = ROOT / "cline-bridge"
-    if bridge_dir.exists():
-        print(info("npm ci in cline-bridge..."))
-        run(["npm", "ci", "--prefer-offline"], cwd=bridge_dir)
-        print(info("Building cline-bridge..."))
-        run(["npm", "run", "build"], cwd=bridge_dir)
-        print(ok("cline-bridge built"))
-    else:
-        print(warn("cline-bridge/ khong tim thay"))
 
     # VS Code extension esbuild
     ext_dir = ROOT / "src" / "vscode-extension"
@@ -498,14 +486,6 @@ def start_all() -> None:
         print(warn("Whale2API gateway (port " + str(PORTS["whale2api"]) +
                    ") chua chay. Bat Docker roi: cd tools/whale2api && docker compose up -d"))
 
-    # cline-bridge
-    bridge_js = ROOT / "cline-bridge" / "dist" / "bridge.js"
-    if bridge_js.exists() and not port_listening(PORTS["cline_bridge"]):
-        print(info("Starting cline-bridge..."))
-        p = subprocess.Popen(["node", str(bridge_js)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _procs.append(p)
-
     print()
     print(info("Cho 5s de services khoi dong..."))
     time.sleep(5)
@@ -527,7 +507,6 @@ def stop_all() -> None:
 
 SERVICES = [
     ("whale2api  (Brain)",    "whale2api",    PORTS["whale2api"],    f"http://127.0.0.1:{PORTS['whale2api']}/v1/models"),
-    ("Cline Bridge",          "cline_bridge", PORTS["cline_bridge"], f"http://127.0.0.1:{PORTS['cline_bridge']}/health"),
     ("TTS Pool",              "tts_pool",     PORTS["tts_pool"],    f"http://127.0.0.1:{PORTS['tts_pool']}/health"),
 ]
 
