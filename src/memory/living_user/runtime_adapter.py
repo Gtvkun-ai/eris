@@ -32,6 +32,13 @@ hàng chục luật cho mọi lần tương tác. Có thể trả operations=[] 
 giữ sự kiện. Chỉ dẫn rõ ràng về lâu dài vẫn có thể lưu ngay từ một lượt.
 Khi user sửa nghĩa câu trước, ưu tiên cách user vừa làm rõ; đối chiếu hồ sơ cũ,
 không thêm một bản diễn đạt trùng. Không củng cố fact chỉ vì assistant nhắc lại.
+Lời sửa một hiểu nhầm của assistant về việc đang diễn ra không tự trở thành
+sở thích hay thói quen lâu dài. Nếu không có profile sai tương ứng để sửa và
+không có thông tin bền vững mới, giữ lời làm rõ trong episode, operations=[].
+Khi reinforce một record có nghĩa tương đương, dùng đúng path/value hiện có,
+giữ mọi điều kiện và chi tiết chưa bị user rút lại. Chỉ update khi nghĩa thực sự
+đổi; value mới phải giữ các chi tiết cũ còn đúng. Không bỏ chi tiết chỉ vì lượt
+hiện tại không nhắc lại. Viết value/reason bằng tiếng Việt tự nhiên.
 Reason cần nêu ngắn gọn evidence hiện tại, điều kiện và căn cứ lưu lâu dài;
 đừng thay việc kiểm chứng bằng văn phong nghe có vẻ sâu sắc.
 Profile chỉ giữ thông tin có ích lâu dài; chỉ dẫn cho một lượt, trò đùa, nhập vai,

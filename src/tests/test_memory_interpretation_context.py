@@ -50,6 +50,19 @@ def test_source_context_budget_and_causal_cutoff():
     assert ctx["omitted_items"] > 0
 
 
+def test_old_candidate_source_is_not_starved_by_busy_current_chat():
+    turns = [{"id":str(i), "role":"user", "text":"x"*1800} for i in range(12)]
+    source = [{"id":f"old-{i}", "role":"user", "text":"y"*1800} for i in range(32)]
+    episode = {"id":"old", "evidence_ids":["old-30"], "summary":"Older context",
+               "metadata":{"source_turns":source}}
+    ctx = build_evidence_context(turns=turns, episodes=[episode], evidence_ids=["old-30"])
+    assert "old-30" not in ctx["missing_evidence_ids"]
+    assert any(row["id"] == "old-30" for row in ctx["episodes"][0]["source_turns"])
+    used = sum(len(row["text"]) for row in ctx["recent_conversation"])
+    used += sum(len(e["summary"])+sum(len(row["text"]) for row in e["source_turns"]) for e in ctx["episodes"])
+    assert used <= 20000
+
+
 def test_episode_sources_survive_reconsolidation_but_stay_out_of_root(tmp_path):
     adapter = SimpleNamespace(summarize_episode=lambda payload:{"title":"Trêu vui","summary":"Đùa về video"})
     builder = UserEpisodeBuilder(model_adapter=adapter)
@@ -82,6 +95,30 @@ def test_gc_gets_evidence_context_not_only_profile_labels(tmp_path):
     LivingUserMemoryCurator(service, reviewer=reviewer).run()
     assert seen and "Tôi đang đùa thôi" in seen[0]
     assert '"role":"user"' in seen[0]
+
+
+def test_source_window_is_not_duplicated_into_mutation_trace(tmp_path):
+    service = LivingUserMemoryService(tmp_path)
+    service.apply_turn_operations((), trace_context={"turn_id":"u1",
+        "interpretation_context":{"recent_conversation":[{"text":"private-source-window"}]},
+        "recent_conversation":[{"text":"private-source-window"}]})
+    trace = service.trace_journal.path.read_text(encoding="utf-8")
+    assert "private-source-window" not in trace
+    assert '"turn_id":"u1"' in trace
+
+
+def test_context_capture_failure_still_preserves_current_turn_in_inbox(tmp_path, monkeypatch):
+    service = LivingUserMemoryService(tmp_path)
+    def unavailable(**kwargs):
+        raise RuntimeError("unavailable-source-detail")
+    monkeypatch.setattr(service, "capture_interpretation_context", unavailable)
+    pipeline = TurnMemoryPipeline(memory_kernel=SimpleNamespace(core=SimpleNamespace(base_dir=str(tmp_path))),
+                                  living_user=service, config=TurnMemoryPipelineConfig())
+    assert pipeline._enqueue_curator(TurnMemoryEnvelope(text="Keep this evidence", turn_id="u1", evidence_ids=("u1",)))
+    queued = pipeline._curator_inbox.due()[1]
+    assert queued["text"] == "Keep this evidence"
+    assert queued["context"]["interpretation_context"]["source_context_available"] is False
+    assert "unavailable-source-detail" not in str(queued)
 
 
 def test_interpretation_context_excludes_other_project_episodes(tmp_path):

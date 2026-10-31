@@ -519,7 +519,7 @@ class UserProfileStore:
                     record.updated_at = now
                     record.valid_until = now
                     record.metadata["curator_reason"] = reason
-                    record.metadata["curated_by"] = "deepseek_curator"
+                    record.metadata["curated_by"] = "living_user_curator"
                     changed_ids.append(record.id)
                     details["archived"] += 1
 
@@ -532,7 +532,7 @@ class UserProfileStore:
                     record.updated_at = now
                     record.valid_until = now
                     record.metadata["curator_reason"] = reason
-                    record.metadata["curated_by"] = "deepseek_curator"
+                    record.metadata["curated_by"] = "living_user_curator"
                     changed_ids.append(record.id)
                     details["deleted"] += 1
 
@@ -583,7 +583,7 @@ class UserProfileStore:
                     primary.updated_at = now
                     primary.last_confirmed_at = max(record.last_confirmed_at for record in selected)
                     primary.metadata["curator_reason"] = reason
-                    primary.metadata["curated_by"] = "deepseek_curator"
+                    primary.metadata["curated_by"] = "living_user_curator"
                     primary.metadata["canonical_user_memory"] = True
                     primary.metadata["curated_merge_ids"] = [r.id for r in selected if r.id != primary.id][-40:]
                     changed_ids.extend(record.id for record in selected)
@@ -629,7 +629,7 @@ class UserProfileStore:
                             record.updated_at = now
                             record.metadata["merged_into"] = primary.id
                             record.metadata["curator_reason"] = reason
-                            record.metadata["curated_by"] = "deepseek_curator"
+                            record.metadata["curated_by"] = "living_user_curator"
                     primary.path = target_path
                     if row.get("value") is not None:
                         primary.value = row.get("value")
@@ -645,7 +645,7 @@ class UserProfileStore:
                     primary.valid_until = None
                     primary.status = "active"
                     primary.metadata["curator_reason"] = reason
-                    primary.metadata["curated_by"] = "deepseek_curator"
+                    primary.metadata["curated_by"] = "living_user_curator"
                     primary.metadata["canonical_user_memory"] = True
                     primary.metadata["canonicalized_from"] = [r.id for r in selected][-60:]
                     changed_ids.extend(record.id for record in selected)
@@ -663,7 +663,7 @@ class UserProfileStore:
                     record.value = value.strip()[:1000]
                     record.updated_at = now
                     record.metadata["curator_reason"] = reason
-                    record.metadata["curated_by"] = "deepseek_curator"
+                    record.metadata["curated_by"] = "living_user_curator"
                     record.metadata["canonical_user_memory"] = True
                     changed_ids.append(record.id)
                     details["rewritten"] += 1
@@ -676,7 +676,7 @@ class UserProfileStore:
                     record.updated_at = now
                     record.metadata["hidden_from_ui"] = True
                     record.metadata["curator_reason"] = reason
-                    record.metadata["curated_by"] = "deepseek_curator"
+                    record.metadata["curated_by"] = "living_user_curator"
                     changed_ids.append(record.id)
                     details["hidden"] += 1
 

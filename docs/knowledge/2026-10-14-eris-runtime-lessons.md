@@ -1761,3 +1761,70 @@ không chạy app/AI hay dọn dữ liệu. Snapshot sau sửa mục 39:
 Artifact `eris-storage-inventory-20261031/` có sizes.json, contents.json và
 inventory.md (toàn bộ profile active/disputed, episode và seed beliefs/preferences).
 Đây là kiểm kê nội dung và dung lượng, chưa phải authorization dọn/xóa tiếp.
+
+## 41. Ngày 31/10: cho Gemini diễn giải memory bằng nguồn và ngữ cảnh
+
+User yêu cầu cải thiện Gemini để lọc kiến thức hữu ích, sau kiểm kê mục 40.
+Không dùng phân loại ý nghĩa bằng từ khóa, không đổi cá tính/vision/TTS và không
+reset hay chạy GC trên profile thật trong đợt này.
+
+**Chẩn đoán và thay đổi:** extractor đã có 6 lượt gần nhất, nhưng worker trễ có
+thể đọc đuôi hội thoại khác với thời điểm enqueue; GC chỉ nhìn record/cluster,
+episode cũ không giữ lời gốc để kiểm lại diễn giải. Không chính xác nếu nói mọi
+đường Gemini trước đây hoàn toàn không có context.
+
+- Capture một cửa sổ có role/session/source ID ngay khi enqueue và lưu cùng
+  durable inbox. Worker/retry dùng snapshot đó, không lấy lời nói tương lai.
+  Capture lỗi vẫn giữ current turn, chỉ ghi loại lỗi, không bỏ evidence.
+- Episode mới giữ nguồn ngắn: tối đa 32 lượt lúc dựng, 48 sau reconsolidation,
+  1.800 ký tự/lượt. Context gửi Gemini tối đa 12 lượt gần đây, 6 episode và ngân
+  sách 20.000 ký tự phần text (không phải tổng JSON hay số token). Cần nguồn cũ
+  thì dành ngân sách cho episode match và ưu tiên lời gốc quanh ID được dẫn.
+- GC nhận nguồn có phân biệt user/assistant. Episode không có lời gốc được đánh
+  dấu secondary; ref legacy trùng nhiều session được đánh dấu ambiguous. Không
+  dựng lại lời gốc từ summary hoặc coi thiếu nguồn là bằng chứng memory sai.
+  Episode ngoài project scope bị loại trước khi dựng context.
+- Prompt extractor/episode/GC phân biệt tự trào, lời đùa, nhập vai, thử hệ thống,
+  chỉ dẫn một lượt, correction và yêu cầu lâu dài có điều kiện. Không nâng lời
+  assistant thành xác nhận của user; reinforce giữ nguyên path/value và mọi
+  qualifier còn đúng. Lời sửa hiểu nhầm nhất thời không tự thành sở thích global.
+- Raw source window không được lặp vào mutation trace hoặc Root recent_episodes;
+  Root giữ summary/evidence. Không thêm lời gọi AI/embedding vào enqueue. Nhãn
+  curated_by cho mutation mới đổi từ deepseek_curator thành living_user_curator
+  vì store không biết provider; không viết lại metadata lịch sử.
+
+**Gemini thật:** Docker Desktop không khởi động được do socket sailor-ingest.sock
+  bị OS từ chối truy cập. Không reset Docker hay xóa dữ liệu. Chạy chính
+  tools/gemini_vision_docker/server.py bằng venv riêng ngoài repo, bind
+  127.0.0.1:8000, dùng cache đăng nhập hiện có, không in cookie. Service đã
+  authenticated; session chỉ công bố **gemini-flash-lite / 3.5 Flash-Lite**.
+  Adapter yêu cầu gemini-flash; server hiện fallback model mặc định khi alias
+  không resolve. Không gọi kết quả này là phép thử Gemini Flash đầy đủ/Pro.
+  Host service được để chạy cho lane hiện tại; không cài autorun. Docker vẫn cần
+  sửa riêng; khởi động Docker service port 8000 sau này cần dừng host helper.
+
+Sáu tình huống synthetic: joke, self-deprecation và roleplay không tạo profile/
+action; yêu cầu giải toán giữ cả bước giải/ký hiệu/ngoại lệ; reinforce giữ đúng
+value cũ. Lượt đầu correction vẫn tạo global media interest, reinforce làm rơi
+chi tiết ký hiệu; đã sửa prompt rồi thử lại ba ca correction/reinforce/lasting
+preference, kết quả đúng như mong đợi. Đây là kiểm tra tình huống, chưa phải
+chứng minh mọi hội thoại ngoài thực tế đều phân loại đúng.
+
+GC live trên kho thử riêng: review 4 record, xóa 2 fact diễn giải sai từ joke/
+tự trào; canonicalize 2 yêu cầu toán thành 1, giữ cả hai ý và evidence. Không
+áp các operation thử lên profile thật. Các record cũ thiếu nguồn vẫn cần review
+thận trọng; không backfill transcript bằng suy đoán.
+
+**Kiểm chứng và triển khai:** 80 test liên quan pass (8 file); bộ mở rộng thêm
+19 pass/1 fail ở test_living_user_competence_claim_is_context_only_not_teaching_authority.
+Failure compile_context trả rỗng tái hiện nguyên trạng với service.py từ commit
+6ec42c4d trước thay đổi, không báo toàn suite pass. Copy 9 module Python vào
+Documents/eris, hash khớp repo; smoke import chính portable xác nhận context và
+Root bỏ raw sources. 58 file memory/config/history được bảo vệ giữ nguyên hash;
+profile vẫn có SHA256 48c37397c0180ef3f1f7d86016cdd69c9c307d86bfdface91a80970b27f647a6.
+Không build đè UI đang được sửa đồng thời, không mở app để drain inbox thật.
+
+Backup Documents/eris/backups/gemini-memory-quality-20261031-212904.
+Artifact eris-gemini-memory-quality-20261031/ có live-eval.json (lượt đầu),
+live-eval-refined.json, live-curation.json, deployment.json, portable-smoke.json
+và launcher host service tái lập được. Không đưa log service/cookie vào báo cáo.

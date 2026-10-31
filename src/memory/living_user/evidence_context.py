@@ -9,6 +9,11 @@ def build_evidence_context(*, turns: Iterable[Mapping[str, Any]], episodes: Iter
                            session_id: str = "", max_chars: int = 20000) -> dict[str, Any]:
     wanted = {str(ref) for ref in evidence_ids if ref}
     budget = max(1000, int(max_chars))
+    rows = [e.to_dict() if callable(getattr(e, "to_dict", None)) else dict(e) for e in episodes]
+    rows = [e for e in rows if cutoff is None or float(e.get("ended_at") or 0) <= cutoff]
+    # A busy current chat must not consume the entire budget before the source
+    # episode of an older candidate is read by the curator.
+    recent_budget = budget // 2 if any(wanted.intersection(e.get("evidence_ids") or ()) for e in rows) else budget
     recent: list[dict[str, Any]] = []
     omitted = 0
     for row in reversed(list(turns)):
@@ -19,7 +24,7 @@ def build_evidence_context(*, turns: Iterable[Mapping[str, Any]], episodes: Iter
         if role not in {"user", "assistant", "eris"}:
             continue
         text = str(row.get("text") or "")
-        if len(recent) >= 12 or budget < len(text[:1800]):
+        if len(recent) >= 12 or recent_budget < len(text[:1800]):
             omitted += 1
             continue
         recent.append({"id": str(row.get("id") or ""), "role": role,
@@ -27,9 +32,8 @@ def build_evidence_context(*, turns: Iterable[Mapping[str, Any]], episodes: Iter
                        "session_id": str(row.get("session_id") or session_id),
                        "text_truncated": bool(row.get("text_truncated")) or len(text) > 1800})
         budget -= len(text[:1800])
+        recent_budget -= len(text[:1800])
     recent.reverse()
-    rows = [e.to_dict() if callable(getattr(e, "to_dict", None)) else dict(e) for e in episodes]
-    rows = [e for e in rows if cutoff is None or float(e.get("ended_at") or 0) <= cutoff]
     rows.sort(key=lambda e: (bool(wanted.intersection(e.get("evidence_ids") or ())),
                              float(e.get("ended_at") or 0)), reverse=True)
     related: list[dict[str, Any]] = []
@@ -44,16 +48,24 @@ def build_evidence_context(*, turns: Iterable[Mapping[str, Any]], episodes: Iter
             continue
         budget -= len(summary)
         source_turns = []
-        for row in (episode.get("metadata") or {}).get("source_turns", ()) or ():
+        sources = list((episode.get("metadata") or {}).get("source_turns", ()) or ())
+        matched_indices = [i for i, row in enumerate(sources) if row.get("id") in wanted]
+        indices = list(range(len(sources)))
+        if matched_indices:
+            indices.sort(key=lambda i: (min(abs(i-j) for j in matched_indices), i))
+        selected_sources = []
+        for i in indices[:12]:
+            row = sources[i]
             text = str(row.get("text") or "")[:1800]
             if budget < len(text):
                 omitted += 1
                 continue
-            source_turns.append({"id": str(row.get("id") or ""),
+            selected_sources.append((i, {"id": str(row.get("id") or ""),
                                  "role": str(row.get("role") or "unknown"), "text": text,
                                  "session_id": str(row.get("session_id") or episode.get("session_id") or ""),
-                                 "text_truncated": bool(row.get("text_truncated"))})
+                                 "text_truncated": bool(row.get("text_truncated"))}))
             budget -= len(text)
+        source_turns = [row for _, row in sorted(selected_sources)]
         related.append({"episode_id": episode.get("id"), "session_id": episode.get("session_id"),
                         "scope": episode.get("scope"), "summary": summary,
                         "matched_refs": matched, "evidence_ids": episode.get("evidence_ids", []),
