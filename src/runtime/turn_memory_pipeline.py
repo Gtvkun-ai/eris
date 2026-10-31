@@ -23,7 +23,7 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from memory.memory_kernel import MemoryKernel
@@ -342,6 +342,15 @@ class TurnMemoryPipeline:
     def _enqueue_curator(self, envelope: TurnMemoryEnvelope) -> bool:
         if not self.curator_enabled:
             return False
+        capture = getattr(self.living_user, "capture_interpretation_context", None)
+        if callable(capture) and "interpretation_context" not in envelope.context:
+            try:
+                captured = capture(evidence_ids=envelope.evidence_ids, cutoff=envelope.created_at, context=envelope.context)
+                if not isinstance(captured, Mapping):
+                    raise TypeError("invalid_context_snapshot")
+            except Exception as exc:
+                captured = {"source_context_available": False, "error_type": type(exc).__name__}
+            envelope = replace(envelope, context={**dict(envelope.context), "interpretation_context": captured})
         inbox = self._curator_inbox
         if inbox is not None:
             try:
@@ -479,7 +488,8 @@ class TurnMemoryPipeline:
                 envelope_id=envelope.envelope_id,
                 payload=operations,
                 priority=envelope.priority,
-                context=proposal_context,
+                context={key: value for key, value in proposal_context.items()
+                         if key not in {"interpretation_context", "recent_conversation"}},
             ))
         self._log(
             "debug",

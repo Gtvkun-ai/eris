@@ -84,6 +84,11 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             living.pop(key, None)
         if isinstance(living.get("profile"), Mapping):
             living["profile"] = compact_profile(living["profile"])
+        # Source windows belong to the Gemini memory lane, not every Root
+        # bootstrap. Root retains the episode summary and its evidence refs.
+        for episode in living.get("recent_episodes", ()):
+            if isinstance(episode, dict) and isinstance(episode.get("metadata"), dict):
+                episode["metadata"].pop("source_turns", None)
     active = memory.get("active_state")
     metadata = active.get("metadata") if isinstance(active, dict) else None
     if isinstance(metadata, dict) and "internal_state" in memory and _same_json(metadata.get("internal_state"), memory["internal_state"]):

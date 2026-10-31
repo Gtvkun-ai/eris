@@ -161,6 +161,8 @@ class LivingUserMemoryService:
                 "id": evidence_id,
                 "role": "assistant" if role == "eris" else role,
                 "text": clean[:1800],
+                "text_truncated": len(clean) > 1800,
+                "session_id": sid,
                 "timestamp": time.time(),
                 "context": dict(context or {}),
             })
@@ -215,6 +217,22 @@ class LivingUserMemoryService:
             "turns": self._turn_buffer[-48:],
         })
 
+    def capture_interpretation_context(self, *, evidence_ids=(), cutoff=None, context=None, scopes=()) -> dict[str, Any]:
+        """Read-only snapshot; no model/retrieval/network on the enqueue path."""
+        from .evidence_context import build_evidence_context
+        with self._turn_buffer_lock:
+            turns = [dict(row) for row in self._turn_buffer]
+            session = self._active_session_id
+        payload = dict(context or {})
+        allowed = tuple(scopes) or (_scope_from_context(payload, session_id=str(payload.get("session_id") or session)),)
+        episodes = [episode for episode in self.episode_store.all()
+                    if any(episode.scope.matches(scope) for scope in allowed)]
+        project = str(payload.get("project_id") or payload.get("project") or "")
+        if not scopes:
+            turns = [row for row in turns if str((row.get("context") or {}).get("project_id") or "") in {"", project}]
+        return build_evidence_context(turns=turns, episodes=episodes,
+                                      evidence_ids=evidence_ids, cutoff=cutoff, session_id=session)
+
     def propose_turn_operations(
         self,
         user_text: str,
@@ -234,6 +252,7 @@ class LivingUserMemoryService:
         if self.model_adapter is None:
             from .runtime_adapter import CuratorInferenceError
             raise CuratorInferenceError("unavailable")
+        evidence_ids = tuple(evidence_ids)
         proposal_context = dict(context or {})
         action_scope = _scope_from_context(proposal_context, session_id=str(proposal_context.get("session_id") or self._active_session_id))
         supplied_actions = [
@@ -245,11 +264,12 @@ class LivingUserMemoryService:
         ]
         proposal_context["action_scope"] = action_scope.to_dict()
         proposal_context["existing_actions"] = supplied_actions
-        with self._turn_buffer_lock:
-            proposal_context["recent_conversation"] = [
-                {"id": row["id"], "role": row["role"], "text": row["text"]}
-                for row in self._turn_buffer[-6:]
-            ]
+        evidence_context = proposal_context.get("interpretation_context")
+        if not isinstance(evidence_context, Mapping):
+            evidence_context = self.capture_interpretation_context(
+                evidence_ids=evidence_ids, cutoff=proposal_context.get("evidence_created_at"), context=proposal_context)
+        proposal_context["interpretation_context"] = evidence_context
+        proposal_context["recent_conversation"] = list(evidence_context.get("recent_conversation", ()))
         ops = self.extractor.from_turn(
             user_text,
             evidence_ids=evidence_ids,
@@ -283,7 +303,8 @@ class LivingUserMemoryService:
             "action_record_ids": action_result["record_ids"],
         }
         if trace_context:
-            payload["context"] = dict(trace_context)
+            payload["context"] = {key: value for key, value in trace_context.items()
+                                  if key not in {"interpretation_context", "recent_conversation"}}
         self.trace_journal.append("observe_turn", payload)
         return UserTurnObservation(
             applied=len(result.record_ids) + action_result["applied"],

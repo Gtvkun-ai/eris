@@ -39,7 +39,15 @@ class UserEpisodeStore:
             existing.evidence_ids = tuple(dict.fromkeys((*existing.evidence_ids, *episode.evidence_ids)))[:128]
             existing.importance = clamp01(max(existing.importance, episode.importance) + 0.02)
             existing.ended_at = max(existing.ended_at, episode.ended_at)
+            source_turns = list(existing.metadata.get("source_turns", ()))
+            known = {str(row.get("id")) for row in source_turns if row.get("id")}
+            for row in episode.metadata.get("source_turns", ()):
+                if row.get("id") and str(row["id"]) not in known:
+                    source_turns.append(dict(row))
+                    known.add(str(row["id"]))
             existing.metadata.update(episode.metadata)
+            if source_turns:
+                existing.metadata["source_turns"] = source_turns[-48:]
             saved = existing
         else:
             self._items[episode.id] = episode

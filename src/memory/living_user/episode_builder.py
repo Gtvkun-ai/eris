@@ -47,8 +47,10 @@ class UserEpisodeBuilder:
             "turns": [
                 {
                     "role": str(x.get("role") or x.get("speaker") or "unknown"),
-                    "text": compact_text(x.get("text") or x.get("content"), 800),
+                    "text": compact_text(x.get("text") or x.get("content"), 1800),
                     "id": str(x.get("id") or x.get("turn_id") or ""),
+                    "session_id": str(session_id),
+                    "text_truncated": bool(x.get("text_truncated")) or len(str(x.get("text") or x.get("content") or "")) > 1800,
                 }
                 for x in rows
             ],
@@ -59,6 +61,9 @@ class UserEpisodeBuilder:
                 "do_not_infer_sensitive_traits": True,
             },
         }
+        # Retain one bounded source window in the episode, not a transcript
+        # duplicated into every profile record. Old episodes remain readable.
+        source_metadata = {**dict(metadata or {}), "source_turns": payload["turns"]}
         model = self._from_model(payload)
         if model is not None:
             return UserEpisode(
@@ -78,9 +83,9 @@ class UserEpisodeBuilder:
                 started_at=started,
                 ended_at=ended,
                 source="episode_model",
-                metadata=dict(metadata or {}),
+                metadata=source_metadata,
             )
-        return self._fallback(rows, session_id=session_id, scope=scope or UserMemoryScope(), evidence_ids=evidence_ids, started=started, ended=ended, metadata=metadata)
+        return self._fallback(rows, session_id=session_id, scope=scope or UserMemoryScope(), evidence_ids=evidence_ids, started=started, ended=ended, metadata=source_metadata)
 
     def _from_model(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
         if self.model_adapter is None:
