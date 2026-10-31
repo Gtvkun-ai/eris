@@ -164,6 +164,8 @@ class MemoryGCService:
         anchor_journal_max_mb: float | None = None,
     ) -> None:
         self.memory_core = memory_core
+        # Tùy chọn: do coordinator nối sau khi khởi tạo. Không thuộc chân lý memory.
+        self.portrait_presenter = None
         self.llm_service = llm_service
         self.idle_probe = idle_probe
         self.interval_seconds = float(
@@ -431,6 +433,16 @@ class MemoryGCService:
         except Exception as exc:
             result.warnings.append(f"journal_compact_failed:{type(exc).__name__}:{exc}")
 
+        # Lần dọn nền cũng kiểm tra chân dung; nếu evidence đổi, xếp Gemini
+        # viết lại ở worker riêng. KHÔNG đợi Gemini trả lời trong GC thread.
+        if self.portrait_presenter is not None:
+            try:
+                from runtime.living_user_panel import build_memory_panel_snapshot
+                living_user = getattr(self.memory_core, "living_user", None)
+                if living_user is not None:
+                    build_memory_panel_snapshot(living_user, portrait_presenter=self.portrait_presenter)
+            except Exception as exc:
+                logger.warning("[memory_gc] Không xếp được refresh chân dung: %s", exc)
         result.duration_sec = time.time() - t0
         return result
 

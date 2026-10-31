@@ -40,6 +40,7 @@ def handle_memory_panel_request(
     path = str(request.get("path") or "").strip()
     message = "Đã đọc memory."
     extra: dict[str, Any] = {}
+    memory_changed = False
 
     try:
         if action == "snapshot":
@@ -66,12 +67,14 @@ def handle_memory_panel_request(
             if not getattr(result, "changed", False):
                 rejected = ", ".join(getattr(result, "rejected", ()) or ())
                 raise RuntimeError(rejected or "memory_update_rejected")
+            memory_changed = True
             message = "Đã xác nhận memory." if action == "confirm" else "Đã cập nhật memory."
         elif action in {"forget", "reject"}:
             if not path:
                 raise ValueError("missing_path")
             hard = bool(request.get("hard", False)) if action == "forget" else False
             changed = living_user.forget(path, project_id=project_id, hard=hard)
+            memory_changed = bool(changed)
             message = (
                 "Đã xóa hoàn toàn memory." if hard
                 else "Đã ngừng sử dụng memory này."
@@ -88,6 +91,7 @@ def handle_memory_panel_request(
                 rejected = ", ".join(getattr(result, "rejected", ()) or ())
                 if rejected != "scope_unchanged":
                     raise RuntimeError(rejected or "scope_move_rejected")
+            memory_changed = bool(getattr(result, "changed", False))
             project_id = target_key if target_kind == "project" else ""
             message = "Đã đổi phạm vi sử dụng memory."
         elif action == "set_auto_cleanup":
@@ -118,6 +122,10 @@ def handle_memory_panel_request(
         else:
             raise ValueError(f"unsupported_action:{action}")
 
+        # Xóa bản tóm tắt cũ ngay sau khi user sửa/quên. Gemini đang viết dở
+        # cũng không được ghi nội dung trễ trở lại file.
+        if memory_changed and callable(getattr(portrait_presenter, "invalidate", None)):
+            portrait_presenter.invalidate()
         payload = build_memory_panel_snapshot(
             living_user,
             include_inferred=bool(request.get("include_inferred", True)),

@@ -1431,3 +1431,333 @@ chứa lời public user/assistant và trạng thái delivery, không giữ toà
 màn hình của từng turn. Nhiều request có thể gửi lại cùng mô tả ~1,9k ký tự,
 nhưng request thứ mười không tự chứa mười bản mô tả qua đường này. Không suy
 diễn rằng ảnh/vision đang là nguồn context phình lớn; user ưu tiên giữ phần này.
+
+## 35. Ngày 30/10: khả năng Whale2API phải kiểm tra riêng với API chính thức
+
+User yêu cầu xem Whale2API dùng DeepSeek có khả năng gì để tận dụng. Chỉ điều tra
+source và chạy probe tổng hợp; chưa chuyển agent loop sang tools, sửa gateway,
+đổi memory/vision hay restart dịch vụ.
+
+**Bản đang chạy:** Docker `whale2api`, cổng 5103, image
+`ghcr.io/tangsong404/whale2api:latest`, image ID
+`sha256:70475dae6ba554b4d67eac19c285650eefd0e01ecf7b8ac28ae3235166173266`.
+Source checkout `tools/whale2api` không được bind mount làm executable; các nhận
+định chỉ đọc source không tự chứng minh binary chạy có cùng revision. Probe
+live bên dưới là bằng chứng riêng cho deployment này.
+
+- **Tools dùng được ở giao diện Chat Completions:** probe SSE trả đúng
+  `tool_calls` với name/arguments/id; gửi lại assistant call và role=tool cùng
+  `tool_call_id`, model trả đúng `42`. Hai request mất khoảng 4,24s và 2,42s.
+  Không chạy tool hệ thống; chỉ cộng hai số trong script kiểm tra.
+- **Không phải native strict function calling của API chính thức:** checkout
+  chuyển schema thành text + hướng dẫn cú pháp custom, rồi parse output thành
+  OpenAI-shaped tool calls (`promptcompat/tool_prompt.go`,
+  `toolcall/tool_prompt.go`). Không thấy xử lý `strict` hay constrained JSON
+  decoding; không bỏ validation ở runtime. Test thành công đơn giản không chứng
+  minh mọi tool/schema đều hoạt động hoặc tự làm prompt nhỏ hơn.
+- **Đính chính phạm vi `tool_choice`:** Chat normalization luôn đặt auto,
+  bỏ qua request policy. Live gửi `tool_choice="none"` vẫn nhận tool call.
+  Vì vậy nhận xét trước đó rằng gateway nhận tools/tool_choice cần giới hạn:
+  tools hoạt động, policy Chat chưa được bảo đảm. Responses normalization có
+  parse policy nhưng chưa được probe live trong đợt này.
+- **Không nối tiếp web chat giữa request:** `completionruntime/nonstream.go`
+  gọi CreateSession mỗi request; `StandardRequest.CompletionPayload` đặt
+  `parent_message_id=nil`. Không tìm thấy xử lý `X-Session-ID` trong checkout.
+  Live gửi cùng header nhưng bỏ lịch sử thì model trả `MISSING` thay vì nhớ
+  marker tổng hợp. `parent_message_id`/continue trong retry nội bộ không chứng
+  minh hỗ trợ hội thoại liên request. Điều này giới hạn các suy luận cũ về
+  SessionGuard: header bên Eris không tạo persistent upstream session ở gateway
+  hiện tại. Muốn session thật cần thay gateway, không chỉ đổi header ở Eris.
+- **Thinking bật/tắt:** live disabled không có reasoning_content; enabled trả
+  kết quả đúng và có reasoning_content (chỉ đếm độ dài, không lưu nội dung).
+  `util/thinking.go` ánh xạ minimal/low/medium/high/xhigh thành cùng boolean true;
+  không coi effort là ngân sách suy nghĩ phân cấp. `thinking` explicit ưu tiên
+  trước reasoning_effort. Thinking injection cấu hình riêng còn có thể thêm text.
+- **Ảnh:** live gửi PNG tổng hợp màu magenta bằng image_url data URI, gateway
+  trả đúng `Magenta` (~6,06s). Source có inline upload/files. Đây là bằng chứng
+  một ảnh đơn giản, chưa đánh giá OCR, tài liệu dài hay chất lượng vision.
+- **Context:** GET /v1/models quảng bá deepseek-flash, context_length=896000,
+  multimodal=true. Đây là metadata/cấu hình, chưa probe đủ cửa sổ hay chứng minh
+  khả năng nhớ toàn bộ. Usage do gateway đếm/ước lượng, không phải số billing
+  hay cache-hit từ DeepSeek. Chưa có bằng chứng cache Self miễn phí giữa request.
+- **Search/model:** checkout mặc định search=false và không chuyển
+  search_enabled từ Chat request; chỉ chấp nhận deepseek-flash, model_type default.
+  Không suy ra có sẵn search, expert/pro hay Tool Search chỉ từ web UI/API docs.
+- **Embeddings/Responses:** source có route nhưng embeddings chỉ hỗ trợ
+  mock/deterministic/builtin tạo vector SHA-256 64 chiều, không phải semantic
+  embedding để recall memory. Responses lưu kết quả để GET; không tìm thấy
+  xử lý previous_response_id trong normalization/handler, vẫn dùng CreateSession.
+  Không coi đổi endpoint là cách giữ trí nhớ upstream.
+
+Ưu tiên thử tiếp khi triển khai: adapter tool_calls qua registry hiện có,
+discovery/guide theo nhu cầu, validation và execution receipt; sửa policy gateway
+trước khi dựa vào tool_choice. Benchmark với loop JSON hiện tại vì gateway vẫn
+chèn manual của riêng nó. Session reuse là công việc riêng cần account affinity,
+parent-message tracking và kiểm tra state trước khi gửi delta. Giữ nguyên quyền
+quyết định, cá tính và canonical Self của Eris.
+
+5 package Go liên quan promptcompat/toolcall/format/config/completionruntime đều
+pass (cached). Artifact `eris-whale-capabilities-20261030/` chứa probe và kết quả
+live tổng hợp, không lưu credential hay reasoning text. API chính thức có tài
+liệu function calling/strict beta riêng; không áp các đảm bảo đó cho Web gateway.
+
+## 36. Ngày 30/10: fast dev vào Documents và hai lượt desktop có audio hoàn tất
+
+User yêu cầu chạy fast dev sang Documents rồi test. Đã chạy đúng
+`build_dev_fast.bat` (profile dev/debug, skip installer), exit 0, output
+`C:\Users\Gtvkun\Documents\eris`. Không triển khai session reuse hay đổi agent
+loop trong lượt này. `ErisManager.spec` thiếu nên script dùng binary manager đã
+có; không nói đã build lại manager. Sanity Godot/.NET/Live2D và pool DB pass.
+
+Trước build xác minh các đường dẫn src/asset/voice_presets/data_* bị thay nằm
+trong output, backup 55 file memory/config/state tại
+`Documents/eris/backups/fast-dev-test-20261030-213121/`. Build chép đè
+config/elevenlabs_pool.db; đã phục hồi DB đang dùng từ backup trước khi launch.
+55/55 file được bảo vệ giữ hash tại ranh giới sau build/trước chạy runtime.
+Không hiểu điều này là memory không được học thêm trong lúc test. Chín module
+được kiểm hash sau build đều khớp repo, gồm cleanup, Gemini adapter và hai
+module context/vision không thay đổi. Data runtime thực sự tiếp tục ở ErisLive
+theo cấu hình; build không reset kho đó.
+
+**Kiểm chứng:** 44 test pass cho prompt cleanup, build launcher/payload và
+public_text_audio_commit. Mở bằng launcher portable, Eris.exe khởi chạy đúng
+`Documents/eris/python/python.exe` + `Documents/eris/src/vision.py`, Live2D cũng
+dùng portable Python. Bootstrap Self live 83.161 ký tự, system 9.362; hai
+request chat được log khoảng 126.753 và 127.353 ký tự message content. Đây là
+ký tự, không phải provider token/billing; chars3 estimate không phải tokenizer.
+
+Gửi hai câu qua giao thức UDP local mà desktop đang dùng, giữ TTS và mọi config
+production. Lấy audio_start/audio_done theo delivery ID từ public trace, đối
+chiếu Live2D playback receipts và public-text reason=audio_start; cả hai lượt
+đều delivered. Body history có đúng hai reply; câu sau trích lại đúng câu chào.
+Không có ghi âm độc lập để đánh giá chất lượng giọng nghe bằng tai.
+
+- Lượt thử 1 bắt đầu audio 34,451s, done 47,334s sau tin tổng hợp. **Không phải
+  mẫu độc lập:** desktop có tin trước đó lúc 21:34:30, tin thử đến 21:35:04
+  trong khi đang chuẩn bị context, Root gộp messages=2. Từ tin trước tới audio
+  khoảng 68,9s. Evidence 23.270ms, memory recall 51ms; context 28.071ms, trong đó
+  memory_context 28.020ms; Root round trip khoảng 7,1s, Writer 4.813ms.
+- Lượt thử 2, chỉ một input ở Root: bắt đầu audio **47,440s**, done **62,518s**.
+  Root-input wait 31,4s; evidence **25.814ms**, memory recall 17ms; context
+  **231ms**, memory_context 179ms; Root khoảng **4,7s**, Writer **3.561ms**;
+  writer prepared tới audio khoảng 7,7s. Evidence bao gồm unified chat
+  perception **19.441ms**, có OCR refresh và route vision dù user chỉ hỏi
+  nhắc lại câu chào. Chưa kết luận tiểu bước nào chiếm toàn bộ phần còn lại.
+
+**Cập nhật ưu tiên từ bằng chứng live:** thay thế suy đoán trong lời khuyên ngay
+trước test rằng prompt bootstrap lặp là nút thắt cần xử lý đầu tiên. Session
+reuse vẫn có giá trị tiềm năng, nhưng ở hai mẫu này phần chờ trước Root lớn
+hơn Root/Writer. Cần đo sâu telemetry/perception và lần memory_context 28s
+trước khi chọn fix latency. Thấy OCR/vision chậm không có nghĩa đoạn context
+màn hình ~2k ký tự là prompt rác; không tự cắt vision hay sửa bước 5. Chưa đo
+TTFT provider, chưa xác định nguyên nhân cuối cùng của memory_context 28s.
+
+Sau test có một autonomous follow-up tự nói về việc đang test; không coi đó là
+lượt test thứ ba hay bằng chứng lỗi TTS. Hai mẫu không đủ đánh giá latency
+trung bình hay toàn bộ cá tính. Để bản desktop tiếp tục mở cho user sử dụng.
+Artifact `eris-fast-dev-live-test-20261030/` có build log/receipt, manifest bảo
+vệ, desktop-live-results.json, transcript riêng hai reply, timing-evidence.log
+và verification.json. Không lưu raw prompt, credential hoặc reasoning text.
+
+## 37. Ngày 30/10: đọc lại phiên 21:52–22:03 và đối chiếu lời nói/receipt
+
+User yêu cầu đọc log sau khi sửa Rich Chat. Chỉ đọc log, Godot conversation
+history và public trace; không gửi thêm tin, mở app hay sửa runtime/prompt.
+Nguồn chính `Documents/eris/logs/eris_run_20261030_215227.txt`, trace ErisLive
+và `AppData/Roaming/Godot/app_userdata/Eris/eris_conversation_history.json`.
+
+- Có 6 lượt chat user trong phiên. Từ mốc nhận user_turn ở host tới gửi text
+  tại audio_start: khoảng 55,4 / 49,7 / 25,7 / 26,1 / 31,7 / 26,5 giây.
+  Đây là latency câu chính, không phải micro-act nhận tin. Hai lượt chậm đầu
+  có memory_context 21.824ms và perception 21.671ms (evidence 24.696ms).
+  Các lượt sau evidence 2,2–3,8s, context khoảng 0,17–1,16s. Củng cố kết luận
+  ở mục 36: phải đo các chỗ chờ trước Root, không quy mọi độ trễ cho prompt.
+- Public trace trong khoảng phiên có **9 audio_queued, 8 audio_start,
+  8 audio_done, 1 audio_cancelled, không audio_failed**. Lượt bị hủy là
+  continuation delivery:0406bae602a1467c83c6c07f0f651426 đang chờ phát; bị user
+  gửi "HÉT ĐI" lúc 22:01:20 ngắt. Không coi đó là TTS rơi. Log xác nhận playback
+  và text-sync, không xác nhận giọng thật sự tăng âm lượng/hét bằng tai.
+- Câu "hóa ra tôi đang nhìn chính tôi" là continuation_due -> Root move ->
+  writer -> audio_done, channel autonomous. Có bằng chứng tự tiếp lời sau lượt
+  chat trước, không phải một tin user mới. Câu dùng chi tiết cửa sổ Live2D/python
+  để tự giễu; không suy rộng thành nhận thức về bản thân hay đọc pixel thật.
+- Đoạn nhận biết test nằm ở phiên 21:32: 21:37 autonomous_signal tự bình luận
+  về chuỗi chào/nhắc lại; 21:39 user mới giải thích rõ người test là Codex,
+  21:40 Eris đùa "như bị đồng nghiệp dùng checklist soi từng câu chào".
+  Tin tổng hợp trước đó đã nói rõ "kiểm tra bản build", nên đây là dùng ngữ
+  cảnh và tự nối ý, không phải phát hiện bí mật. Tránh đính chính quá mức làm
+  mất điểm sản phẩm thật là khả năng tiếp lời theo cùng một mạch.
+- Nhận xét nội dung: giữ được giọng khô, callback và chủ động; nhưng chuỗi
+  rủ hét lặp nhiều lần thành diễn giải "không hét theo đơn đặt hàng"/giải thích
+  động cơ, dài hơn nhịp đùa của user. Đây là đánh giá hội thoại từ mẫu cụ thể,
+  chưa phải ủy quyền làm phẳng cá tính hay thay prompt để ép vâng lời.
+- 5 warning: legacy startup tìm whale2api.exe (không chứng minh Docker gateway
+  chết vì Root vẫn inference thành công); một post observer provider_error /
+  InferenceRejected; hai semantic-frame kind không hợp lệ được sanitize
+  (observation, self_deprecating_callback); một living_user_curator_deferred /
+  CuratorInferenceError. Log này chưa chứa nguyên nhân chi tiết của curator,
+  không kết luận Gemini ngừng toàn bộ hay memory đã mất. Các observer sau đó
+  vẫn thành công.
+- Phiên kết thúc 22:03:14 bằng **context menu exit**, unexpected=False.
+  Exit code -1 của child bị host dừng không phải bằng chứng crash. Điều này
+  thay thế trạng thái trước "đang để desktop mở" tại thời điểm kết thúc audit.
+
+## 38. Ngày 30/10: audit memory mới và tái hiện canonicalize gộp ngoài ID được chọn
+
+User hỏi lỗi memory và những lượt vừa chat có lưu thông tin nhảm về họ không.
+Chỉ audit và chạy probe trên bản sao, **chưa sửa runtime hay memory thật**.
+
+**Đính chính đường dẫn:** Living User store thực sự được cập nhật trong phiên
+này nằm ở `Documents/eris/.eris_home/memory/core`, không phải
+`Documents/ErisLive/memory/core` (các file living_user tại đó còn cũ).
+Nhận định trước ở mục 36 rằng memory runtime đều ở ErisLive không chính xác.
+Public trace ở ErisLive vẫn là nguồn đúng cho audio của phiên; không suy mọi
+store dùng chung một root chỉ từ vị trí trace. Căn cứ: timestamp thay đổi,
+observe_turn trace chứa nguyên evidence phiên này, và curator inbox cùng ID lỗi.
+
+Đối chiếu backup trước build `backups/fast-dev-test-20261030-213121/.eris_home/
+memory/core` với store hiện tại:
+
+- Profile tổng 147 -> 149 record. **Chỉ hai record mới:**
+  `communication.playful_romcom_teasing`: đùa/thả thính không cần lý do, trích
+  câu "có gái là tán", confidence 0,85, working/global;
+  `interests.games.ai_game_sentiment`: user thấy game AI nói vui thì được,
+  chơi thật chán, confidence 0,95, working/global. Cả hai có observe_turn
+  role=user và evidence đúng câu đã nói. Nhãn đùa là đúng; nâng một câu đùa
+  đơn lẻ thành pattern global độ tin cậy cao là điểm cần thận trọng, không
+  diễn giải thành hành vi tán tỉnh đời thực.
+- Episode 67 -> 71. Ba summary liên quan các lượt mới: nhờ Codex test độ ổn
+  định; làm rõ chỉ đang xem video YouTube; đùa về hét/mỹ nữ/game AI. Nhìn chung
+  giữ đúng ngữ cảnh. Episode còn lại là cuộc trò chuyện Borwein cũ được ghi
+  thêm vào store trong khoảng so sánh, không phải thông tin mới về user.
+- Action store byte-identical: không tạo goal/commitment/workflow mới từ trò đùa.
+- Job CuratorInferenceError ở 22:01:31 có đúng envelope ID trong inbox, status
+  pending, attempts=1, operations=[], source=delivered_assistant, role=assistant.
+  Lần lỗi đó chưa áp operation vào profile; nguyên nhân timeout/parse/provider
+  không thể phân biệt vì logger chỉ lưu tên exception. Không gọi nó là mất
+  memory hay kết luận toàn bộ Gemini không chạy.
+
+**Lỗi đã xác nhận nằm ở tầng store canonicalize, không chỉ ở lựa chọn của AI:**
+`memory/living_user/store.py`, nhánh canonicalize tự lấy tất cả active/disputed
+record cùng target path và scope rồi `selected.extend(collisions)`, kể cả ID
+model không yêu cầu. Sau đó thay chúng bằng một value canonical, không giữ
+toàn bộ meaning của những record được code thêm vào.
+
+Audit lúc 21:40:14 chỉ yêu cầu canonicalize 3 record gần nghĩa về cảm xúc của
+ERIS vào `communication.response_rules`. Probe offline dùng backup y hệt:
+**3 ID được chọn -> 31 record tham gia -> 30 record bị superseded**, trong đó
+28 record ngoài yêu cầu AI. Ví dụ "muốn ERIS chủ động hỏi thăm" và "khi không
+hiểu, giải thích rõ từng bước" bị nhập vào câu chỉ nói về không phủ nhận cảm
+xúc/bản sắc của ERIS. Tương tự, nhóm learning.active_topics lúc 21:54:58 chọn
+7 mục toán/thuật ngữ nhưng code kéo thêm cả triết học, Alzheimer và các chủ đề
+khác rồi đổi value thành "toán học ... và các thuật ngữ ngắn hạn".
+
+Toàn khoảng so sánh: active **118 -> 64**, superseded 24 -> 83, disputed 3 -> 0,
+deleted giữ 2; không coi mọi mức giảm là trùng lặp được dọn đúng. Ngoài lỗi mở
+rộng ID, merge chọn primary và cộng evidence cũng có thể bỏ các sắc thái khác
+nhau; cần review từng cụm khi phục hồi. Metadata `curated_by=deepseek_curator`
+là nhãn hardcode trong store, không phải bằng chứng DeepSeek thực sự dọn thay
+Gemini hiện tại. Không quy lỗi gộp quá rộng cho Gemini khi ID audit cho thấy
+model chỉ chọn một tập nhỏ hơn.
+
+Dữ liệu nguồn còn trong record superseded và backup, chưa bị hard-delete.
+Ưu tiên sửa việc store tự mở rộng ID rồi phục hồi có đối chiếu, giữ hai ký ức
+mới có evidence; không reset toàn bộ và không dùng keyword phân loại đùa/thật.
+Đây là hướng xử lý, chưa được thực hiện trong lượt audit này.
+
+Artifact `eris-memory-session-audit-20261030/audit.json` lưu delta, provenance,
+inbox status và probe; probe chỉ ghi `isolated-probe/profile.json`. Hash profile
+thật trước/sau probe giữ nguyên. Báo cáo là snapshot lúc Eris đã thoát.
+
+## 39. Ngày 31/10: sửa curator chỉ áp ID tường minh và phục hồi các nhóm mất nghĩa
+
+User yêu cầu "fix đi" sau audit mục 38. Đã sửa và đồng bộ sang portable;
+trạng thái "chỉ audit/chưa sửa" ở mục 38 được thay thế bởi kết quả bên dưới.
+
+- `UserProfileStore.apply_curator_operations` không còn tự thêm record cùng
+  path/scope vào canonicalize. Primary, evidence và mutation chỉ lấy từ ID
+  model chọn. Các record multi khác cùng path giữ nguyên toàn bộ field.
+- Nếu canonicalize đụng record single-valued ở đích mà không liệt kê nó,
+  operation bị từ chối bằng canonicalize_target_conflict trước mọi mutation.
+  AI có thể chọn rõ các ID cần xử lý hoặc một representation phù hợp khác;
+  không dùng keyword hay lớp quyết định semantic thay AI.
+- System curator nói rõ path là category, không phải semantic identity;
+  merge chỉ cho duplicate cùng nghĩa vì giữ wording của primary; synthesis
+  cần canonicalize có value giữ các ý/điều kiện riêng. Đây là hướng dẫn AI,
+  không phải lời đảm bảo mọi phán đoán semantic tương lai đều đúng.
+- Test cũ bắt buộc hấp thụ collision được thay bằng reject không mutation rồi
+  thành công khi AI liệt kê rõ cả target. Regression mới kiểm multi giữ nguyên
+  các preference khác cùng path, không trộn evidence, và save/reload đúng.
+
+**Khôi phục dữ liệu:** khi không có process portable đang chạy, đối chiếu exact
+record với audit snapshot trước khi ghi. Hoàn tác 7 nhóm curator đã review mất
+nghĩa: **66 record** được phục hồi từ backup trước phiên. Giữ nguyên **83 record
+khác**, gồm cả hai profile mới có evidence. Đây không phải thay cả file bằng
+backup cũ: giữ các record mới, audit và history hiện tại, đồng thời thêm audit
+repair + snapshot records_before để có thể undo. Ba disputed được trả về đúng
+trạng thái cũ; không tự biến chúng thành fact đã xác nhận.
+
+Sau repair: **149 record: active 120, superseded 24, deleted 2, disputed 3**.
+26 file được bảo vệ giữ hash, gồm episode/action/inbox/trace và các store khác,
+secrets/.env cùng lịch sử Godot. Không xóa/retry thủ công job curator pending,
+không sửa episode hay cảm xúc/vision/TTS. Backup trước repair và source portable
+cũ tại `Documents/eris/backups/memory-curator-repair-20261031/`.
+
+**Kiểm chứng:** bộ 7 file memory/curator: **76 passed, 2 failed**. Hai failure
+trong test_living_user_memory_v39 liên quan context selection/clarification đã
+tái hiện y hệt khi nạp UserProfileStore từ HEAD trước sửa; không tuyên bố toàn
+bộ test suite pass. Probe request thật từng gây lỗi: chọn 3 ID thì nay chỉ đổi
+3 ID, 144 record ngoài nhóm giữ nguyên. Smoke import chính module deployed ở
+Documents xác nhận 66 record phục hồi và hai profile mới deep-equal, đọc store
+không đổi hash. Không gọi Gemini/LLM live trong kiểm tra này.
+
+Đã copy **store.py và curator.py** vào `Documents/eris/src/memory/living_user`,
+hai hash khớp repo. Eris vẫn đang tắt; code sẽ dùng ở lần mở tiếp theo, không
+gọi lại fast build để tránh đè các store/cấu hình ngoài phạm vi.
+Artifact `eris-memory-session-audit-20261030/` có repair-plan/applied.json,
+repair_reviewed_groups.py (dry run mặc định, apply tường minh, có precondition
+hash/record và marker chống áp hai lần), deployment.json và portable-smoke.json.
+
+## 40. Ngày 31/10: kiểm kê nội dung memory, seed cá tính, snapshot và log
+
+User hỏi Eris đang lưu gì trong memory và các kho khác. Chỉ đọc và tạo báo cáo,
+không chạy app/AI hay dọn dữ liệu. Snapshot sau sửa mục 39:
+
+- Profile portable .eris_home/memory/core: 149 record, 120 active; trong active
+  có communication 78 (response_rules 30), learning 17, interests 10, identity 6,
+  technical 4 và 5 mục thuộc academic/philosophy/personality/work. Nhãn nguồn
+  106 explicit, 7 observed, 7 inferred; các nhãn này không tự chứng minh mọi
+  phát ngôn là fact ổn định. Tier: working 101, habit 15, core_anchor 4.
+- Có tên Hoà, vai trò người tạo Eris, tự nhận INTP; preference tiếng Việt, muốn
+  quan điểm riêng, chủ động hỏi thăm, giải thích rõ; chủ đề toán/MBTI/triết học,
+  game/anime, vẽ/rig avatar. Nhiều lời đùa, tự trào và chỉ dẫn trình diễn một
+  lần cũng còn là profile/rule global. Cần review theo ngữ cảnh; không tự coi
+  lời tự chê tiếng Anh/code/đồ họa/toán là đánh giá năng lực khách quan.
+- 71 episode; transcript Godot riêng có 72 entry (~98KB). Action store không
+  có goal/workflow, chỉ 1 commitment completed cũ mang action là đoạn lời dài
+  của assistant. Inbox có 3 pending từ delivered_assistant và 1 failed cũ.
+- agent_mind.json: 10 beliefs và 12 preferences, **đều mang nguồn seed hoặc
+  seed_infj5w4**, không phải kết quả học mới từ phiên vừa qua. Có thiên hướng
+  quan sát/hài khô/ghét diễn cảm xúc và belief seed user.accepts_dry_humor.
+  Chưa có phép thử nhân quả để quy toàn bộ giọng nói của Eris cho tầng seed.
+- private_concerns có 24 record đều stale; nhật ký, residue, private_life_state
+  còn nội dung cũ tháng 8–9. Semantic JSON chỉ 1 claim tentative về tiếng Việt.
+  Concept graph 1,69MB vẫn còn trên đĩa; runtime và Root projection đã bỏ graph.
+  File tồn tại/có mtime mới không tự chứng minh đang được dùng cho prompt.
+- Tổng portable memory/core 11,9MB gồm cả backup/log; profile file 2,53MB nhưng
+  records hiện tại JSON gọn khoảng 134KB, history khoảng 1,50MB, audit 174KB,
+  còn lại gồm định dạng. Không dùng dung lượng file làm token context.
+- Subject Core DB tại portable data/subject_core/subject.db ~138MB: 2.523
+  events, 590 history snapshots (295 inner_life, 295 subject_state). Hai nhóm
+  history có ~94,66MB và ~29,18MB payload UTF-8; không phải 138MB kiến thức mới
+  về user. Bảng beliefs_projection/values_projection và các bảng commitment,
+  outcome, receipt chuyên biệt đang trống trong DB này; không suy rằng mọi
+  cơ chế tương ứng của toàn Eris đều không chạy.
+- Portable logs 143,8MB, riêng observability 141,1MB; backups 262,1MB chủ yếu
+  còn các bản build trước/phục hồi. ErisLive có memory cũ lẫn state/log khác
+  còn hoạt động (public trace), còn root portable memory_core cũng có dữ liệu
+  legacy. Không xóa một root chỉ vì một số store trong nó cũ.
+
+Artifact `eris-storage-inventory-20261031/` có sizes.json, contents.json và
+inventory.md (toàn bộ profile active/disputed, episode và seed beliefs/preferences).
+Đây là kiểm kê nội dung và dung lượng, chưa phải authorization dọn/xóa tiếp.

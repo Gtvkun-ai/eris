@@ -57,6 +57,10 @@ Goals:
 - Canonical values shown to the user must be natural Vietnamese unless the value is intrinsically a code/name/token.
 - Cross-path duplicates SHOULD be collapsed with canonicalize.
 - If several records express one concept, canonicalize them into one stable path/value and preserve all evidence IDs.
+- A shared path is only a category, not proof that records express the same concept.
+- Distinct response preferences, conditions and learning topics may share a path and must remain separate when their meanings differ.
+- merge retains the primary record's wording: use it only for semantic duplicates. Use canonicalize with an explicit value when synthesis is needed, preserving every distinct fact and qualifier of the listed records.
+- Operations affect ONLY the listed record_ids. If resolving a single-valued destination, explicitly include any existing target record whose meaning must be preserved; otherwise choose a distinct path or multi cardinality when appropriate.
 - Use hide only for a record that is still genuinely useful to cognition but has no user-facing reading value.
 
 Output ONLY one JSON object. No markdown/prose outside JSON. Use only record IDs present in input.

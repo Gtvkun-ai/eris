@@ -313,19 +313,15 @@ class CoordinatorBootstrapMixin:
                     else:
                         self.logger.info("Living user memory model owner: disabled; no DeepSeek fallback.")
 
-                    # V12 Memory Portrait: canonical truth vẫn do curator sở hữu,
-                    # nhưng câu chữ public của panel phải qua đúng Surface worker.
-                    # Presenter không ghi ngược prose vào memory; nó chỉ giữ cache RAM.
-                    from memory.living_user import MemoryPortraitPresenter
-                    surface_client = getattr(llm_service, "surface_client", None)
-                    self.memory_portrait_presenter = MemoryPortraitPresenter(
-                        llm_service,
-                        client=surface_client,
-                        fallback_to_service_surface=False,
+                    # Gemini chỉ làm BIÊN TẬP VIÊN cho chân dung lưu đĩa.
+                    # Không gọi model khi mở panel; Godot chỉ đọc snapshot.
+                    from memory.living_user import SavedGeminiMemoryPortrait
+                    self.memory_portrait_presenter = SavedGeminiMemoryPortrait(
+                        living_user.base_dir, client=gemini_curator,
                     )
                     self.logger.info(
-                        "Living user memory portrait writer: %s.",
-                        "DeepSeek surface lane" if surface_client is not None else "deterministic fallback",
+                        "Living user saved portrait: Gemini background writer=%s.",
+                        "enabled" if gemini_curator is not None else "disabled",
                     )
                 except Exception as exc:
                     # Deterministic profile vẫn chạy; model adapter chỉ là enrichment.
@@ -821,6 +817,8 @@ class CoordinatorBootstrapMixin:
                 idle_probe=getattr(self, "_background_memory_digest_idle_probe", None),
             )
             if self.memory_gc_service is not None:
+                # Dọn memory định kỳ cũng kiểm tra có cần Gemini viết chân dung mới.
+                self.memory_gc_service.portrait_presenter = getattr(self, "memory_portrait_presenter", None)
                 self.logger.info("[memory_gc] service started (interval=%.0fs)", self.memory_gc_service.interval_seconds)
         except Exception as exc:
             self.logger.warning("[memory_gc] Không khởi tạo được memory GC service: %s", exc)

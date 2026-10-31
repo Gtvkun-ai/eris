@@ -122,14 +122,14 @@ def test_self_relevant_environment_semantic_key_is_stable_when_evidence_ref_chan
     assert a.revision != b.revision  # audit ref đổi, semantic identity thì không
 
 
-def test_canonicalize_absorbs_existing_target_path_collision(tmp_path):
-    """Canonicalizer không được tạo hai 'canonical' record cùng semantic home."""
+def test_canonicalize_rejects_unlisted_single_target_without_mutation(tmp_path):
     service = LivingUserMemoryService(tmp_path)
     service.profile_store.apply((
         _op("communication.response_rules", "nói tự nhiên", "turn_a", cardinality="multi"),
         _op("communication.response_style", "gọn khi phù hợp", "turn_b"),
     ))
     source = service.profile_store.get("communication.response_rules")[0]
+    before = service.profile_store.snapshot(include_sensitive=True)
     result = service.profile_store.apply_curator_operations(({
         "action": "canonicalize",
         "record_ids": [source.id],
@@ -138,10 +138,50 @@ def test_canonicalize_absorbs_existing_target_path_collision(tmp_path):
         "cardinality": "single",
         "reason": "collapse to one semantic home",
     },))
+    assert not result.changed
+    assert any(reason.startswith("canonicalize_target_conflict:") for reason in result.rejected)
+    assert service.profile_store.snapshot(include_sensitive=True) == before
+
+    target = service.profile_store.get("communication.response_style")[0]
+    result = service.profile_store.apply_curator_operations(({
+        "action": "canonicalize", "record_ids": [source.id, target.id],
+        "path": "communication.response_style",
+        "value": "Ưu tiên cách nói tự nhiên, gọn khi phù hợp.",
+        "cardinality": "single", "reason": "explicitly preserve both meanings",
+    },))
     assert result.changed
     rows = service.profile_store.get("communication.response_style")
     assert len(rows) == 1
     assert set(rows[0].evidence_ids) == {"turn_a", "turn_b"}
+
+
+def test_canonicalize_multi_changes_only_selected_ids_and_evidence(tmp_path):
+    service = LivingUserMemoryService(tmp_path)
+    service.profile_store.apply((
+        _op("communication.response_rules", "không phủ nhận cảm xúc", "emotion_a", cardinality="multi"),
+        _op("communication.response_rules", "không phủ nhận bản sắc", "emotion_b", cardinality="multi"),
+        _op("communication.response_rules", "chủ động hỏi thăm", "care", cardinality="multi"),
+        _op("communication.response_rules", "giải thích từng bước", "explain", cardinality="multi"),
+    ))
+    records = service.profile_store.all()
+    selected = [r for r in records if r.evidence_ids[0] in {"emotion_a", "emotion_b"}]
+    untouched = {r.id: r.to_dict() for r in records if r not in selected}
+    result = service.profile_store.apply_curator_operations(({
+        "action": "canonicalize", "record_ids": [r.id for r in selected],
+        "path": "communication.response_rules", "cardinality": "multi",
+        "value": "không phủ nhận cảm xúc và bản sắc", "reason": "related explicit IDs",
+    },))
+    assert result.changed
+    assert set(result.record_ids) == {r.id for r in selected}
+    after = {r.id: r for r in service.profile_store.all(include_inactive=True)}
+    assert all(after[rid].to_dict() == record for rid, record in untouched.items())
+    canonical = next(r for r in after.values() if r.value == "không phủ nhận cảm xúc và bản sắc")
+    assert set(canonical.evidence_ids) == {"emotion_a", "emotion_b"}
+    assert set(canonical.metadata["canonicalized_from"]) == {r.id for r in selected}
+    reloaded = type(service.profile_store)(service.profile_store.path)
+    assert {r.id: r.to_dict() for r in reloaded.all(include_inactive=True)} == {
+        rid: r.to_dict() for rid, r in after.items()
+    }
 
 
 def test_panel_payload_does_not_expose_raw_feed_trace(tmp_path):

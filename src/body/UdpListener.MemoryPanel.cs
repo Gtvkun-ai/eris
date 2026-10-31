@@ -78,6 +78,9 @@ public partial class UdpListener : Node2D
 	private Label _memoryCleanupLabel;
 	private bool _memoryApplyingCleanupSnapshot;
 	private bool _memoryCleanupPolling;
+	// Gemini viết ở nền: chỉ hỏi Brain lại khi bản lưu chưa hoàn tất.
+	private bool _memoryPortraitPolling;
+	private ulong _memoryPortraitPollAtMs;
 	private ulong _memoryCleanupPollAtMs;
 	private Label _memoryDetailTitle;
 	private Label _memoryDetailMeta;
@@ -130,7 +133,10 @@ public partial class UdpListener : Node2D
 		};
 		GetNode<Control>("CanvasLayer/Control").AddChild(_memoryPanel);
 		BuildMemoryPanelUi();
-		LoadMemoryPanelCache();
+		// Portrait có nguồn lưu bền ở Python. Bỏ cache Godot cũ để không hồi sinh
+		// ký ức mà user đã yêu cầu quên ở phiên trước.
+		try { System.IO.File.Delete(ProjectSettings.GlobalizePath(MemoryPanelCachePath)); }
+		catch (Exception ex) { GD.PrintErr($"[MemoryPanel] Không dọn được cache cũ: {ex.Message}"); }
 		if (_contextMemoryButton != null)
 			_contextMemoryButton.Pressed += OnContextMemoryPressed;
 	}
@@ -226,7 +232,7 @@ public partial class UdpListener : Node2D
 		_memoryModeButton = CreateMemoryButton("Quản lý", () => SetMemoryManagerMode(!_memoryManagerVisible), primary: false);
 		_memoryModeButton.CustomMinimumSize = new Vector2(86f, 34f);
 		header.AddChild(_memoryModeButton);
-		var refresh = CreateMemoryButton("Đọc lại", () => SendMemoryPanelRequest(
+		var refresh = CreateMemoryButton("Viết lại", () => SendMemoryPanelRequest(
 			"snapshot", new Dictionary<string, object> { ["refresh_portrait"] = true }), primary: true);
 		refresh.CustomMinimumSize = new Vector2(82f, 34f);
 		header.AddChild(refresh);
@@ -621,9 +627,11 @@ public partial class UdpListener : Node2D
 			if (root.TryGetProperty("memory_panel", out JsonElement panel) && panel.ValueKind == JsonValueKind.Object)
 			{
 				ApplyMemoryPanelSnapshot(panel);
-				SaveMemoryPanelCache(panel.GetRawText());
+				// Không tạo thêm bản sao memory tại Godot; đọc từ Brain đã lưu.
 			}
-			SetMemoryStatus(string.IsNullOrWhiteSpace(message) ? "Đã cập nhật." : message, status == "error");
+			SetMemoryStatus(status == "ok" && _memoryPortraitPolling
+				? "Gemini đang viết lại ký ức ở nền; bản mới sẽ tự xuất hiện."
+				: string.IsNullOrWhiteSpace(message) ? "Đã cập nhật." : message, status == "error");
 			return true;
 		}
 		catch (JsonException)
@@ -719,6 +727,10 @@ public partial class UdpListener : Node2D
 		if (!panel.TryGetProperty("portrait", out JsonElement portrait) || portrait.ValueKind != JsonValueKind.Object)
 			return;
 
+		// Không đợi Gemini trong UI: chỉ poll khi writer báo đang chạy.
+		_memoryPortraitPolling = ReadJsonString(portrait, "generation_status") == "writing";
+		if (_memoryPortraitPolling)
+			_memoryPortraitPollAtMs = Time.GetTicksMsec() + 2500UL;
 		string opening = ReadJsonString(portrait, "opening");
 		if (!string.IsNullOrWhiteSpace(opening))
 			_memorySummaryText = opening;
@@ -1196,6 +1208,13 @@ public partial class UdpListener : Node2D
 	private void TickMemoryPanelStatus()
 	{
 		ulong now = Time.GetTicksMsec();
+		if (_memoryPanel != null && _memoryPanel.Visible && !_memoryRequestPending
+			&& _memoryPortraitPolling && now >= _memoryPortraitPollAtMs)
+		{
+			_memoryPortraitPollAtMs = now + 2500UL;
+			SendMemoryPanelRequest("snapshot");
+			return;
+		}
 		if (!_memoryRequestPending && _memoryCleanupPolling && now >= _memoryCleanupPollAtMs)
 		{
 			_memoryCleanupPollAtMs = now + 2500UL;
@@ -1463,34 +1482,4 @@ public partial class UdpListener : Node2D
 		return string.Join(separator, value.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() : x.ToString()).Where(x => !string.IsNullOrWhiteSpace(x)));
 	}
 
-	private void SaveMemoryPanelCache(string json)
-	{
-		try
-		{
-			using var file = Godot.FileAccess.Open(MemoryPanelCachePath, Godot.FileAccess.ModeFlags.Write);
-			file?.StoreString(json);
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[MemoryPanel] Cache save failed: {ex.Message}");
-		}
-	}
-
-	private void LoadMemoryPanelCache()
-	{
-		try
-		{
-			if (!Godot.FileAccess.FileExists(MemoryPanelCachePath)) return;
-			using var file = Godot.FileAccess.Open(MemoryPanelCachePath, Godot.FileAccess.ModeFlags.Read);
-			string json = file?.GetAsText() ?? "";
-			if (string.IsNullOrWhiteSpace(json)) return;
-			using JsonDocument doc = JsonDocument.Parse(json);
-			if (doc.RootElement.ValueKind == JsonValueKind.Object)
-				ApplyMemoryPanelSnapshot(doc.RootElement);
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"[MemoryPanel] Cache load failed: {ex.Message}");
-		}
-	}
 }

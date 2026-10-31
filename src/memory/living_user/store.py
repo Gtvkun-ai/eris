@@ -472,7 +472,7 @@ class UserProfileStore:
     ) -> ApplyResult:
         """Áp dụng batch curator theo record ID một cách atomic.
 
-        V68: DeepSeek là authority cấu trúc của working profile. Store không còn
+        Curator là authority cấu trúc của working profile. Store không còn
         bảo vệ representation user-confirmed khỏi curator; authority evidence vẫn
         được giữ trong record/audit để meaning có thể được truy nguyên.
         """
@@ -597,10 +597,13 @@ class UserProfileStore:
                     target_scope = UserMemoryScope.from_value(row.get("scope")) if isinstance(row.get("scope"), Mapping) else None
                     cardinality = str(row.get("cardinality") or "").strip().lower()
 
-                    # Canonical path là unique semantic home trong cùng scope. Nếu đã có
-                    # một record active ở đích mà model không liệt kê, nhập luôn nó vào
-                    # batch thay vì để canonicalization tạo thêm một duplicate mới.
+                    # A path is a category, not semantic identity. Only the IDs
+                    # chosen by the curator may be changed or supply evidence.
+                    # A single-valued destination needs an explicit resolution;
+                    # never silently absorb an unlisted record to make it unique.
+                    primary = max(selected, key=lambda r: (r.trust_weight, r.recurrence, r.updated_at))
                     desired_scope = target_scope or selected[0].scope
+                    desired_cardinality = cardinality if cardinality in {"single", "multi"} else primary.cardinality
                     selected_ids = {record.id for record in selected}
                     collisions = [
                         record for record in self._records.values()
@@ -609,10 +612,10 @@ class UserProfileStore:
                         and record.path == target_path
                         and record.scope.identity == desired_scope.identity
                     ]
-                    if collisions:
-                        selected.extend(collisions)
+                    if collisions and (desired_cardinality == "single" or any(record.cardinality == "single" for record in collisions)):
+                        rejected.append("canonicalize_target_conflict:" + ",".join(record.id for record in collisions))
+                        continue
 
-                    primary = max(selected, key=lambda r: (r.trust_weight, r.recurrence, r.updated_at))
                     evidence: list[str] = []
                     recurrence = 0
                     last_confirmed = 0.0

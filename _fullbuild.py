@@ -286,7 +286,9 @@ def newest_mtime(paths):
                     if d not in {".git", ".pytest_cache", "__pycache__", "node_modules"}
                 ]
                 for fn in fns:
-                    if not fn.endswith((".cs", ".tscn", ".tres", ".gd", ".godot")):
+                    # Rich Chat assets are embedded in Eris.dll. Copying Python
+                    # cannot update them; a stale export must fail this gate too.
+                    if not fn.endswith((".cs", ".tscn", ".tres", ".gd", ".godot", ".html", ".js", ".css")):
                         continue
                     fp = os.path.join(dp, fn)
                     try:

@@ -7,6 +7,7 @@ Chromium; otherwise skipped. No production server or model credentials needed.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import time
@@ -19,6 +20,14 @@ ROOT = Path(__file__).resolve().parents[1] / 'body' / 'richchat'
 
 def browser():
     chromium = shutil.which('chromium') or shutil.which('chromium-browser')
+    if not chromium and os.name == 'nt':
+        candidates = [Path(os.environ.get(root, '')) / relative
+                      for root, relative in (
+                          ('PROGRAMFILES(X86)', 'Microsoft/Edge/Application/msedge.exe'),
+                          ('PROGRAMFILES', 'Microsoft/Edge/Application/msedge.exe'),
+                          ('PROGRAMFILES', 'Google/Chrome/Application/chrome.exe'),
+                      )]
+        chromium = next((str(path) for path in candidates if path.is_file()), None)
     if not chromium:
         pytest.skip('No Chromium executable for browser integration test')
     try:
@@ -134,4 +143,34 @@ def test_browser_speech_highlights_exact_live_turn():
         page.wait_for_function("document.querySelector('.entry.assistant.speaking-now') === null", timeout=5000)
         data['speech'] = {'phase': 'thinking', 'turnId': ''}
         page.wait_for_selector('.live-activity', timeout=5000)
+        b.close()
+
+
+def test_browser_loads_history_without_optional_workspace_button():
+    exe, run = browser()
+    with run() as p:
+        b = p.chromium.launch(executable_path=exe, headless=True)
+        page = b.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        state = make_state()
+        state['bundles'] = []
+        install_routes(page, state, [])
+        # A cached/older shell can omit optional workspace controls. History
+        # initialization and ongoing updates must remain usable in that shell.
+        import re
+        shell = (ROOT / 'index.html').read_text(encoding='utf-8')
+        shell = re.sub(r'<button\b[^>]*id="workspaceBtn"[^>]*>.*?</button>', '', shell)
+        page.route('**/index.html', lambda route: route.fulfill(
+            status=200, content_type='text/html', body=shell))
+        page.goto('http://eris-test.invalid/index.html')
+        page.wait_for_selector('.entry.assistant', timeout=10000)
+        assert page.locator('#dates button').count() > 0
+        assert 'Đang tải hội thoại' not in page.locator('#messages').inner_text()
+        state['messages'].append({
+            'id': 2, 'role': 'user', 'date': '2026-10-30', 'time': '22:00',
+            'text': 'Tin mới sau khi tải lịch sử', 'turnId': '',
+        })
+        page.wait_for_selector('.entry.user', timeout=5000)
+        assert not errors, errors
         b.close()
