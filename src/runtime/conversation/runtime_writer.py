@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 from .contracts import ConversationEvent
 from .delivery import SurfaceEnvelope
 from .kernel import KernelTurn
+from .speech_math_strip import strip_math_for_speech
 from .writer import RenderedConversationMove
 
 
@@ -65,7 +66,20 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     if str(language_hint or '').lower() in ('vi', 'vi-vn', 'vietnamese'):
         # The Vietnamese public surface is already canonical. Do not reuse a
         # translated Japanese surface, signature ending or fail-soft JA filler.
-        vietnamese = str(result.get('speech_text') or result.get('text', '') or '').strip()
+        #
+        # Bong bóng Rich Chat render LaTeX/markdown bằng MathJax, nên text hiển
+        # thị (result['text']) GIỮ nguyên công thức. Nhưng speech_text là nguồn
+        # TTS: phải strip LaTeX/markdown, nếu không TTS đọc "\frac{3}{4}" thành
+        # ký hiệu. Chỉ chuyển trên nhánh giọng đọc; không đụng text hiển thị.
+        #
+        # Nguồn nói ưu tiên speech_text, NHƯNG nếu nó là surface Nhật (writer trả
+        # kana/kanji) thì bỏ, dùng text Việt chuẩn — mode Việt không tái dùng bản
+        # dịch Nhật. Giữ invariant cũ trước khi strip math.
+        candidate_speech = str(result.get('speech_text') or '').strip()
+        if candidate_speech and _contains_japanese_script(candidate_speech):
+            candidate_speech = ''
+        raw_vietnamese = candidate_speech or str(result.get('text', '') or '').strip()
+        vietnamese = strip_math_for_speech(raw_vietnamese)
         if vietnamese:
             result.update(speech_text=vietnamese, speech_language='vi', tts_language='vi')
             contract = result.get('speech_contract')
@@ -97,7 +111,9 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     # Nguồn để dịch: speech.text nếu có, nếu rỗng thì fallback sang display text
     # để writer trả speech_text rỗng KHÔNG dẫn tới prepare raise mismatch. Chỉ
     # bỏ qua khi THẬT SỰ không có gì để nói (cả speech lẫn display đều rỗng).
-    source = str(spec.speech.text or '').strip() or display_text
+    # Nguồn để dịch/đọc phải sạch LaTeX trước: localizer dịch `\frac{...}` như
+    # văn bản nên ký hiệu sẽ lọt vào TTS Nhật. Bubble vẫn giữ LaTeX ở display.
+    source = strip_math_for_speech(str(spec.speech.text or '').strip() or display_text)
     if not source:
         return result
     if _contains_japanese_script(source):
