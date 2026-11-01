@@ -319,6 +319,44 @@ class TutorCapability:
                 "capabilities": workspace.readiness(),
                 "retention": learning.retention_snapshot()["readiness"],
             }
+        if operation == "insights":
+            # Projection read-only; Root có thể giải thích mà không coi ước lượng
+            # là kết luận chắc chắn về năng lực của người dùng.
+            path_id = str(arguments.get("path_id") or "")[:120]
+            return {"status": "completed", **learning.learning_insights(path_id=path_id)}
+        if operation == "dashboard":
+            text = str(getattr(event, "text", "") or "").casefold()
+            if not any(x in text for x in ("bảng", "tổng quan", "dashboard", "tiến độ", "bao cao", "báo cáo")):
+                raise ValueError("dashboard_must_be_requested")
+            return learning.export_learning_dashboard(path_id=str(arguments.get("path_id") or "")[:120])
+        if operation == "set_retention_mode":
+            # Không đổi lịch theo suy đoán của model. Yêu cầu cấu hình rõ ràng
+            # phải có trong tin người dùng ở chính lượt này.
+            mode = str(arguments.get("mode") or "").lower()
+            text = str(getattr(event, "text", "") or "").casefold()
+            requested = "fsrs" if mode == "fsrs" else "heuristic" if mode == "heuristic" else "shadow"
+            if requested not in text or not any(w in text for w in ("bật", "chuyển", "dùng", "tắt", "enable", "switch", "use")):
+                raise ValueError("explicit_retention_change_required")
+            return {"status": "completed", **learning.set_retention_mode(mode)}
+        if operation in {"preview_expansion", "apply_expansion"}:
+            additions = arguments.get("additions")
+            refs = arguments.get("source_refs", ())
+            if not isinstance(refs, (list, tuple)) or len(refs) > 16 or any(not isinstance(x, str) for x in refs):
+                raise ValueError("invalid_source_refs")
+            reason = str(arguments.get("reason") or "")[:240]
+            path_id = str(arguments.get("path_id") or "")[:120]
+            if operation == "preview_expansion":
+                return {"status": "completed", **learning.preview_expansion(
+                    additions, path_id=path_id, source_refs=refs, reason=reason)}
+            import unicodedata
+            message = unicodedata.normalize("NFD", str(getattr(event, "text", "") or "").casefold())
+            message = "".join(c for c in message if unicodedata.category(c) != "Mn")
+            if not any(x in message for x in ("xac nhan", "ap dung", "them vao lo trinh", "luu lo trinh")):
+                raise ValueError("explicit_expansion_approval_required")
+            base_revision = str(arguments.get("base_revision") or "")
+            return {"status": "completed", **learning.apply_expansion(
+                additions, path_id=path_id, base_revision=base_revision,
+                source_refs=refs, reason=reason)}
         if operation == "attempts":
             return {"status": "completed", "attempts": learning.attempts(str(arguments.get("kp_id") or ""))}
         if operation == "curriculum":

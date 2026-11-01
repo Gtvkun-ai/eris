@@ -106,7 +106,16 @@ class LearningService:
         self._scheduler = scheduler
         if retention_mode not in {"shadow", "fsrs", "heuristic"}:
             raise ValueError("invalid_retention_mode")
-        self._retention_mode = retention_mode
+        # Mode FSRS chỉ kích hoạt khi đúng phiên bản thư viện. Nếu máy portable
+        # thiếu dependency, giữ heuristic và công khai trạng thái degraded.
+        try:
+            persisted = self._store.get_meta("learning_retention_mode_v1", None)
+        except (OSError, ValueError, RuntimeError):
+            persisted = None  # Metadata hỏng/DB đang bận không được làm chết Root.
+        requested = persisted if retention_mode == "shadow" and persisted in {"shadow", "fsrs", "heuristic"} else retention_mode
+        self._retention_requested_mode = requested
+        self._retention_mode = ("shadow" if requested == "fsrs" and not retention.readiness()["available"]
+                                else requested)
         self._logger = logger
         self._lock = threading.RLock()
         # In-memory session state (ephemeral)
@@ -442,11 +451,99 @@ class LearningService:
         return self._store.load_attempts(kp_id, limit=limit, include_superseded=include_superseded)
 
     def retention_snapshot(self, kp_id=""):
-        return {
-            "readiness": {**retention.readiness(), "mode": self._retention_mode},
-            "selected_mode": self._retention_mode,
-            "items": self._store.retention_snapshot(kp_id),
-        }
+        """Read-only: shadow vẫn có thể xem khi heuristic là lịch chính."""
+        with self._lock:
+            ready = retention.readiness()
+            return {
+                "readiness": {**ready, "mode": self._retention_mode,
+                              "requested_mode": self._retention_requested_mode,
+                              "degraded": self._retention_requested_mode != self._retention_mode},
+                "selected_mode": self._retention_mode,
+                "requested_mode": self._retention_requested_mode,
+                "items": self._store.retention_snapshot(kp_id),
+            }
+
+    def set_retention_mode(self, mode: str) -> dict[str, Any]:
+        """Chỉ đổi theo thao tác tường minh, không cho FSRS thiếu dependency chạy ngầm.
+
+        Khi FSRS chưa sẵn sàng: báo lỗi, KHÔNG ghi cấu hình hoặc đổi lịch đang dùng.
+        Bản lưu cho phép portable tiếp tục lựa chọn sau khi restart.
+        """
+        if mode not in {"shadow", "heuristic", "fsrs"}:
+            raise ValueError("invalid_retention_mode")
+        with self._lock:
+            if mode == "fsrs" and not retention.readiness()["available"]:
+                raise RuntimeError("fsrs_not_ready")
+            self._store.set_meta("learning_retention_mode_v1", mode)
+            self._retention_mode = mode
+            self._retention_requested_mode = mode
+            return self.retention_snapshot()
+
+    def learning_insights(self, *, path_id: str = "", now: float | None = None,
+                          max_kps: int = 48) -> dict[str, Any]:
+        """Dashboard projection P2; không chấm điểm hay phát lời nói.
+
+        Dùng path đã lưu (mặc định active); tuyệt đối không tự khởi động Tutor.
+        Giới hạn số skill và item để không đẩy cả ledger vào Root/UI.
+        """
+        from runtime.learning_core.insights import evidence_signals
+
+        ts = float(now if now is not None else time.time())
+        if max_kps < 1 or max_kps > 64:
+            raise ValueError("invalid_insights_limit")
+        with self._lock:
+            path = self._store.load_path(path_id) if path_id else self.active_path()
+            if path is None:
+                return {"schema": "eris.learning.insights.v1", "path": None, "knowledge": [],
+                        "due_review": [], "assessment": "no_active_learning_path"}
+            ids = list(path.kp_ids)[:max_kps]
+            due = {r.kp_id: r for r in due_items(
+                self._scheduled_review_items(ids, now=ts), now=ts, max_items=max_kps
+            )}
+            skills = []
+            for point in path.knowledge_points[:max_kps]:
+                attempts = self._store.load_attempts(point.kp_id, limit=48, include_superseded=False)
+                patterns = self._store.repeated_error_patterns(point.kp_id)
+                signals = evidence_signals(attempts, patterns=patterns, due=point.kp_id in due)
+                mastery = self._store.load_mastery(point.kp_id)
+                skills.append({
+                    "kp_id": point.kp_id, "title": point.title,
+                    "prerequisites": list(point.prerequisites),
+                    "mastery_stage": mastery.stage, "mastery_estimate": round(mastery.mastery, 3),
+                    "last_evidence_at": mastery.last_evidence_at,
+                    "review_due_at": due[point.kp_id].due_at if point.kp_id in due else None,
+                    "signals": signals,
+                })
+            # Ưu tiên đến hạn ôn và lỗi có bằng chứng, không tự đưa ra kế hoạch
+            # dựa trên phần trăm mastery giả. Không làm gián đoạn Root.
+            priority = {"review_due": 0, "possible_repeated_gap": 1,
+                        "needs_repair": 2, "needs_independent_probe": 3}
+            followups = [s for s in skills if s["signals"]["status"] in priority]
+            followups.sort(key=lambda s: (priority[s["signals"]["status"]], s["kp_id"]))
+            recommendations = [
+                {"kp_id": s["kp_id"], "title": s["title"],
+                 "action": s["signals"]["next_action"], "reason": s["signals"]["status"]}
+                for s in followups[:8]
+            ]
+            from runtime.learning_core.evaluation import evaluate_attempts
+            # Không so sánh hiệu quả của hai môn khác nhau như cùng một thử
+            # nghiệm. Chỉ quan sát attempt của đúng path này và yêu cầu n mẫu.
+            path_attempts = [row for row in self._store.load_attempts(limit=500)
+                             if row.get("path_id") == path.path_id]
+            teaching = evaluate_attempts(path_attempts, min_samples=5)
+            return {
+                "schema": "eris.learning.insights.v1",
+                "path": {"path_id": path.path_id, "title": path.title, "domain_id": path.domain_id,
+                         "revision": self._store.path_revision(path.path_id)},
+                "generated_at": ts, "knowledge": skills,
+                "due_review": [r.to_dict() for r in due.values()][:12],
+                "recommendations": recommendations,
+                "teaching_evaluation": teaching,
+                "retention": {"active_mode": self._retention_mode,
+                              "requested_mode": self._retention_requested_mode,
+                              "fsrs_available": retention.readiness()["available"]},
+                "assessment": "observational_not_calibrated",
+            }
 
     def _scheduled_review_items(self, kp_ids=None, *, now):
         items = self._store.load_review_items(kp_ids)
@@ -526,6 +623,82 @@ class LearningService:
                 "goal": {"before": previous.goal, "after": path.goal},
             },
         }
+
+    def export_learning_dashboard(self, *, path_id: str = "") -> dict[str, Any]:
+        """Xuất báo cáo Web offline theo yêu cầu; không tạo server thứ hai.
+
+        Báo cáo không chứa đáp án bí mật, transcript hoặc dữ liệu ngoài Tutor.
+        Có thể mở bằng trình duyệt thường trên máy của người dùng.
+        """
+        from pathlib import Path
+        from runtime.learning_core.insights_html import render_dashboard
+        from runtime.workspace_manager import default_eris_home
+
+        snapshot = self.learning_insights(path_id=path_id)
+        base = Path(default_eris_home()) / "mentor" / "reports"
+        base.mkdir(parents=True, exist_ok=True)
+        # Tên file không lấy trực tiếp từ chuỗi do model gợi ý.
+        name = hashlib.sha256(str((snapshot.get("path") or {}).get("path_id") or "none").encode()).hexdigest()[:16]
+        location = base / f"learning-insights-{name}.html"
+        temporary = base / f".{name}.{uuid.uuid4().hex}.tmp"
+        try:
+            temporary.write_text(render_dashboard(snapshot), encoding="utf-8")
+            temporary.replace(location)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return {"status": "completed", "path": str(location), "uri": location.resolve().as_uri(),
+                "report_type": "offline_html_snapshot", "generated_at": snapshot.get("generated_at"),
+                "insights": snapshot}
+
+    def preview_expansion(self, additions, *, path_id: str = "", source_refs=(), reason=""):
+        """P2: mở rộng lộ trình kiểu *append-only*, preview trước khi lưu.
+
+        Giữ nguyên ID/ thứ tự skill cũ; yêu cầu nguồn cùng domain cho mọi
+        mục tiêu mới. Không cấp mastery, không tự sửa curriculum bằng LLM.
+        """
+        from runtime.learning_core.contracts import KnowledgePoint, LearningPath
+
+        if not isinstance(additions, (list, tuple)) or not 1 <= len(additions) <= 8:
+            raise ValueError("invalid_expansion_size")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("expansion_requires_reason")
+        with self._lock:
+            previous = self._store.load_path(path_id) if path_id else self.active_path()
+            if previous is None:
+                raise ValueError("unknown_learning_space")
+            nodes = tuple(KnowledgePoint.from_mapping(x) for x in additions if isinstance(x, dict))
+            if len(nodes) != len(additions):
+                raise ValueError("invalid_expansion_node")
+            prior_ids = set(previous.kp_ids)
+            if any(node.kp_id in prior_ids or not node.kp_id for node in nodes):
+                raise ValueError("expansion_must_use_new_skill_ids")
+            proposal = LearningPath(
+                path_id=previous.path_id, title=previous.title, goal=previous.goal,
+                knowledge_points=previous.knowledge_points + nodes,
+                source=previous.source, domain_id=previous.domain_id,
+            )
+            return self.preview_curriculum(proposal, source_refs=tuple(source_refs), reason=reason.strip()[:240])
+
+    def apply_expansion(self, additions, *, base_revision, path_id="", source_refs=(), reason=""):
+        """Commit có CAS; Root phải kiểm chứng user xác nhận ở lượt hiện tại."""
+        from runtime.learning_core.contracts import LearningPath, KnowledgePoint
+
+        with self._lock:
+            preview = self.preview_expansion(
+                additions, path_id=path_id, source_refs=source_refs, reason=reason
+            )
+            if base_revision != preview["base_revision"]:
+                raise ValueError("stale_curriculum_revision")
+            path_data = preview["path"]
+            proposed = LearningPath(
+                path_id=path_data["path_id"], title=path_data["title"], goal=path_data["goal"],
+                knowledge_points=tuple(KnowledgePoint.from_mapping(k) for k in path_data["knowledge_points"]),
+                source=path_data["source"], domain_id=path_data["domain_id"],
+            )
+            revision = self.revise_path(proposed, base_revision=base_revision,
+                                        reason=preview["reason"], source_refs=preview["source_refs"])
+            return {"revision": revision, "changes": preview["changes"],
+                    "path_id": proposed.path_id}
 
     def evaluation_report(self):
         from runtime.learning_core.evaluation import evaluate_attempts
