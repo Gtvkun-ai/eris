@@ -51,6 +51,7 @@ class TutorCapability:
         self._pending_expects = False
         self._activity_workspace = None
         self._pending_activity_receipts = []
+        self._settled_activity_receipts: list[tuple[str, int, str, str]] = []
 
     def advise(
         self,
@@ -159,12 +160,43 @@ class TutorCapability:
             ]
         return result
 
+    def bind_pending_delivery(self, *, event_id: str, session_id: str, generation: int,
+                              delivery_id: str, move_id: str, artifact_bundle_ids=()) -> None:
+        """Ràng buộc evidence với một public move đã COMMIT, không tin ID từ LLM.
+
+        Gọi tại delivery adapter sau khi transport đã nhận nội dung. Activity
+        bắt buộc có artifact bundle đúng trong move Root đã xác thực.
+        """
+        if not all((event_id, session_id, delivery_id, move_id)):
+            return
+        bundles = set(artifact_bundle_ids or ())
+        for pending in self._pending_activity_receipts:
+            if (pending.get("event_id") != event_id
+                    or pending["session_id"] != session_id
+                    or pending["generation"] != generation
+                    or pending.get("delivery_id")):
+                continue
+            if pending["kind"] == "activity" and pending.get("artifact_bundle_id") not in bundles:
+                continue
+            pending["delivery_id"] = delivery_id
+            pending["move_id"] = move_id
+
     def observe_delivery_receipt(self, receipt: DeliveryReceipt) -> None:
+        identity = (receipt.session_id, receipt.generation, receipt.delivery_id, receipt.move_id)
+        if identity in self._settled_activity_receipts:
+            return  # Receipt lặp tuyệt đối không được commit lần hai.
         if self._activity_workspace is not None:
             remaining = []
             handled_operation = False
             for pending in self._pending_activity_receipts:
-                if (receipt.session_id, receipt.generation) != (pending["session_id"], pending["generation"]):
+                # Thiếu bind hoặc sai identity => KHÔNG chấp nhận receipt.
+                # Đối chiếu cả delivery_id và move_id do Kernel cấp phát.
+                if (receipt.session_id != pending["session_id"]
+                        or receipt.generation != pending["generation"]
+                        or not pending.get("delivery_id")
+                        or not pending.get("move_id")
+                        or receipt.delivery_id != pending["delivery_id"]
+                        or receipt.move_id != pending["move_id"]):
                     remaining.append(pending)
                     continue
                 handled_operation = True
@@ -185,6 +217,13 @@ class TutorCapability:
                         self._log("debug", "[tutor] stale learning receipt: %s", exc)
             self._pending_activity_receipts = remaining[-32:]
             if handled_operation:
+                self._settled_activity_receipts.append(identity)
+                self._settled_activity_receipts = self._settled_activity_receipts[-128:]
+                return
+            # Có hoạt động đang chờ trong đúng session/generation nhưng receipt
+            # không thuộc về nó: không fallback sang commit quyết định Tutor cũ.
+            if any(p["session_id"] == receipt.session_id and p["generation"] == receipt.generation
+                   for p in self._pending_activity_receipts):
                 return
         if self.executive is None or self._last_decision is None:
             return
@@ -209,7 +248,8 @@ class TutorCapability:
         if self._activity_workspace is None:
             self._activity_workspace = LearningActivities(learning)
         workspace = self._activity_workspace
-        pending = {"session_id": event.session_id, "generation": event.generation}
+        pending = {"event_id": event.event_id, "session_id": event.session_id,
+                   "generation": event.generation}
         if operation == "start_path":
             from runtime.tutor.auto_path import propose_learning_path
             from runtime.learning_core.records import DomainSpec
@@ -238,7 +278,8 @@ class TutorCapability:
             self.executive.suspend_pending_move(reason="activity_started")
             self._last_decision = None
             self._waiting_for_response = False
-            self._pending_activity_receipts.append({**pending, "kind": "activity", "activity_id": item["activity_id"]})
+            self._pending_activity_receipts.append({**pending, "kind": "activity", "activity_id": item["activity_id"],
+                                                    "artifact_bundle_id": bundle_id})
             return {
                 "status": "completed",
                 "operation": "activity",

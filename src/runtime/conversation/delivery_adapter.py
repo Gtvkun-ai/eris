@@ -287,12 +287,23 @@ class RuntimeConversationDeliveryAdapter:
             if not isinstance(pending, dict):
                 pending = {}
                 self.host._v12_delivery_capabilities = pending
+            used = tuple(str(x) for x in tuple(rendered.metadata.get("root_capabilities_used", ()) or ()) if str(x))
             pending[did] = {
-                "capabilities": tuple(str(x) for x in tuple(rendered.metadata.get("root_capabilities_used", ()) or ()) if str(x)),
+                "capabilities": used,
                 "session_id": turn.session_id,
                 "generation": turn.generation,
                 "move_id": turn.move.move_id,
             }
+            if "tutor" in used:
+                tutor = getattr(self.host, "tutor_capability", None)
+                binder = getattr(tutor, "bind_pending_delivery", None)
+                if callable(binder):
+                    binder(
+                        event_id=str(rendered.metadata.get("event_id") or ""),
+                        session_id=turn.session_id, generation=turn.generation,
+                        delivery_id=did, move_id=turn.move.move_id,
+                        artifact_bundle_ids=turn.move.tool_artifact_bundles,
+                    )
             if len(pending) > 128:
                 for stale in list(pending)[:-128]:
                     pending.pop(stale, None)

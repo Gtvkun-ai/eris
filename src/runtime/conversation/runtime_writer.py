@@ -309,6 +309,8 @@ class RuntimeConversationWriter:
             # claim ở tầng surface quyết định sự im lặng của Eris.
             engine = runtime_context.get('__source_grounding_engine')
             report = runtime_context.get('__source_grounding_report')
+            # Registry do Root cung cấp; tuyệt đối không lấy capability từ text của LLM.
+            registry = runtime_context.get('__root_capabilities')
             stage = 'prepare'
             if configured_speech_language() != speech_language:
                 raise RuntimeError('v03_speech_configuration_changed')
@@ -343,7 +345,12 @@ class RuntimeConversationWriter:
                     'provider_payload':dict(payload),
                     'source_grounding_report':report if engine is not None else None,
                     'source_grounding_engine':engine,
-                    'root_capabilities_used':(),
+                    # Luồng Writer V03 trước đây luôn gửi (), khiến receipt
+                    # Tutor không bao giờ được gọi trong bản production.
+                    'root_capabilities_used': tuple(
+                        registry.invocations_for(event.event_id)
+                    ) if callable(getattr(registry, 'invocations_for', None)) else (),
+                    'event_id': event.event_id,
                     'evidence_registry':evidence_registry,
                     'character_portrait':runtime_context.get('__character_portrait'),
                     'prepared_public_output':prepared,
@@ -520,6 +527,7 @@ class RuntimeConversationWriter:
                 "source_grounding_report": runtime_context.get("__source_grounding_report"),
                 "source_grounding_engine": runtime_context.get("__source_grounding_engine"),
                 "root_capabilities_used": list(used_capabilities),
+                "event_id": event.event_id,
                 # Metadata private cho Task 5/6; delivery không serialize nó.
                 "evidence_registry": evidence_registry,
                 "character_portrait": runtime_context.get("__character_portrait"),

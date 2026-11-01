@@ -48,6 +48,14 @@ def receipt(generation=1, successful=True):
         delivery_id="delivery:1", session_id="session:1", generation=generation, move_id="move:1", successful=successful
     )
 
+def bind_activity_receipt(capability, result, *, generation=1, event_id="user:1"):
+    # Mô phỏng adapter đã commit một public move có bundle chính xác.
+    capability.bind_pending_delivery(
+        event_id=event_id, session_id="session:1", generation=generation,
+        delivery_id="delivery:1", move_id="move:1",
+        artifact_bundle_ids=[result["artifact_bundle_id"]],
+    )
+
 
 def test_assisted_partial_and_revealed_answers_do_not_claim_independent_ability(tmp_path):
     learning = service(tmp_path)
@@ -271,6 +279,7 @@ def test_python_activity_requires_delivery_and_actual_user_event(tmp_path, monke
         arguments={"operation": "activity_event", "correct": True}, event=answer, recent_history=[]
     )
     assert before["status"] == "failed" and not learning.attempts()
+    bind_activity_receipt(capability, result if "result" in locals() else made)
     capability.observe_delivery_receipt(receipt())
     graded = capability.invoke_for_root(
         arguments={"operation": "activity_event", "answer": 99}, event=answer, recent_history=[]
@@ -295,12 +304,17 @@ def test_hint_or_reveal_commits_only_after_receipt_then_blocks_independent_succe
     capability = TutorCapability(TutorExecutive(learning))
     made = capability.invoke_for_root(arguments={"operation": "activity"}, event=event(), recent_history=[])
     item = learning._store.load_activity(made["activity_id"])
+    bind_activity_receipt(capability, result if "result" in locals() else made)
     capability.observe_delivery_receipt(receipt())
     workspace = capability._activity_workspace
     help_event = event(2, workspace.command(item, "reveal"), 2)
     helped = capability.invoke_for_root(arguments={"operation": "activity_event"}, event=help_event, recent_history=[])
     assert helped["help_kind"] == "answer_revealed"
     assert learning._store.assistance_for(item["activity_id"])["assistance"] == "independent"
+    capability.bind_pending_delivery(
+        event_id=help_event.event_id, session_id="session:1", generation=2,
+        delivery_id="delivery:1", move_id="move:1",
+    )
     capability.observe_delivery_receipt(receipt(2))
     command = workspace.command(item, "answer", item["correct"])
     result = capability.invoke_for_root(

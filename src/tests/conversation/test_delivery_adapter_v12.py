@@ -240,3 +240,33 @@ def test_suppressed_transport_does_not_create_false_public_commit():
     assert host.ledger.assistant_turns() == []
     assert host.last_text == ""
     assert host.last_chat_answer == ""
+
+
+def test_tutor_receipt_binding_uses_committed_move_and_verified_bundle():
+    """Adapter phải chuyển đúng identity của move + bundle sang Tutor.
+
+    Không lấy identity từ nội dung do model tự sinh. Terminal receipt sau
+    đó chỉ có thể được Tutor chấp nhận nếu khớp các định danh này.
+    """
+    from dataclasses import replace
+
+    host = _Host()
+    bound = []
+    host.tutor_capability = SimpleNamespace(bind_pending_delivery=lambda **kwargs: bound.append(kwargs))
+    turn = _turn()
+    turn = replace(turn, move=replace(turn.move, tool_artifact_bundles=("bundle:verified",)))
+    rendered = _rendered("Bài đã có trong workspace")
+    rendered = replace(rendered, metadata={
+        **rendered.metadata,
+        "root_capabilities_used": ("tutor",),
+        "event_id": "user:verified",
+    })
+    RuntimeConversationDeliveryAdapter(host).deliver(
+        turn=turn, rendered=rendered, delivery_id="delivery:verified",
+    )
+    assert bound == [{
+        "event_id": "user:verified",
+        "session_id": "s", "generation": 1,
+        "delivery_id": "delivery:verified", "move_id": "move:1",
+        "artifact_bundle_ids": ("bundle:verified",),
+    }]

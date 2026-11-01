@@ -14,12 +14,13 @@ def readiness():
         actual = version("fsrs")
     except PackageNotFoundError:
         return {"available": False, "reason": "fsrs_extra_not_installed", "mode": "shadow"}
-    return {
-        "available": actual == FSRS_VERSION,
-        "version": actual,
-        "reason": "" if actual == FSRS_VERSION else "fsrs_version_mismatch",
-        "mode": "shadow",
-    }
+    if actual != FSRS_VERSION:
+        return {"available": False, "version": actual, "reason": "fsrs_version_mismatch", "mode": "shadow"}
+    try:
+        from fsrs import Card, Rating, Scheduler  # noqa: F401
+    except (ImportError, OSError):
+        return {"available": False, "version": actual, "reason": "fsrs_import_failed", "mode": "shadow"}
+    return {"available": True, "version": actual, "reason": "", "mode": "shadow"}
 
 
 def replay(evidences, *, desired_retention=0.9):

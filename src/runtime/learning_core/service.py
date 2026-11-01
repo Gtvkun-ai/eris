@@ -114,6 +114,8 @@ class LearningService:
         self._session_counts: dict[str, _KPSession] = {}  # kp_id → _KPSession
         self._active_path_id: str = ""
         self._active_kp_id: str = ""
+        # Con trỏ riêng từng lộ trình: chuyển môn rồi quay lại không mất bài.
+        self._path_positions: dict[str, str] = {}
         # Active learning pointer cần sống qua restart để TutorExecutive có thể
         # resume đúng bài đang dạy. Mastery/evidence vẫn được load từ bảng riêng.
         self._restore_runtime_state()
@@ -127,15 +129,26 @@ class LearningService:
         with self._lock:
             self._store.upsert_path(path, now=now)
 
-    def activate_path(self, path_id: str) -> bool:
-        """Set the active path. Returns False if path not found."""
+    def activate_path(self, path_id: str, *, restart: bool = False) -> bool:
+        """Kích hoạt hoặc tiếp tục lộ trình. Chỉ quay lại bài đầu khi restart=True."""
         with self._lock:
             path = self._store.load_path(path_id)
             if path is None:
                 return False
+            # Chuyển sang môn khác: lưu vị trí môn cũ trước khi đổi.
+            if self._active_path_id and self._active_kp_id:
+                self._path_positions[self._active_path_id] = self._active_kp_id
+            valid = set(path.kp_ids)
+            first = path.kp_ids[0] if path.kp_ids else ""
+            saved = self._path_positions.get(path_id, "")
+            # Nếu revision bỏ bài đang học, fallback an toàn về điểm đầu còn hợp lệ.
+            selected = first if restart else (saved if saved in valid else first)
+            changed = path_id != self._active_path_id
             self._active_path_id = path_id
-            self._active_kp_id = path.knowledge_points[0].kp_id if path.knowledge_points else ""
-            self._session_counts = {}
+            self._active_kp_id = selected
+            self._path_positions[path_id] = selected
+            if changed or restart:
+                self._session_counts = {}
             self._persist_runtime_state_locked()
             return True
 
@@ -518,6 +531,8 @@ class LearningService:
         """Move active KP pointer forward after advance/complete step."""
         with self._lock:
             self._active_kp_id = kp_id
+            if self._active_path_id:
+                self._path_positions[self._active_path_id] = kp_id
             self._persist_runtime_state_locked()
 
     # ------------------------------------------------------------------
@@ -534,6 +549,12 @@ class LearningService:
             return
         path_id = str(raw.get("active_path_id", "") or "").strip()[:120]
         kp_id = str(raw.get("active_kp_id", "") or "").strip()[:120]
+        positions = raw.get("path_positions", {})
+        if isinstance(positions, dict):
+            # Dữ liệu cũ không có path_positions vẫn đọc bình thường.
+            for key, value in list(positions.items())[:256]:
+                if isinstance(key, str) and isinstance(value, str) and key and value:
+                    self._path_positions[key[:120]] = value[:120]
         if not path_id:
             return
         try:
@@ -545,6 +566,7 @@ class LearningService:
         valid_kps = set(path.kp_ids)
         self._active_path_id = path_id
         self._active_kp_id = kp_id if kp_id in valid_kps else (path.kp_ids[0] if path.kp_ids else "")
+        self._path_positions[path_id] = self._active_kp_id
 
     def _persist_runtime_state_locked(self) -> None:
         try:
@@ -553,6 +575,7 @@ class LearningService:
                 {
                     "active_path_id": self._active_path_id,
                     "active_kp_id": self._active_kp_id,
+                    "path_positions": dict(list(self._path_positions.items())[-256:]),
                 },
             )
         except Exception as exc:  # noqa: BLE001

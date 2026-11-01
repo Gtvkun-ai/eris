@@ -1,4 +1,4 @@
-﻿"""
+"""
 _fullbuild.py -- One-click build Eris: moi .py -> .pyc, deploy sang build dir.
 
 Chay bang VENV cua du an (bat buoc):
@@ -204,6 +204,36 @@ def ensure_portable_python_can_import_src(python_dir):
         print("  [OK] Patched python312._pth with ..\\src")
     else:
         print("  [OK] python312._pth already includes ..\\src")
+
+def ensure_tutor_fsrs_dependency(python_dir):
+    """P0: FSRS phải có trong Python portable, kể cả portable cài trước Tutor v1.
+
+    Không đổi retention_mode=shadow. Chỉ bảo đảm thư viện có thể import và
+    đúng bản pin; thiếu thì build tự cài vào interpreter portable, không cài
+    nhầm Python hệ thống hoặc venv đang dùng để build.
+    """
+    py = os.path.join(python_dir, "python.exe")
+    if not os.path.isfile(py):
+        print("  [FAIL] Missing portable python.exe; cannot verify Tutor FSRS")
+        sys.exit(1)
+    probe = ("from importlib.metadata import version; "
+             "assert version('fsrs') == '6.3.2'; "
+             "from fsrs import Card, Rating, Scheduler; "
+             "assert Scheduler and Card and Rating")
+    def check():
+        return subprocess.run([py, "-c", probe], cwd=REPO, capture_output=True, text=True)
+    result = check()
+    if result.returncode == 0:
+        print("  [OK] Tutor FSRS 6.3.2 ready in portable Python")
+        return
+    print("  [INFO] Tutor FSRS unavailable in portable Python; installing pinned version...")
+    install = subprocess.run([py, "-m", "pip", "install", "fsrs==6.3.2"],
+                             cwd=REPO, capture_output=True, text=True)
+    if install.returncode != 0 or check().returncode != 0:
+        print("  [FAIL] FSRS 6.3.2 could not be installed/verified in portable Python")
+        print("  " + (install.stderr or install.stdout)[-1200:])
+        sys.exit(1)
+    print("  [OK] Tutor FSRS 6.3.2 installed and verified")
 
 def ensure_live2d_dependencies(python_dir):
     python_exe = os.path.join(python_dir, "python.exe")
@@ -890,11 +920,13 @@ if os.path.exists(portable_src):
         print("  [OK] Portable Python source == destination (skipping copy)")
         ensure_portable_python_can_import_src(portable_dst)
         ensure_live2d_dependencies(portable_dst)
+        ensure_tutor_fsrs_dependency(portable_dst)
     else:
         print("  Deploying Portable Python Runtime to build... This may take a while.")
         shutil.copytree(portable_src, portable_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "pip-cache"))
         ensure_portable_python_can_import_src(portable_dst)
         ensure_live2d_dependencies(portable_dst)
+        ensure_tutor_fsrs_dependency(portable_dst)
         print("  [OK] Portable Python deployed")
 elif os.path.exists(portable_dst):
     print("  [OK] Portable Python pre-deployed at build output (skipping copy)")
