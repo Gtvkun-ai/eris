@@ -84,6 +84,12 @@ class CoordinatorShutdownMixin:
         if callable(repair_close):
             repair_close()
         self.running = False
+        canvas_inbox = getattr(self, "canvas_control_inbox", None)
+        if canvas_inbox is not None:
+            canvas_inbox.stop()
+        canvas_service = getattr(self, "learning_canvas_service", None)
+        if canvas_service is not None:
+            canvas_service.close()
         # P2: ngắt quyết định goal nền trước khi tháo Subject/Work Session.
         goal_driver = getattr(self, "_identity_goal_driver", None)
         if goal_driver is not None:

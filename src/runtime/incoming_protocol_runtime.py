@@ -339,6 +339,22 @@ class IncomingProtocolRuntimeMixin:
         }, channel="agent_console")
 
 
+    def _handle_learning_canvas_request(self, msg: dict) -> None:
+        """UI-only lane: no user turn, generation bump, kernel call or audio cancel."""
+        canvas = getattr(self, "learning_canvas_service", None)
+        try:
+            if canvas is None:
+                result = {"type": "learning_canvas_ack", "parse_mode": "learning_canvas_ack",
+                          "should_speak": False, "request_id": str(msg.get("request_id", ""))[:120],
+                          "status": "unavailable", "message": "Learning Canvas chưa sẵn sàng."}
+            else:
+                result = canvas.handle(msg)
+        except Exception as exc:
+            result = {"type": "learning_canvas_ack", "parse_mode": "learning_canvas_ack",
+                      "should_speak": False, "request_id": str(msg.get("request_id", ""))[:120],
+                      "status": "error", "message": f"Không đọc được Canvas: {type(exc).__name__}"}
+        self._send_runtime_json(result, channel="learning_canvas")
+
     def _handle_memory_panel_request(self, msg: dict) -> None:
         """Đọc/sửa Living User Memory qua panel Godot.
 

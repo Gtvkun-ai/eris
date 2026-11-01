@@ -370,6 +370,34 @@ class RuntimeCoordinator(
         self.eris_code_observer_link = None
         self.coding_observation_service = None
 
+        # Dedicated lightweight inbound lane: Root/Writer may block foreground
+        # polling for seconds. Exactly one reader owns the original transport;
+        # non-Canvas packets retain their existing foreground dispatch semantics.
+        self.learning_canvas_service = None
+        self.canvas_control_inbox = None
+        try:
+            from runtime.learning_canvas import LearningCanvasService
+
+            if self.learning_service is not None:
+                self.learning_canvas_service = LearningCanvasService(
+                    self.learning_service, store=self.learning_service._store,
+                )
+                from runtime.learning_canvas.events import connect_canvas_host
+                connect_canvas_host(self)
+        except Exception as exc:
+            logger.warning("[learning-canvas] pack unavailable: %s", type(exc).__name__)
+        try:
+            from runtime.learning_canvas.inbox import CanvasControlInbox
+
+            inbox = CanvasControlInbox(
+                self.transport, self._handle_learning_canvas_request, logger=logger,
+            )
+            inbox.start()
+            self.canvas_control_inbox = inbox
+            self.transport = inbox
+        except Exception as exc:
+            logger.warning("[learning-canvas] startup unavailable: %s", type(exc).__name__)
+
     def _supervise_agent_event(self, event: dict) -> None:
         """Deterministic first-line technical supervision for coding-agent execution.
 
@@ -508,10 +536,15 @@ class RuntimeCoordinator(
                     if pending is None:
                         pending = deque(maxlen=128)
                         self._pending_conversation_capability_events = pending
+                    scope = getattr(self, "_canvas_work_scopes", {}).get(str(task_id), {})
+                    metadata = {"work_capability": result.to_dict(), "canvas_scope": scope}
+                    from runtime.learning_canvas.events import allow_canvas_result
+                    if not allow_canvas_result(self, "work_result", metadata, event_id=f"work:{task_id}:{event_type}"):
+                        return
                     pending.append({
                         "event_id": f"work:{task_id}:{event_type}",
                         "kind": "work_result",
-                        "metadata": {"work_capability": result.to_dict()},
+                        "metadata": metadata,
                     })
                     wake = getattr(self, "_wake_autonomous_loop", None)
                     if callable(wake):

@@ -221,6 +221,26 @@ class LearningStore(AssessmentStoreMixin, CatalogStoreMixin):
         except Exception:
             return default
 
+    def compare_and_set_meta_revision(self, key: str, expected_revision: int, value: dict) -> bool:
+        """Atomic CAS for revisioned UI cursors, including separate connections."""
+        payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            db = self._db()
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT value FROM schema_meta WHERE key=?", (key,)).fetchone()
+                current = json.loads(row["value"]) if row else {"revision": 0}
+                if current.get("revision") != expected_revision:
+                    db.rollback()
+                    return False
+                db.execute("INSERT INTO schema_meta(key,value) VALUES (?,?) "
+                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, payload))
+                db.commit()
+                return True
+            except Exception:
+                db.rollback()
+                raise
+
     # ------------------------------------------------------------------
     # LearningPath CRUD
     # ------------------------------------------------------------------

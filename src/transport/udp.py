@@ -548,7 +548,7 @@ class UdpTransport:
 
     def poll_json(self):
         try:
-            data, _ = self._recv_sock.recvfrom(4096)
+            data, _ = self._recv_sock.recvfrom(MAX_UDP_PAYLOAD_BYTES)
             return json.loads(data.decode("utf-8"))
         except (BlockingIOError, OSError):
             return None
