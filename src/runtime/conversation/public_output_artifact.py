@@ -80,12 +80,28 @@ class PreparedPublicOutput:
 def _artifact_hash(*, session_id: str, generation: int, run_id: str, move_id: str,
                    delivery_id: str, channel: str, display_text: str,
                    memory_text: str, speech_text: str, source_fingerprint: str,
-                   segment_hashes: tuple[str, ...]) -> str:
+                   segment_hashes: tuple[str, ...], canvas_hash: str = '') -> str:
     """Niêm phong nội dung đã prepare, độc lập với semantic verifier."""
     values = (session_id, generation, run_id, move_id, delivery_id, channel,
               display_text, memory_text, speech_text, source_fingerprint,
               segment_hashes)
+    if canvas_hash:
+        values += (canvas_hash,)
     return sha(json.dumps(values, ensure_ascii=False, separators=(',', ':')))
+
+
+def canvas_hash(segments):
+    bindings = [(f.segment_id, f.delivery.get("learning_canvas")) for f in segments if f.delivery.get("learning_canvas")]
+    return sha(json.dumps(bindings, sort_keys=True, ensure_ascii=False)) if bindings else ""
+
+
+def reseal_prepared(prepared):
+    """Used only while composing a Root-owned Canvas candidate, before commit."""
+    return replace(prepared, sealed_hash=_artifact_hash(
+        session_id=prepared.session_id, generation=prepared.generation, run_id=prepared.run_id, move_id=prepared.move_id,
+        delivery_id=prepared.delivery_id, channel=prepared.channel, display_text=prepared.display_text,
+        memory_text=prepared.memory_text, speech_text=prepared.speech_text, source_fingerprint=prepared.source_fingerprint,
+        segment_hashes=prepared.segment_hashes, canvas_hash=canvas_hash(prepared.segments)))
 
 
 def prepare_public_output(*, event_id: str, turn: Any, channel: str, decision: Any,
@@ -215,6 +231,7 @@ def validate_prepared(prepared: PreparedPublicOutput) -> None:
         display_text=prepared.display_text, memory_text=prepared.memory_text,
         speech_text=prepared.speech_text, source_fingerprint=prepared.source_fingerprint,
         segment_hashes=prepared.segment_hashes,
+        canvas_hash=canvas_hash(prepared.segments),
     )
     if not prepared.sealed_hash or expected != prepared.sealed_hash:
         raise RuntimeError('public_artifact_seal_mismatch')

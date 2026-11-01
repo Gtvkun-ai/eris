@@ -78,6 +78,7 @@ class NextConversationMove:
     presentation_blocks: tuple[dict[str, Any], ...] = ()
     # Internal executor receipts only. Never sourced from model-provided IDs.
     tool_artifact_bundles: tuple[str, ...] = ()
+    canvas_segments: tuple[dict[str, str], ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "NextConversationMove":
@@ -101,6 +102,9 @@ class NextConversationMove:
             literal_dialogue=data.get("_runtime_literal_dialogue") is True,
             document_source=str(data.get("document_source", "") or "")[:12000],
             presentation_blocks=_parse_presentation_blocks(data.get("presentation_blocks")),
+            canvas_segments=tuple({"block_id": str(p.get("block_id", ""))[:120], "say": str(p.get("say", ""))[:1200]}
+                for p in (data.get("canvas_segments") or ())[:6] if isinstance(p, Mapping))
+                if isinstance(data.get("canvas_segments", ()), (tuple, list)) else (),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,6 +118,7 @@ class NextConversationMove:
             "after": self.after.value,
             **({"document_source": self.document_source} if self.document_source else {}),
             **({"presentation_blocks": list(self.presentation_blocks)} if self.presentation_blocks else {}),
+            **({"canvas_segments": list(self.canvas_segments)} if self.canvas_segments else {}),
         }
 
 

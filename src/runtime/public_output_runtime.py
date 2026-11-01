@@ -1228,6 +1228,14 @@ class PublicOutputRuntimeMixin:
             "error": str(getattr(event, "error", "") or ""),
             "prosody_style": str(getattr(stage_frame, "prosody_style", "") or ""),
         }
+        binding = dict(getattr(stage_frame, "delivery", {}) or {}).get("learning_canvas", {})
+        if isinstance(binding, dict) and binding:
+            record["generation"] = int(binding.get("generation", 0))
+            canvas = getattr(self, "learning_canvas_service", None)
+            if canvas is not None:
+                packet = canvas.playback.event(event_type, record["turn_id"], record["segment_id"])
+                if packet:
+                    self._send_runtime_json(packet, channel="learning_canvas")
         audio_dur = int(getattr(event, "audio_duration_ms", 0) or getattr(stage_frame, "audio_duration_ms", 0) or 0)
         if audio_dur > 0:
             record["audio_duration_ms"] = audio_dur

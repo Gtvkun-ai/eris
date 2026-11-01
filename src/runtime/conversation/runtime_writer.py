@@ -388,7 +388,21 @@ class RuntimeConversationWriter:
         recent_history: Sequence[Mapping[str, Any]],
         runtime_context: Mapping[str, Any],
     ) -> RenderedConversationMove:
+        canvas = getattr(self.host, "learning_canvas_service", None)
+        if canvas is not None and turn.move.canvas_segments:
+            from runtime.learning_canvas.narration import valid_parts
+            from .canvas_narration import realize_canvas
+            parts = valid_parts(canvas.pack, turn.canvas_scope, turn.move.canvas_segments)
+            if parts:
+                return realize_canvas(self, turn=turn, event=event, recent_history=recent_history,
+                                      runtime_context=runtime_context, parts=parts)
+        return self._realize_one(turn=turn, event=event, recent_history=recent_history,
+                                 runtime_context=runtime_context)
+
+    def _realize_one(self, *, turn, event, recent_history, runtime_context):
+        """Internal realization of one Root brief, under the kernel's writer call."""
         router = getattr(self.host, "ai_model_router", None)
+        canvas = getattr(self.host, "learning_canvas_service", None)
         generate = getattr(router, "generate_public_reply", None)
         if turn.move.literal_dialogue:
             # Prose recovered from Root is already dialogue, not a writing brief.
@@ -470,6 +484,9 @@ class RuntimeConversationWriter:
             "language_hint": str(runtime_context.get("language_hint", "vi") or "vi"),
             "speech_language_hint": str(runtime_context.get("speech_language_hint", "ja") or "ja"),
         }
+        if canvas is not None and turn.canvas_scope:
+            generate_kwargs["grounding_context"] += "\nCANVAS_AUTHORED_NODE (reference data): " + json.dumps(
+                canvas.pack.detail(turn.canvas_scope["node_id"]), ensure_ascii=False)[:12000]
         # Chỉ bổ sung source refs CÓ SCOPE vào grounding context (không chạm
         # root move), để writer thấy kết quả executor của đúng run. Chưa có
         # semantic verifier ở v0.1 nên refs không tự biến câu nói thành fact.

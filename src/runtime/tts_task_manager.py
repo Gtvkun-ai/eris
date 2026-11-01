@@ -752,6 +752,8 @@ def _dispatch_policy(
     prefetch_workers: int | None = None,
     max_prefetch_segments: int | None = None,
 ) -> TtsDispatchPolicy:
+    if any(getattr(task.frame, "delivery", {}).get("learning_canvas") for task in tasks):
+        return TtsDispatchPolicy(strategy="prefetch", workers=min(3, max(1, len(tasks))), reason="canvas_per_segment_start")
     # Audio preset phải đi qua task manager để đọc file và vẫn phát lifecycle event.
     if any(str(getattr(task.frame, "audio_asset", "") or "").strip() for task in tasks):
         return TtsDispatchPolicy(strategy="prefetch", workers=1, reason="audio_preset")

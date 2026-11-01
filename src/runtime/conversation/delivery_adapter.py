@@ -199,6 +199,13 @@ class RuntimeConversationDeliveryAdapter:
                         or state.active_delivery_id != did):
                     raise RuntimeError("v03_preempted_before_dispatch")
             # Gửi artifact đã niêm phong; không có semantic verifier receipt.
+            canvas = getattr(self.host, "learning_canvas_service", None)
+            if canvas is not None and turn.canvas_scope:
+                packet = canvas.playback.register(did, turn.generation, turn.canvas_scope,
+                    {f.segment_id: f.delivery.get("learning_canvas", {}).get("block_id", "") for f in prepared.segments},
+                    session_id=turn.session_id)
+                if packet:
+                    self.host._send_runtime_json(packet, channel="learning_canvas")
             accepted = send(decision, channel=channel, prepared=prepared)
         else:
             accepted = send(decision, channel=channel)
@@ -374,9 +381,14 @@ class RuntimeConversationDeliveryAdapter:
             state = reducer() if callable(reducer) else None
             apply_stage(decision,turn.move.delivery or "neutral",state=state,channel=channel)
         clean["user_text"] = str(getattr(self.host,"current_stage_user_text","") or "") if channel == "chat" else ""
-        return prepare_public_output(event_id=event.event_id,turn=turn,channel=channel,
+        prepared = prepare_public_output(event_id=event.event_id,turn=turn,channel=channel,
                                      decision=decision,payload=clean,
                                      source_fingerprint=source_fingerprint)
+        canvas = getattr(self.host, "learning_canvas_service", None)
+        if canvas is not None and turn.canvas_scope:
+            from .canvas_narration import bind_prepared
+            prepared = bind_prepared(prepared, turn.canvas_scope, canvas.pack)
+        return prepared
 
     @staticmethod
     def _channel_for(rendered: RenderedConversationMove) -> str:
