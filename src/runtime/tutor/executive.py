@@ -26,9 +26,7 @@ from runtime.tutor.contracts import (
     ContextTurn,
     LearnerHypothesis,
     SemanticAssessment,
-    TeachingMove,
     TutorDecision,
-    TutorDiagnosis,
     TutorObservation,
     TutorState,
 )
@@ -163,6 +161,8 @@ class TutorExecutive:
             path = self.learning.active_path()
             if path is None:
                 return None
+            if path.path_id != self._state.path_id or previous.kp_id not in path.kp_ids:
+                return None
             step = self.learning.next_tutor_step(learner=learner, now=ts)
             if step is None:
                 return None
@@ -178,6 +178,8 @@ class TutorExecutive:
             )
             assessment = self.reasoner.assess_response(observation, self._state, previous)
             if assessment is None:
+                return None
+            if assessment.kp_id != previous.kp_id:
                 return None
             committed = self._apply_semantic_assessment(
                 assessment, interaction_id=previous.move_id, turn_id=turn_id, now=ts,
@@ -280,6 +282,8 @@ class TutorExecutive:
             if step.kind == "advance" and step.kp_id:
                 self.learning.advance_kp(step.kp_id)
             if move.move_id:
+                if move.requires_user_response:
+                    self.learning._store.register_assistance(move.move_id, move.kp_id)
                 self._committed_move_ids[move.move_id] = None
                 while len(self._committed_move_ids) > 128:
                     self._committed_move_ids.pop(next(iter(self._committed_move_ids)))
@@ -369,6 +373,10 @@ class TutorExecutive:
             recent_history=history,
             signals=tuple(str(item) for item in signals),
             now=now,
+            source_context=tuple({key: (value[:1600] if key == "excerpt" else value)
+                                  for key, value in span.items()
+                                  if key in {"span_id", "source_id", "locator", "excerpt", "source_kind", "content_hash", "origin"}}
+                                 for span in self.learning.search_sources(kp.title + " " + kp.description, limit=3)),
         )
 
     @staticmethod
@@ -415,6 +423,16 @@ class TutorExecutive:
         review_recall: bool = False,
     ) -> bool:
         if assessment.verdict == "uncertain" or assessment.confidence < self.semantic_commit_confidence:
+            from runtime.learning_core.records import AssessmentAttempt, digest
+            help_state = self.learning._store.assistance_for(interaction_id)
+            self.learning.record_attempt(AssessmentAttempt(
+                attempt_id="attempt:" + digest([assessment.kp_id, interaction_id, turn_id])[:32],
+                kp_id=assessment.kp_id, result="ungraded", evidence_type="exposure",
+                interaction_id=interaction_id, turn_id=turn_id,
+                path_id=self._state.path_id, assistance=help_state["assistance"],
+                hint_count=help_state.get("hint_count",0),
+                assessor_version="semantic-v1", recorded_at=now,
+            ))
             return False
         evidence_type = self._normalized_evidence_type(assessment)
         evidence = self.learning.commit_evidence(
@@ -426,6 +444,9 @@ class TutorExecutive:
             interaction_id=interaction_id,
             error_code=assessment.error_code,
             review_recall=review_recall,
+            item_family_id=("recall:" + hashlib.sha256(assessment.kp_id.encode()).hexdigest()[:32])
+            if review_recall else interaction_id,
+            result={"pass": "correct", "partial": "partial", "fail": "incorrect"}[assessment.verdict],
             now=now,
         )
         return evidence is not None

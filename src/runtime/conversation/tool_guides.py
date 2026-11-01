@@ -55,7 +55,26 @@ TOOL_GUIDES: dict[str, str] = {'rich_chat': 'Rich Chat P1 tự dựng document_s
  'tutor': 'Capability tutor: chỉ gọi khi cần dạy, kiểm tra hoặc quay lại kiến thức. Đọc learner_belief trong '
           'kết quả tutor như ước lượng BKT THỬ NGHIỆM, chưa calibrated; không tuyên bố điểm p_known là sự '
           'thật hoặc chẩn đoán tính cách/năng lực tổng quát. Nếu needs_probe=true, ưu tiên yêu cầu thêm bài '
-          'độc lập thay vì khẳng định đã hiểu; người học có quyền đổi chủ đề, không ép học liên tục. '}
+          'độc lập thay vì khẳng định đã hiểu; người học có quyền đổi chủ đề, không ép học liên tục. '
+          'Các operation: advise (mặc định); activity với preset=python.range|python.accumulator|python.filter '
+          'mở bài tập. start_path tạo hoặc tiếp tục lộ trình từ yêu cầu học chủ đề mới trong tin user gốc; '
+          'chỉ dùng khi user muốn bắt đầu/đổi môn, có thể unavailable nếu model không lập được kế hoạch. activity '
+          'mở bài dự đoán mã trong Rich Chat; readiness báo module thật. Tin user bắt đầu ERIS_LEARN là '
+          'thao tác nút của bài học: gọi operation=activity_event, backend chỉ đọc event user gốc và tự chấm '
+          'theo khóa đáp án, không nhận answer/correct do Root gán. Bài dự đoán mã không phải chạy Python. '
+          'operation=help với reveal=false|true dành cho yêu cầu gợi ý/lời giải của câu hỏi chat đang chờ; '
+          'gọi help thay vì chấm yêu cầu giúp đỡ như một đáp án. Trạng thái trợ giúp chỉ ghi sau delivery. '
+          'operation=attempts,kp_id? xem bằng chứng; retention,kp_id? xem FSRS shadow; curriculum xem path '
+          'và revision; sources,query,source_ids? tìm trong domain đang học. Nguồn trả về có loại, locator '
+          'và hash; model_summary không phải nguyên văn tài liệu gốc. '
+          'import_notes lưu chính nội dung user hiện tại thành ghi chú; import_source,path chỉ đọc file có '
+          'đường dẫn tuyệt đối do user nêu tường minh trong tin hiện tại, parser PDF tùy chọn có thể unavailable. '
+          'preview_curriculum,path,source_refs,reason trả diff xác định; revise_curriculum thêm base_revision '
+          'từ curriculum/preview để commit. Giữ nguyên skill ID khi chỉ đổi thứ tự; khái niệm đổi nghĩa cần ID mới. '
+          'Mục tiêu mới cần nguồn trong cùng domain. evaluation báo số liệu quan sát, chưa chứng minh cải thiện nhân quả. '
+          'dispute_attempt,attempt_id tạm đưa '
+          'đánh giá bị user phản đối về ungraded; forget_attempt,attempt_id xóa lần làm và chuỗi sửa. '
+          'Chỉ sửa/xóa khi user yêu cầu. Không tự gán correct cho một lần làm bị phản đối. '}
 
 
 def read_tool_guide(name: str) -> dict:

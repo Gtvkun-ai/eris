@@ -74,7 +74,8 @@ def _json_size(value: Any, label: str, maximum: int) -> bytes:
 def _content(kind: str, content: dict) -> None:
     if kind == 'math':
         _str(content.get('latex'), 'math.latex', maximum=8000)
-        if 'plain_text' in content: _str(content['plain_text'], 'math.plain_text', maximum=12000, empty=True)
+        if 'plain_text' in content:
+            _str(content['plain_text'], 'math.plain_text', maximum=12000, empty=True)
     elif kind == 'chart':
         _str(content.get('chart_type'), 'chart.chart_type', maximum=40)
         if not isinstance(content.get('series'), list) or not content['series']:
@@ -130,6 +131,20 @@ def validate_artifact(value: Mapping[str, Any]) -> dict:
         raise ArtifactContractError('artifact.kind: unsupported')
     _int(item.get('revision'), 'revision')
     content = _obj(item.get('content'), 'content')
+    if 'activity' in content:
+        if item.get('source') != 'tutor_activity' or kind != 'document':
+            raise ArtifactContractError('activity: trusted tutor source required')
+        activity = _obj(content['activity'], 'activity')
+        if set(activity) != {'activity_id', 'nonce', 'revision', 'options'}:
+            raise ArtifactContractError('activity: invalid fields')
+        if not re.fullmatch(r'activity:[a-f0-9]{32}', str(activity.get('activity_id', ''))):
+            raise ArtifactContractError('activity: invalid id')
+        for field, length in (('nonce', 32), ('revision', 64)):
+            if not re.fullmatch(r'[a-f0-9]{' + str(length) + r'}', str(activity.get(field, ''))):
+                raise ArtifactContractError('activity: invalid ' + field)
+        if (not isinstance(activity.get('options'), list) or not 2 <= len(activity['options']) <= 6
+                or any(not isinstance(x, str) or not x or len(x) > 500 for x in activity['options'])):
+            raise ArtifactContractError('activity: invalid choices')
     _content(kind, content)
     presentation = _obj(item.get('presentation'), 'presentation')
     targets = presentation.get('target')
@@ -334,9 +349,9 @@ def write_bundle_sidecar(bundle: Mapping[str, Any], workspace: str | Path) -> Pa
         # Linking is atomic and refuses to clobber a concurrent writer.
         try:
             os.link(temporary, target)
-        except FileExistsError:
+        except FileExistsError as exc:
             if target.read_bytes() != serialized:
-                raise ArtifactContractError('sidecar: conflicting writer')
+                raise ArtifactContractError('sidecar: conflicting writer') from exc
         return target
     finally:
         temporary.unlink(missing_ok=True)

@@ -54,10 +54,21 @@ const ErisArtifacts = (() => {
         body=ErisRender.chartSvg(values,labels.map(String),String(content.title||''),content.chart_type);
       if (!body) return {html:'',error:'E_UNSUPPORTED_KIND'};
     } else return {html:'',error:'E_UNSUPPORTED_KIND'};
+    const activity=content.activity;
+    if(activity && artifact.source==='tutor_activity' &&
+        /^activity:[a-f0-9]{32}$/.test(activity.activity_id||'') &&
+        /^[a-f0-9]{32}$/.test(activity.nonce||'') &&
+        Array.isArray(activity.options) && activity.options.length>=2 && activity.options.length<=6){
+      body+='<div class="learning-activity" role="group" aria-label="Chọn câu trả lời">'+
+        activity.options.map((choice,index)=>`<button type="button" class="learning-choice" data-learning-action="answer" data-learning-choice="${index}">${escape(choice)}</button>`).join('')+
+        '<div class="learning-help"><button type="button" data-learning-action="hint">Gợi ý thêm một bước</button>'+
+        '<button type="button" data-learning-action="reveal">Xem lời giải</button></div>'+
+        '<p class="learning-status" aria-live="polite">Tự thử trước, rồi nhờ Eris gợi ý khi cần.</p></div>';
+    }
     if (!body) return {html:'',error:'E_RENDER'};
     const title = String(artifact.presentation?.title || ({math:'Công thức',code:'Mã nguồn',table:'Bảng dữ liệu',document:'Tài liệu',chart:'Biểu đồ'}[kind]||'Artifact')).slice(0,200);
     const html = `<section class="artifact-card" data-artifact-id="${artifact.artifact_id}" data-revision="${Number(artifact.revision)||1}">`+
-      `<header><span class="artifact-mark">✧</span> ${escape(title)} <small>${escape(kind)}</small></header>`+
+      `<header><span class="artifact-mark">✧</span> ${escape(title)} <small>${escape(activity?'Bài tập':kind)}</small></header>`+
       `<div class="artifact-body">${body}</div></section>`;
     return {html,error:null,hasMath:kind==='math'||body.includes('class="math-block"')||/\\\[|\\\(/.test(body)};
   }

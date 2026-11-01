@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
-from typing import Any, Sequence
+from typing import Any
 
-from runtime.learning_core.contracts import PendingInteraction, PENDING_STATUSES
-from runtime.learning_core.grading import GradingResult, grade_choice, quality_from_evidence_type
+from runtime.learning_core.contracts import PendingInteraction
+from runtime.learning_core.grading import GradingResult, grade_choice
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +56,10 @@ class PendingInteractionLedger:
 
     def __init__(self) -> None:
         self._items: dict[str, PendingInteraction] = {}
+
+    def restore_from_store(self, interaction: PendingInteraction) -> None:
+        """Refresh a cache entry from authoritative SQLite after restart/rollback."""
+        self._items[interaction.interaction_id] = interaction
 
     # ------------------------------------------------------------------
     def add(self, interaction: PendingInteraction) -> bool:

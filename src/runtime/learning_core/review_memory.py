@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from runtime.learning_core.contracts import LearningEvidence, ReviewItem
+from runtime.learning_core.records import independent as is_independent
 
 DAY = 86400.0
 _SUCCESS = frozenset({"quiz_correct", "feynman_pass", "application", "paraphrase"})
@@ -102,6 +103,8 @@ def update_review_memory(
     - Lượt answer sai thông thường không tự reset lịch đã ấn định.
     """
     reviewed, hint_count = _is_review(evidence)
+    if not is_independent(evidence):
+        return current_item, current_memory
     good = evidence.correct and evidence.evidence_type in _SUCCESS and evidence.strength >= .65
     bad = not evidence.correct and evidence.evidence_type in _FAILURE
     if current_item is None and current_memory is None:

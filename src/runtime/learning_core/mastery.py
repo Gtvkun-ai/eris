@@ -7,11 +7,13 @@ Key differences from the original:
 - Confidence cap is a separate parameter, not stored separately.
 - No DB I/O; caller (LearningService / LearningStore) handles persistence.
 """
+
 from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, replace
+from runtime.learning_core.records import independent, evidence_metadata
+from dataclasses import dataclass
 from typing import Sequence
 
 from runtime.learning_core.contracts import (
@@ -27,7 +29,7 @@ from runtime.learning_core.contracts import (
 # ---------------------------------------------------------------------------
 
 # Recency half-life for evidence weighting (seconds)
-_HALF_LIFE_SECONDS: float = 7 * 24 * 3600.0   # 1 week
+_HALF_LIFE_SECONDS: float = 7 * 24 * 3600.0  # 1 week
 
 # Minimum / maximum evidence contribution per item
 _EVIDENCE_WEIGHT_MIN: float = 0.10
@@ -42,15 +44,15 @@ _MISCONCEPTION_DECAY: float = 0.05
 
 # Strength bonus per evidence type
 _STRENGTH_MAP: dict[str, float] = {
-    "quiz_correct":    1.00,
-    "feynman_pass":    1.00,
-    "application":     0.85,
-    "paraphrase":      0.70,
-    "quiz_incorrect":  0.00,
-    "feynman_fail":    0.00,
-    "misconception":   0.00,
-    "self_report":     0.20,
-    "exposure":        0.10,
+    "quiz_correct": 1.00,
+    "feynman_pass": 1.00,
+    "application": 0.85,
+    "paraphrase": 0.70,
+    "quiz_incorrect": 0.00,
+    "feynman_fail": 0.00,
+    "misconception": 0.00,
+    "self_report": 0.20,
+    "exposure": 0.10,
 }
 
 
@@ -73,7 +75,9 @@ class MasteryPolicy:
                 n = d
             return max(lo, min(hi, n))
 
-        object.__setattr__(self, "half_life_seconds", _f(self.half_life_seconds, _HALF_LIFE_SECONDS, 3600.0, 365 * 86400.0))
+        object.__setattr__(
+            self, "half_life_seconds", _f(self.half_life_seconds, _HALF_LIFE_SECONDS, 3600.0, 365 * 86400.0)
+        )
         object.__setattr__(self, "confidence_cap", _f(self.confidence_cap, _CONFIDENCE_CAP, 0.5, 1.0))
         object.__setattr__(self, "misconception_decay", _f(self.misconception_decay, _MISCONCEPTION_DECAY, 0.0, 0.5))
 
@@ -84,6 +88,7 @@ DEFAULT_POLICY = MasteryPolicy()
 # ---------------------------------------------------------------------------
 # Pure computation functions
 # ---------------------------------------------------------------------------
+
 
 def _recency_weight(evidence_at: float, now: float, half_life: float) -> float:
     """Exponential decay weight; older evidence contributes less."""
@@ -127,6 +132,18 @@ def compute_mastery(
     error_codes: list[str] = []
     misconception_count = 0
     last_at = 0.0
+    success_families: set[str] = set()
+    success_turns: set[str] = set()
+    # Keep the latest independent observation per explicit item family for
+    # scoring. All attempts remain in the audit count, but reopening the same
+    # template cannot drown out failures on other skills/items.
+    scored = {}
+    for ev in kp_evidence:
+        if independent(ev):
+            family = evidence_metadata(ev).get("item_family_id")
+            scored[("family", family) if family else ("evidence", ev.evidence_id)] = ev
+    scored_ids = {ev.evidence_id for ev in scored.values()}
+    independent_attempts = 0
 
     for ev in kp_evidence:
         w = _recency_weight(ev.recorded_at, ts, policy.half_life_seconds)
@@ -134,15 +151,30 @@ def compute_mastery(
         base_strength = _STRENGTH_MAP.get(ev.evidence_type, 0.0)
         # Use the stored strength field for types that support variable strength
         effective_strength = base_strength * max(0.0, min(1.0, ev.strength)) if base_strength > 0.0 else 0.0
-        weighted_sum += w * effective_strength
-        weight_total += w
+        if not independent(ev):
+            effective_strength = 0.0
+        eligible = ev.evidence_id in scored_ids
+        if eligible:
+            weighted_sum += w * effective_strength
+            weight_total += w
 
         if ev.evidence_type not in {"exposure", "self_report"}:
             attempt_count += 1
-            if ev.correct:
+            if eligible:
+                independent_attempts += 1
+            family = evidence_metadata(ev).get("item_family_id") or ev.interaction_id or ev.turn_id or ev.evidence_id
+            if (
+                ev.correct
+                and eligible
+                and family not in success_families
+                and (not ev.turn_id or ev.turn_id not in success_turns)
+            ):
                 correct_count += 1
+                success_families.add(family)
+                if ev.turn_id:
+                    success_turns.add(ev.turn_id)
 
-        if ev.evidence_type == "misconception":
+        if ev.evidence_type == "misconception" and eligible:
             misconception_count += 1
             if ev.error_code:
                 error_codes.append(ev.error_code)
@@ -159,13 +191,16 @@ def compute_mastery(
     mastery = max(0.0, min(policy.confidence_cap, raw))
 
     # Confidence: reflects consistency of recent performance
-    recent_correct = sum(
-        1 for e in kp_evidence[-5:]
-        if e.evidence_type in {"quiz_correct", "feynman_pass", "application"} and e.correct
+    recent_correct = len(
+        {
+            evidence_metadata(e).get("item_family_id") or e.interaction_id or e.turn_id or e.evidence_id
+            for e in sorted(scored.values(), key=lambda e: e.recorded_at)[-5:]
+            if e.evidence_type in {"quiz_correct", "feynman_pass", "application"} and e.correct and independent(e)
+        }
     )
     confidence = min(1.0, recent_correct / 5.0)
 
-    stage = _assign_stage(mastery, attempt_count, correct_count)
+    stage = _assign_stage(mastery, independent_attempts, correct_count)
 
     return MasteryRecord(
         kp_id=kp_id,

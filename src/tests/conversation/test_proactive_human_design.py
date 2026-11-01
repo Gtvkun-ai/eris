@@ -114,6 +114,9 @@ class Learning:
     def active_path(self):
         return self.path
 
+    def register_domain(self, domain):
+        self.domain = domain
+
     def register_path(self, path, *, now=None):
         self.path = path
 
@@ -126,7 +129,9 @@ def test_auto_path_uses_model_concepts_and_durable_source():
     path = propose_learning_path(router, topic_text="Dạy tôi Python")
     assert path is not None and path.source == "eris_auto"
     assert len(path.knowledge_points) == 3
-    assert path.knowledge_points[1].prerequisites == ("a",)
+    assert path.domain_id
+    assert all(kp.kp_id.startswith(path.domain_id + ":") for kp in path.knowledge_points)
+    assert path.knowledge_points[1].prerequisites == (path.knowledge_points[0].kp_id,)
     assert propose_learning_path(PlanRouter(value=False), topic_text="Dạy tôi Python") is None
 
 
@@ -152,7 +157,7 @@ def test_autopath_survives_learning_service_restart(tmp_path):
     after = restarted.active_path()
     assert after is not None and after.path_id == before.path_id
     assert after.source == "eris_auto"
-    assert after.knowledge_points[2].prerequisites == ("b",)
+    assert after.knowledge_points[2].prerequisites == (after.knowledge_points[1].kp_id,)
 
 
 def test_b_confusion_opens_path_with_substantive_context():

@@ -1828,3 +1828,166 @@ Backup Documents/eris/backups/gemini-memory-quality-20261031-212904.
 Artifact eris-gemini-memory-quality-20261031/ có live-eval.json (lượt đầu),
 live-eval-refined.json, live-curation.json, deployment.json, portable-smoke.json
 và launcher host service tái lập được. Không đưa log service/cookie vào báo cáo.
+
+## 42. Ngày 31/10: dọn profile cũ theo yêu cầu mới, giữ lịch sử phục hồi
+
+User yêu cầu trực tiếp “dọn memory cũ rác”. Đây là authorization mới cho việc
+dọn dữ liệu, thay giới hạn chỉ kiểm kê/chỉ sửa code ở mục 40–41. Khi Eris được
+mở lại trong lúc rà, đã hỏi cách tránh ghi đè writer đang chạy; user chọn
+**tự đóng Eris**. Chỉ áp sau khi xác nhận Eris/runtime đã dừng; không force kill
+và không tự mở app lại để phát sinh mutation trong kiểm tra.
+
+**Review:** Gemini Web Flash-Lite đã xem 123 record active/disputed theo ba
+nhóm, với 71 episode secondary và 72 entry UI history. Không giả định ref
+session_turn:N xác định duy nhất một nguồn. Đề xuất ban đầu có dẫn sai UI index,
+gộp mất điều kiện, dùng merge sai semantics và muốn bỏ nhu cầu chủ động quan tâm;
+không áp tự động. Codex đối chiếu lại nguồn và lập 59 operation tường minh,
+lượt Gemini phản biện sau đó accept đủ 59. Không dùng semantic keyword filter,
+không ép quota giảm số record, không coi mọi câu đùa đều rác: giữ pattern trêu
+thân mật/cách gọi/giọng chill có căn cứ, cất các tình tiết biểu diễn một lần.
+
+- Cất 53 record khỏi profile active: nhãn tự chê tiếng Anh/code/đồ họa; đề bài
+  toán/thuật ngữ, chủ đề từng hỏi và tiến độ xem nhất thời; luật global suy từ
+  yêu cầu cười/khóc/idol/diễn một lần; phản ứng/roleplay/cảm thán cụ thể.
+  Archive có thể phục hồi, không hard-delete nguồn hay kết luận đã làm xong bài.
+- Sáu nhóm canonicalize giữ đủ ý: bản sắc/cảm xúc, giải thích đánh giá cụ thể,
+  giải thích lại khi chưa hiểu và bám đúng đề toán, phản hồi MBTI có căn cứ/
+  nhất quán/không chẩn đoán, bốn cách gọi thân mật, đánh giá cao sáng tạo của
+  Eris. Giữ union evidence; chỉ đổi ID liệt kê, multi cho path có nhiều nhu cầu.
+- Giữ tên/vai trò người tạo, tự nhận INTP, dự án tự vẽ/rig và vướng xoay mặt/3D,
+  ChatGPT cho đồ án/Gemini cho vision, nhu cầu học/quan điểm riêng/chủ động hỏi
+  thăm, sở thích và các record khác ngoài danh sách. Bốn core anchor giữ nguyên.
+- Sửa 25 episode: bỏ 38 open_loop không phải công việc thực sự (câu xã giao
+  chưa được trả lời, phát ngôn/lời đùa chép vào open_loop, dự đoán sẽ quay lại).
+  Sửa summary/user_signals đoạn “mỹ nữ” thành ngữ cảnh video YouTube, không
+  gán đang chơi game hay hành vi tán tỉnh ngoài đời. Giữ việc/câu hỏi khó thực sự
+  chưa rõ kết quả theo lịch sử, không tự đánh dấu completed. Giữ toàn bộ episode,
+  nguồn/ID/timestamp/scope. Review episode Gemini bị thiếu coverage rồi timeout;
+  25 sửa cuối ghi rõ **Codex semantic review**, không tuyên bố Gemini đã xác minh.
+- Chuyển commitment completed commit_dcbd3d748a0bd60762 sang archived qua
+  ActionMemoryStore có audit. Đây là đoạn phản hồi triết lý dài của assistant
+  bị lưu nhầm, không phải lời hứa/hành động. Không có goal/workflow để dọn.
+
+**Concurrent state:** lúc đầu profile v209 có 120 active/3 disputed. App tự chạy
+GC trong lúc rà, đổi 9 record (gồm trạng thái disputed), tạo thêm episode rồi
+profile tới v211. Đã giữ snapshot/audit thay đổi đồng thời; không ghi cả backup
+v209 đè lên bản mới. Hai source trùng 71922f/64ea44 đã superseded và hấp thụ vào
+target tương ứng thì bỏ khỏi input canonicalize mới, giữ evidence đã hấp thụ.
+Các record ngoài operation so với v211 được giữ deep-equal; không nói rằng đợt
+dọn này tự xác nhận các disputed. Không hồi lại trạng thái cũ bằng suy đoán.
+
+**Đã áp 22:02:** profile v211 → v212: **118 → 55 active**; tổng vẫn 149 record,
+gồm 55 active, 39 superseded, 53 archived, 2 deleted cũ. 59 operation thay đúng
+69 record, 80 record khác giữ nguyên. Episode vẫn **72**, giữ cả episode mới
+phát sinh trong lúc review. 26 file memory/config/UI history ngoài ba target giữ
+nguyên hash. Không thay seed cá tính, concept graph, observer/vision/TTS, inbox
+hay transcript. Không gọi build hoặc sửa source runtime trong đợt dọn dữ liệu.
+
+Backup ngay trước áp tại
+`Documents/eris/backups/old-memory-cleanup-apply-20261031-220220/`, thêm backup
+đầu phiên `old-memory-cleanup-20261031-213943/`. Áp có guard runtime đã tắt,
+hash precondition từng target, marker chống áp lại; ghi từng file atomic sau khi
+đã backup đủ ba file (không phải transaction atomic xuyên ba file).
+Smoke bằng module chính portable xác nhận load 55 current/149 total, đủ 4 core
+anchor, 72 episode, commitment archived và ID đã archived không còn trong
+snapshot profile. Load kiểm tra không đổi hash. Không tuyên bố đã test hội thoại
+live sau dọn. Artifact `eris-old-memory-cleanup-20261031/` có proposals, phản
+biện, diff, staged candidates, `stage_apply.py`, `applied.json`, `verification.json`
+và `cleanup-review.md`. Toàn bộ transcript/episode được giữ để truy hồi bối cảnh;
+archive profile không đồng nghĩa xóa ký ức lịch sử.
+
+## 43. Ngày 31/10: cơ chế hoạt động Inner Diary và kết nối modern digest trong C#
+
+User nhận thấy panel Inner Diary (nhật ký nội tâm) bị trống, nghi ngờ không có
+luồng dữ liệu điền vào và hỏi cơ chế vận hành hiện tại.
+
+**Cơ chế thực tế theo kiến trúc:**
+- **Hệ thống cũ (Legacy):** Từng dùng một background worker (`PrivateMindLoop`)
+  chạy một vai trò mô hình độc lập (`ERIS_INNER_DIARY_WORKER_ROLE`) để sinh ra
+  các shard văn bản tách rời (`current_thought`, `future_bias`, `open_concerns`,
+  `temporary_thoughts`, `surface_bias`). Luồng này đã bị retire vì gây lãng phí
+  token, trễ pha và dễ sinh ảo giác (hallucination) không khớp nhận thức trung tâm.
+- **Kiến trúc hiện tại (Architecture C - `ai_orchestrated.v3`):** Không còn luồng
+  model độc lập riêng để bịa shard. Nhận thức của Eris được thống nhất trong
+  `RuntimeMindState` (gồm động cơ `active_motives`, mâu thuẫn `active_conflict`,
+  phòng vệ `activated_defenses`, diễn giải `self_interpretation`, ý định
+  `latest_intention`, khám phá `discovery`, và `open_loops`). Sau mỗi turn hoặc
+  nhịp tự chủ, `ai_orchestrated/panel_adapter.py` chiếu các trường thực này thành
+  bản tóm tắt `private_mind_digest` (schema `eris.inner_state.panel.v1`) và chuyển
+  sang Godot qua gói UDP (hỗ trợ cả gói kèm hội thoại và lane `panel_state_update`).
+  Do đó, luồng dữ liệu **vẫn tồn tại và liên tục được gửi**.
+
+**Nguyên nhân gốc rễ khiến panel trên Godot bị trắng:**
+1. **Lỗi cổng chặn (Gate rejection) tại `PrivateMindDigestHasContent`:**
+   Hàm này chỉ kiểm tra các trường legacy (`TryReadDiarySections`, `menu.current_thought`,
+   v.v.). Khi nhận digest modern (`eris.inner_state.panel.v1`), hàm trả về `false`,
+   khiến gói bị vứt bỏ ngay lập tức và `_latestPrivateMindDebugJson` không bao giờ
+   được cập nhật.
+2. **Thiếu kết nối (Unwired adapter) trong `RefreshPrivateMindPanel`:**
+   Dù `UdpListener.IdentityPrivateMind.cs` đã viết sẵn các hàm adapter (`IsModernIdentityDigest`,
+   `BuildModernIdentityDiarySlots`, `RefreshModernIdentityConcernStack`,
+   `RefreshModernIdentityMemoryEcho`, `RenderModernIdentityDigest`), `RefreshPrivateMindPanel`
+   ở `UdpListener.cs` chưa từng gọi chúng mà chỉ gọi các extractor legacy rỗng.
+
+**Xử lý:**
+- Đã kết nối `IsModernIdentityDigest` và `ModernIdentityDigestHasContent` vào
+  `PrivateMindDigestHasContent` và `PrivateMindWriterSummary`.
+- Trong `RefreshPrivateMindPanel`, phân nhánh nếu là modern digest thì dựng 5 slot
+  nội tâm từ nhận thức thật (`self_interpretation`, `latest_intention`, `active_conflict`,
+  `active_motives`, `activated_defenses`, `discovery`, `open_loops`) và cập nhật
+  sidebar cards.
+- Bổ sung fallback hiển thị `active_motives` trong concern stack khi trạng thái
+  nội tâm đang tĩnh lặng (không có xung đột hay kích hoạt phòng vệ).
+- Đã build C# sạch 0 warning/0 error, export lại Godot `Eris.pck` tươi và chạy
+  `build_dev_fast.bat` thành công 100%. Đã bổ sung bộ kiểm thử tự động tại
+  `src/tests/test_inner_diary_panel_modern_sync.py`.
+
+## Nghiên cứu ngày 31/10: Tutor và các repo mã nguồn mở
+
+Theo yêu cầu user, đã đối chiếu 16 repo bên ngoài với source Tutor hiện tại.
+Xem [bản nghiên cứu và quyết định tích hợp](2026-10-31-tutor-open-source-integration-study.md)
+và [manifest nguồn ghim commit](2026-10-31-tutor-open-source-sources.json).
+
+Đính chính so với khung Learning Intelligence trong bản ghi user gửi: Eris đã có
+LearningService/SQLite, evidence ledger, TutorExecutive, auto-path, BKT shadow và
+review heuristic. Review hiện chưa phải FSRS; BKT tự ghi rõ chưa calibrated.
+Đây là đối chiếu source, không phải xác nhận chất lượng sư phạm hay runtime live.
+
+Hướng đề xuất là mở rộng đúng kernel/capability hiện có: attempt ghi mức trợ giúp,
+nguồn có locator/version, sửa path theo revision, adapter py-fsrs và workspace chọn
+theo hoạt động. Không phục hồi ConceptGraphStore/multi-hop memory đã gỡ ở mục 26;
+prerequisite trong learning path là dữ liệu sư phạm có phạm vi riêng. Root tiếp tục
+sở hữu lời nói và quyết định hội thoại; Tutor trả advice/evidence. Tài liệu đề xuất
+chưa phải thay đổi code, dependency hoặc ủy quyền triển khai tương lai.
+
+Đã chạy ba file test hiện có về learner/persistence/kernel boundary: **19 passed
+in 1.88s**. Chỉ xác nhận các contract offline được test; chưa cài hoặc kiểm thử
+FSRS/Docling/workspace đề xuất và chưa triển khai bản portable trong vòng này.
+
+## Cập nhật ngày 01/11: tích hợp Tutor từ nghiên cứu mã nguồn mở
+
+User đã yêu cầu triển khai và tiếp tục. Đã mở rộng LearningService/TutorCapability
+hiện có với AssessmentAttempt tách kết quả/trợ giúp, correction/forget và projection
+transactional; nguồn có locator/hash/version và retrieval theo domain; curriculum
+namespace/DAG/revision/CAS; py-fsrs 6.3.2 shadow; báo cáo policy observational; ba
+preset bài dự đoán mã Python có nút trong Rich Chat. Root vẫn sở hữu public text/TTS,
+receipt xác nhận giao bài/trợ giúp; không thêm agent loop hoặc phục hồi memory graph.
+Có đường bắt đầu môn mới dùng planner hiện có, tiếp tục path đã lưu mà không ghi đè.
+
+[Báo cáo triển khai v1](2026-11-01-tutor-open-source-integration-v1.md) **thay thế
+kết luận “chỉ có đề xuất/chưa cài hoặc kiểm thử FSRS/workspace” ở mục nghiên cứu
+31/10 cho các phần trên**. FSRS thật đã cài và test trong Python phát triển; mặc
+định shadow, active mode tùy chọn có fallback heuristic rõ scheduler owner.
+Docling chỉ có lazy adapter, chưa cài/test PDF thật; MathLive/JSXGraph/Pyodide chưa
+tích hợp. BKT chưa calibrated và chưa có bằng chứng cải thiện kết quả học nhân quả.
+
+Nhóm Tutor/learner/kernel/workspace đầy đủ cuối: **197 passed, 1 failed** do race
+workspace có sẵn (`queued`/`running`); bộ Tutor mới **33 passed**. Node UI: **3 passed**;
+Ruff và JS syntax pass; C# build **0 warning/0 error**. UI fixture kiểm tra browser
+thật ở 1280px/390px, hint→answer ghi assistance đúng; Root/delivery giả lập, không
+phải model/TTS live. Sáu lỗi của quét conversation rộng tái hiện đúng trên HEAD gốc,
+chi tiết trong báo cáo; race workspace pass khi chạy riêng và ở một lần toàn nhóm
+trước đó, vẫn tái hiện ở lần cuối nên không kết luận bộ kiểm tra xanh hoàn toàn.
+Xác nhận cuối khi tách đúng race đã biết: **197 passed, 1 deselected, 44.91s**,
+không thay source parallel work để đạt kết quả này.
+Chưa export/deploy portable hoặc kiểm tra hội thoại có voice trên bản đang chạy.

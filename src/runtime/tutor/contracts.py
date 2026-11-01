@@ -493,6 +493,7 @@ class TutorObservation:
     recent_history: tuple[ContextTurn, ...] = ()
     signals: tuple[str, ...] = ()
     now: float = 0.0
+    source_context: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "turn_id", _id(self.turn_id))
@@ -519,6 +520,7 @@ class TutorObservation:
                 "kp_type": self.kp_type,
             },
             "policy_step": self.policy_step.to_dict(),
+            "sources": [dict(item) for item in self.source_context[:3]],
             "mastery": self.mastery.to_dict(),
             "learner": self.learner.to_dict(),
             "recent_history": [turn.to_dict() for turn in self.recent_history],

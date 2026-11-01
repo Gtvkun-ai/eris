@@ -7,6 +7,7 @@ của từng lớp. Một process chỉ nên có một LearningService và một
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 from runtime.learning_core import LearningService, LearningStore
@@ -29,7 +30,8 @@ def build_tutor_runtime(
     learner_client: Any = None,
 ) -> TutorRuntimeBundle:
     """Tạo đúng một learning truth + tutor executive cho process hiện tại."""
-    learning = LearningService(store=store or LearningStore(), logger=logger)
+    learning = LearningService(store=store or LearningStore(), logger=logger,
+                               retention_mode=os.getenv("ERIS_LEARNING_RETENTION_MODE", "shadow"))
     reasoner = None
     if callable(getattr(model_router, "invoke_structured_worker", None)):
         reasoner = RuntimeTutorReasoner(model_router, learner_client=learner_client, logger=logger)

@@ -146,6 +146,7 @@ class LearningPath:
     goal: str
     knowledge_points: tuple[KnowledgePoint, ...]
     source: str = "user"            # user | companion | eris_auto
+    domain_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path_id", _sid(self.path_id))
@@ -156,6 +157,7 @@ class LearningPath:
             raise ValueError("learning_path_requires_at_least_one_kp")
         object.__setattr__(self, "knowledge_points", kps)
         object.__setattr__(self, "source", _sid(self.source) or "user")
+        object.__setattr__(self, "domain_id", _sid(self.domain_id))
 
     @property
     def kp_ids(self) -> tuple[str, ...]:
@@ -168,6 +170,7 @@ class LearningPath:
             "goal": self.goal,
             "knowledge_points": [kp.to_dict() for kp in self.knowledge_points],
             "source": self.source,
+            "domain_id": self.domain_id,
         }
 
 
@@ -270,7 +273,7 @@ class LearningEvidence:
     turn_id: str = ""
     recorded_at: float = 0.0
     error_code: str = ""
-    metadata: str = ""              # compact JSON string, max 500 chars
+    metadata: str = ""              # compact JSON string, max 4096 chars
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence_id", _sid(self.evidence_id))
@@ -283,7 +286,7 @@ class LearningEvidence:
         object.__setattr__(self, "turn_id", _sid(self.turn_id))
         object.__setattr__(self, "recorded_at", _pos_float(self.recorded_at, 0.0))
         object.__setattr__(self, "error_code", _sid(self.error_code))
-        object.__setattr__(self, "metadata", _text(self.metadata, 500))
+        object.__setattr__(self, "metadata", _text(self.metadata, 4096))
 
     def to_dict(self) -> dict[str, Any]:
         return {

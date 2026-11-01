@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Sequence
 
 from runtime.learning_core.contracts import LearningEvidence
+from runtime.learning_core.records import independent
 from runtime.learning_core.policy import TutorStep
 
 # Không tính 'em hiểu rồi', exposure hoặc cặp bài trong một interaction là chứng cứ
@@ -71,6 +72,9 @@ def choose_adaptive_step(
         return step
 
     last = attempts[0]
+    if last.correct and not independent(last):
+        return replace(step, kind="assess", reason="adaptive_transfer_probe",
+                       interaction_type="application")
     if not last.correct:
         # Lỗi một lần chỉ là tín hiệu sửa đúng khái niệm đang hỏi; ít nhất hai
         # interaction độc lập mới được nói đây là lỗi *tái diễn*.
@@ -82,7 +86,7 @@ def choose_adaptive_step(
 
     # Lượt đúng nhưng strength yếu không phải lý do cắt gợi ý hoặc bỏ giảng.
     # Đặc biệt không cho một "application" strength=.2 thành căn cứ cá nhân hóa.
-    positives = [ev for ev in attempts if ev.correct and ev.strength >= 0.65]
+    positives = [ev for ev in attempts if ev.correct and ev.strength >= 0.65 and independent(ev)]
     if not positives or not last.correct or last.strength < 0.65:
         return step
     transfer = any(ev.evidence_type == "application" and ev.correct for ev in positives)

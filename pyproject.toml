@@ -11,6 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tutor = ["fsrs==6.3.2"]
 agent = [
   "langgraph>=1.1",
   "langgraph-checkpoint-sqlite>=3.0",

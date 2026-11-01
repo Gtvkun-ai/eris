@@ -49,6 +49,7 @@ def _compact_private_mind_for_udp_overflow(value):
             "active_identity_forms", "active_motives", "activated_defenses",
             "active_conflict", "value_choice", "self_interpretation",
             "expression", "discovery", "latest_observation",
+            "inner_diary",
         )
         return {
             key: _bounded_panel_value(value.get(key), dict_limit=16, list_limit=8, text_limit=240)
@@ -135,6 +136,7 @@ def _slim_private_mind_core(private_mind):
             "open_loops", "latest_intention", "active_motives",
             "activated_defenses", "active_conflict", "value_choice",
             "self_interpretation", "expression", "discovery",
+            "inner_diary",
         )
         return {
             key: _bounded_panel_value(private_mind.get(key), dict_limit=10, list_limit=5, text_limit=140)

@@ -68,16 +68,24 @@ def normalize_presentation_blocks(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(normalized)
 
 
-def verified_math_bundles(results: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
-    """Discover only ACTUALLY successful math action results from this Root run.
+def verified_tool_bundles(results: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """Discover only successful math/tutor executor results from this Root run.
 
     Never trust bundle identifiers emitted by the model in its final move.
     """
     identifiers: list[str] = []
     for item in results:
-        if item.get('kind') != 'capability_result' or item.get('capability') != 'action':
+        if item.get('kind') != 'capability_result':
             continue
         response = item.get('result')
+        if (item.get('capability') == 'tutor' and isinstance(response, Mapping)
+                and response.get('status') == 'completed' and response.get('operation') == 'activity'):
+            raw = response.get('artifact_bundle_id')
+            if isinstance(raw, str) and _BUNDLE_ID.fullmatch(raw) and raw not in identifiers:
+                identifiers.append(raw)
+            continue
+        if item.get('capability') != 'action':
+            continue
         if not isinstance(response, Mapping) or response.get('action_id') != 'math_workspace' or response.get('success') is not True:
             continue
         data = response.get('data')
@@ -85,6 +93,10 @@ def verified_math_bundles(results: Sequence[Mapping[str, Any]]) -> tuple[str, ..
         if isinstance(raw, str) and _BUNDLE_ID.fullmatch(raw) and raw not in identifiers:
             identifiers.append(raw)
     return tuple(identifiers[:4])
+
+
+# Compatibility for callers/tests that used the original math-only bridge.
+verified_math_bundles = verified_tool_bundles
 
 
 def publish_committed_presentation(*, turn_id: str, delivery_id: str,
@@ -123,15 +135,15 @@ def publish_committed_presentation(*, turn_id: str, delivery_id: str,
             for original in bundle['artifacts']:
                 if len(items) >= 40:
                     break
-                if original['source'] != 'math_workspace' or original['kind'] not in _ALLOWED:
+                if original['source'] not in {'math_workspace', 'tutor_activity'} or original['kind'] not in _ALLOWED:
                     continue
                 items.append(build_artifact(
-                    turn_id=turn_id, source='math_workspace', kind=original['kind'],
+                    turn_id=turn_id, source=original['source'], kind=original['kind'],
                     content=original['content'], stable_key=original['artifact_id'],
                     order=len(items)*10,
                     title=original['presentation'].get('title', '')[:200],
                     metadata={'turn_binding': 'bound', 'source_artifact_id': original['artifact_id'],
-                              'source_bundle_id': bundle_id, 'owner': 'math_workspace'},
+                              'source_bundle_id': bundle_id, 'owner': original['source']},
                 ))
         except (OSError, ValueError, TypeError, KeyError, UnicodeError):
             continue

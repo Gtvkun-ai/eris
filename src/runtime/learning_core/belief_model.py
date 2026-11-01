@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from runtime.learning_core.contracts import LearningEvidence
+from runtime.learning_core.records import independent as is_independent, evidence_metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,23 +93,26 @@ def compute_belief(
     slip = min(0.95, max(0.01, float(slip)))
     learn = min(0.25, max(0.0, float(learn)))
     seen: set[str] = set()
+    seen_turns: set[str] = set()
     independent = 0
     transfer = False
     usable = 0
     ordered = sorted(evidences, key=lambda ev: (ev.recorded_at, ev.evidence_id))
     for ev in ordered:
         quality = _QUALITY.get(ev.evidence_type, 0.0)
-        if quality <= 0.0:
+        if quality <= 0.0 or not is_independent(ev):
             continue
         usable += 1
         # Khi interaction ID không có, lượt nói tạo ra một evidence-family.
         # Legacy thiếu cả hai: mỗi evidence ID là một family, nhưng không khẳng
         # định rằng mỗi quan sát đã được kiểm thử độc lập.
-        family = ev.interaction_id or ev.turn_id or ev.evidence_id
-        repeated = family in seen
+        family = evidence_metadata(ev).get("item_family_id") or ev.interaction_id or ev.turn_id or ev.evidence_id
+        repeated = family in seen or bool(ev.turn_id and ev.turn_id in seen_turns)
         if not repeated:
             independent += 1
             seen.add(family)
+            if ev.turn_id:
+                seen_turns.add(ev.turn_id)
         weight = quality * (0.20 if repeated else 1.0)
         if ev.evidence_type in {"application", "feynman_pass"} and ev.correct and not repeated:
             transfer = True

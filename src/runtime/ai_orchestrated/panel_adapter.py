@@ -943,6 +943,19 @@ def build_ai_panel_payload(
             if key in observation
         },
     }
+    try:
+        from runtime.gemini_inner_diary import get_gemini_inner_diary_service
+        gemini_diary_svc = get_gemini_inner_diary_service()
+        gemini_diary_svc.maybe_trigger_generation(
+            state=state,
+            observation=observation,
+            affect=views.get("affect"),
+        )
+        saved_diary = gemini_diary_svc.get_current_diary()
+        if isinstance(saved_diary, dict) and saved_diary:
+            private_mind_digest["inner_diary"] = saved_diary
+    except Exception:
+        pass
     private_life_digest = {
         "architecture": AI_RUNTIME_VERSION,
         "relationship_summary": relation.prompt_summary(),

@@ -5179,6 +5179,8 @@ public partial class UdpListener : Node2D
 		{
 			using JsonDocument doc = JsonDocument.Parse(json);
 			JsonElement root = doc.RootElement;
+			if (IsModernIdentityDigest(root))
+				return ModernIdentityDigestHasContent(root);
 			JsonElement menu = root;
 			if (root.ValueKind == JsonValueKind.Object
 				&& root.TryGetProperty("menu", out var m) && m.ValueKind == JsonValueKind.Object)
@@ -5223,6 +5225,23 @@ public partial class UdpListener : Node2D
 		{
 			using JsonDocument doc = JsonDocument.Parse(json);
 			JsonElement root = doc.RootElement;
+			if (IsModernIdentityDigest(root))
+			{
+				if (root.TryGetProperty("inner_diary", out JsonElement d)
+					&& d.ValueKind == JsonValueKind.Object
+					&& d.TryGetProperty("writer", out JsonElement w)
+					&& w.ValueKind == JsonValueKind.Object)
+				{
+					string model = IdentityText(w, "model");
+					if (!string.IsNullOrWhiteSpace(model))
+						return $"Gemini ({model}) · Nhật ký Eris";
+				}
+				string arch = IdentityText(root, "architecture");
+				if (string.IsNullOrWhiteSpace(arch))
+					arch = "ai_orchestrated.v3";
+				return $"Identity Kernel · {arch}";
+			}
+
 			JsonElement deepWriter = default;
 			JsonElement shardWriter = default;
 
@@ -5372,33 +5391,45 @@ public partial class UdpListener : Node2D
 			}
 		}
 
-		var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
-		if (hasData)
+		List<PrivateMindDiarySection> slots;
+		if (hasData && IsModernIdentityDigest(root))
 		{
-			foreach (var sec in TryReadDiarySections(root))
-			{
-				if (!string.IsNullOrWhiteSpace(sec.Title))
-					diaryByTitle[sec.Title.Trim()] = sec.Items;
-			}
+			slots = BuildModernIdentityDiarySlots(root);
+			RefreshDiaryMood();
+			RefreshModernIdentityConcernStack(root);
+			RefreshModernIdentityMemoryEcho(root);
+			_privateMindText.Text = RenderModernIdentityDigest(root);
 		}
-
-		var slots = new List<PrivateMindDiarySection>
+		else
 		{
-			BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
-			BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
-			BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
-			BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
-			BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
-		};
+			var diaryByTitle = new Dictionary<string, List<PrivateMindDiaryItem>>();
+			if (hasData)
+			{
+				foreach (var sec in TryReadDiarySections(root))
+				{
+					if (!string.IsNullOrWhiteSpace(sec.Title))
+						diaryByTitle[sec.Title.Trim()] = sec.Items;
+				}
+			}
+
+			slots = new List<PrivateMindDiarySection>
+			{
+				BuildDiarySlot("Suy nghĩ hiện tại", PreferDiarySection(diaryByTitle, "Suy nghĩ hiện tại", hasData ? ExtractCurrentThought(menu, root) : null)),
+				BuildDiarySlot("Suy nghĩ tương lai", PreferDiarySection(diaryByTitle, "Suy nghĩ tương lai", hasData ? ExtractFutureThought(menu, root) : null)),
+				BuildDiarySlot("Đang bận tâm", PreferDiarySection(diaryByTitle, "Đang bận tâm", hasData ? ExtractConcerns(menu) : null)),
+				BuildDiarySlot("Phân tích gần đây", PreferDiarySection(diaryByTitle, "Phân tích gần đây", hasData ? ExtractFragments(menu, root) : null)),
+				BuildDiarySlot("Muốn nói", PreferDiarySection(diaryByTitle, "Muốn nói", hasData ? ExtractSurface(menu, root) : null)),
+			};
+
+			RefreshDiaryMood();
+			RefreshDiaryConcernStack(menu, hasData);
+			RefreshDiaryMemoryEcho(root, menu, hasData);
+			_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
+		}
 
 		foreach (PrivateMindDiarySection slot in slots)
 			_privateMindSectionList.AddChild(BuildPrivateMindSectionCard(slot));
 
-		RefreshDiaryMood();
-		RefreshDiaryConcernStack(menu, hasData);
-		RefreshDiaryMemoryEcho(root, menu, hasData);
-
-		_privateMindText.Text = hasData ? RenderDiary(root) : "[i]Chưa có dữ liệu.[/i]";
 		doc?.Dispose();
 	}
 

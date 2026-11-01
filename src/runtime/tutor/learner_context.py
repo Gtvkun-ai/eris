@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from runtime.learning_core.contracts import LearnerProfile
 
@@ -111,6 +111,7 @@ def learner_continuity_snapshot(learning: Any, *, source: Any = None, max_kps: i
             return {}
         ids = list(path.kp_ids)[: max(1, min(12, int(max_kps)))]
         due = {r.kp_id for r in learning.due_review_items()}
+        schedules = learning.review_snapshot(ids)
         points = []
         for kp_id in ids:
             mastery = learning.get_mastery(kp_id)
@@ -123,7 +124,8 @@ def learner_continuity_snapshot(learning: Any, *, source: Any = None, max_kps: i
                 "attempt_count": int(mastery.attempt_count),
                 "last_evidence_at": round(float(mastery.last_evidence_at), 1),
                 "retrievability_heuristic": round(float(mastery.retrievability), 4),
-                "next_review_at": round(float(mastery.next_review_at), 1),
+                "next_review_at": round(float(schedules.get(kp_id, {}).get("due_at", mastery.next_review_at)), 1),
+                "retention_scheduler": schedules.get(kp_id, {}).get("scheduler_owner", "heuristic"),
                 "observed_error_codes": [str(x)[:80] for x in mastery.error_codes[:5]],
                 "repeated_error_hypotheses": learning.repeated_error_patterns(kp_id),
                 "due_for_review": kp_id in due,

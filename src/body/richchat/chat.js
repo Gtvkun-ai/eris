@@ -394,7 +394,14 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
     for(const msg of current){const item=document.createElement('article');item.className='entry '+(msg.role==='user'?'user':'assistant');
       if(msg.role==='assistant' && msg.turnId)item.dataset.turnId=msg.turnId;
       const meta=document.createElement('div');meta.className='meta';meta.textContent=`${msg.role==='user'?'Bạn':'Eris'} · ${msg.time||''}`;
-      const content=document.createElement('div');content.className='content';content.innerHTML=ErisRender.render(msg.text);
+      let displayedText=msg.text;
+      const learningEvent=/^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) [a-f0-9]{32}(?: ([0-9]))?$/.exec(msg.text);
+      if(msg.role==='user' && learningEvent){
+        const activity=artifacts.find(x=>x.artifact.content?.activity?.activity_id===learningEvent[2])?.artifact.content.activity;
+        displayedText=learningEvent[1]==='answer'?'Đáp án của tôi: '+(activity?.options?.[Number(learningEvent[3])]||'đã chọn'):
+          learningEvent[1]==='hint'?'Cho tôi thêm một gợi ý.':'Giải thích lời giải của bài này giúp tôi.';
+      }
+      const content=document.createElement('div');content.className='content';content.innerHTML=ErisRender.render(displayedText);
       const actions=document.createElement('div');actions.className='message-actions';const copy=document.createElement('button');copy.className='copy-button';copy.textContent='Sao chép ↗';copy.addEventListener('click',()=>navigator.clipboard.writeText(msg.text).then(()=>toast('Đã sao chép'),()=>toast('Không thể sao chép')));actions.appendChild(copy);
       item.append(meta,content,actions);
       if(msg.role==='assistant' && msg.turnId && !mountedTurns.has(msg.turnId)){
@@ -417,6 +424,38 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
       const selector='[data-artifact-id="'+a.artifact_id+'"][data-revision="'+a.revision+'"]';
       const card=root.querySelector(selector);
       if(!card)continue;
+      const activity=a.content?.activity;
+      if(a.source==='tutor_activity' && activity){
+        card.querySelectorAll('[data-learning-action]').forEach(button=>button.addEventListener('click',async()=>{
+          const action=button.dataset.learningAction;
+          if(!['answer','hint','reveal'].includes(action))return;
+          const key='eris-learning:'+activity.activity_id;
+          const status=card.querySelector('.learning-status');
+          if(action==='answer' && sessionStorage.getItem(key)){
+            if(status)status.textContent='Câu trả lời đã gửi. Xem phản hồi của Eris trong hội thoại.';
+            return;
+          }
+          const message=`ERIS_LEARN ${action} ${activity.activity_id} ${activity.nonce}`+
+            (action==='answer'?` ${button.dataset.learningChoice}`:'');
+          button.disabled=true;
+          try{
+            const response=await fetch(endpoint('api/send'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
+            if(!response.ok)throw new Error('send_failed');
+            if(action==='answer'){
+              sessionStorage.setItem(key,'submitted');
+              card.querySelectorAll('[data-learning-action]').forEach(b=>{b.disabled=true;});
+            }
+            if(status)status.textContent=action==='answer'?'Đã nộp bài. Eris sẽ phản hồi trong hội thoại.':'Đã nhờ Eris hỗ trợ trong hội thoại.';
+          }catch(_){if(status)status.textContent='Chưa gửi được. Bạn có thể thử lại.';}
+          finally{if(action!=='answer' || !sessionStorage.getItem(key))button.disabled=false;}
+        }));
+        if(sessionStorage.getItem('eris-learning:'+activity.activity_id)){
+          card.querySelectorAll('[data-learning-action]').forEach(b=>{b.disabled=true;});
+          const status=card.querySelector('.learning-status');
+          if(status)status.textContent='Đã nộp bài. Xem phản hồi của Eris trong hội thoại.';
+        }
+        continue;
+      }
       const ask=document.createElement('button');ask.type='button';ask.className='artifact-edit';ask.textContent='✦ Nhờ Eris sửa';
       card.querySelector('header')?.append(ask);
       ask.addEventListener('click',()=>{

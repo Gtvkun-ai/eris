@@ -44,12 +44,15 @@ def propose_learning_path(
         })
         if plan is None:
             return None
+        domain_id = _stable("domain", plan.global_goal)
+        names = {item.concept_id: domain_id + ":" + _stable("skill", item.concept_id).split(":", 1)[1]
+                 for item in plan.concepts}
         kps = tuple(KnowledgePoint(
-            kp_id=item.concept_id,
+            kp_id=names[item.concept_id],
             title=item.objective[:240],
             kp_type="concept",
             description=item.description,
-            prerequisites=tuple(item.prerequisites),
+            prerequisites=tuple(names[ref] for ref in item.prerequisites),
         ) for item in plan.concepts)
         ids = {kp.kp_id for kp in kps}
         if (len(kps) < 3 or len(kps) > 8 or len(ids) != len(kps)
@@ -62,6 +65,7 @@ def propose_learning_path(
         return LearningPath(
             path_id=_stable("autopath", goal), title=goal[:240], goal=goal,
             knowledge_points=kps, source="eris_auto",
+            domain_id=domain_id,
         )
     except Exception:
         return None
@@ -122,6 +126,8 @@ def maybe_autostart_path(
         if path is None:
             return False
         # Tuyệt đối không coi register thành activate; đường success cần cả hai.
+        from runtime.learning_core.records import DomainSpec
+        learning.register_domain(DomainSpec(path.domain_id, path.title, path.domain_id))
         learning.register_path(path, now=now)
         return bool(learning.activate_path(path.path_id))
     except Exception:

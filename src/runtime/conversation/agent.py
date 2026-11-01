@@ -341,9 +341,9 @@ class RuntimeModelRootAgent:
                 # user chen vào giữa chừng thì trả NoReply('root_turn_preempted').
                 if not still_active():
                     return NoReply(reason="root_turn_preempted")
-                from ..workspace.presentation_p2 import verified_math_bundles
+                from ..workspace.presentation_p2 import verified_tool_bundles
                 return replace(NextConversationMove.from_mapping(raw),
-                               tool_artifact_bundles=verified_math_bundles(tool_results))
+                               tool_artifact_bundles=verified_tool_bundles(tool_results))
 
             if kind == "batch":
                 # Nhiều action nội bộ ĐỘC LẬP trong một bước. Bỏ phần tử finalize
