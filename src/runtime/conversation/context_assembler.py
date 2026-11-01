@@ -77,7 +77,15 @@ class ConversationContextAssembler:
         personality = _call_text(state, "personality_prompt_context", limit=12000)
         relationship = _call_text(getattr(state, "relationship", None), "prompt_summary", limit=12000)
         memory_started = time.perf_counter()
-        memory, memory_records, memory_degraded = self._typed_memory_context(user_text)
+        # Memory chạy LANE NỀN: lượt này dùng snapshot gần nhất (0 chờ) + kick
+        # refresh nền cho lượt sau; lượt đầu seed đồng bộ có deadline ~2s. Giữ
+        # nguyên (text, records, degraded) của một lần build thật nên không phá
+        # receipt/provenance/admission. Root vẫn có tool recall on-demand khi
+        # user hỏi thẳng về trí nhớ (xem memory_recall_tools_for_host).
+        from .memory_lane import ensure_memory_lane
+        memory, memory_records, memory_degraded = ensure_memory_lane(host).get(
+            self._typed_memory_context, user_text,
+        )
         memory_finished = time.perf_counter()
         world = self._world_context(channel)
         clock = self._clock_context()
