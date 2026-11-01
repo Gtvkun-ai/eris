@@ -2,7 +2,8 @@
 """ConversationKernel V12 — lifecycle/concurrency owner, không phải conversation planner."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from contextlib import contextmanager
 import re
 import threading
 import time
@@ -44,6 +45,8 @@ class KernelTurn:
     consecutive_self_wakes: int = 0
     # Cấp trước writer để receipt và TTS dùng một identity bất biến.
     delivery_id: str = ""
+    focus_epoch: int = 0
+    canvas_scope: Mapping[str, Any] = field(default_factory=dict)
 
     def writer_context(self) -> dict[str, Any]:
         return {
@@ -123,6 +126,50 @@ class ConversationKernel:
         self._events_inflight: set[str] = set()
         self._recovered_outcome_sessions: set[str] = set()
         self._outcome_recovery_lock = threading.RLock()
+        self._focus_lock = threading.RLock()
+        self._focus_epochs: dict[str, int] = {}
+        self._canvas_run_scopes: dict[str, dict] = {}
+        self._canvas_lease_scopes: dict[str, dict] = {}
+        self.on_settled: Any = None
+        self.focus_scope_is_current: Any = None
+
+    def _scope_current(self, run_id):
+        scope = self._canvas_run_scopes.get(run_id, {})
+        return not scope or not callable(self.focus_scope_is_current) or bool(self.focus_scope_is_current(scope))
+
+    def bind_canvas_scope(self, session_id: str, scope: Mapping[str, Any], *, run_id="") -> None:
+        with self._focus_lock:
+            state = self.store.load(session_id)
+            if state.active_run_id and (not run_id or state.active_run_id == run_id):
+                self._canvas_run_scopes[state.active_run_id] = dict(scope)
+                while len(self._canvas_run_scopes) > 512:
+                    self._canvas_run_scopes.pop(next(iter(self._canvas_run_scopes)))
+
+    def canvas_scope(self, session_id: str) -> dict:
+        with self._focus_lock:
+            return dict(self._canvas_run_scopes.get(self.store.load(session_id).active_run_id, {}))
+
+    def note_focus_change(self, session_id: str) -> ConversationSessionState:
+        """UI steering: keep committed delivery, invalidate uncommitted run only.
+
+        Never change conversation generation, discard audio or create a user turn.
+        The epoch also prevents an old delivery from leasing a continuation later.
+        """
+        with self._focus_lock:
+            self._focus_epochs[session_id] = self._focus_epochs.get(session_id, 0) + 1
+            self.continuation.cancel_session(session_id)
+            self._canvas_lease_scopes.pop(session_id, None)
+            return self.store.mutate(session_id, lambda prior, now: replace(
+                prior, active_run_id="", active_move_id="", active_delivery_id="", phase=RunPhase.WAITING_USER,
+            ) if prior.phase in {RunPhase.THINKING, RunPhase.WORKING, RunPhase.WRITING, RunPhase.CONTINUATION_PENDING}
+            else prior)
+
+    @contextmanager
+    def focus_change_guard(self, session_id):
+        # The UI cursor and delivery handoff have one linearization point.
+        with self._focus_lock:
+            yield
+            self.note_focus_change(session_id)
 
     def handle_event(
         self,
@@ -159,7 +206,8 @@ class ConversationKernel:
         with self._event_condition:
             if len(self._event_results) >= 512:
                 self._event_results.pop(next(iter(self._event_results)))
-            self._event_results[event_id] = result
+            if result.status != "busy":
+                self._event_results[event_id] = result
             self._events_inflight.discard(event_id)
             self._event_condition.notify_all()
         return result
@@ -174,6 +222,10 @@ class ConversationKernel:
     ) -> ConversationRunResult:
         sid = str(event.session_id or "default")[:180]
         run_id = f"run:{uuid.uuid4().hex}"
+        scope = (runtime_context or {}).get("__canvas_scope", {}) or (
+            self._canvas_lease_scopes.get(sid, {}) if event.kind == "continuation_due" else {})
+        if scope and callable(self.focus_scope_is_current) and not self.focus_scope_is_current(scope):
+            return ConversationRunResult(event=event, decision=None, status="stale_focus")
         if event.kind == "user_turn":
             # Đổi generation TRƯỚC: callback TTS cũ tới đồng thời sẽ bị loại
             # ngay cả khi chưa kịp lấy delivery lock để discard.
@@ -223,6 +275,10 @@ class ConversationKernel:
             return ConversationRunResult(event=event, decision=None, status='background_failure_cooldown')
 
         normalized_event = replace(event, session_id=sid, generation=state.generation)
+        with self._focus_lock:
+            focus_epoch = self._focus_epochs.get(sid, 0)
+            if isinstance(scope, Mapping) and scope:
+                self.bind_canvas_scope(sid, scope, run_id=run_id)
         agent_context = self._agent_runtime_context(sid, runtime_context)
         # Execution token được kernel cấp, không cho client/model tự chỉ định.
         agent_context["__conversation_run_id"] = run_id
@@ -231,7 +287,8 @@ class ConversationKernel:
         def root_run_active() -> bool:
             # Một snapshot atomic/session read cho từng lần kiểm tra.
             current_run = self.store.load(sid)
-            return current_run.generation == state.generation and current_run.active_run_id == run_id
+            return (current_run.generation == state.generation and current_run.active_run_id == run_id
+                    and self._scope_current(run_id))
         agent_context["__root_run_active"] = root_run_active
         # Pin registry vào normalized generation của kernel. Input trước kernel
         # có thể mang generation=0; receipt từ Root phải dùng generation THỰC.
@@ -265,7 +322,8 @@ class ConversationKernel:
             return ConversationRunResult(event=normalized_event, decision=None,
                                          status="root_provider_failed", failure_reason=exc.kind.value)
         current = self.store.load(sid)
-        if current.generation != state.generation or current.active_run_id != run_id:
+        if current.generation != state.generation or current.active_run_id != run_id or not self._scope_current(run_id):
+            self._release_updated_input(sid, state.generation, run_id)
             return ConversationRunResult(
                 event=normalized_event,
                 decision=decision,
@@ -280,7 +338,7 @@ class ConversationKernel:
                     active_move_id="",
                     active_delivery_id="",
                     phase=RunPhase.WAITING_USER,
-                ),
+                ) if prior.generation == state.generation and prior.active_run_id == run_id else prior,
             )
             return ConversationRunResult(
                 event=normalized_event,
@@ -314,6 +372,8 @@ class ConversationKernel:
             continuation_chain_started_at=float(continuation_meta.get("chain_started_at", 0.0) or 0.0),
             consecutive_self_wakes=max(0, int(continuation_meta.get("consecutive_self_wakes", 0) or 0)),
             delivery_id=f"delivery:{uuid.uuid4().hex}",
+            focus_epoch=focus_epoch,
+            canvas_scope=self.canvas_scope(sid),
         )
         self.store.mutate(
             sid,
@@ -321,7 +381,7 @@ class ConversationKernel:
                 prior,
                 active_move_id=decision.move_id,
                 phase=RunPhase.WRITING,
-            ),
+            ) if prior.generation == state.generation and prior.active_run_id == run_id else prior,
         )
         self._move_outcome(turn, 'preparing', event_id=normalized_event.event_id)
         if self.writer is None:
@@ -368,7 +428,8 @@ class ConversationKernel:
             )
 
         current = self.store.load(sid)
-        if current.generation != turn.generation or current.active_run_id != turn.run_id:
+        if current.generation != turn.generation or current.active_run_id != turn.run_id or not self._scope_current(turn.run_id):
+            self._release_updated_input(sid, turn.generation, turn.run_id)
             self._move_outcome(turn, 'cancelled', reason='stale_after_prepare')
             return ConversationRunResult(
                 event=normalized_event,
@@ -478,7 +539,7 @@ class ConversationKernel:
         )
         turn = KernelTurn(session_id=sid, generation=generation, run_id=run_id,
                           move=move, note=state.note,
-                          delivery_id=f"delivery:{uuid.uuid4().hex}")
+                          delivery_id=f"delivery:{uuid.uuid4().hex}", focus_epoch=self._focus_epochs.get(sid, 0))
         self.store.mutate(sid, lambda prior, now: replace(
             prior, active_move_id=move.move_id, phase=RunPhase.WRITING))
         rendered = RenderedConversationMove(
@@ -731,7 +792,8 @@ class ConversationKernel:
             sid,
             lambda prior, now: replace(prior, active_move_id=move.move_id, phase=RunPhase.WRITING),
         )
-        return KernelTurn(sid, state.generation, run_id, move, state.note, False)
+        return KernelTurn(sid, state.generation, run_id, move, state.note, False,
+                          focus_epoch=self._focus_epochs.get(sid, 0), canvas_scope=self.canvas_scope(sid))
 
     def begin_continuation(self, *, session_id: str,
                            recent_history: Sequence[Mapping[str, Any]] = (),
@@ -787,6 +849,8 @@ class ConversationKernel:
                 lease.chain_started_at,
                 lease.consecutive_self_wakes,
                 f"delivery:{uuid.uuid4().hex}",
+                focus_epoch=self._focus_epochs.get(sid, 0),
+                canvas_scope=self.canvas_scope(sid),
             )
         except Exception:
             self.continuation.release(lease)
@@ -867,13 +931,16 @@ class ConversationKernel:
 
     def mark_delivery_started(self, turn: KernelTurn, *, delivery_id: str) -> bool:
         did = str(delivery_id or '')[:180]
-        state = self.store.mutate(
-            turn.session_id,
-            lambda prior, now: replace(prior, active_delivery_id=did, phase=RunPhase.DELIVERING)
-            if prior.generation == turn.generation and prior.active_run_id == turn.run_id
-            and prior.active_move_id == turn.move.move_id and prior.phase == RunPhase.WRITING
-            else prior,
-        )
+        with self._focus_lock:
+            if turn.focus_epoch != self._focus_epochs.get(turn.session_id, 0) or not self._scope_current(turn.run_id):
+                return False
+            state = self.store.mutate(
+                turn.session_id,
+                lambda prior, now: replace(prior, active_delivery_id=did, phase=RunPhase.DELIVERING)
+                if prior.generation == turn.generation and prior.active_run_id == turn.run_id
+                and prior.active_move_id == turn.move.move_id and prior.phase == RunPhase.WRITING
+                else prior,
+            )
         if state.generation != turn.generation or state.active_run_id != turn.run_id \
                 or state.active_delivery_id != did or state.phase != RunPhase.DELIVERING:
             return False
@@ -897,6 +964,14 @@ class ConversationKernel:
 
     def settle_delivery(self, turn: KernelTurn, *, delivery_id: str,
                         successful: bool, cancelled: bool = False) -> bool:
+        with self._focus_lock:
+            settled = self._settle_delivery_locked(turn, delivery_id=delivery_id, successful=successful, cancelled=cancelled)
+        if settled and callable(self.on_settled):
+            self.on_settled(delivery_id, successful, cancelled)
+        return settled
+
+    def _settle_delivery_locked(self, turn: KernelTurn, *, delivery_id: str,
+                        successful: bool, cancelled: bool = False) -> bool:
         state = self.store.load(turn.session_id)
         if state.generation != turn.generation:
             return False
@@ -917,11 +992,16 @@ class ConversationKernel:
             session_id=turn.session_id,
             generation=turn.generation,
             move_id=turn.move.move_id,
-            after=turn.move.after,
+            after=(turn.move.after if turn.focus_epoch == self._focus_epochs.get(turn.session_id, 0)
+                   else ConversationAfter.WAIT_USER),
             parent_chain_started_at=turn.continuation_chain_started_at if turn.continuation else 0.0,
             parent_self_wakes=turn.consecutive_self_wakes if turn.continuation else 0,
         )
         phase = RunPhase.CONTINUATION_PENDING if lease is not None else RunPhase.WAITING_USER
+        if lease is not None and turn.canvas_scope:
+            self._canvas_lease_scopes[turn.session_id] = dict(turn.canvas_scope)
+        else:
+            self._canvas_lease_scopes.pop(turn.session_id, None)
         self.store.mutate(
             turn.session_id,
             lambda prior, now: replace(

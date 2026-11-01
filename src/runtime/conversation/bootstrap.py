@@ -16,9 +16,27 @@ from .runtime_writer import RuntimeConversationWriter
 from .session_store import ConversationSessionStore
 
 
+def _install_canvas_links(host, kernel):
+    from runtime.learning_canvas.events import scope_is_current
+    kernel.focus_scope_is_current = lambda scope: scope_is_current(host, scope)
+
+    def settled(delivery_id, successful, cancelled):
+        canvas = getattr(host, "learning_canvas_service", None)
+        send = getattr(host, "_send_runtime_json", None)
+        if canvas is not None:
+            packet = canvas.playback.finish(delivery_id, successful=successful, cancelled=cancelled)
+            if packet and callable(send):
+                send(packet, channel="learning_canvas")
+        wake = getattr(host, "_wake_autonomous_loop", None)
+        if getattr(host, "_pending_conversation_capability_events", None) and callable(wake):
+            wake("capability_events_after_delivery")
+    kernel.on_settled = settled
+
+
 def ensure_conversation_kernel(host: Any) -> ConversationKernel:
     current = getattr(host, "conversation_kernel", None)
     if isinstance(current, ConversationKernel):
+        _install_canvas_links(host, current)
         # Kernel có thể được tạo bởi một signal sớm hơn phase AI cuối;
         # đến lúc router sẵn sàng vẫn phải đăng ký warm-up một lần.
         preload = getattr(current.agent, "preload_self", None)
@@ -50,6 +68,7 @@ def ensure_conversation_kernel(host: Any) -> ConversationKernel:
         logger=logger,
     )
     host.conversation_kernel = kernel
+    _install_canvas_links(host, kernel)
     # Warm-up chỉ một lần khi kernel thật được lắp. Đọc Self đã có và gửi
     # toàn bộ vào DeepSeek trước lượt chat; không sinh database/snapshot khác.
     preload = getattr(root, "preload_self", None)

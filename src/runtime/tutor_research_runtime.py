@@ -450,6 +450,8 @@ class TutorResearchRuntimeMixin:
             return
         self._last_research_ts = time.time()
         self._research_in_flight = True
+        from runtime.learning_canvas.events import capture_canvas_scope
+        canvas_scope = capture_canvas_scope(self)
         try:
             from runtime.tutor_search_jobs import make_tutor_search_job
             seq = int(getattr(self, "_research_job_seq", 0) or 0) + 1
@@ -480,7 +482,8 @@ class TutorResearchRuntimeMixin:
                 answer = None
             finally:
                 try:
-                    self._deliver_research_followup(topic, answer, mode=mode, job_id=str(getattr(job, "job_id", "") or ""))
+                    self._deliver_research_followup(topic, answer, mode=mode, job_id=str(getattr(job, "job_id", "") or ""),
+                                                    canvas_scope=canvas_scope)
                 except Exception as exc:
                     self.logger.warning("[tutor research] deliver error: %s", exc)
                 active = getattr(self, "_active_research_job", None)
@@ -491,10 +494,15 @@ class TutorResearchRuntimeMixin:
         threading.Thread(target=_bg, name="ERIS-ResearchFollowup", daemon=True).start()
 
 
-    def _deliver_research_followup(self, topic: str, answer, *, mode: str = "research", job_id: str = "") -> None:
+    def _deliver_research_followup(self, topic: str, answer, *, mode: str = "research", job_id: str = "", canvas_scope=None) -> None:
         """Gửi câu trả lời nhịp 2 ra body bằng giọng Eris (qua đường decision chuẩn)."""
 
         active = getattr(self, "_active_research_job", None)
+        from runtime.learning_canvas.events import allow_canvas_result
+        bound_metadata = {"canvas_scope": dict(canvas_scope or {}),
+                          "research_capability": {"summary": str(answer or "")[:16000]}}
+        if not allow_canvas_result(self, "research_result", bound_metadata, event_id=f"research:{job_id}"):
+            return
         runtime_bool = getattr(self, "_tutor_runtime_bool", None)
         stale_guard_enabled = runtime_bool("tutor", "stale_result_guard_enabled", default=True) if callable(runtime_bool) else True
         if stale_guard_enabled and isinstance(active, dict):
@@ -559,13 +567,24 @@ class TutorResearchRuntimeMixin:
             session_id=session_id,
             kind="research_result",
             generation=kernel.snapshot(session_id).generation,
-            metadata={"research_capability": result.to_dict()},
+            metadata={"research_capability": result.to_dict(), "canvas_scope": dict(canvas_scope or {})},
         )
         run = kernel.handle_event(
             event,
             recent_history=history,
-            runtime_context={"research_capability": result.to_dict()},
+            runtime_context={"research_capability": result.to_dict(), "__canvas_scope": dict(canvas_scope or {})},
         )
+        if canvas_scope and run.status in {"stale", "stale_focus", "delivery_unavailable"}:
+            allow_canvas_result(self, "research_result", dict(event.metadata), event_id=event.event_id)
+        if run.status == "busy":
+            from collections import deque
+            pending = getattr(self, "_pending_conversation_capability_events", None)
+            if pending is None:
+                pending = self._pending_conversation_capability_events = deque(maxlen=128)
+            pending.append({"kind": event.kind, "event_id": event.event_id, "metadata": dict(event.metadata)})
+            wake = getattr(self, "_wake_autonomous_loop", None)
+            if callable(wake):
+                wake("research_result_pending")
         self.last_conversation_run = {
             "schema": "eris.conversation_run.v12",
             "event_id": run.event.event_id,

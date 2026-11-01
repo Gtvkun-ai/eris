@@ -766,6 +766,7 @@ class AIChatOrchestrator:
         )
         from runtime.capabilities import ActionCapability, ResearchCapability, TutorCapability, WorkCapability
         from runtime.conversation.context import RootCapabilityRegistry
+        from runtime.capabilities.canvas import canvas_capability_for_host
 
         # V12 hard cutover: foreground bootstrap chỉ *đăng ký* capability. Không
         # gọi tutor/work/research trước RootAgent vì làm vậy sẽ biến router thành
@@ -784,8 +785,10 @@ class AIChatOrchestrator:
             work_capability = WorkCapability(
                 getattr(host, "agent_harness", None),
                 logger=getattr(host, "logger", None),
+                host=host,
             )
             host.work_capability = work_capability
+        work_capability.host = host
 
         research_capability = getattr(host, "research_capability", None)
         if not isinstance(research_capability, ResearchCapability):
@@ -808,6 +811,7 @@ class AIChatOrchestrator:
             "work": work_capability,
             "research": research_capability,
             "action": action_capability,
+            "canvas": canvas_capability_for_host(host),
         })
         # ContextAssembler chỉ projection state/evidence; nó không route intent và
         # không chọn nội dung nói. RootAgent vẫn là semantic/social authority duy
@@ -1076,7 +1080,7 @@ class AIAutonomousOrchestrator:
         _install_speculative_dispatch(host, kernel)
         if signal_kind != "opening_signal":
             phase = getattr(kernel.snapshot(sid).phase, "value", "")
-            if phase in {"thinking", "writing", "delivering"}:
+            if phase in {"thinking", "working", "writing", "delivering"}:
                 sleep = getattr(host, "_sleep_interruptible", None)
                 if sleep_after and callable(sleep):
                     sleep(0.5)
@@ -1124,6 +1128,11 @@ class AIAutonomousOrchestrator:
             session_id=sid, kind=signal_kind,
             generation=kernel.snapshot(sid).generation,
         )
+        scope = signal_metadata.get("canvas_scope", {})
+        from runtime.learning_canvas.events import allow_canvas_result
+        if not allow_canvas_result(host, signal_kind, signal_metadata, event_id=prospective_event.event_id):
+            from runtime.conversation.kernel import ConversationRunResult
+            return ConversationRunResult(event=prospective_event, decision=None, status="stale_focus")
         evidence_context = ensure_conversation_evidence_assembler(host).assemble_autonomous()
         runtime_context = ensure_conversation_context_assembler(host).assemble(
             user_text="",
@@ -1151,13 +1160,20 @@ class AIAutonomousOrchestrator:
         runtime_context["__root_memory_recall_tools"] = memory_recall_tools_for_host(host, session_id=sid)
         runtime_context["__source_grounding_report"] = evidence_context.get("__source_grounding_report")
         runtime_context["__source_grounding_engine"] = evidence_context.get("__source_grounding_engine")
+        if scope:
+            runtime_context["__canvas_scope"] = dict(scope)
+        from runtime.capabilities.canvas import canvas_capability_for_host
+        from runtime.conversation.context import RootCapabilityRegistry
+        runtime_context["__root_capabilities"] = RootCapabilityRegistry({
+            "canvas": canvas_capability_for_host(host),
+        })
         status = dict(runtime_context.get("conversation_status", {}) or {})
         status.update({
             "signal_kind": signal_kind,
             "chat_mode": bool(getattr(host, "chat_mode", False)),
         })
         runtime_context["conversation_status"] = status
-        for capability_key in ("tutor_capability", "work_capability", "research_capability"):
+        for capability_key in ("tutor_capability", "work_capability", "research_capability", "canvas_capability"):
             capability_value = signal_metadata.get(capability_key)
             if isinstance(capability_value, Mapping):
                 runtime_context[capability_key] = dict(capability_value)
@@ -1192,6 +1208,8 @@ class AIAutonomousOrchestrator:
                 runtime_context=runtime_context,
             )
 
+        if scope and getattr(result, "status", "") in {"stale", "stale_focus", "delivery_unavailable"}:
+            allow_canvas_result(host, signal_kind, signal_metadata, event_id=prospective_event.event_id)
         decision = getattr(result, "decision", None)
         decision_dict = decision.to_dict() if callable(getattr(decision, "to_dict", None)) else {}
         host.last_agent_turn = decision_dict
@@ -1245,12 +1263,12 @@ class AIAutonomousOrchestrator:
             or "foreground:primary"
         ).strip()[:180]
         kernel = ensure_conversation_kernel(host)
+        pending = getattr(host, "_pending_conversation_capability_events", None)
         lease = kernel.continuation.peek(sid)
-        if lease is not None and lease.due_at <= time.time():
+        if not pending and lease is not None and lease.due_at <= time.time():
             self._run_v12_signal("autonomous_signal")
             return bool(getattr(host, "running", True))
 
-        pending = getattr(host, "_pending_conversation_capability_events", None)
         item = pending[0] if pending else None
         if isinstance(item, Mapping):
             result = self._run_v12_signal(
@@ -1258,8 +1276,11 @@ class AIAutonomousOrchestrator:
                 metadata=item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {},
                 event_id=str(item.get("event_id", "") or ""),
             )
-            if result is not None:
-                pending.popleft()
+            # busy is transient; the exact same event must be retried. A stale
+            # run is deliberately discarded after a newer user turn won it.
+            if result is not None and getattr(result, "status", "") != "busy":
+                if pending and pending[0] is item:
+                    pending.popleft()
         else:
             self._run_v12_signal("autonomous_signal")
         return bool(getattr(self.host, "running", True))

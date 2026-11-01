@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping
+import uuid
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,9 +33,10 @@ class WorkResult:
 
 
 class WorkCapability:
-    def __init__(self, harness: Any | None, *, logger: Any = None) -> None:
+    def __init__(self, harness: Any | None, *, logger: Any = None, host=None) -> None:
         self.harness = harness
         self.logger = logger
+        self.host = host
 
     def snapshot(self) -> WorkResult:
         if self.harness is None:
@@ -55,6 +57,16 @@ class WorkCapability:
         if self.harness is None or not callable(getattr(self.harness, "invoke", None)):
             return WorkResult(status="unavailable")
         args = dict(arguments or {})
+        from runtime.learning_canvas.events import capture_canvas_scope
+        scope = capture_canvas_scope(self.host) if self.host is not None else {}
+        if scope:
+            args["task_id"] = str(args.get("task_id") or "canvas-work-" + uuid.uuid4().hex)
+            scopes = getattr(self.host, "_canvas_work_scopes", None)
+            if scopes is None:
+                scopes = self.host._canvas_work_scopes = {}
+            scopes[args["task_id"]] = scope
+            while len(scopes) > 256:
+                scopes.pop(next(iter(scopes)))
         thread_id = str(args.get("thread_id") or f"conversation-work:{session_id or 'default'}")[:240]
         try:
             raw = self.harness.invoke(
