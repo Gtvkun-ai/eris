@@ -248,6 +248,8 @@ của phiên và raw wire PID 26564 với source portable `Documents/eris/src`
 - Ba delivery cuối bị hủy trước playback khi message mới được xử lý. “ô”
   không nằm trong backchannel whitelist và pure local probe xác nhận nó hủy
   audio; log `enter_chat_mode` không đủ phân biệt mở ô nhập với xử lý message.
+  **Đây là trạng thái source/probe của phiên lịch sử; kết luận về whitelist
+  hiện tại được thay thế ở cập nhật Task 7–10 ngày 01/11 bên dưới.**
 - ElevenLabs có một disconnect thật, Gemini fallback phát xong. **Không nâng
   filler JA của rescue thành bảo đảm mọi câu đều có tiếng:** TTS cancellation
   vẫn bị tính sai thành provider failure trong code; probe xác nhận ba lần
@@ -273,6 +275,10 @@ Chi tiết nằm trong mục 6 của báo cáo điều tra. Các nhận định 
 hạn của hướng sửa, chưa thay thế quan sát live bằng test hoặc phỏng đoán.
 
 Đây là cập nhật tri thức/chẩn đoán; chưa sửa hoặc triển khai runtime mới.
+
+**Đính chính hiệu lực ngày 01/11:** riêng nhận định “ChatCycle chưa nhận
+cancel_generation” phía trên đã lỗi thời đối với checkout hiện tại; xem mục
+Learning Canvas Task 7–10. Các nhận định khác vẫn cần đối chiếu riêng với source/trace.
 
 ## 9. Thay đổi transport/prompt DeepSeek ngày 15/10/2026
 
@@ -1991,3 +1997,75 @@ trước đó, vẫn tái hiện ở lần cuối nên không kết luận bộ 
 Xác nhận cuối khi tách đúng race đã biết: **197 passed, 1 deselected, 44.91s**,
 không thay source parallel work để đạt kết quả này.
 Chưa export/deploy portable hoặc kiểm tra hội thoại có voice trên bản đang chạy.
+
+## Cập nhật 01/11: Learning Canvas, phạm vi Task 1–3
+
+Đã thêm gói Java DI, snapshot từ LearningService, focus có revision/pin lưu trong
+learning SQLite và panel Godot native để đọc/điều hướng. CanvasControlInbox đọc
+transport trên worker riêng; chỉ Canvas request được xử lý ở lane này, các gói
+khác vẫn chờ foreground. Vì vậy nhận định control bị poll cùng Root ở mục 22
+**không còn áp dụng cho route Canvas mới**; không suy ra settings hoặc mọi route
+khác đã được chuyển sang fast path. Canvas không gọi chat/kernel/TTS.
+
+Bộ liên quan 137 test pass; UDP thật đạt assertion <200 ms khi foreground giả
+bị chặn; C# 0 warning/error; preview OpenGL pass cả đủ dữ liệu/rỗng ở 5 kích
+thước. Đây chưa phải kiểm chứng model/voice thật hoặc bản portable đã triển khai.
+Chi tiết và giới hạn tại [báo cáo Task 1–3](../learning-canvas/implementation-tasks-1-3.md).
+Các phần Root capability, chấm Java, focus trong delivery và highlight vẫn chưa
+triển khai; không xem dữ liệu bài tập/preview là vòng học hoàn chỉnh đã chạy.
+
+## Cập nhật 01/11: Learning Canvas, Task 4–6
+
+Theo yêu cầu tiếp theo, đã nối capability Canvas cho Root và event tutor_result
+có origin=user_ui; UI không gọi chat hay tăng generation. Đã sửa hai biên mất
+event busy: orchestrator không pop, kernel không cache busy để cùng ID thử lại.
+Root tiếp tục sở hữu lời nói; package Canvas chỉ đưa dữ liệu/assessment vào queue.
+
+Trắc nghiệm chấm theo khóa backend và ghi AssessmentAttempt vào SQLite; mức trợ
+giúp còn qua restart/nonce mới của cùng bài. Java có bộ chạy Docker giới hạn tài
+nguyên, worker riêng và UI CodeEdit/kết quả test; unavailable tự chuyển sang quiz,
+không tạo attempt giả. Báo cáo ở [Task 4–6](../learning-canvas/implementation-tasks-4-6.md).
+
+Đoạn Task 1–3 phía trên nói “Root capability/chấm Java chưa triển khai” **được
+thay thế cho các phần đã có mã ở Task 4–6**. Không thay bằng kết luận JVM đã chạy:
+Docker Desktop vẫn lỗi sailor-ingest.sock, chưa có engine để đo spike/read-only/
+noexec hay chấm Java thật. Root/model/delivery được kiểm tra giả lập, Godot dùng
+renderer OpenGL thật và fixture RAM. Chưa deploy portable hoặc xác nhận voice live.
+Focus giữa delivery, highlight và đầy đủ chính sách chấp nhận/bỏ ghim vẫn thuộc
+Task 7–10, chưa được hoàn thành trong đợt này.
+
+## Cập nhật 01/11: Learning Canvas, Task 7–10
+
+**Thay thế hai kết luận source lịch sử ở mục điều tra 15/10:** checkout hiện tại
+có `ô`/`ồ` trong `interaction_dynamics._BACKCHANNEL_TOKENS`; ChatCycle
+`_preempt_for_classified_user_turn` nhận `cancel_generation=True` và kiểm cờ
+trước khi hủy generation. Đối chiếu trực tiếp
+[classifier](../../src/runtime/interaction_dynamics.py) và
+[ChatCycle](../../src/runtime/chat_cycle.py), cùng regression
+`test_20261015_tts_interrupt_repair.py`. Không dùng câu “ô ngoài whitelist” hoặc
+“ChatCycle chưa nhận cancel_generation” để chẩn đoán bản hiện tại. Quan sát hủy
+delivery trong trace cũ vẫn là lịch sử của phiên đó; test không thay bằng chứng live.
+
+**Thay thế trạng thái “focus/highlight còn thuộc Task 7–10” ở mục trước:** đã có
+note_focus_change/epoch, bỏ run chưa commit nhưng giữ delivery đã commit, hủy
+lease/speculation của nhánh cũ, coalesce click và wake sau settle. Click Canvas
+không đi qua user_turn. Research/work chụp node_id + focus_revision khi khởi
+chạy, kết quả cũ giữ thành huy hiệu SQLite thay vì tự nói. Revision CAS và
+focus_revision tách riêng để ack không vô tình làm cũ tác vụ.
+
+Root gắn block_id cho các brief Canvas; writer hiện thực qua pipeline hiện có,
+binding vào artifact/frame. Chỉ callback audio_start thực sự mới highlight;
+queued chưa chứng minh playback. Canvas dùng từng segment thay vì inline,
+Godot lọc stream/turn/generation/seq và giữ chip quay lại nhánh đang nói. Pin chỉ
+nhả khi user chấp nhận proposal; focus của Eris không sinh navigate echo.
+
+Nghiệm thu cuối: **333 passed, 5 skipped** trên 32 file Python, C# 0 warning/error,
+preview Godot/OpenGL pass đủ dữ liệu/rỗng ở 5 kích thước. Đã export debug mới và
+build dev thành công vào scratch, chưa triển khai lên bản cài đang dùng.
+Chi tiết: [báo cáo Task 7–10](../learning-canvas/implementation-tasks-7-10.md).
+
+Các giới hạn vẫn còn: năm JVM integration test skip vì Docker engine chưa chạy;
+chưa đo JVM/read-only/noexec thật. E2E dùng model/delivery/Java giả lập, kiểm audio
+dùng TTS manager + device giả; không xác nhận provider/loa hoặc vòng học live.
+Hiệu quả học tập chưa được chứng minh; cần bài độc lập và kiểm tra nhớ lại trễ,
+không lấy mastery/FSRS shadow làm chứng minh đã học vững.

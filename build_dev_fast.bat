@@ -10,4 +10,4 @@ if not exist "%PY%" (
     exit /b 1
 )
 
-"%PY%" "%~dp0_fullbuild.py" --profile dev --debug --yes --skip-installer
+"%PY%" "%~dp0_fullbuild.py" --profile dev --debug --yes --skip-installer %*

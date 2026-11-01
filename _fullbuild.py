@@ -351,6 +351,9 @@ def assert_godot_pack_fresh(pack_path):
     print("  [OK] Eris.pck freshness check")
 
 def find_godot_export_file(filename):
+    if ARGS.godot_export_dir:
+        path = os.path.join(ARGS.godot_export_dir, filename)
+        return path if os.path.isfile(path) else ""
     candidates = [
         os.path.join(REPO, filename),
         os.path.join(DEV_OUT, filename),
@@ -374,7 +377,7 @@ def is_godot_dotnet_export_dir(path):
     return all(os.path.isfile(fp) for fp in _godot_dotnet_required_files(path))
 
 def find_godot_dotnet_export_dir():
-    roots = [REPO, DEV_OUT]
+    roots = [ARGS.godot_export_dir] if ARGS.godot_export_dir else [REPO, DEV_OUT]
     preferred_names = [
         "data_Eris_windows_x86_64",
         "data_Eris.console_windows_x86_64",
@@ -474,6 +477,11 @@ def parse_args():
         "--output",
         default="",
         help="Override output directory. Defaults: Documents\\eris for dev, Documents\\eris_release for release.",
+    )
+    parser.add_argument(
+        "--godot-export-dir",
+        default="",
+        help="Read Eris.exe, Eris.pck and Godot .NET assemblies from this export directory.",
     )
     parser.add_argument(
         "--debug",
@@ -804,7 +812,8 @@ for binary_fn in ["Eris.exe", "Eris.pck"]:
             assert_godot_pack_fresh(src_bin)
         deploy_pairs.append((src_bin, os.path.join(OUT, binary_fn)))
     else:
-        print("  [MISSING] " + binary_fn + " (looked in repo root and " + DEV_OUT + ")")
+        looked_in = ARGS.godot_export_dir or ("repo root and " + DEV_OUT)
+        print("  [MISSING] " + binary_fn + " (looked in " + looked_in + ")")
 
 manager_exe = os.path.join(REPO, "dist", "ErisManager.exe")
 if os.path.isfile(manager_exe):
