@@ -44,6 +44,11 @@ _OBSERVATIONAL_CAPABILITY_IDS = (
 
 
 _CAPABILITY_DATA: dict[str, CapabilityDefinition] = {
+    "canvas": CapabilityDefinition(
+        id="canvas", effect="control", public_name_vi="Learning Canvas Java DI",
+        description_vi="Root capability canvas mở nhóm DI, đọc nội dung và đề xuất focus trong Godot native; dùng guide canvas, không gọi qua action executor.",
+        visible_in_ui_group="knowledge",
+    ),
     "python_workspace": CapabilityDefinition(
         id="python_workspace", effect="control", public_name_vi="chạy Python sandbox Docker",
         description_vi="Chạy code Python do Eris viết trong Docker không mạng; xuất stdout và ảnh PNG lên Workspace Panel. Chỉ khả dụng khi có Docker",
@@ -366,6 +371,12 @@ def _boolean(description: str = "") -> dict[str, Any]:
 _EMPTY_INPUT = _object_schema()
 
 _CAPABILITY_INPUT_CONTRACTS: dict[str, tuple[dict[str, Any], str]] = {
+    "canvas": (_object_schema({
+        "operation": _string("Root Canvas operation", enum=("library", "open_group", "snapshot", "focus", "accept_focus")),
+        "base_revision": _integer("Revision từ snapshot", minimum=0),
+        "group_id": _string("ID nhóm từ Canvas library"),
+        "node_id": _string("ID nút từ snapshot"),
+    }, ("operation",)), "json"),
     "python_workspace": (_object_schema({
         "code": _string("Source Python <= 12 KB, chạy trong Docker không mạng"),
     }, ("code",)), "json"),

@@ -82,6 +82,23 @@ TOOL_GUIDES: dict[str, str] = {'rich_chat': 'Rich Chat P1 tự dựng document_s
           'Chỉ sửa/xóa khi user yêu cầu. Không tự gán correct cho một lần làm bị phản đối. '}
 
 
+TOOL_GUIDES["canvas"] = (
+    "Capability canvas: operation=library liệt kê nhóm và ID thật; operation=open_group,group_id mở nhóm native Godot. "
+    "operation=snapshot đọc focus, trạng thái và block Java/giải thích; operation=focus,node_id đề xuất focus. "
+    "Tôn trọng lựa chọn ghim của user. focus trả applied=false,reason=user_pinned thì chỉ đánh dấu gợi ý, không tự kéo panel. "
+    "User bấm nút được gợi ý sẽ chấp nhận/bỏ ghim. operation=accept_focus,node_id,base_revision chỉ dùng khi "
+    "user_turn hiện tại yêu cầu bằng lời quay về nút được gợi ý; không dùng trên autonomous/tutor_result. "
+    "Không đoán ID ngoài library. Canvas chỉ trả dữ liệu, Root quyết có nói gì. "
+    "Khi giảng, có thể thêm canvas_segments=[{block_id,say}] vào move, tối đa 6 phần; mỗi say là ý giao Writer "
+    "cho đúng block lấy từ snapshot. Backend bỏ block ID lạ; phần đã commit được phát hết dù UI chuyển nút. "
+    "Event tutor_result có metadata.origin=user_ui và canvas_capability.action=navigate nghĩa user chọn nút, "
+    "không phải lượt chat mới. Khi kernel rảnh, có thể giải thích theo các block của nút đó bằng giọng Eris. "
+    "action=assessment cung cấp verdict thật và assistance; không tự chấm lại, không coi hint/reveal là tự làm. "
+    "Không lộ đáp án/harness bằng công cụ; thao tác nộp/hint/reveal do UI backend kiểm soát. "
+    "state_sent chỉ xác nhận gửi state, chưa chứng minh user đã đọc hoặc đã nghe."
+)
+
+
 def read_tool_guide(name: str) -> dict:
     text = TOOL_GUIDES.get(name)
     if text is None:

@@ -44,6 +44,9 @@ NEXT_MOVE_SCHEMA: dict[str, Any] = {
                 "delivery": {"type": "string"},
                 "after": {"type": "string", "enum": ["wait_user", "may_continue", "continue_self"]},
                 "document_source": {"type": "string"},
+                "canvas_segments": {"type": "array", "maxItems": 6, "items": {
+                    "type": "object", "additionalProperties": False, "required": ["block_id", "say"],
+                    "properties": {"block_id": {"type": "string"}, "say": {"type": "string"}}}},
                 "presentation_blocks": {"type": "array", "maxItems": 6, "items": {
                     "type": "object", "additionalProperties": False,
                     "required": ["kind", "content"],
@@ -87,7 +90,7 @@ ROOT_STEP_SCHEMA: dict[str, Any] = {
             "required": ["kind", "capability", "arguments"],
             "properties": {
                 "kind": {"type": "string", "enum": ["use_capability"]},
-                "capability": {"type": "string", "enum": ["tutor", "work", "research", "action"]},
+                "capability": {"type": "string", "enum": ["tutor", "work", "research", "action", "canvas"]},
                 "arguments": {"type": "object", "additionalProperties": True},
             },
         },
