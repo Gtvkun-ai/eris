@@ -272,6 +272,26 @@ class TutorCapability:
             self._pending_expects = False
             self._pending_activity_receipts.clear()
             return {"status": "completed", "resumed": saved is not None, **learning.curriculum_snapshot()}
+        if operation == "spaces":
+            return {"status": "completed", **learning.learning_spaces()}
+        if operation == "switch_path":
+            # Không để Root tự đoán ID rồi âm thầm chuyển môn: người dùng phải
+            # thực sự nhắc đến tên môn/lộ trình hoặc chính mã của nó trong lượt này.
+            requested = str(arguments.get("path_id") or "")
+            known = next((row for row in learning.learning_spaces()["paths"]
+                          if row["path_id"] == requested), None)
+            if known is None:
+                raise ValueError("unknown_learning_space")
+            user_text = " ".join(str(event.text or "").casefold().split())
+            if (known["title"].casefold() not in user_text and requested.casefold() not in user_text):
+                raise ValueError("learning_space_not_requested_by_user")
+            result = learning.switch_learning_space(requested)
+            self.executive.suspend_pending_move(reason="path_changed")
+            self._last_decision = None
+            self._waiting_for_response = False
+            self._pending_expects = False
+            self._pending_activity_receipts.clear()
+            return {"status": "completed", **result}
         if operation == "activity":
             item = workspace.create(event=event, preset=str(arguments.get("preset") or "python.range"))
             bundle_id = workspace.bundle(item)

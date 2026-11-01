@@ -118,17 +118,41 @@ def maybe_autostart_path(
     if learning is None or router is None:
         return False
     try:
-        if learning.active_path() is not None:
-            return False
-        if not _intent_to_learn(host, user_text=user_text, recent_history=recent_history):
+        active = learning.active_path()
+        if active is not None:
+            # Không tự tạo path mới chỉ vì nhiều lượt đang bàn cùng một chủ đề.
+            # Muốn đổi môn khi đã có path, user phải kích hoạt ý định học rõ ràng.
+            from runtime.ai_orchestrated.orchestrator import _explicit_pedagogical_activation
+            if not _explicit_pedagogical_activation(user_text):
+                return False
+            # "Dạy tôi lại", "học tiếp" chỉ là tiếp tục path hiện tại, tuyệt
+            # đối không lập curriculum mới từ một lượt thiếu tên chủ đề.
+            from runtime.ai_orchestrated.orchestrator import normalize_vi
+            expressed = normalize_vi(str(user_text or "")).strip()
+            generic_followups = {"day toi lai", "chi toi lai", "day toi tiep",
+                                 "muon hoc tiep", "toi muon hoc tiep", "dang hoc",
+                                 "day toi", "chi toi", "muon hoc"}
+            if expressed in generic_followups:
+                return False
+            # Khi user gọi đúng tên path đang học, hãy để Tutor resume từ
+            # vị trí cũ thay vì tạo bản sao từ output mới của planner.
+            title = normalize_vi(str(getattr(active, "title", "") or "")).strip()
+            if title and title in expressed:
+                return False
+        elif not _intent_to_learn(host, user_text=user_text, recent_history=recent_history):
             return False
         path = propose_learning_path(router, topic_text=user_text, recent_history=recent_history)
         if path is None:
             return False
-        # Tuyệt đối không coi register thành activate; đường success cần cả hai.
+        # Nếu môn đã tồn tại, CHỈ RESUME; planner không được âm thầm ghi đè
+        # curriculum/revision đang có bằng một bản sinh lại khác wording.
         from runtime.learning_core.records import DomainSpec
-        learning.register_domain(DomainSpec(path.domain_id, path.title, path.domain_id))
-        learning.register_path(path, now=now)
+        store = getattr(learning, "_store", None)
+        load = getattr(store, "load_path", None)
+        existing = load(path.path_id) if callable(load) else None
+        if existing is None:
+            learning.register_domain(DomainSpec(path.domain_id, path.title, path.domain_id))
+            learning.register_path(path, now=now)
         return bool(learning.activate_path(path.path_id))
     except Exception:
         return False

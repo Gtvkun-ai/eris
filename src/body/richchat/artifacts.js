@@ -57,13 +57,22 @@ const ErisArtifacts = (() => {
     const activity=content.activity;
     if(activity && artifact.source==='tutor_activity' &&
         /^activity:[a-f0-9]{32}$/.test(activity.activity_id||'') &&
-        /^[a-f0-9]{32}$/.test(activity.nonce||'') &&
-        Array.isArray(activity.options) && activity.options.length>=2 && activity.options.length<=6){
-      body+='<div class="learning-activity" role="group" aria-label="Chọn câu trả lời">'+
-        activity.options.map((choice,index)=>`<button type="button" class="learning-choice" data-learning-action="answer" data-learning-choice="${index}">${escape(choice)}</button>`).join('')+
-        '<div class="learning-help"><button type="button" data-learning-action="hint">Gợi ý thêm một bước</button>'+
-        '<button type="button" data-learning-action="reveal">Xem lời giải</button></div>'+
-        '<p class="learning-status" aria-live="polite">Tự thử trước, rồi nhờ Eris gợi ý khi cần.</p></div>';
+        /^[a-f0-9]{32}$/.test(activity.nonce||'')){
+      const mode=String(activity.response_mode||'choice');
+      const options=Array.isArray(activity.options)?activity.options:[];
+      const choice=mode==='choice' && options.length>=2 && options.length<=6;
+      const typed=['numeric','reflection'].includes(mode) && options.length===0;
+      if(choice||typed){
+        let answerArea=choice?options.map((value,index)=>`<button type="button" class="learning-choice" data-learning-action="answer" data-learning-choice="${index}">${escape(value)}</button>`).join(''):
+          `<label class="learning-answer-label" for="answer-${escape(artifact.artifact_id)}">${mode==='numeric'?'Giá trị số nguyên':'Lời giải thích của bạn (chưa tự chấm)'}</label>`+
+          (mode==='numeric'?`<input id="answer-${escape(artifact.artifact_id)}" class="learning-text-answer" inputmode="numeric" maxlength="24" placeholder="Ví dụ: -3">`:
+            `<textarea id="answer-${escape(artifact.artifact_id)}" class="learning-text-answer" maxlength="1200" rows="4" placeholder="Diễn đạt bằng lời của bạn..."></textarea>`)+
+          '<button type="button" class="learning-submit" data-learning-action="answer">Nộp bài</button>';
+        body+='<div class="learning-activity" role="group" aria-label="Bài thực hành">'+answerArea+
+          '<div class="learning-help"><button type="button" data-learning-action="hint">Gợi ý thêm một bước</button>'+
+          '<button type="button" data-learning-action="reveal">Xem lời giải</button></div>'+
+          '<p class="learning-status" aria-live="polite">Tự thử trước, rồi nhờ Eris gợi ý khi cần.</p></div>';
+      }
     }
     if (!body) return {html:'',error:'E_RENDER'};
     const title = String(artifact.presentation?.title || ({math:'Công thức',code:'Mã nguồn',table:'Bảng dữ liệu',document:'Tài liệu',chart:'Biểu đồ'}[kind]||'Artifact')).slice(0,200);

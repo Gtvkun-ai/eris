@@ -152,6 +152,42 @@ class LearningService:
             self._persist_runtime_state_locked()
             return True
 
+    def learning_spaces(self) -> dict[str, Any]:
+        """Danh sách miền/lộ trình đã lưu, KHÔNG suy đoán điểm năng lực.
+
+        Mỗi path có con trỏ riêng (kể cả path chưa được mở ở phiên này). Trạng
+        thái chỉ phản ánh vị trí đang học, không gọi 'đã thành thạo' từ số lượt.
+        """
+        with self._lock:
+            domains = self._store.domains()
+            paths = []
+            for path_id in self._store.list_path_ids()[:256]:
+                path = self._store.load_path(path_id)
+                if path is None:
+                    continue
+                position = self._path_positions.get(path_id, "")
+                if position not in path.kp_ids:
+                    position = path.kp_ids[0] if path.kp_ids else ""
+                current = next((kp for kp in path.knowledge_points if kp.kp_id == position), None)
+                paths.append({
+                    "path_id": path.path_id, "domain_id": path.domain_id,
+                    "title": path.title, "goal": path.goal,
+                    "kp_count": len(path.kp_ids), "current_kp_id": position,
+                    "current_kp_title": current.title if current else "",
+                    "active": path.path_id == self._active_path_id,
+                    "revision": self._store.path_revision(path.path_id),
+                })
+            return {"schema": "eris.learning.spaces.v1", "domains": domains,
+                    "paths": paths, "active_path_id": self._active_path_id}
+
+    def switch_learning_space(self, path_id: str) -> dict[str, Any]:
+        """Chỉ chuyển sang path ĐÃ tồn tại; không tự tạo hoặc reset tiến độ."""
+        if not isinstance(path_id, str) or not path_id or len(path_id) > 120:
+            raise ValueError("invalid_learning_space_id")
+        if not self.activate_path(path_id):
+            raise ValueError("unknown_learning_space")
+        return self.learning_spaces()
+
     def active_path(self) -> LearningPath | None:
         with self._lock:
             if not self._active_path_id:

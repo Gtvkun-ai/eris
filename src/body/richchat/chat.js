@@ -298,6 +298,8 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
   }
   const acknowledged=new Set(), ackInFlight=new Set(), retries=new Map();
   let currentArtifacts=[], renderGeneration=0, mathFirstSeen=0;
+  // Lưu nháp trong RAM khi polling render lại; KHÔNG ghi câu trả lời vào storage.
+  const learningDrafts=new Map();
   const mathReady=()=>window.MathJax && typeof MathJax.typesetPromise==='function';
   const syncMath=()=>{if(mathReady()) MathJax.typesetPromise([root]).catch(()=>{});};
   const html=ErisRender.escape;
@@ -395,10 +397,11 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
       if(msg.role==='assistant' && msg.turnId)item.dataset.turnId=msg.turnId;
       const meta=document.createElement('div');meta.className='meta';meta.textContent=`${msg.role==='user'?'Bạn':'Eris'} · ${msg.time||''}`;
       let displayedText=msg.text;
-      const learningEvent=/^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) [a-f0-9]{32}(?: ([0-9]))?$/.exec(msg.text);
+      const learningEvent=/^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) [a-f0-9]{32}(?: ([0-5]|t:[A-Za-z0-9_-]{1,4096}))?$/.exec(msg.text);
       if(msg.role==='user' && learningEvent){
         const activity=artifacts.find(x=>x.artifact.content?.activity?.activity_id===learningEvent[2])?.artifact.content.activity;
-        displayedText=learningEvent[1]==='answer'?'Đáp án của tôi: '+(activity?.options?.[Number(learningEvent[3])]||'đã chọn'):
+        displayedText=learningEvent[1]==='answer'?'Tôi đã nộp câu trả lời cho bài học'+
+          (learningEvent[3]?.startsWith('t:')?' (câu trả lời văn bản).':': '+(activity?.options?.[Number(learningEvent[3])]||'đã chọn')):
           learningEvent[1]==='hint'?'Cho tôi thêm một gợi ý.':'Giải thích lời giải của bài này giúp tôi.';
       }
       const content=document.createElement('div');content.className='content';content.innerHTML=ErisRender.render(displayedText);
@@ -426,6 +429,14 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
       if(!card)continue;
       const activity=a.content?.activity;
       if(a.source==='tutor_activity' && activity){
+        const draftField=card.querySelector('.learning-text-answer');
+        if(draftField){
+          draftField.value=learningDrafts.get(activity.activity_id)||'';
+          draftField.addEventListener('input',()=>{
+            if(learningDrafts.size>80) learningDrafts.delete(learningDrafts.keys().next().value);
+            learningDrafts.set(activity.activity_id,draftField.value);
+          });
+        }
         card.querySelectorAll('[data-learning-action]').forEach(button=>button.addEventListener('click',async()=>{
           const action=button.dataset.learningAction;
           if(!['answer','hint','reveal'].includes(action))return;
@@ -435,14 +446,29 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
             if(status)status.textContent='Câu trả lời đã gửi. Xem phản hồi của Eris trong hội thoại.';
             return;
           }
+          let payload='';
+          if(action==='answer'){
+            if(activity.response_mode==='numeric' || activity.response_mode==='reflection'){
+              const field=card.querySelector('.learning-text-answer');
+              const value=String(field?.value||'').trim();
+              const bytes=new TextEncoder().encode(value);
+              if(!value || bytes.length>3000 || (activity.response_mode==='numeric' && !/^[+-]?[0-9]{1,12}$/.test(value))){
+                if(status)status.textContent='Nhập câu trả lời hợp lệ trước khi nộp (tối đa 3000 byte UTF-8).';
+                return;
+              }
+              payload='t:'+btoa(Array.from(bytes,b=>String.fromCharCode(b)).join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+              if(payload.length>4098){if(status)status.textContent='Câu trả lời quá dài.';return;}
+            } else payload=button.dataset.learningChoice||'';
+          }
           const message=`ERIS_LEARN ${action} ${activity.activity_id} ${activity.nonce}`+
-            (action==='answer'?` ${button.dataset.learningChoice}`:'');
+            (action==='answer'?` ${payload}`:'');
           button.disabled=true;
           try{
             const response=await fetch(endpoint('api/send'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
             if(!response.ok)throw new Error('send_failed');
             if(action==='answer'){
               sessionStorage.setItem(key,'submitted');
+              learningDrafts.delete(activity.activity_id);
               card.querySelectorAll('[data-learning-action]').forEach(b=>{b.disabled=true;});
             }
             if(status)status.textContent=action==='answer'?'Đã nộp bài. Eris sẽ phản hồi trong hội thoại.':'Đã nhờ Eris hỗ trợ trong hội thoại.';

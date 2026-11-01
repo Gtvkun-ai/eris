@@ -135,14 +135,21 @@ def validate_artifact(value: Mapping[str, Any]) -> dict:
         if item.get('source') != 'tutor_activity' or kind != 'document':
             raise ArtifactContractError('activity: trusted tutor source required')
         activity = _obj(content['activity'], 'activity')
-        if set(activity) != {'activity_id', 'nonce', 'revision', 'options'}:
+        # Hợp đồng cũ (4 trường) vẫn hợp lệ. Typed activity có thêm
+        # response_mode, nhưng KHÔNG được chứa expected_text/correct/đáp án.
+        legacy = {'activity_id', 'nonce', 'revision', 'options'}
+        if set(activity) not in (legacy, legacy | {'response_mode'}):
             raise ArtifactContractError('activity: invalid fields')
+        mode = activity.get('response_mode', 'choice')
+        if mode not in ('choice', 'numeric', 'reflection'):
+            raise ArtifactContractError('activity: invalid response mode')
         if not re.fullmatch(r'activity:[a-f0-9]{32}', str(activity.get('activity_id', ''))):
             raise ArtifactContractError('activity: invalid id')
         for field, length in (('nonce', 32), ('revision', 64)):
             if not re.fullmatch(r'[a-f0-9]{' + str(length) + r'}', str(activity.get(field, ''))):
                 raise ArtifactContractError('activity: invalid ' + field)
-        if (not isinstance(activity.get('options'), list) or not 2 <= len(activity['options']) <= 6
+        if (not isinstance(activity.get('options'), list)
+                or (not 2 <= len(activity['options']) <= 6 if mode == 'choice' else len(activity['options']) != 0)
                 or any(not isinstance(x, str) or not x or len(x) > 500 for x in activity['options'])):
             raise ArtifactContractError('activity: invalid choices')
     _content(kind, content)

@@ -1,11 +1,15 @@
-"""A first complete activity slice: Python tracing, delivered through existing artifacts.
+"""Bài tập Tutor đa lĩnh vực đi qua artifact/receipt của Eris.
 
-The answer key is server-owned. Browser buttons submit an ordinary user event;
-only its actual text can select an answer. No client 'passed' field is trusted.
+Python và toán được chấm deterministic từ đáp án chỉ nằm ở backend;
+bài tự giải thích là ungraded. Browser chỉ gửi user event, không có quyền
+đánh dấu người học đã thành thạo. Bộ preset này là lát cắt P1, chưa phải
+curriculum vô hạn cho mọi môn.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import secrets
 import time
@@ -22,6 +26,16 @@ REFERENCE = (
     "Với total += n, mỗi lượt cộng n vào giá trị total hiện có. "
     "Toán tử n % 2 cho phần dư khi chia n cho 2; phần dư 0 là số chẵn."
 )
+MATH_REFERENCE = (
+    "Phương trình một ẩn: cộng hoặc trừ cùng một số ở hai vế để cô lập x. "
+    "Phân số a/b có mẫu b khác 0; cộng hai phân số cùng mẫu bằng cách cộng tử số."
+)
+WRITING_REFERENCE = (
+    "Tự giải thích một khái niệm giúp bộc lộ cách hiểu; bài trả lời tự do chưa có bộ chấm "
+    "đáng tin cậy sẽ được lưu trạng thái chưa đánh giá, không tăng mastery."
+)
+MATH_DOMAIN = DomainSpec("math-foundation", "Toán nền tảng", "math:v1", capabilities=("choice", "short_answer"))
+WRITING_DOMAIN = DomainSpec("reasoning-reflection", "Lý giải và diễn đạt", "reasoning:v1", capabilities=("short_answer",))
 PYTHON_DOMAIN = DomainSpec("python-basics", "Python căn bản", "python:v1", capabilities=("choice", "short_answer"))
 PRESETS = {
     "python.range": {
@@ -62,7 +76,38 @@ PRESETS = {
     },
 }
 
-EVENT = re.compile(r"^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) ([a-f0-9]{32})(?: ([0-9]))?$")
+# Tách khỏi PRESETS legacy: các test/công cụ cũ duyệt PRESETS chỉ giả định Python.
+EXTRA_PRESETS = {
+    "math.fractions": {
+        "kp_id": "math:v1:fractions", "title": "Cộng phân số cùng mẫu",
+        "question": "Tính kết quả phép cộng phân số sau:",
+        "options": ["2/5", "3/5", "4/5"], "correct": 1,
+        "hints": ["Với cùng mẫu, chỉ cần cộng tử số.", "Giữ mẫu và cộng đúng hai tử số."],
+        "explanation": "Cộng tử số và giữ nguyên mẫu số.", "response_mode": "choice",
+    },
+    "math.linear": {
+        "kp_id": "math:v1:linear", "title": "Giải phương trình bậc nhất",
+        "question": "Giải tìm x (nhập một số nguyên):", "options": [],
+        "hints": ["Chuyển hằng số sang vế phải bằng phép trừ cả hai vế.",
+                  "Chỉ có hệ số 1 trước x; thực hiện phép trừ để tìm x."],
+        "explanation": "Cô lập x bằng cách trừ cùng hằng số ở hai vế.", "response_mode": "numeric",
+    },
+    "writing.explanation": {
+        "kp_id": "reasoning:v1:explanation", "title": "Tự giải thích lại một ý",
+        "question": "Hãy giải thích bằng lời của bạn: vì sao khi học nên tự làm thử trước khi xem lời giải?",
+        "options": [], "hints": ["Nêu một lợi ích của việc tự thử trước.",
+                                "Bạn có thể nói về việc nhận ra chỗ mình chưa hiểu."],
+        "explanation": "Đây là bài tự giải thích; Eris lưu câu trả lời nhưng chưa tự chấm đúng/sai.",
+        "response_mode": "reflection",
+    },
+}
+ALL_PRESETS = {**PRESETS, **EXTRA_PRESETS}
+
+# Đáp án văn bản được mã hóa base64url để chuyển qua kênh ERIS_LEARN của user event;
+# backend không xem chuỗi do model bịa là bằng chứng đã học.
+EVENT = re.compile(
+    r"^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) ([a-f0-9]{32})(?: ([0-5]|t:[A-Za-z0-9_-]{1,4096}))?$"
+)
 
 
 def tracing_variant(preset, seed):
@@ -88,7 +133,7 @@ def tracing_variant(preset, seed):
             options=[str(total), str(end), str(total + end + 1)],
             explanation=f"n lần lượt từ 1 tới {end}; cộng từng giá trị vào total được {total}.",
         )
-    else:
+    elif preset == "python.filter":
         end = 6 + seed % 9
         even = sum(n for n in range(1, end + 1) if n % 2 == 0)
         total = end * (end + 1) // 2
@@ -100,7 +145,50 @@ def tracing_variant(preset, seed):
     rotation = seed % 3
     item["options"] = item["options"][rotation:] + item["options"][:rotation]
     item["correct"] = (-rotation) % 3
+    item["response_mode"] = "choice"
     return item
+
+
+def activity_variant(preset: str, seed: int) -> dict:
+    """Sinh bài bằng phép tính xác định, không gọi LLM để tự tạo đáp án."""
+    if preset.startswith("python."):
+        return tracing_variant(preset, seed)
+    item = dict(EXTRA_PRESETS[preset])
+    if preset == "math.fractions":
+        den = 4 + seed % 7
+        a = 1 + (seed // 7) % 2
+        b = 1 + (seed // 17) % 2
+        item.update(question=f"Tính {a}/{den} + {b}/{den} = ?",
+                    options=[f"{a+b}/{den}", f"{a+b+1}/{den}", f"{a+b}/{den+1}"],
+                    explanation=f"Cùng mẫu {den}, nên ({a} + {b})/{den} = {a+b}/{den}.")
+        rotation = seed % 3
+        item["options"] = item["options"][rotation:] + item["options"][:rotation]
+        item["correct"] = (-rotation) % 3
+    elif preset == "math.linear":
+        x = (seed % 19) - 9
+        constant = 2 + (seed // 19) % 15
+        item.update(question=f"Giải phương trình x + {constant} = {x + constant}. Nhập giá trị x.",
+                    expected_text=str(x),
+                    explanation=f"Trừ {constant} ở hai vế: x = {x + constant} - {constant} = {x}.")
+    elif preset == "writing.explanation":
+        # Không tạo đáp án đúng/sai giả cho một câu tự luận mở.
+        item["expected_text"] = ""
+    return item
+
+
+def decode_text_answer(raw: str) -> str:
+    """Giới hạn UTF-8 và kích thước; không nhận chuỗi điều khiển/tài nguyên thực thi."""
+    if not raw.startswith("t:"):
+        raise ValueError("invalid_text_answer")
+    token = raw[2:]
+    try:
+        blob = base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True)
+        answer = blob.decode("utf-8", "strict").strip()
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("invalid_text_answer") from exc
+    if not answer or len(blob) > 3000 or any(ord(ch) < 32 and ch not in "\n\t" for ch in answer):
+        raise ValueError("invalid_text_answer")
+    return answer
 
 
 class LearningActivities:
@@ -115,32 +203,40 @@ class LearningActivities:
             "choice": True,
             "short_answer": True,
             "python_exec": False,
-            "math_input": False,
+            "math_input": True,  # Chỉ câu trả lời số nguyên, chấm deterministic.
+            "reflection_ungraded": True,
             "graph_manipulation": False,
         }
 
     def create(self, *, event, preset="python.range", now=None):
-        if preset not in PRESETS:
+        if preset not in ALL_PRESETS:
             raise ValueError("unsupported_activity_preset")
         now = time.time() if now is None else float(now)
-        self.learning.register_domain(PYTHON_DOMAIN)
+        group = preset.split(".", 1)[0]
+        domain, path_id, title, goal, reference, origin = {
+            "python": (PYTHON_DOMAIN, "python-basics:v1", "Python căn bản", "Đọc và dự đoán mã Python",
+                       REFERENCE, "https://docs.python.org/3/tutorial/controlflow.html#the-range-function"),
+            "math": (MATH_DOMAIN, "math-foundation:v1", "Toán nền tảng", "Làm quen phân số và phương trình",
+                     MATH_REFERENCE, ""),
+            "writing": (WRITING_DOMAIN, "reasoning-reflection:v1", "Tự giải thích", "Luyện diễn đạt suy nghĩ",
+                        WRITING_REFERENCE, ""),
+        }[group]
+        self.learning.register_domain(domain)
         path = LearningPath(
-            "python-basics:v1",
-            "Python căn bản",
-            "Đọc và dự đoán mã Python",
-            tuple(KnowledgePoint(p["kp_id"], p["title"], "procedure") for p in PRESETS.values()),
-            source="eris_auto",
-            domain_id=PYTHON_DOMAIN.domain_id,
+            path_id, title, goal,
+            tuple(KnowledgePoint(p["kp_id"], p["title"], "procedure")
+                  for key, p in ALL_PRESETS.items() if key.startswith(group + ".")),
+            source="eris_auto", domain_id=domain.domain_id,
         )
         existing = self.store.load_path(path.path_id)
         if existing is None:
             self.learning.register_path(path, now=now)
-        source_id = "eris-python-reference-v1"
+        source_id = "eris-" + group + "-reference-v1"
         spans = text_spans(
-            domain_id=PYTHON_DOMAIN.domain_id,
+            domain_id=domain.domain_id,
             source_id=source_id,
-            text=REFERENCE,
-            origin="https://docs.python.org/3/tutorial/controlflow.html#the-range-function",
+            text=reference,
+            origin=origin,
             source_kind="model_summary",
             now=0.0,
         )
@@ -149,13 +245,15 @@ class LearningActivities:
         existing_activity = self.store.load_activity(activity_id)
         if existing_activity:
             return existing_activity
-        # An explicit activity request may switch to its path; no activation on read.
+        # Chuyển path được phép, nhưng phải RESUME bài đang học thay vì reset.
         self.learning.activate_path(path.path_id)
         seed = int(digest([event.event_id, preset])[:8], 16)
-        item = tracing_variant(preset, seed)
+        item = activity_variant(preset, seed)
         previous = self.store.latest_activity(preset)
-        if previous and previous["code"] == item["code"]:
-            item = tracing_variant(preset, seed + 1)
+        # Chỉ tránh lặp nguyên văn biến thể câu hỏi. Bài reflection có thể lặp
+        # lại theo lần học, nhưng không dùng cùng item_id để giả là transfer.
+        if previous and previous.get("question") == item["question"] and preset != "writing.explanation":
+            item = activity_variant(preset, seed + 1)
         item.update(
             activity_id=activity_id,
             preset=preset,
@@ -175,15 +273,25 @@ class LearningActivities:
         return item
 
     def bundle(self, item):
-        code = item["code"]
-        source = item["question"] + "\n\n" + chr(96) * 3 + "python\n" + code + "\n" + chr(96) * 3
-        source += "\n\nHãy chọn đáp án bên dưới. Bạn có thể xin gợi ý trước khi nộp bài."
+        code = item.get("code", "")
+        source = item["question"]
+        if code:
+            source += "\n\n" + chr(96) * 3 + "python\n" + code + "\n" + chr(96) * 3
+        response_mode = item.get("response_mode", "choice")
+        source += "\n\n" + {
+            "choice": "Chọn một đáp án. Bạn có thể xin gợi ý trước khi nộp bài.",
+            "numeric": "Nhập số nguyên x rồi nộp bài; backend sẽ tự kiểm tra giá trị.",
+            "reflection": "Viết lời giải thích của chính bạn. Bài này lưu là chưa chấm, KHÔNG tăng điểm năng lực.",
+        }[response_mode]
         public = {
             "activity_id": item["activity_id"],
             "nonce": item["nonce"],
             "revision": item["base_revision"],
-            "options": item["options"],
+            "options": item.get("options", []),
         }
+        # Chỉ thêm trường mới cho typed input; giữ contract choice v1 nguyên dạng.
+        if response_mode != "choice":
+            public["response_mode"] = response_mode
         turn_id = "job:" + item["activity_id"]
         artifact = build_artifact(
             turn_id=turn_id,
@@ -259,30 +367,47 @@ class LearningActivities:
                 "hint_count": item["hint_count"] + 1,
                 "instruction": item["explanation"] if action == "reveal" else hints[index],
             }
-        if answer is None or not 0 <= int(answer) < len(item["options"]):
-            raise ValueError("invalid_activity_answer")
-        correct = int(answer) == item["correct"]
+        mode = item.get("response_mode", "choice")
+        if mode == "choice":
+            if answer is None or not answer.isdigit() or not 0 <= int(answer) < len(item["options"]):
+                raise ValueError("invalid_activity_answer")
+            correct = int(answer) == item["correct"]
+            answer_ref = "choice:" + answer
+            result = "correct" if correct else "incorrect"
+        elif mode in {"numeric", "reflection"}:
+            value = decode_text_answer(answer or "")
+            if mode == "numeric":
+                if not re.fullmatch(r"[+-]?[0-9]{1,12}", value):
+                    raise ValueError("invalid_numeric_answer")
+                correct = int(value) == int(item["expected_text"])
+                result = "correct" if correct else "incorrect"
+            else:
+                correct = False
+                result = "ungraded"  # Chưa có rubric đáng tin để chấm tự luận.
+            answer_ref = "sha256:" + digest(value)
+        else:
+            raise ValueError("unsupported_activity_mode")
         help_state = self.store.assistance_for(activity_id)
         attempt = AssessmentAttempt(
             attempt_id,
             item["kp_id"],
-            "correct" if correct else "incorrect",
-            "quiz_correct" if correct else "quiz_incorrect",
+            result,
+            "exposure" if result == "ungraded" else "quiz_correct" if correct else "quiz_incorrect",
             strength=1.0 if correct else 0.0,
             interaction_id=activity_id,
             turn_id=event.event_id,
             path_id=item["path_id"],
-            item_id=item["preset"] + ":" + digest(item["code"])[:16],
+            item_id=item["preset"] + ":" + digest(item.get("code") or item["question"])[:16],
             item_family_id=item["preset"],
             activity_id=activity_id,
             assistance=help_state["assistance"],
             hint_count=help_state.get("hint_count", 0),
             answer_revealed=help_state["assistance"] == "answer_revealed",
-            rubric_version="python-tracing-v1",
-            assessor_version="choice-key-v1",
+            rubric_version=("reflection-ungraded-v1" if mode == "reflection" else "deterministic-v1"),
+            assessor_version=("no-grade-v1" if mode == "reflection" else "choice-key-v1" if mode == "choice" else "integer-key-v1"),
             source_refs=tuple(item["source_refs"]),
             recorded_at=now,
-            answer_ref="choice:" + answer,
+            answer_ref=answer_ref,
             error_code="" if correct else "trace-step",
         )
         committed = self.learning.record_attempt(attempt)
@@ -293,6 +418,7 @@ class LearningActivities:
             "committed": committed,
             "attempt": attempt.to_dict(),
             "feedback": item["explanation"],
+            "grading_status": "ungraded" if result == "ungraded" else "deterministic",
             "next_step": "independent_variant" if help_state["assistance"] != "independent" else "continue",
             "retention": self.learning.retention_snapshot(item["kp_id"]),
         }
