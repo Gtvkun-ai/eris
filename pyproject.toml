@@ -45,6 +45,9 @@ include = [
 ]
 exclude = ["tests*", "assets*", "live2d_body*"]
 
+[tool.setuptools.package-data]
+"runtime.learning_canvas" = ["packs/*.json"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120
