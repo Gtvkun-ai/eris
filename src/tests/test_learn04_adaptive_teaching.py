@@ -161,7 +161,9 @@ def test_illegal_llm_move_cannot_override_adaptive_envelope(tmp_path):
     assert decision.move.kp_id == "for.loop"
     assert "BIẾN THỂ" in decision.move.instruction_vi
     assert decision.move.requires_user_response
-    assert decision.move.max_sentences <= 2
+    # max_sentences là HINT MỀM, không còn trần cứng cắt lời. Bất biến thật của
+    # test: LLM không ép được kind/kp_id/directive sư phạm — không phải số câu.
+    assert decision.move.max_sentences >= 1
     assert "Bỏ qua bài học" not in decision.move.instruction_vi
 
 

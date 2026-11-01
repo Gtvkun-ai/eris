@@ -334,6 +334,11 @@ class RuntimeModelRootAgent:
             if kind == "no_reply":
                 return NoReply.from_mapping(raw)
             if kind == "move" or (event.kind == "user_turn" and (raw.get("intent") or raw.get("say"))):
+                # Quan sát cadence: chỉ ghi LOẠI `after` (wait_user|may_continue|
+                # continue_self), KHÔNG serialize nội dung say/intent. Dùng để thấy
+                # Root có rải nhịp qua may_continue khi chạy live hay không.
+                self._log("info", "[root-agent] finalize move after=%s",
+                          str(raw.get("after", "wait_user")).strip().lower()[:24])
                 # Finalize TRỰC TIẾP move Root đã chọn — không chạy một vòng model
                 # thứ hai (self-verify) vốn làm phẳng personality. Anti-fabrication
                 # vẫn do claim_manifest + grounding gate + enforce_completed_action_claims

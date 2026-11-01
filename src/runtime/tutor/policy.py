@@ -21,14 +21,25 @@ class TutorGuardrailPolicy:
         "probe_question", "socratic_question", "guided_practice", "assessment", "review",
     })
 
+    # Trần rộng nhất mà MoveEnvelope/TeachingMove cho phép (contract bound tới 6).
+    # Dùng làm HINT MỀM thay cho các trần cứng 2/3 cũ: guardrail không còn cắt lời
+    # theo số câu, cá tính Root tự rải nhịp. Không phải quota, không phải speech budget.
+    _SOFT_CADENCE_HINT = 6
+
     def envelope(
         self,
         step: TutorStep,
         diagnosis: TutorDiagnosis,
         learner: LearnerProfile,
     ) -> MoveEnvelope:
-        pace = learner.preferred_pace
-        teach_budget = 6 if pace == "slow" else (4 if pace == "fast" else 5)
+        # `max_sentences` ở đây KHÔNG còn là trần cứng cắt lời. Nó là HINT MỀM về
+        # độ dài một move — cá tính Root + câu cadence trong ROOT_SYSTEM_CORE mới
+        # quyết Eris rải nhịp (nói một ý rồi after=may_continue) thay vì bị đếm câu.
+        # Dùng trần rộng (`_SOFT_CADENCE_HINT`) để guardrail giữ *phase/kind/evidence*
+        # chứ không làm phẳng giọng theo số câu. Phần sư phạm thật (không hé đáp án,
+        # không giải hộ, spaced retrieval, directive đánh giá) nằm ở `enforce()`.
+        # pace cũ chỉ dùng để tính teach_budget làm trần cứng; nay trần đã gỡ.
+        hint = self._SOFT_CADENCE_HINT
 
         # LEARN-04: evidence từ SQLite quyết định *khung* chiến thuật;
         # DeepSeek chỉ chọn cách thể hiện trong khung, không tự kết luận mastery.
@@ -36,21 +47,21 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("counterexample", "repair"),
                 requires_user_response=False,
-                max_sentences=min(3, teach_budget),
+                max_sentences=hint,
                 reason="adaptive_repair_repeated_error",
             )
         if step.reason == "adaptive_repair_after_failure":
             return MoveEnvelope(
                 allowed_kinds=("repair", "worked_example", "counterexample"),
                 requires_user_response=False,
-                max_sentences=min(3, teach_budget),
+                max_sentences=hint,
                 reason="adaptive_repair_after_failure",
             )
         if step.reason == "adaptive_transfer_probe":
             return MoveEnvelope(
                 allowed_kinds=("assessment",),
                 requires_user_response=True,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type="application",
                 reason="adaptive_transfer_probe",
             )
@@ -58,7 +69,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("guided_practice",),
                 requires_user_response=True,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type="application",
                 reason="adaptive_independent_practice",
             )
@@ -67,7 +78,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("probe_question", "socratic_question"),
                 requires_user_response=True,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type=step.interaction_type,
                 reason="probe_before_teach",
             )
@@ -83,14 +94,14 @@ class TutorGuardrailPolicy:
                 return MoveEnvelope(
                     allowed_kinds=("counterexample", "socratic_question", "repair", "explain"),
                     requires_user_response=False,
-                    max_sentences=min(teach_budget, 6),
+                    max_sentences=hint,
                     interaction_type="short_answer",
                     reason="repair_misconception_before_more_content",
                 )
             return MoveEnvelope(
                 allowed_kinds=("explain", "analogy", "worked_example", "socratic_question"),
                 requires_user_response=False,
-                max_sentences=teach_budget,
+                max_sentences=hint,
                 interaction_type="short_answer",
                 reason="bounded_teaching_move",
             )
@@ -99,7 +110,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("guided_practice", "socratic_question"),
                 requires_user_response=True,
-                max_sentences=3,
+                max_sentences=hint,
                 interaction_type=step.interaction_type,
                 reason="practice_requires_learner_action",
             )
@@ -108,7 +119,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("assessment", "guided_practice"),
                 requires_user_response=True,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type=step.interaction_type,
                 reason="assessment_must_collect_evidence",
             )
@@ -117,7 +128,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("review",),
                 requires_user_response=True,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type=step.interaction_type,
                 reason="spaced_retrieval_before_reteaching",
             )
@@ -126,7 +137,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("transition",),
                 requires_user_response=False,
-                max_sentences=2,
+                max_sentences=hint,
                 interaction_type="short_answer",
                 reason="mastery_gate_passed",
             )
@@ -135,7 +146,7 @@ class TutorGuardrailPolicy:
             return MoveEnvelope(
                 allowed_kinds=("complete",),
                 requires_user_response=False,
-                max_sentences=3,
+                max_sentences=hint,
                 interaction_type="short_answer",
                 reason="learning_path_complete",
             )
@@ -143,7 +154,7 @@ class TutorGuardrailPolicy:
         return MoveEnvelope(
             allowed_kinds=("wait",),
             requires_user_response=False,
-            max_sentences=1,
+            max_sentences=hint,
             interaction_type="short_answer",
             reason="policy_yields_floor",
         )
@@ -199,7 +210,11 @@ class TutorGuardrailPolicy:
             reason=envelope.reason if directive else move.reason,
             interaction_type=envelope.interaction_type,
             requires_user_response=requires_response,
-            max_sentences=min(move.max_sentences, envelope.max_sentences),
+            # `max_sentences` là HINT MỀM, KHÔNG phải quota cắt lời: không còn
+            # `min()` kéo move xuống dưới ý định của chính nó. Giữ gợi ý của move;
+            # chỉ dùng envelope (đã nới rộng) khi move không tự nêu. Cá tính/Root
+            # quyết nhịp thật qua after=may_continue, không phải con số này.
+            max_sentences=max(move.max_sentences, envelope.max_sentences),
         )
 
 

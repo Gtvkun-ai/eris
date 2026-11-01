@@ -96,7 +96,10 @@ def test_probe_phase_cannot_be_overridden_by_semantic_model(tmp_path) -> None:
     assert decision.policy_step.kind == "probe"
     assert decision.move.kind == "probe_question"
     assert decision.move.requires_user_response is True
-    assert decision.move.max_sentences == 2
+    # `max_sentences` giờ là HINT MỀM, không còn trần cứng cắt lời (cadence do cá
+    # tính Root quyết qua after=may_continue). Phase/kind/requires_response vẫn bị
+    # guardrail giữ chặt — đó mới là bất biến test này bảo vệ, không phải số câu.
+    assert decision.move.max_sentences >= 2
 
 
 def test_writer_projection_never_contains_expected_answer(tmp_path) -> None:
@@ -258,9 +261,11 @@ def test_learner_pace_changes_teaching_budget(tmp_path) -> None:
 
     assert decision is not None
     assert decision.policy_step.kind == "teach"
-    # Design proactive-human: teach pace=fast phải có tối thiểu 4 câu.
-    assert decision.envelope.max_sentences == 4
-    assert decision.move.max_sentences <= 4
+    # max_sentences là HINT MỀM: envelope không còn cắt lời theo pace (trần cứng 4
+    # cho fast đã gỡ). Teach vẫn ra đúng phase; độ dài/nhịp do cá tính Root rải qua
+    # after=may_continue, không phải con số này.
+    assert decision.envelope.max_sentences >= 4
+    assert decision.move.max_sentences >= 4
 
 class _SocraticReasoner(ConservativeTutorReasoner):
     def choose_move(self, observation, state, diagnosis, envelope):
