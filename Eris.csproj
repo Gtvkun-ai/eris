@@ -7,5 +7,6 @@
   <ItemGroup>
     <EmbeddedResource Include="src/body/richchat/**/*" Exclude="src/body/richchat/**/*.txt" />
     <Compile Remove="src\integration\body_contracts\**" />
+    <Compile Remove="dist\**;build\**;scratch\**" />
   </ItemGroup>
 </Project>

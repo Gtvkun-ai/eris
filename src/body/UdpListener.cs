@@ -368,6 +368,7 @@ public partial class UdpListener : Node2D
 		BuildCharacterContextMenuUi();
 		InitializeMemoryPanel();
 		InitializeCapabilityPanel();
+		InitializeLearningCanvas();
 		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
 		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
 		_emotionPanel.Size = EmotionPanelMinSize;
@@ -807,6 +808,7 @@ public partial class UdpListener : Node2D
 			|| TryGetVisibleControlMouseRect(_settingsPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_memoryPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_capabilityPanel, mouse, out rect)
+			|| TryGetVisibleControlMouseRect(_learningCanvasPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_autonomyGoalsPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_artifactWorkspacePanel, mouse, out rect)
@@ -834,6 +836,7 @@ public partial class UdpListener : Node2D
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _settingsPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
+		MergeVisibleControlRect(ref aggregate, ref hasRect, _learningCanvasPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _autonomyGoalsPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _artifactWorkspacePanel, 4f);
@@ -965,6 +968,7 @@ public partial class UdpListener : Node2D
 		TickSettingsPanelRuntimeStatus();
 		TickMemoryPanelStatus();
 		TickCapabilityPanelStatus();
+		TickLearningCanvas();
 		TickRuntimePresencePanel();
 		TickConversationUi();
 		TickRichChatPortal();
@@ -991,6 +995,12 @@ public partial class UdpListener : Node2D
 	{
 		if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
 		{
+			if (_learningCanvasPanel?.Visible == true)
+			{
+				CloseLearningCanvas();
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 			if (_chatPanel?.Visible == true)
 			{
 				CloseChatPanel();
@@ -1114,6 +1124,11 @@ public partial class UdpListener : Node2D
 				GetViewport().SetInputAsHandled();
 				return;
 			}
+			if (_learningCanvasPanel?.Visible == true && IsMouseOverControl(_learningCanvasPanel, mouseEvent.Position))
+			{
+				GetViewport().SetInputAsHandled();
+				return;
+			}
 			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible && IsMouseOverControl(_conversationHistoryPanel, mouseEvent.Position))
 			{
 				GetViewport().SetInputAsHandled();
@@ -1162,6 +1177,11 @@ public partial class UdpListener : Node2D
 			if (_capabilityPanel != null && _capabilityPanel.Visible)
 			{
 				CloseCapabilityPanel();
+				GetViewport().SetInputAsHandled();
+			}
+			if (_learningCanvasPanel?.Visible == true)
+			{
+				CloseLearningCanvas();
 				GetViewport().SetInputAsHandled();
 			}
 			if (_conversationHistoryPanel != null && _conversationHistoryPanel.Visible)
@@ -1930,6 +1950,12 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextCapabilityButton, Mathf.Max(0, closeIndex));
 			}
+			if (_contextLearningCanvasButton == null)
+			{
+				_contextLearningCanvasButton = new Button { Name = "LearningCanvasButton" };
+				container.AddChild(_contextLearningCanvasButton);
+				container.MoveChild(_contextLearningCanvasButton, Mathf.Max(0, _contextCloseButton.GetIndex()));
+			}
 			if (_contextSettingsButton == null)
 			{
 				_contextSettingsButton = new Button { Name = "SettingsButton" };
@@ -1956,6 +1982,7 @@ public partial class UdpListener : Node2D
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn", "res://asset/Resource/emotion.png");
+		ConfigureContextMenuButton(_contextLearningCanvasButton, "Learning Canvas · Java DI", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cài đặt", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoát ERIS", "res://asset/Resource/exit.png");
 		ConfigureContextMenuButton(_contextCloseButton, "Đóng", "res://asset/Resource/exit.png");
@@ -4829,6 +4856,8 @@ public partial class UdpListener : Node2D
 			return;
 		if (TryHandleCapabilityPanelPacket(raw))
 			return;
+		if (TryHandleLearningCanvasPacket(raw))
+			return;
 		var payload = _decisionParser.Parse(raw);
 		if (payload.HasEmotionDebug)
 		{
@@ -4927,6 +4956,7 @@ public partial class UdpListener : Node2D
 
 			if (eventType == "audio_start")
 			{
+				bool newAudioTurn = !string.Equals(_ttsBodyAudioTurnId, turnId, StringComparison.Ordinal);
 				_ttsAudioIsPlaying = true;
 				_ttsBodyAudioTurnId = turnId;
 				_ttsBodyAudioSegmentCount = Math.Max(segmentCount, segmentId + 1);
@@ -4939,7 +4969,7 @@ public partial class UdpListener : Node2D
 				}
 				_lastTtsAudioDurationMs = durationMs;
 
-				if (_speechSentences != null && _speechSentences.Count > 1)
+				if (newAudioTurn && _speechSentences != null && _speechSentences.Count > 1)
 					StartSentenceHighlightTracking(durationMs);
 				if (ActiveSpeechStatusLabel() is { } status)
 					status.Text = "đang nói…";
