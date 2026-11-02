@@ -5,16 +5,16 @@
     "real_base_exists": true,
     "projected_per_key": {
       "active_state": {
-        "chars": 6198,
-        "tokens": 2070
+        "chars": 3102,
+        "tokens": 1038
       },
       "affective_residue_memory": {
         "chars": 2,
         "tokens": 4
       },
       "agent_mind": {
-        "chars": 7852,
-        "tokens": 2621
+        "chars": 4189,
+        "tokens": 1400
       },
       "belief_core": {
         "chars": 2,
@@ -61,8 +61,8 @@
         "tokens": 4
       },
       "semantic_memory": {
-        "chars": 3389,
-        "tokens": 1133
+        "chars": 1646,
+        "tokens": 552
       },
       "sociocultural_memory": {
         "chars": 2,
@@ -86,8 +86,8 @@
       }
     },
     "projected_total": {
-      "chars": 27897,
-      "tokens": 9303
+      "chars": 19395,
+      "tokens": 6469
     },
     "raw_per_key_chars": {
       "active_state": {

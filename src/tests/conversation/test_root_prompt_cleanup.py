@@ -11,6 +11,11 @@ from runtime.conversation.context import RootCapabilityRegistry
 from runtime.conversation.contracts import ConversationEvent
 from runtime.conversation.root_session import RootConversationSession, _read_self
 from runtime.conversation.self_prompt_view import compact_profile, project_self_view, project_runtime_context
+from runtime.conversation.self_prompt_view import (
+    compact_agent_mind,
+    compact_active_state,
+    compact_semantic_item,
+)
 from runtime.conversation.self_prompt_view import state_difference
 from runtime.conversation.tool_guides import TOOL_GUIDES, read_tool_guide
 
@@ -131,6 +136,186 @@ def test_compact_profile_cuts_audit_keeps_telling_and_qualifiers():
     assert compact_profile(projected) == projected
 
 
+def test_compact_agent_mind_cuts_audit_keeps_beliefs_and_contradictions():
+    source = {
+        "schema_version": 1,
+        "updated_at": 1787.0,
+        "beliefs": {
+            "b.keep": {
+                "key": "b.keep", "claim": "User tolerates dry humor.", "domain": "user",
+                "confidence": 0.62, "source_ids": ["seed"], "tags": ["global"],
+                "positive_evidence_count": 1, "negative_evidence_count": 0,
+                "contradiction_ids": [], "decay_rate": 0.012,
+                "created_at": 10.0, "updated_at": 20.0, "last_seen": 20.0,
+            },
+            "b.conflict": {
+                "key": "b.conflict", "claim": "User prefers silence here.", "domain": "self",
+                "confidence": 0.5, "source_ids": ["u:1"], "tags": ["silence"],
+                "positive_evidence_count": 2, "negative_evidence_count": 1,
+                "contradiction_ids": ["b.keep"], "decay_rate": 0.015,
+                "created_at": 11.0, "updated_at": 21.0, "last_seen": 21.0,
+            },
+        },
+        "preferences": {
+            "p.one": {
+                "key": "p.one", "polarity": "like", "strength": 0.68, "stability": 0.74,
+                "source": "seed", "tags": ["style"],
+                "created_at": 12.0, "updated_at": 22.0, "last_reinforced": 22.0,
+            },
+        },
+        "habits": {},
+        "last_feedback_events": [],
+    }
+    before = copy.deepcopy(source)
+    projected = compact_agent_mind(source)
+    # Telling/content survives on beliefs and preferences.
+    for belief in projected["beliefs"].values():
+        assert set(("claim", "confidence", "tags")) <= belief.keys()
+        for cut in ("created_at", "updated_at", "last_seen", "source_ids",
+                    "positive_evidence_count", "negative_evidence_count", "decay_rate"):
+            assert cut not in belief, cut
+    assert projected["preferences"]["p.one"]["polarity"] == "like"
+    assert projected["preferences"]["p.one"]["strength"] == 0.68
+    assert projected["preferences"]["p.one"]["stability"] == 0.74
+    for cut in ("created_at", "updated_at", "last_reinforced", "source"):
+        assert cut not in projected["preferences"]["p.one"], cut
+    # Conflicting belief is kept; empty contradiction_ids is dropped.
+    assert projected["beliefs"]["b.conflict"]["contradiction_ids"] == ["b.keep"]
+    assert "contradiction_ids" not in projected["beliefs"]["b.keep"]
+    # Empty habits / feedback log and the top-level epoch are gone.
+    assert "habits" not in projected
+    assert "last_feedback_events" not in projected
+    assert "updated_at" not in projected
+    assert projected["schema_version"] == 1
+    # Input untouched, projection idempotent.
+    assert source == before
+    assert compact_agent_mind(projected) == projected
+
+
+def test_compact_active_state_drops_empty_zero_keeps_meaningful():
+    source = {
+        "version": 1,
+        "updated_at": "2026-10-24T22:42:36+0700",
+        "current_goal": "",
+        "current_goal_confidence": 0.0,
+        "session_arc": "unknown",
+        "active_project": "",
+        "relation_state": {},
+        "metadata": {
+            "internal_state": {
+                "valence": 0.02,
+                "curiosity": 0.576,
+                "silence_ticks": 0,
+                "last_channel": "",
+                "recent_notes": [],
+                "last_social_presence_present": False,
+                "desire_dynamics": {
+                    "want": 0.16, "attraction_charge": 0.0,
+                    "attachment_drift": "guarded", "recurring_aversion": "",
+                    "recent_patterns": [],
+                },
+                "goal_persistence": {
+                    "status": "empty", "strength": 0.0, "goal_id": "", "evidence": [],
+                },
+                "relationship_dynamics": {
+                    "trust": 0.25, "familiarity": 0.0, "preferred_distance": 0.58,
+                    "last_event": "maintenance_reset", "last_update_turn": 0,
+                },
+                "action_memory": {
+                    "traces": [], "rhythm_phase": "settled", "last_spoken_ts": 0.0,
+                },
+            }
+        },
+    }
+    before = copy.deepcopy(source)
+    projected = compact_active_state(source)
+    internal = projected["metadata"]["internal_state"]
+    # Meaningful (non-default) values survive.
+    assert internal["valence"] == 0.02
+    assert internal["curiosity"] == 0.576
+    assert internal["desire_dynamics"]["want"] == 0.16
+    assert internal["desire_dynamics"]["attachment_drift"] == "guarded"
+    assert internal["relationship_dynamics"]["trust"] == 0.25
+    assert internal["relationship_dynamics"]["preferred_distance"] == 0.58
+    assert internal["relationship_dynamics"]["last_event"] == "maintenance_reset"
+    assert internal["action_memory"]["rhythm_phase"] == "settled"
+    # Bool False is a real value, kept (not treated as zero).
+    assert internal["last_social_presence_present"] is False
+    assert projected["version"] == 1
+    # Empty / zero / 'unknown'-default fields are gone.
+    for cut in ("current_goal", "current_goal_confidence", "active_project",
+                "relation_state", "session_arc"):
+        assert cut not in projected, cut
+    assert "silence_ticks" not in internal
+    assert "last_channel" not in internal
+    assert "recent_notes" not in internal
+    assert "attraction_charge" not in internal["desire_dynamics"]
+    assert "recurring_aversion" not in internal["desire_dynamics"]
+    # goal_persistence keeps its only non-empty field (status='empty' is a real
+    # string), and its zero/empty siblings are cut (safety rule: keep strings).
+    assert internal["goal_persistence"] == {"status": "empty"}
+    assert "familiarity" not in internal["relationship_dynamics"]
+    assert "last_update_turn" not in internal["relationship_dynamics"]
+    assert "traces" not in internal["action_memory"]
+    # Input untouched, projection idempotent.
+    assert source == before
+    assert compact_active_state(projected) == projected
+
+
+def test_compact_semantic_item_drops_raw_content_dupe_and_audit():
+    claim = "Tôi có xu hướng duy trì sự thụ động trong tương tác."
+    source = {
+        "id": "sem_b1512e2cd608",
+        "claim": claim,
+        "domain": "unknown",
+        "confidence": 0.82,
+        "source": "state_commit",
+        "evidence_ids": ["dossier.user.history.0", "epi_6f25e6a2bedf"],
+        "observations": 1,
+        "status": "active",
+        "first_seen_at": "2026-08-19T09:18:13+0700",
+        "updated_at": "2026-08-19T09:18:13+0700",
+        "decay_policy": "slow",
+        "contradiction_ids": [],
+        "tags": ["commit", "typed_fact"],
+        "metadata": {
+            "fact_key": "active_passive_tendency",
+            "domain": "self",
+            "importance": 0.697,
+            "source": "ai_curator_concern_bridge",
+            "raw_content": claim,
+            "reason": "concern_bridge_by_ai_curator",
+            "aliases": [],
+            "fact_profile_evidence": ["metadata.fact_key"],
+            "embedding_text_hash": "40b957a3fcdd041c",
+            "embedding_version": 1,
+            "access_count": 0,
+            "last_accessed_at": "",
+        },
+    }
+    before = copy.deepcopy(source)
+    projected = compact_semantic_item(source)
+    # Telling + light qualifiers survive.
+    assert projected["claim"] == claim
+    assert projected["confidence"] == 0.82
+    assert projected["status"] == "active"
+    assert projected["tags"] == ["commit", "typed_fact"]
+    assert projected["metadata"]["fact_key"] == "active_passive_tendency"
+    assert projected["metadata"]["importance"] == 0.697
+    assert projected["metadata"]["domain"] == "self"
+    # Audit is gone (raw_content was a verbatim claim duplicate).
+    for cut in ("evidence_ids", "first_seen_at", "updated_at"):
+        assert cut not in projected, cut
+    for cut in ("raw_content", "embedding_text_hash", "embedding_version",
+                "access_count", "last_accessed_at", "fact_profile_evidence"):
+        assert cut not in projected["metadata"], cut
+    # Empty contradiction_ids dropped.
+    assert "contradiction_ids" not in projected
+    # Input untouched, projection idempotent.
+    assert source == before
+    assert compact_semantic_item(projected) == projected
+
+
 def test_self_view_removes_debug_and_clones_without_changing_owner():
     mind = {"identity": {"beliefs": ["uncertain", "opposing"]}, "relationship": {"last_event": "current"},
             "latest_observation": {"turn_id": "old", "confidence": 0.4}}
@@ -150,7 +335,12 @@ def test_self_view_removes_debug_and_clones_without_changing_owner():
     assert source == original
     assert view["mind_state"] == mind
     assert view["memory_state"]["persisted_mind_variants"] == {"relationship": {"last_event": "persisted variant"}}
-    assert "internal_state" not in view["memory_state"]["active_state"]["metadata"]
+    # The duplicate internal_state is popped; the now-empty metadata (and the
+    # emptied active_state body) is then pruned by compact_active_state, leaving
+    # only the projection marker. internal_state no longer leaks into the prompt.
+    active_view = view["memory_state"]["active_state"]
+    assert "metadata" not in active_view
+    assert active_view == {"projection_schema": "eris.active_state.v1"}
     episode = view["memory_state"]["living_user"]["recent_episodes"][0]
     assert episode["title"] == "T" and episode["summary"] == "real memory"
     for cut in ("evidence_ids", "metadata", "session_id", "started_at", "ended_at"):
