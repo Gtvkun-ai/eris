@@ -1,0 +1,223 @@
+{
+  "ok": true,
+  "steps": [],
+  "real_base_dir": "C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core",
+  "real_base_exists": true,
+  "store_files": [
+    {
+      "name": ".inner_residue_of0gfxrz.tmp",
+      "bytes": 61718
+    },
+    {
+      "name": "active_state_snapshot.json",
+      "bytes": 9268
+    },
+    {
+      "name": "affective_residue_memory.json",
+      "bytes": 34
+    },
+    {
+      "name": "agent_mind.json",
+      "bytes": 11076
+    },
+    {
+      "name": "anchor_journal.jsonl",
+      "bytes": 324700
+    },
+    {
+      "name": "anchor_state.json",
+      "bytes": 269
+    },
+    {
+      "name": "behavior_observations.jsonl",
+      "bytes": 0
+    },
+    {
+      "name": "curator_inbox.sqlite3",
+      "bytes": 16384
+    },
+    {
+      "name": "episodic_memory.json",
+      "bytes": 763
+    },
+    {
+      "name": "inner_diary.json",
+      "bytes": 60757
+    },
+    {
+      "name": "inner_diary_residue.json",
+      "bytes": 149272
+    },
+    {
+      "name": "internal_agenda.json",
+      "bytes": 39
+    },
+    {
+      "name": "living_user_actions.json",
+      "bytes": 6752
+    },
+    {
+      "name": "living_user_episodes.json",
+      "bytes": 27727
+    },
+    {
+      "name": "living_user_profile.json",
+      "bytes": 156249
+    },
+    {
+      "name": "living_user_trace.jsonl",
+      "bytes": 1286357
+    },
+    {
+      "name": "living_user_turn_buffer.json",
+      "bytes": 83
+    },
+    {
+      "name": "maintenance_audit.jsonl",
+      "bytes": 94911
+    },
+    {
+      "name": "memory_feed_trace.jsonl",
+      "bytes": 610637
+    },
+    {
+      "name": "panel_snapshot.json",
+      "bytes": 21073
+    },
+    {
+      "name": "private_concerns.json",
+      "bytes": 70374
+    },
+    {
+      "name": "private_life_state.json",
+      "bytes": 77038
+    },
+    {
+      "name": "public_topic_boundaries.json",
+      "bytes": 1470
+    },
+    {
+      "name": "relational_memory.json",
+      "bytes": 1047
+    },
+    {
+      "name": "repair_memory.json",
+      "bytes": 34
+    },
+    {
+      "name": "semantic_memory.json",
+      "bytes": 4946
+    },
+    {
+      "name": "thought_stream.jsonl",
+      "bytes": 0
+    },
+    {
+      "name": "tom_history.json",
+      "bytes": 61
+    }
+  ],
+  "sandbox": "C:\\Users\\Gtvkun\\AppData\\Local\\Temp\\eris-self-measure-xon5qtqr\\core",
+  "counts": {
+    "profile_records_snapshot_limit80": 11,
+    "profile_records_total_on_disk": 11,
+    "recent_episodes_in_prompt_view": 0,
+    "episodes_total_on_disk": 17,
+    "episode_recap_present": false
+  },
+  "self_measurements": {
+    "current_after_cut": {
+      "living_user.profile": {
+        "chars": 2830,
+        "tokens": 947
+      },
+      "living_user.recent_episodes": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "living_user.episode_recap": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "living_user.actions": {
+        "chars": 4782,
+        "tokens": 1598
+      },
+      "living_user.other_surviving_keys": {
+        "keys": [],
+        "chars": 2
+      },
+      "living_user.TOTAL_projected": {
+        "chars": 7675,
+        "tokens": 2562
+      }
+    },
+    "heavy_old_form": {
+      "living_user.profile": {
+        "chars": 9072,
+        "tokens": 3028
+      },
+      "living_user.recent_episodes_raw_recent8": {
+        "chars": 7423,
+        "tokens": 2478,
+        "count": 8
+      },
+      "living_user.actions": {
+        "chars": 4782,
+        "tokens": 1598
+      }
+    },
+    "profile_cut_saving_chars": 6242
+  },
+  "episode_diagnostics": {
+    "rollup_file_exists": false,
+    "recent_days_window": 7.0,
+    "episodes_total": 17,
+    "episode_ages_days_sorted": [
+      73.8,
+      73.8,
+      73.9,
+      74.0,
+      74.0,
+      74.0,
+      74.0,
+      75.1,
+      75.1,
+      75.3,
+      76.0,
+      76.3,
+      76.3,
+      76.3,
+      79.0,
+      80.1,
+      80.9
+    ],
+    "episodes_within_7d": 0,
+    "note": "recent() only keeps episodes <= recent_days old; render() only emits a recap when a valid rollup entry exists. If no episode is within 7d and no rollup file exists, the Root prompt's recent_episodes + episode_recap are both empty."
+  },
+  "actions_diagnostics": {
+    "goals": {
+      "count": 0,
+      "status": {}
+    },
+    "commitments": {
+      "count": 7,
+      "status": {
+        "active": 7
+      }
+    },
+    "workflows": {
+      "count": 0,
+      "status": {}
+    },
+    "includes_inactive_records": true,
+    "actions_block_chars": 4782,
+    "audit_provenance_chars_within_records": 1697,
+    "note": "project_self_view does NOT run a compact_* pass on actions, so evidence_ids/timestamps/metadata/scope still ship. The snapshot also includes inactive (completed/cancelled/archived) records."
+  },
+  "not_measured": {
+    "mind_state": "Needs ai_state_reducer.snapshot() from a live RuntimeCoordinator; not rebuildable from memory/core files alone.",
+    "subject_self": "Needs host.subject_service.self_view() from the live runtime; no standalone file.",
+    "memory_state_other_layers": "memory_state also carries semantic/episodic/relational/procedural/affective/belief/worldview/etc. via MemoryCognitionCore.load(); those enter the Self prefix too but are outside the living_user branch this script isolates. Their on-disk byte sizes are listed in store_files above (e.g. semantic_memory.json, relational_memory.json)."
+  }
+}
