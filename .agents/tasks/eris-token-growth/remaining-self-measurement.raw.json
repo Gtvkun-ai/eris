@@ -1,0 +1,224 @@
+{
+  "ok": true,
+  "memory_state": {
+    "real_base_dir": "C:\\Users\\Gtvkun\\Documents\\ErisLive\\memory\\core",
+    "real_base_exists": true,
+    "projected_per_key": {
+      "active_state": {
+        "chars": 6198,
+        "tokens": 2070
+      },
+      "affective_residue_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "agent_mind": {
+        "chars": 7852,
+        "tokens": 2621
+      },
+      "belief_core": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "body_rhythm_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "episodic_memory": {
+        "chars": 506,
+        "tokens": 172
+      },
+      "event_ledger": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "homeostatic_baseline": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "living_user": {
+        "chars": 7675,
+        "tokens": 2562
+      },
+      "memory_candidate": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "procedural_memory": {
+        "chars": 1119,
+        "tokens": 377
+      },
+      "relational_memory": {
+        "chars": 742,
+        "tokens": 251
+      },
+      "repair_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "self_continuity": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "semantic_memory": {
+        "chars": 3389,
+        "tokens": 1133
+      },
+      "sociocultural_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "spatial_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "temporal_rhythm_memory": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "tom_history": {
+        "chars": 2,
+        "tokens": 4
+      },
+      "worldview_memory": {
+        "chars": 2,
+        "tokens": 4
+      }
+    },
+    "projected_total": {
+      "chars": 27897,
+      "tokens": 9303
+    },
+    "raw_per_key_chars": {
+      "active_state": {
+        "chars": 6198
+      },
+      "affective_residue_memory": {
+        "chars": 2
+      },
+      "agent_mind": {
+        "chars": 7852
+      },
+      "belief_core": {
+        "chars": 2
+      },
+      "body_rhythm_memory": {
+        "chars": 2
+      },
+      "episodic_memory": {
+        "chars": 506
+      },
+      "event_ledger": {
+        "chars": 2
+      },
+      "homeostatic_baseline": {
+        "chars": 2
+      },
+      "living_user": {
+        "chars": 75574
+      },
+      "memory_candidate": {
+        "chars": 2
+      },
+      "procedural_memory": {
+        "chars": 1119
+      },
+      "relational_memory": {
+        "chars": 742
+      },
+      "repair_memory": {
+        "chars": 2
+      },
+      "self_continuity": {
+        "chars": 2
+      },
+      "semantic_memory": {
+        "chars": 3389
+      },
+      "sociocultural_memory": {
+        "chars": 2
+      },
+      "spatial_memory": {
+        "chars": 2
+      },
+      "temporal_rhythm_memory": {
+        "chars": 2
+      },
+      "tom_history": {
+        "chars": 2
+      },
+      "worldview_memory": {
+        "chars": 2
+      }
+    },
+    "raw_total_chars": 95796,
+    "store_record_counts": {
+      "semantic": 3,
+      "episodic": 1,
+      "relational": 1,
+      "procedural": 3,
+      "affective_residue": 0,
+      "repair": 0,
+      "belief_core": 0,
+      "worldview": 0
+    }
+  },
+  "mind_state": {
+    "measured": false,
+    "reason": "Needs ai_state_reducer.snapshot().to_dict() from a live RuntimeCoordinator. MemoryCognitionCore.load() does NOT emit ai_orchestrated_state (the persisted mind variant), so there is no standalone mind_state snapshot in memory/core to read."
+  },
+  "subject_self": {
+    "measured": false,
+    "reason": "Needs host.subject_service.self_view() from the live SubjectService. No standalone self_view file is written under memory/core."
+  },
+  "static_prompts": {
+    "contracts.STYLE_FALLBACK_PROMPT": {
+      "chars": 3224,
+      "tokens": 1078
+    },
+    "contracts.SELF_IDENTITY_PROFILE_PROMPT": {
+      "chars": 1512,
+      "tokens": 508
+    },
+    "contracts.RUNTIME_RULES_PROMPT": {
+      "chars": 2359,
+      "tokens": 790
+    },
+    "contracts.INFERENCE_LADDER_PROMPT": {
+      "chars": 969,
+      "tokens": 327
+    },
+    "contracts.AUTONOMOUS_BEHAVIOR_PROMPT": {
+      "chars": 1310,
+      "tokens": 440
+    },
+    "contracts.CHAT_RULES_PROMPT": {
+      "chars": 1565,
+      "tokens": 525
+    },
+    "contracts.PERSONA_PROMPT": {
+      "chars": 3224,
+      "tokens": 1078
+    },
+    "contracts.PROMPT": {
+      "chars": 5584,
+      "tokens": 1865
+    },
+    "contracts.DECISION_GBNF": {
+      "chars": 2912,
+      "tokens": 974
+    },
+    "root_prompt_contract.ROOT_SYSTEM_CORE": {
+      "chars": 10207,
+      "tokens": 3406
+    },
+    "root_session_projector.SELF_BOOTSTRAP_INSTRUCTION": {
+      "chars": 1225,
+      "tokens": 412
+    },
+    "eris_voice_contract.AUTONOMOUS_VOICE_CORE_V39": {
+      "chars": 500,
+      "tokens": 170
+    }
+  }
+}
