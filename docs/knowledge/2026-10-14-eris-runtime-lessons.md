@@ -2069,3 +2069,92 @@ chưa đo JVM/read-only/noexec thật. E2E dùng model/delivery/Java giả lập
 dùng TTS manager + device giả; không xác nhận provider/loa hoặc vòng học live.
 Hiệu quả học tập chưa được chứng minh; cần bài độc lập và kiểm tra nhớ lại trễ,
 không lấy mastery/FSRS shadow làm chứng minh đã học vững.
+
+## Cập nhật 02/11: hai phiên im lặng mới nhất và Learning Canvas
+
+Đối chiếu portable run log 13:40/13:45, observability và raw wire PID 2112
+(khôi phục objects có kiểm SHA-256). Bảy module Root/kernel/writer/context/Canvas
+trùng byte checkout. Chi tiết: [audit im lặng/Canvas](2026-11-02-silent-startup-learning-canvas-audit.md).
+
+- Phiên 13:40: gateway 5103 từ chối kết nối, Official fallback 401 invalid key;
+  Root chưa tạo được lời public. Không phải receipt lỗi TTS/context overflow.
+- Phiên 13:45: warm-up 72,093s; opening request 36,938s có move trên wire nhưng
+  không tới writer. Source focus invalidation và 11 navigate trong log giải
+  thích run opening mất hiệu lực; chưa có structured stale receipt riêng.
+  Navigate cuối được gom thành một tutor_result; Root mất 27,031s rồi gọi
+  writer 13:48:17. App thoát 13:48:27 khi writer chưa có response/audio_start.
+- **Thu hẹp giả thuyết learning nhồi context:** request Canvas 137.100 ký tự
+  content, capability Canvas + learner_continuity khoảng 5,9k (~4,3%). Gateway
+  báo prompt_tokens 43.217 và HTTP 200; không có overflow/trim. Self và receipts
+  lớn hơn phần học. Không lấy usage gateway làm token billing hay quy mọi
+  latency cho prompt. Không cắt learning/memory, sửa runtime hoặc restart.
+
+Đây là bằng chứng live request/response của Canvas sau các cập nhật 01/11,
+**không thay giới hạn chưa xác nhận voice/JVM/effectiveness live** ở các mục đó.
+ElevenLabs warm-up thành công không chứng minh synthesis hoặc playback; hai
+phiên này chưa tới audio nên không kết luận provider/loa khỏe hoặc hỏng.
+
+## Cập nhật 02/11: chất lượng phiên hội thoại 14:17–14:28
+
+Nguồn mới: run `eris_run_20261102_141704.txt`, raw PID 20376 (khôi phục payload
+có kiểm checksum), public history và audio lifecycle. [Đánh giá hội thoại](2026-11-02-1417-conversation-quality-audit.md).
+Chín lượt public commit ở audio_start; tám delivered/done, một audio bị ngắt
+khi user gửi tiếp. **Thay giới hạn chưa thấy voice ở hai phiên trước trong
+phạm vi phiên này**, không tuyên bố lỗi provider/focus cũ đã được sửa hoặc
+chất âm đã được nghe/chấm.
+
+Đánh giá chủ quan khoảng 6/10: có hài khô và nối được trò bò phản lực, nhưng
+lặp hỏi dò “anh đang thử tôi?” và đòi bằng chứng cho premise đùa; user chat
+chờ khoảng 26–35s tới audio. Wording chủ yếu đã có ở Root, surface giữ gần
+nguyên văn. Lượt tutor cuối nhận đúng result=incorrect nhưng không có lựa
+chọn user; câu “đa số sai vì…” vượt evidence của event. Không sửa runtime
+trong lượt đánh giá; không dùng observer success làm bằng chứng chất lượng.
+
+**Bổ sung latency cùng phiên:** user giữ nguyên hội thoại, hỏi vì sao chậm.
+Lượt 14:25:29→14:25:57.945 gồm ~3,7s input/evidence/context, Root HTTP 8,203s,
+surface HTTP 5,360s, TTS HTTP 10,893s và ~0,7s chuyển bước/playback. Chín TTS
+request trong phiên mất 8,379–11,746s, queue chỉ 1–9ms. TTS source trùng
+portable: nhận stream nhưng gom hết bytes của segment trước playback, chưa
+phát ngay chunk đầu. Không có first-byte timer trong log để hứa mức giảm.
+Root wire thinking enabled/high, surface disabled; không có localizer call
+riêng trong lượt này. Không quy toàn bộ HTTP latency cho thinking/context;
+observer chạy sau delivery, không chặn câu này. Xem phần bổ sung của báo cáo
+trên. Không sửa runtime hoặc tắt thinking.
+
+**Bóc request 14:25:32 theo câu hỏi tiếp:** tổng 139.934 ký tự message content
+gồm system 14.090, Self bootstrap 79.117, runtime_context 29.504, overlay Self
+14.505, history 2.017 và event/envelope 701 (phân hoạch không đếm trùng).
+Living_user trong Self 50.538: profile 38 record/25.581, 8 episodes/21.587,
+actions/3.328. Runtime có 10 move receipts/10.564 và learner_continuity 3.019;
+text user chỉ 105. Đây là số của request thật, không nhầm với log chars/3
+hoặc request bytes. Self prefix vẫn được gửi lại cùng overlay; warm-up không
+biến nó thành dữ liệu remote miễn gửi lại. Chi tiết ở báo cáo cùng phiên.
+
+## Cập nhật 02/11: xác minh commit cắt projection 77fc3a13
+
+Đã đọc commit, `cheap-cut-implementation.md`, `self-context-cut-review.md`
+trong `.agents/tasks/eris-token-growth/` và code hiện tại. Commit gồm một
+module runtime, hai file test và implementation report (không phải tổng cộng
+một file). Report/review có verdict APPROVED; không chạy lại test trong lượt
+giải thích này. Mức giảm living_user 33.674→16.386 là fixture tổng hợp, không
+phải đo request portable sau triển khai.
+
+**Thay trạng thái lossless/giữ metadata.reason ở mục 33 cho projection mới:**
+profile bỏ evidence_ids, metadata và bốn timestamp; episode bỏ evidence_ids,
+metadata, started_at/ended_at/session_id/source. Canonical store không đổi,
+mind_state/actions không đổi. Tuy nhiên đây là projection có mất trường;
+metadata.reason có thể chứa điều kiện/giải thích ngoài value, timestamp chứa
+mốc thời gian. Không nâng “store nguyên vẹn/test pass” thành bảo đảm Root
+không mất thông tin có nghĩa; chưa audit semantic coverage từng record.
+
+Kiểm tra SHA-256 tại lúc đọc: module portable `Documents/eris` khác checkout,
+chưa có `compact_episode`; do đó chưa có bằng chứng bản portable đã dùng
+commit này. Không tự copy/restart trong lượt hỏi giải thích.
+
+Đo thêm payload thật 14:25:32 trước sửa (cùng manifest đã kiểm): profile
+metadata tổng value JSON ~7.962 ký tự, evidence_ids ~3.836; episode
+evidence_ids ~9.167, metadata ~629. MindState bootstrap chỉ 7.182, chủ yếu
+personality 3.265 và identity 3.193; không đồng nhất nó với Self 79.117.
+Mind overlay lúc lượt bò phản lực 7.215, lớn nhất latest_observation 3.128 và
+goal_records 2.822; state còn gồm relationship/appraisal/open loops. Không
+đồng nhất MindState structured state với raw private reasoning.
