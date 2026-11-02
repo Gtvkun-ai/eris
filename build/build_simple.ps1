@@ -9,10 +9,10 @@
 # Chay tu goc repo:
 #   powershell -ExecutionPolicy Bypass -File build\build_simple.ps1
 # Tham so:
-#   -Out <duong dan>   Thu muc dau ra (mac dinh: C:\Users\Gtvkun\Documents\eris)
+#   -Out <duong dan>   Thu muc dau ra (mac dinh: Documents\eris cua user hien tai)
 # ============================================================================
 param(
-    [string]$Out = "C:\Users\Gtvkun\Documents\eris"
+    [string]$Out = (Join-Path $env:USERPROFILE "Documents\eris")
 )
 
 $ErrorActionPreference = "Stop"

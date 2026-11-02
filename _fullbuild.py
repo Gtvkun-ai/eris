@@ -24,8 +24,9 @@ from build_payload import source_copy_ignore
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO    = os.path.dirname(os.path.abspath(__file__))
-DEV_OUT = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris"))
-RELEASE_OUT = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris_release"))
+_USER_DOCS = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Documents")
+DEV_OUT = os.path.normpath(os.path.join(_USER_DOCS, "eris"))
+RELEASE_OUT = os.path.normpath(os.path.join(_USER_DOCS, "eris_release"))
 VENV_PY = os.path.join(REPO, ".venv", "Scripts", "python.exe")
 
 # .py duoc giu lai trong build (Godot launch truc tiep file nay)
@@ -1233,14 +1234,16 @@ if os.path.isfile(sample_pyc):
 # ── 6. Inno Setup Package ──────────────────────────────────────────────────────
 banner("6 / 6  --  Inno Setup Package")
 
-possible_iscc = [
-    r"C:\Program Files\Inno Setup 7\ISCC.exe",
-    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    r"C:\Program Files\Inno Setup 6\ISCC.exe"
+possible_iscc = [os.environ.get("ISCC_EXE"), shutil.which("ISCC.exe")]
+possible_iscc += [
+    os.path.join(os.environ[base], version, "ISCC.exe")
+    for base in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
+    if os.environ.get(base)
+    for version in ("Inno Setup 7", "Inno Setup 6")
 ]
 iscc_path = None
 for p in possible_iscc:
-    if os.path.exists(p):
+    if p and os.path.isfile(p):
         iscc_path = p
         break
 
@@ -1268,7 +1271,7 @@ else:
         )
         if res.returncode == 0:
             print("  [OK] Dong goi Inno Setup thanh cong!")
-            print("  File cai dat: C:\\Users\\Gtvkun\\Documents\\eris_dist\\ErisSetup.exe")
+            print(f"  File cai dat: {os.path.join(_USER_DOCS, 'eris_dist', 'ErisSetup.exe')}")
         else:
             print("  [FAIL] Inno Setup bao loi:")
             print("  " + (res.stderr or res.stdout)[:500])

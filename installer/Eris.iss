@@ -3,9 +3,9 @@ AppName=Eris
 AppVersion=0.14.0
 DefaultDirName={localappdata}\Programs\Eris
 PrivilegesRequired=lowest
-OutputDir=C:\Users\Gtvkun\Documents\eris_dist
+OutputDir={#GetEnv("USERPROFILE")}\Documents\eris_dist
 #ifndef SourceDir
-#define SourceDir "C:\Users\Gtvkun\Documents\eris_release"
+#define SourceDir GetEnv("USERPROFILE") + "\Documents\eris_release"
 #endif
 #ifndef SetupOutputBaseFilename
 #define SetupOutputBaseFilename "ErisSetup"

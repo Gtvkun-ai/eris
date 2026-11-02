@@ -47,7 +47,7 @@ ROOT      = Path(__file__).resolve().parent
 VENV_PY   = ROOT / ".venv" / "Scripts" / "python.exe"
 STATE_DIR = ROOT / ".eris_state"
 STATE_FILE = STATE_DIR / "setup_state.json"
-BUILD_OUT = Path(r"C:\Users\Gtvkun\Documents\eris")
+BUILD_OUT = Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents" / "eris"
 
 # Service ports
 PORTS = {

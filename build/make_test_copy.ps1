@@ -8,10 +8,10 @@ Tao ban test "nen pyc" cua ERIS sang thu muc dich.
 
 Usage:
   powershell -ExecutionPolicy Bypass -File build\make_test_copy.ps1 `
-      -Target "C:\Users\Gtvkun\Documents\eris" [-NoModels]
+      -Target "$env:USERPROFILE\Documents\eris" [-NoModels]
 #>
 param(
-    [string]$Target = "C:\Users\Gtvkun\Documents\eris",
+    [string]$Target = (Join-Path $env:USERPROFILE "Documents\eris"),
     [switch]$NoModels
 )
 
@@ -82,14 +82,13 @@ foreach ($d in @("config", "build")) {
     }
 }
 
-# 4b) Launcher: Eris.exe goi bare `python`. .pyc compile bang venv nen `python` PHAI
-# la chinh venv do (khop version + du dependency). Tao run_eris.bat ep PATH.
-$venvScripts = Join-Path $Root ".venv\Scripts"
+# 4b) Launcher: uu tien Python di kem ban test, khong gan venv cua may build.
+# Target can python/ hoac .venv/ cung version Python va du dependency (deploy_setup.ps1).
 $bat = @"
 @echo off
-REM Launcher ban test ERIS (.pyc) - ep ``python`` ve venv da compile (.pyc khop version + du dependency).
+REM Ban test can Python cung version da compile va du dependency.
 setlocal
-set "PATH=$venvScripts;%PATH%"
+set "PATH=%~dp0python;%~dp0python\Scripts;%~dp0.venv\Scripts;%PATH%"
 cd /d "%~dp0"
 start "" "%~dp0Eris.exe"
 "@
