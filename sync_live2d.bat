@@ -1,7 +1,16 @@
 @echo off
+setlocal
 echo === Syncing Live2D assets from infj source to Eris project ===
-set SRC=C:\Users\Gtvkun\Documents\infj
-set DST=C:\Users\Gtvkun\Documents\GitHub\eris\src\assets\live2d\infj
+rem Optional first argument overrides the source model folder.
+set "SRC=%USERPROFILE%\Documents\infj"
+if defined ERIS_LIVE2D_SOURCE set "SRC=%ERIS_LIVE2D_SOURCE%"
+if not "%~1"=="" set "SRC=%~f1"
+set "DST=%~dp0src\assets\live2d\infj"
+if not exist "%SRC%\infj.moc3" (
+    echo [ERROR] Missing source model: "%SRC%\infj.moc3"
+    exit /b 1
+)
+if not exist "%DST%" mkdir "%DST%"
 
 echo [1/4] Copying moc3 + cdi3 + model3 + physics3...
 copy /Y "%SRC%\infj.moc3" "%DST%\infj.moc3"

@@ -4,7 +4,7 @@
 # Giup Eris chay doc lap ma khong lo xung dot version Python tren may.
 # ============================================================================
 param(
-    [string]$Target = "C:\Users\Gtvkun\Documents\eris"
+    [string]$Target = (Join-Path $env:USERPROFILE "Documents\eris")
 )
 
 $ErrorActionPreference = "Stop"

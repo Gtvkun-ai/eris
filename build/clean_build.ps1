@@ -7,12 +7,20 @@
 #   powershell -ExecutionPolicy Bypass -File build\clean_build.ps1
 # ============================================================================
 param(
-    [string]$Out   = "C:\Users\Gtvkun\Documents\eris",
-    [string]$Godot = "D:/Application/Godot_v4.6.2-stable_mono_win64/Godot_v4.6.2-stable_mono_win64.exe"
+    [string]$Out   = (Join-Path $env:USERPROFILE "Documents\eris"),
+    [string]$Godot = $env:ERIS_GODOT
 )
 
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
+if (-not $Godot) {
+    foreach ($name in @("godot-mono", "godot", "godot4")) {
+        $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+        if ($command) { $Godot = $command.Source; break }
+    }
+}
+if (-not $Godot) { throw "Khong tim thay Godot .NET. Truyen -Godot <exe>, dat ERIS_GODOT, hoac them Godot .NET vao PATH." }
+$Godot = (Get-Command $Godot -CommandType Application -ErrorAction Stop).Source
 $Py   = Join-Path $Repo ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
 

@@ -167,8 +167,8 @@ class ErisManager(tk.Tk):
             ("App folder", "."),
             ("Config", "config"),
             ("Logs", "logs"),
-            ("Build output", r"C:\Users\Gtvkun\Documents\eris"),
-            ("Release output", r"C:\Users\Gtvkun\Documents\eris_release"),
+            ("Build output", str(Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents" / "eris")),
+            ("Release output", str(Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents" / "eris_release")),
         ]:
             ttk.Button(buttons, text=label, command=lambda r=rel: self.open_path(r)).pack(fill=tk.X, pady=3)
 

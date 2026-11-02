@@ -3,9 +3,9 @@ AppName=Eris Patch Update
 AppVersion=0.14.1
 DefaultDirName={localappdata}\Programs\Eris
 PrivilegesRequired=lowest
-OutputDir=C:\Users\Gtvkun\Documents\eris_dist
+OutputDir={#GetEnv("USERPROFILE")}\Documents\eris_dist
 #ifndef SourceDir
-#define SourceDir "C:\Users\Gtvkun\Documents\eris_release"
+#define SourceDir GetEnv("USERPROFILE") + "\Documents\eris"
 #endif
 #ifndef SetupOutputBaseFilename
 #define SetupOutputBaseFilename "ErisPatch"

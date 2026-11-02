@@ -13,7 +13,8 @@ from build_payload import source_copy_ignore
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO    = os.path.dirname(os.path.abspath(__file__))
-OUT     = os.path.normpath(os.path.join("C:\\", "Users", "Gtvkun", "Documents", "eris"))
+_USER_DOCS = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Documents")
+OUT     = os.path.normpath(os.path.join(_USER_DOCS, "eris"))
 VENV_PY = os.path.join(REPO, ".venv", "Scripts", "python.exe")
 
 # .py duoc giu lai trong build
@@ -124,14 +125,16 @@ for script in ["run_eris.bat"]:
 # ── 3. Inno Setup Package (Patch) ────────────────────────────────────────────
 banner("3 / 3  --  Inno Setup Package (Tao ban Update)")
 
-possible_iscc = [
-    r"C:\Program Files\Inno Setup 7\ISCC.exe",
-    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    r"C:\Program Files\Inno Setup 6\ISCC.exe"
+possible_iscc = [os.environ.get("ISCC_EXE"), shutil.which("ISCC.exe")]
+possible_iscc += [
+    os.path.join(os.environ[base], version, "ISCC.exe")
+    for base in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
+    if os.environ.get(base)
+    for version in ("Inno Setup 7", "Inno Setup 6")
 ]
 iscc_path = None
 for p in possible_iscc:
-    if os.path.exists(p):
+    if p and os.path.isfile(p):
         iscc_path = p
         break
 
@@ -142,10 +145,10 @@ else:
     if os.path.exists(iss_file):
         print("  Dang tien hanh nen thanh file cai dat (chi vai giay)...")
         import subprocess
-        res = subprocess.run([iscc_path, iss_file], capture_output=True, text=True)
+        res = subprocess.run([iscc_path, "/DSourceDir=" + OUT, iss_file], capture_output=True, text=True)
         if res.returncode == 0:
             print("  [OK] Dong goi Inno Setup thanh cong!")
-            print("  File cai dat: C:\\Users\\Gtvkun\\Documents\\eris_dist\\ErisPatch.exe")
+            print(f"  File cai dat: {os.path.join(_USER_DOCS, 'eris_dist', 'ErisPatch.exe')}")
         else:
             print("  [FAIL] Inno Setup bao loi:")
             print("  " + (res.stderr or res.stdout)[:500])
