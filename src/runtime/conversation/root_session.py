@@ -67,6 +67,16 @@ def _read_self(host: Any) -> dict[str, Any]:
             if key == "memory_state" and isinstance(raw, Mapping):
                 raw = {k: v for k, v in raw.items() if k != "concept_graph"}
             result[key] = _jsonable(raw)
+    # Read only the current episode projection from its owner: maintenance may
+    # have committed a recap since host.memory_state was loaded. No model call.
+    living_user = getattr(getattr(host, "memory_kernel", None), "living_user", None)
+    episode_view = getattr(living_user, "episode_prompt_view", None)
+    memory = result.get("memory_state")
+    if callable(episode_view) and isinstance(memory, dict):
+        from memory.living_user.models import UserMemoryScope
+        project_id = str(getattr(host, "project_id", "") or "")
+        scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        memory.setdefault("living_user", {}).update(episode_view(scope=scope))
     return project_self_view(result)
 
 

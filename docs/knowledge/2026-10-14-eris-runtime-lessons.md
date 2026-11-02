@@ -2158,3 +2158,25 @@ personality 3.265 và identity 3.193; không đồng nhất nó với Self 79.11
 Mind overlay lúc lượt bò phản lực 7.215, lớn nhất latest_observation 3.128 và
 goal_records 2.822; state còn gồm relationship/appraisal/open loops. Không
 đồng nhất MindState structured state với raw private reasoning.
+
+## Cập nhật 02/11: đánh giá thiết kế episode mờ dần
+
+Chỉ đối chiếu source checkout, không sửa runtime/canonical memory, gọi Gemini,
+chạy GC/test hay deploy. Xem [đánh giá thiết kế](../../.agents/tasks/eris-token-growth/episode-fading-design-review.md).
+
+Dreamer Living User tạo ProfileOperation, chưa tạo rolling recap. Self còn nhận
+8 recent episodes từ service.summary qua memory_cognition.load; chỉ sửa
+context_compiler không thay đầy đủ đường vào Root. Episode cùng session/scope
+có thể đổi nội dung dưới ID cũ; compact và trim có loại bản gốc. Thiết kế recap
+cần coverage theo nội dung, commit summary+coverage nguyên tử, giữ nguồn nếu
+cam kết truy lại, và tham gia scope/correction/forget. Nhãn tương đối phải tính
+từ anchor khi render, không lưu “tuần trước” như sự thật bất biến.
+
+**Đính chính diễn giải trong curator-distill-persist-report.md:** rolling recap,
+episode→profile và episodic→semantic là các consumer khác nhau; một cờ đã nén
+không thay dedup của cả ba. Không gộp lịch chạy hai hệ thành cùng nhịp GC 10 phút:
+MemoryGCService gọi trực tiếp MaintenanceRunner, còn living_user.dream có đường
+riêng qua MemoryKernel.maintain từ background digest worker và session. Interval
+worker mặc định 300s có các gate, không chứng minh số call/tần suất live. Giữ
+kết luận source rằng output profile/semantic đã có persist và checkpoint nguồn
+còn thiếu; chưa đo re-distill thực tế trong lượt đánh giá này.

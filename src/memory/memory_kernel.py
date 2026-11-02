@@ -516,6 +516,10 @@ class MemoryKernel:
         )
         report = runner.run(budget=budget, reason=reason, destructive=destructive)
         living_user = self.living_user
+        rollup = getattr(living_user, "rollup_episodes", None)
+        if callable(rollup):
+            result = rollup()
+            report.notes.append(f"episode_rollup:{result.get('status')} calls={result.get('calls', 0)}")
         if living_user is not None and getattr(living_user.config, "auto_dream_on_maintenance", False):
             try:
                 self.last_user_memory_dream = living_user.dream(reason=reason)

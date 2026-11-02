@@ -421,6 +421,7 @@ class ProfileContextPacket:
     proactive_cue: str = ""
     token_budget: int = 900
     diagnostics: tuple[str, ...] = ()
+    episode_recap: str = ""
 
     def render_prompt_context(self) -> str:
         has_actions = self.action_context is not None and bool(
@@ -428,7 +429,7 @@ class ProfileContextPacket:
             or getattr(self.action_context, "commitments", ())
             or getattr(self.action_context, "workflows", ())
         )
-        if not self.items and not self.episodes and not has_actions and not self.proactive_cue:
+        if not self.items and not self.episodes and not has_actions and not self.proactive_cue and not self.episode_recap:
             return ""
         lines = [
             "USER CONTEXT (dùng để cá nhân hóa, không đọc lại như hồ sơ, không biến suy đoán thành sự thật):"
@@ -457,13 +458,18 @@ class ProfileContextPacket:
             lines.append("MEMORY UNCERTAINTY:")
             lines.extend(f"- {compact_text(note, 360)}" for note in self.clarifications)
         if self.episodes:
+            from .episode_projection import relative_time
             lines.append("EPISODES LIÊN QUAN:")
             current_time = now_ts()
             for episode in self.episodes:
-                lines.append(f"- {episode.title or 'Phiên trước'}: {compact_text(episode.summary, 420)}")
+                lines.append(f"- [{relative_time(episode.ended_at, now=current_time)}] {episode.title or 'Phiên trước'}: {episode.summary}")
+                if episode.outcome:
+                    lines.append(f"  Kết quả ghi nhận: {episode.outcome}")
                 # Chỉ hiển thị việc còn mở nếu episode diễn ra trong vòng 72 giờ qua (tránh lôi việc dang dở cũ mèm vào hiện tại)
                 if episode.open_loops and (current_time - episode.started_at <= 72 * 3600):
                     lines.append(f"  Việc còn mở: {'; '.join(episode.open_loops[:3])}")
+        if self.episode_recap:
+            lines.append(f"[EPISODE_RECAP]\nKý ức khái quát, nguồn thứ cấp: {self.episode_recap}\n[/EPISODE_RECAP]")
         if self.action_context is not None:
             render_action = getattr(self.action_context, "render_prompt_context", None)
             action_text = str(render_action() or "") if callable(render_action) else ""
