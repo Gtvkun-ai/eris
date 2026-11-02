@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 public partial class UdpListener : Node2D
 {
@@ -52,11 +53,12 @@ public partial class UdpListener : Node2D
 
 	private void OnContextCapabilityPressed()
 	{
-		if (_capabilityPanel == null) return;
-		if (_capabilityPanel.Visible) CloseCapabilityPanel(); else ShowCapabilityPanel();
+		OpenLearnerPortraitPortal();
 	}
 
-	private void ShowCapabilityPanel()
+	private void ShowCapabilityPanel() => OpenLearnerPortraitPortal();
+
+	private void ShowNativeCapabilityPanel()
 	{
 		if (_capabilityPanel == null) return;
 		CloseCharacterContextMenu();
@@ -237,6 +239,37 @@ public partial class UdpListener : Node2D
 		SetCapabilityStatus(action == "snapshot" ? "Đang đọc working model…" : "Đang cập nhật…");
 	}
 
+	private string _learnerPortraitRequestId = "";
+	private string _learnerPortraitPathId = "";
+	private int _learnerPortraitPage = 0;
+	private bool _learnerPortraitPending;
+	private ulong _learnerPortraitSentAtMs;
+
+	private void SendLearnerPortraitRequest(string pathId = "", int page = -1)
+	{
+		if (_chatSend == null)
+		{
+			Volatile.Write(ref _learnerPortraitSnapshot,
+				"{\"status\":\"error\",\"message\":\"Eris Brain chưa kết nối.\"}");
+			return;
+		}
+		if (page >= 0) { _learnerPortraitPage = page; _learnerPortraitPathId = ""; }
+		if (!string.IsNullOrEmpty(pathId)) _learnerPortraitPathId = pathId;
+		_learnerPortraitRequestId = $"portrait-{Time.GetTicksMsec()}-{GD.Randi()}";
+		var payload = new Dictionary<string, object> {
+			["type"] = "capability_panel_request",
+			["action"] = "portrait_snapshot",
+			["request_id"] = _learnerPortraitRequestId,
+			["path_id"] = _learnerPortraitPathId,
+			["path_page"] = _learnerPortraitPage,
+		};
+		Error error = _chatSend.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)));
+		_learnerPortraitPending = error == Error.Ok;
+		_learnerPortraitSentAtMs = Time.GetTicksMsec();
+		if (error != Error.Ok)
+			Volatile.Write(ref _learnerPortraitSnapshot, "{\"status\":\"error\",\"message\":\"Không gửi được yêu cầu tới Eris.\"}");
+	}
+
 	private bool TryHandleCapabilityPanelPacket(string raw)
 	{
 		if (string.IsNullOrWhiteSpace(raw)) return false;
@@ -249,6 +282,21 @@ public partial class UdpListener : Node2D
 				|| !string.Equals(typeNode.GetString(), "capability_panel_ack", StringComparison.Ordinal))
 				return false;
 			string requestId = ReadJsonString(root, "request_id");
+			if (ReadJsonString(root, "action") == "portrait_snapshot")
+			{
+				if (requestId != _learnerPortraitRequestId) return true;
+				_learnerPortraitPending = false;
+				string statusText = ReadJsonString(root, "status");
+				if (root.TryGetProperty("learner_portrait", out JsonElement portrait) && portrait.ValueKind == JsonValueKind.Object)
+				{
+					string state = JsonSerializer.Serialize(new { status = statusText, data = portrait });
+					Volatile.Write(ref _learnerPortraitSnapshot, state);
+				}
+				else
+					Volatile.Write(ref _learnerPortraitSnapshot,
+						"{\"status\":\"error\",\"message\":\"Chưa có dữ liệu hồ sơ.\"}");
+				return true;
+			}
 			if (!string.IsNullOrWhiteSpace(_capabilityRequestId) && !string.IsNullOrWhiteSpace(requestId)
 				&& !string.Equals(requestId, _capabilityRequestId, StringComparison.Ordinal)) return true;
 			_capabilityPending = false;

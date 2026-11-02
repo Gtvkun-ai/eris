@@ -13,17 +13,19 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .action_memory import ActionMemoryStore, ActionMemoryOperation, GoalRecord, CommitmentRecord, WorkflowRecord
+from .action_memory import ActionMemoryStore, ActionMemoryOperation, GoalRecord, WorkflowRecord
 from .authority import UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig
 from .dreamer import UserProfileDreamer
 from .episode_builder import UserEpisodeBuilder
 from .episode_store import UserEpisodeStore
+from .episode_rollup import EpisodeRollupStore
+from .episode_projection import episode_hash
 from .extractor import UserProfileExtractor, UserProfileModelAdapter
 from .models import DreamReport, ProfileContextPacket, ProfileOperation, UserEpisode, UserMemoryScope
 from .sources import MemoryExplanation, MemorySourceTracker
@@ -38,6 +40,7 @@ class LivingUserMemoryConfig:
     auto_observe_turns: bool = True
     auto_sync_semantic: bool = True
     auto_dream_on_maintenance: bool = True
+    episode_rollup_enabled: bool = True
     context_token_budget: int = 900
     profile_filename: str = "living_user_profile.json"
     episode_filename: str = "living_user_episodes.json"
@@ -52,6 +55,7 @@ class LivingUserMemoryConfig:
             auto_observe_turns=_env_flag("ERIS_LIVING_USER_AUTO_OBSERVE", True),
             auto_sync_semantic=_env_flag("ERIS_LIVING_USER_SYNC_SEMANTIC", True),
             auto_dream_on_maintenance=_env_flag("ERIS_LIVING_USER_AUTO_DREAM", True),
+            episode_rollup_enabled=_env_flag("ERIS_LIVING_USER_EPISODE_ROLLUP", True),
             context_token_budget=max(200, int(os.getenv("ERIS_LIVING_USER_CONTEXT_TOKENS", "900") or 900)),
         )
 
@@ -93,6 +97,8 @@ class LivingUserMemoryService:
         # Profile bên dưới chỉ còn là projection có thể dựng lại.
         self.authority_ledger = UserMemoryAuthorityLedger(self.base_dir / self.config.authority_filename)
         self.episode_store = UserEpisodeStore(self.base_dir / self.config.episode_filename)
+        self.episode_rollups = EpisodeRollupStore(self.base_dir / "living_user_episode_rollups.json",
+                                                 self.episode_store, authority=self.authority_ledger.all)
         self.action_store = ActionMemoryStore(self.base_dir / self.config.action_filename)
         self.trace_journal = MemoryTraceJournal(self.base_dir / self.config.trace_filename)
         self.memory_feed_trace = memory_feed_trace or MemoryFeedTraceJournal(self.base_dir / "memory_feed_trace.jsonl")
@@ -100,7 +106,8 @@ class LivingUserMemoryService:
         self.clarification_policy = MemoryClarificationPolicy()
         self.extractor = UserProfileExtractor(model_adapter=model_adapter)
         self.episode_builder = UserEpisodeBuilder(model_adapter=model_adapter)
-        self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter)
+        self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter,
+            authority_guard=self.authority_ledger.guard_operations, source_validator=self._validate_episode_sources)
         self.context_compiler = ProfileContextCompiler(
             self.profile_store,
             self.episode_store,
@@ -108,6 +115,7 @@ class LivingUserMemoryService:
             action_store=self.action_store,
             clarification_policy=self.clarification_policy,
             config=ProfileContextCompilerConfig(default_token_budget=self.config.context_token_budget),
+            episode_rollups=self.episode_rollups if self.config.episode_rollup_enabled else None,
         )
         self.sources = MemorySourceTracker(
             event_ledger=event_ledger,
@@ -476,6 +484,23 @@ class LivingUserMemoryService:
         self.last_dream_report = report
         return report
 
+    def rollup_episodes(self, *, now: float | None = None) -> dict[str, Any]:
+        """Maintenance-only; never invoked while reading Self/context."""
+        if not self.config.enabled or not self.config.episode_rollup_enabled:
+            return {"status": "disabled", "calls": 0}
+        result = self.episode_rollups.run(self.model_adapter, now=now, active_session_id=self._active_session_id)
+        self.trace_journal.append("episode_rollup", result)
+        return result
+
+    def episode_prompt_view(self, *, scope: UserMemoryScope | None = None,
+                            include_sensitive: bool = False, now: float | None = None) -> dict[str, Any]:
+        if not self.config.enabled:
+            return {"recent_episodes": [], "episode_recap": ""}
+        if not self.config.episode_rollup_enabled:
+            return {"recent_episodes": [x.to_dict() for x in self.episode_store.recent(limit=8, scope=scope or UserMemoryScope())],
+                    "episode_recap": ""}
+        return self.episode_rollups.prompt_view(scope=scope, include_sensitive=include_sensitive, now=now)
+
     def compile_context(
         self,
         query: str,
@@ -547,10 +572,9 @@ class LivingUserMemoryService:
 
     def summary(self, *, include_sensitive: bool = False, limit: int = 60) -> dict[str, Any]:
         records = self.profile_store.snapshot(include_sensitive=include_sensitive, limit=limit)
-        episodes = [x.to_dict() for x in self.episode_store.recent(limit=8)]
         return {
             "profile": records,
-            "recent_episodes": episodes,
+            **self.episode_prompt_view(include_sensitive=include_sensitive),
             "actions": self.action_store.snapshot(),
             "replay": self.replay_debugger.report(limit=200).to_dict(),
             "last_dream_report": asdict(self.last_dream_report) if self.last_dream_report else None,
@@ -650,6 +674,7 @@ class LivingUserMemoryService:
         """Ghi tombstone canonical rồi cập nhật mọi projection liên quan."""
         scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
         evidence_ids = self._collect_memory_evidence(path_or_prefix, scope=scope)
+        self._retire_episode_interpretations(evidence_ids, hard=hard)
         authority = self.authority_ledger.append(
             "forget", path_or_prefix, scope=scope, hard=hard, evidence_ids=() if hard else evidence_ids,
             source="user_panel", metadata={"project_id": project_id},
@@ -676,6 +701,7 @@ class LivingUserMemoryService:
         project_id: str = "",
     ) -> ApplyResult:
         scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
+        self._retire_episode_interpretations(self._collect_memory_evidence(path, scope=scope))
         authority = self.authority_ledger.append(
             "correct", path, scope=scope, value=value, evidence_ids=evidence_ids, source="user_panel",
         )
@@ -719,6 +745,7 @@ class LivingUserMemoryService:
         target_scope = UserMemoryScope(target_scope_kind, target_scope_key if target_scope_kind == "project" else "")
         if target_scope.identity == source_scope.identity:
             return ApplyResult(False, rejected=("scope_unchanged",), version=self.profile_store.version)
+        self._retire_episode_interpretations(self._collect_memory_evidence(path, scope=source_scope))
         authority = self.authority_ledger.append(
             "move_scope", path, scope=source_scope, value=record.value, target_scope=target_scope,
             evidence_ids=record.evidence_ids, source="user_panel",
@@ -852,6 +879,7 @@ class LivingUserMemoryService:
         return evidence
 
     def _scrub_hard_delete(self, path: str, evidence_ids: set[str]) -> None:
+        self._retire_episode_interpretations(evidence_ids, hard=True)
         for store in (self.event_ledger, self.episode_store, self.action_store):
             scrubber = getattr(store, "scrub_evidence", None)
             if callable(scrubber):
@@ -863,6 +891,25 @@ class LivingUserMemoryService:
         with self._turn_buffer_lock:
             self._turn_buffer = [row for row in self._turn_buffer if str(row.get("id") or "") not in evidence_ids]
             self._save_turn_buffer_locked()
+
+    def _retire_episode_interpretations(self, evidence_ids: Iterable[str], *, hard: bool = False) -> None:
+        ids = set(evidence_ids)
+        if not ids:
+            return
+        # Both writes occur under the same source lock. The derived text is removed
+        # first; a crash can lose a projection, never expose a forgotten recap.
+        with self.episode_store.lock:
+            self.episode_rollups.invalidate_evidence(ids)
+            self.dreamer.scrub_checkpoint()
+            if hard:
+                self.episode_store.scrub_evidence(ids)
+            else:
+                self.episode_store.suppress_evidence(ids)
+
+    def _validate_episode_sources(self, episodes: Iterable[UserEpisode]) -> bool:
+        with self.episode_store.lock:
+            hashes = {x.id: episode_hash(x) for x in self.episode_store.all(include_archived=True)}
+            return all(hashes.get(x.id) == episode_hash(x) for x in episodes)
 
 
 

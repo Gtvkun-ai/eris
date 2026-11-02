@@ -158,5 +158,13 @@ def project_runtime_context(context: Mapping[str, Any], self_view: Mapping[str, 
         if _same_json(status["latest_observation"], mind["latest_observation"]):
             status.pop("latest_observation")
             status["latest_observation_ref"] = "mind_state.latest_observation"
+    living = (self_view.get("memory_state") or {}).get("living_user", {})
+    recap = living.get("episode_recap") if isinstance(living, Mapping) else None
+    memory_text = result.get("memory_context")
+    if recap and isinstance(memory_text, str):
+        start, end = "[EPISODE_RECAP]", "[/EPISODE_RECAP]"
+        left, right = memory_text.find(start), memory_text.find(end)
+        if left >= 0 and right >= left and recap in memory_text[left:right]:
+            result["memory_context"] = (memory_text[:left] + memory_text[right + len(end):]).strip()
     # Grounding/vision is deliberately untouched (step 5 is deferred).
     return result

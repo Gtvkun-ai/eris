@@ -405,6 +405,31 @@ class IncomingProtocolRuntimeMixin:
         """
         request_id = str(msg.get("request_id", "") or "")
         action = str(msg.get("action", "snapshot") or "snapshot").strip().lower()
+        if action == "portrait_snapshot":
+            try:
+                service = getattr(self, "learner_portrait_service", None)
+                if service is None:
+                    from runtime.learner_portrait import LearnerPortraitService
+                    service = LearnerPortraitService()
+                    self.learner_portrait_service = service
+                mentor_service = getattr(self, "engineering_mentor_service", None)
+                mentor_projection = getattr(self, "capability_projection_service", None)
+                mentor = (mentor_projection.build(mentor_service.snapshot())
+                          if mentor_service is not None and mentor_projection is not None else None)
+                payload = service.build(
+                    learning=getattr(self, "learning_service", None), mentor=mentor,
+                    path_id=str(msg.get("path_id") or "")[:120],
+                    path_page=max(0, min(20, int(msg.get("path_page") or 0))),
+                )
+                status, message = "ok", "Đã đọc dữ liệu hồ sơ."
+            except Exception as exc:
+                payload, status, message = {}, "error", "Không đọc được Learner Portrait: " + type(exc).__name__
+            self._send_runtime_json({
+                "type": "capability_panel_ack", "parse_mode": "capability_panel_ack",
+                "should_speak": False, "request_id": request_id, "action": action,
+                "status": status, "message": message, "learner_portrait": payload,
+            }, channel="capability_panel")
+            return
         mentor = getattr(self, "engineering_mentor_service", None)
         projection = getattr(self, "capability_projection_service", None)
         controls = getattr(self, "development_control_service", None)

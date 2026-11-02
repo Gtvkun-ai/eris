@@ -21,45 +21,67 @@ public partial class UdpListener
     private TcpListener _richChatServer;
     private CancellationTokenSource _richChatCancellation;
     private readonly ConcurrentQueue<string> _richChatOutbox = new();
+    private readonly ConcurrentQueue<(string PathId, int Page)> _learnerPortraitOutbox = new();
+    private string _learnerPortraitSnapshot = "{\"status\":\"loading\"}";
     private readonly Dictionary<string, (byte[] Bytes, string Mime)> _richChatAssets = new();
     private string _richChatToken = "";
     private string _richChatUrl = "";
     private string _richChatSnapshot = "{\"messages\":[],\"status\":\"Đang kết nối\"}";
     private ulong _richChatLastSnapshotMs;
-    private void OpenRichChatPortal(string page = "")
+    // The same loopback-only, token-protected browser server is shared by
+    // Rich Chat and Learner Portrait. No second HTTP listener or public port.
+    private void EnsureRichChatPortal()
+    {
+        if (_richChatServer != null) return;
+        LoadRichChatAssets();
+        _richChatToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+        _richChatServer = new TcpListener(IPAddress.Loopback, 0);
+        _richChatServer.Start(16);
+        int port = ((IPEndPoint)_richChatServer.LocalEndpoint).Port;
+        _richChatUrl = $"http://127.0.0.1:{port}/{_richChatToken}/";
+        _richChatCancellation = new CancellationTokenSource();
+        _ = Task.Run(() => RichChatAcceptLoop(_richChatCancellation.Token));
+        GD.Print("[RichChat] Browser portal started on loopback only");
+    }
+
+    private void OpenRichChatPortal() => OpenRichChatPortal("");
+
+    private void OpenRichChatPortal(string page)
     {
         if (_companionPreview) return;
         try
         {
-            if (_richChatServer == null)
-            {
-                LoadRichChatAssets();
-                _richChatToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
-                // TcpListener does not require Windows URLACL privileges (unlike HttpListener).
-                _richChatServer = new TcpListener(IPAddress.Loopback, 0);
-                _richChatServer.Start(16);
-                int port = ((IPEndPoint)_richChatServer.LocalEndpoint).Port;
-                _richChatUrl = $"http://127.0.0.1:{port}/{_richChatToken}/";
-                _richChatCancellation = new CancellationTokenSource();
-                _ = Task.Run(() => RichChatAcceptLoop(_richChatCancellation.Token));
-                GD.Print("[RichChat] Browser portal started on loopback only");
-            }
+            EnsureRichChatPortal();
             UpdateRichChatSnapshot();
             Error launch = OS.ShellOpen(_richChatUrl + page);
             if (launch != Error.Ok)
-                throw new InvalidOperationException("Không mở được trình duyệt mặc định: " + launch);
+                throw new InvalidOperationException("Không mở được trình duyệt: " + launch);
         }
         catch (Exception exc)
         {
-            GD.PrintErr("[RichChat] Khởi động không thành công: " + exc.Message);
-            if (_workspaceNotice != null)
-            {
-                _workspaceNotice.Text = "Rich Chat chưa mở được, đang dùng chat Godot.";
-                _workspaceNotice.Visible = true;
-            }
+            GD.PrintErr("[RichChat] Không mở được: " + exc.Message);
             StopRichChatPortal();
             if (_conversationHistoryPanel != null && !_conversationHistoryPanel.Visible)
                 ShowConversationHistoryPanel();
+        }
+    }
+
+    private void OpenLearnerPortraitPortal()
+    {
+        if (_companionPreview) return;
+        CloseCharacterContextMenu();
+        try
+        {
+            EnsureRichChatPortal();
+            SendLearnerPortraitRequest();
+            if (OS.ShellOpen(_richChatUrl + "portrait/index.html") != Error.Ok)
+                throw new InvalidOperationException("Trình duyệt chưa mở được.");
+        }
+        catch (Exception exc)
+        {
+            GD.PrintErr("[LearnerPortrait] Fallback Godot: " + exc.Message);
+            // Preserve the old read-only panel as a usable offline fallback.
+            ShowNativeCapabilityPanel();
         }
     }
 
@@ -72,7 +94,8 @@ public partial class UdpListener
             "vendor/prism.js", "vendor/prism-clike.js", "vendor/prism-python.js",
             "vendor/prism-javascript.js", "vendor/prism-typescript.js", "vendor/prism-csharp.js",
             "vendor/prism-c.js", "vendor/prism-cpp.js", "vendor/prism-java.js", "vendor/prism-css.js",
-            "vendor/prism-markup.js", "vendor/prism-bash.js", "vendor/prism-json.js"
+            "vendor/prism-markup.js", "vendor/prism-bash.js", "vendor/prism-json.js",
+            "portrait/index.html", "portrait/portrait.css", "portrait/portrait.js"
         };
         foreach (string file in files)
         {
@@ -154,6 +177,54 @@ public partial class UdpListener
                 {
                     string snapshot = Volatile.Read(ref _richChatSnapshot);
                     Reply(net, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(snapshot));
+                    return;
+                }
+                if (method == "GET" && relative == "api/portrait/state")
+                {
+                    Reply(net, 200, "application/json; charset=utf-8",
+                          Encoding.UTF8.GetBytes(Volatile.Read(ref _learnerPortraitSnapshot)));
+                    return;
+                }
+                if (method == "POST" && (relative == "api/portrait/refresh" || relative == "api/portrait/select" || relative == "api/portrait/page"))
+                {
+                    string expectedOrigin = "Origin: http://" + expectedHost;
+                    if (!lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)))
+                    { Reply(net, 403, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    int length = -1;
+                    foreach (string line in lines.Skip(1))
+                        if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
+                            int.TryParse(line.Substring(15).Trim(), out int size)) length = size;
+                    if (length < 0 || length > 1024)
+                    { Reply(net, 413, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    int offset = headerEnd + 4;
+                    while (data.Length - offset < length && data.Length < 2048)
+                    {
+                        int read = net.Read(chunk, 0, Math.Min(chunk.Length, length - (int)data.Length + offset));
+                        if (read <= 0) return;
+                        data.Write(chunk, 0, read);
+                    }
+                    string pathId = "";
+                    int pageIndex = -1;
+                    if (relative == "api/portrait/page")
+                    {
+                        using JsonDocument navigation = JsonDocument.Parse(data.ToArray().AsMemory(offset, length));
+                        if (!navigation.RootElement.TryGetProperty("page", out var pageValue) ||
+                            pageValue.ValueKind != JsonValueKind.Number ||
+                            !pageValue.TryGetInt32(out pageIndex) || pageIndex < 0 || pageIndex > 20)
+                        { Reply(net, 400, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    }
+                    if (relative == "api/portrait/select")
+                    {
+                        using JsonDocument selection = JsonDocument.Parse(data.ToArray().AsMemory(offset, length));
+                        pathId = selection.RootElement.TryGetProperty("path_id", out var pid) &&
+                                 pid.ValueKind == JsonValueKind.String ? pid.GetString() ?? "" : "";
+                        if (pathId.Length == 0 || pathId.Length > 120 || pathId.Any(char.IsControl))
+                        { Reply(net, 400, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    }
+                    if (_learnerPortraitOutbox.Count >= 5)
+                    { Reply(net, 409, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    _learnerPortraitOutbox.Enqueue((pathId, pageIndex));
+                    Reply(net, 202, "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}"));
                     return;
                 }
                 if (method == "GET" && relative.StartsWith("api/image/", StringComparison.Ordinal))
@@ -289,6 +360,15 @@ public partial class UdpListener
         int processed = 0;
         while (processed++ < 5 && _richChatOutbox.TryDequeue(out string message))
             SendUserChatMessage(message);
+        // UI requests stay on the Godot main thread; the web server never calls UDP.
+        if (_learnerPortraitOutbox.TryDequeue(out var portraitTask))
+            SendLearnerPortraitRequest(portraitTask.PathId, portraitTask.Page);
+        if (_learnerPortraitPending && Time.GetTicksMsec() - _learnerPortraitSentAtMs > 20000)
+        {
+            _learnerPortraitPending = false;
+            Volatile.Write(ref _learnerPortraitSnapshot,
+                "{\"status\":\"error\",\"message\":\"Eris chưa phản hồi sau 20 giây. Hãy thử Làm mới.\"}");
+        }
         if (Time.GetTicksMsec() - _richChatLastSnapshotMs >= 500)
             UpdateRichChatSnapshot();
     }

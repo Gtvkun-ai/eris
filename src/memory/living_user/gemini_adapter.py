@@ -53,6 +53,13 @@ class GeminiWebUserProfileAdapter:
             raise CuratorInferenceError("parse_error")
         return parsed
 
+    def summarize_episode_rollup(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        from .episode_rollup import ROLLUP_SYSTEM
+        parsed = self._generate_json(ROLLUP_SYSTEM, payload)
+        if not isinstance(parsed.get("segments"), list):
+            raise CuratorInferenceError("parse_error")
+        return parsed
+
     def _generate_json(self, system: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         response = self.create_chat_completion(messages=[
             {"role": "system", "content": system},

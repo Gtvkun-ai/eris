@@ -4,10 +4,9 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import math
-import re
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from memory.semantic_memory import normalize_text
 from memory.memory_admission import MemoryAdmissionPolicy
@@ -15,7 +14,8 @@ from memory.memory_admission import MemoryAdmissionPolicy
 from .action_memory import ActionMemoryStore
 from .clarification import MemoryClarificationPolicy
 from .episode_store import UserEpisodeStore
-from .models import ProfileContextItem, ProfileContextPacket, ProfileRecord, UserMemoryScope, compact_text
+from .models import ProfileContextItem, ProfileContextPacket, ProfileRecord, UserMemoryScope
+from .episode_projection import episode_view, token_cost
 from .store import UserProfileStore
 
 
@@ -46,10 +46,12 @@ class ProfileContextCompiler:
         clarification_policy: MemoryClarificationPolicy | None = None,
         config: ProfileContextCompilerConfig | None = None,
         admission_policy: MemoryAdmissionPolicy | None = None,
+        episode_rollups: Any | None = None,
     ) -> None:
         self.profile_store = profile_store
         self.episode_store = episode_store
         self.embedding_index = embedding_index
+        self.episode_rollups = episode_rollups
         self.action_store = action_store
         self.clarification_policy = resolve_dependency(clarification_policy, lambda: MemoryClarificationPolicy())
         self.config = resolve_dependency(config, lambda: ProfileContextCompilerConfig())
@@ -150,6 +152,21 @@ class ProfileContextCompiler:
                 x for x in self.episode_store.recent(limit=self.config.max_episodes, scope=active_scope)
                 if (now_ts_val - x.started_at <= 7 * 86400) and (x.open_loops or x.importance >= 0.72)
             )
+        episode_recap = ""
+        if self.episode_rollups is not None:
+            current = time.time()
+            if normalize_text(query):
+                # Specific recall can rehydrate old sources, never all cold episodes.
+                episodes = tuple(x for x in episodes if self.episode_rollups._public(x, include_sensitive=include_sensitive))[:2]
+            else:
+                episodes = self.episode_rollups.recent(scope=active_scope, now=current, include_sensitive=include_sensitive)
+            episode_recap = self.episode_rollups.render(scope=active_scope, now=current, include_sensitive=include_sensitive)
+            chosen = []
+            remaining = max(0, budget - estimated_tokens - token_cost(episode_recap))
+            for episode in episodes:
+                if token_cost([episode_view(x, now=current) for x in (*chosen, episode)]) <= remaining:
+                    chosen.append(episode)
+            episodes = tuple(chosen)
         action_context = self.action_store.context(query, scope=active_scope) if self.action_store is not None else None
 
         # Gợi ý chủ động theo nhịp sinh học & mạch hội thoại (Nấc 2)
@@ -167,6 +184,7 @@ class ProfileContextCompiler:
             domain=resolved_domain,
             items=tuple(items),
             episodes=episodes,
+            episode_recap=episode_recap,
             action_context=action_context,
             clarifications=tuple(dict.fromkeys(clarifications)),
             proactive_cue=proactive_cue,
