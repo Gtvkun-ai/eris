@@ -9,6 +9,10 @@ from core.di import resolve_dependency
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
+import json
+
+from memory.json_store_io import atomic_write_json, lock_for_path
+from .episode_projection import episode_hash
 
 from .extractor import UserProfileModelAdapter
 from .models import DreamReport, ProfileOperation, UserEpisode, UserMemoryScope, clamp01
@@ -30,10 +34,18 @@ class UserProfileDreamer:
         *,
         model_adapter: UserProfileModelAdapter | None = None,
         config: UserProfileDreamConfig | None = None,
+        authority_guard: Any = None,
+        source_validator: Any = None,
     ) -> None:
         self.store = store
         self.model_adapter = model_adapter
         self.config = resolve_dependency(config, lambda: UserProfileDreamConfig())
+        self.authority_guard = authority_guard
+        self.source_validator = source_validator
+        self.checkpoint_path = store.path.with_name("living_user_dream_checkpoint.json")
+        self._checkpoint_lock = lock_for_path(self.checkpoint_path)
+        self._job_lock = lock_for_path(str(self.checkpoint_path) + ".inference")
+        self._model_succeeded = False
 
     def consolidate(
         self,
@@ -43,15 +55,76 @@ class UserProfileDreamer:
         reason: str = "idle",
         scope: UserMemoryScope | None = None,
     ) -> DreamReport:
+        if not self._job_lock.acquire(blocking=False):
+            return DreamReport(diagnostics=("dream_busy",))
+        try:
+            return self._consolidate(episodes, semantic_operations=semantic_operations, reason=reason, scope=scope)
+        finally:
+            self._job_lock.release()
+
+    def _checkpoint(self) -> dict[str, Any]:
+        with self._checkpoint_lock:
+            if not self.checkpoint_path.exists():
+                return {"coverage": {}, "pending": [], "revision": 0}
+            doc = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
+            if not isinstance(doc.get("coverage"), dict) or not isinstance(doc.get("pending"), list):
+                raise ValueError("invalid_dream_checkpoint")
+            return doc
+
+    def scrub_checkpoint(self) -> None:
+        # Pending model proposals can contain a forgotten value. Erase the whole
+        # pending batch; source suppression prevents it being re-created later.
+        with self._checkpoint_lock:
+            doc = self._checkpoint()
+            atomic_write_json(self.checkpoint_path, {**doc, "pending": [], "revision": doc["revision"] + 1})
+
+    def _apply(self, operations: list[ProfileOperation], *, reason: str):
+        if self.authority_guard is not None:
+            operations, _ = self.authority_guard(operations)
+        return self.store.apply(operations, checkpoint_reason=f"dream:{reason}")
+
+    def _consolidate(self, episodes: Iterable[UserEpisode], *, semantic_operations: Iterable[ProfileOperation],
+                     reason: str, scope: UserMemoryScope | None) -> DreamReport:
+        checkpoint = self._checkpoint()
+        if checkpoint["pending"]:
+            self._apply([ProfileOperation.from_dict(x) for x in checkpoint["pending"]], reason="resume")
+            with self._checkpoint_lock:
+                latest = self._checkpoint()
+                if latest["revision"] != checkpoint["revision"]:
+                    return DreamReport(diagnostics=("dream_checkpoint_changed",))
+                checkpoint = {**checkpoint, "pending": [], "revision": checkpoint["revision"] + 1}
+                atomic_write_json(self.checkpoint_path, checkpoint)
         chosen = [x for x in episodes if x.importance >= self.config.min_episode_importance]
         chosen = sorted(chosen, key=lambda x: (x.importance, x.ended_at), reverse=True)[: self.config.max_episodes]
+        # Independent of recap coverage. Changes in content re-open this consumer.
+        chosen = [x for x in chosen if checkpoint["coverage"].get(x.id) != episode_hash(x)]
         ops = list(semantic_operations)
         ops.extend(self._deterministic_episode_ops(chosen, scope=scope))
         ops.extend(self._model_ops(chosen, reason=reason, scope=scope))
         ops = _dedupe(ops)[: self.config.max_operations]
+        if self.source_validator is not None and not self.source_validator(chosen):
+            return DreamReport(diagnostics=("dream_sources_changed",))
+        durable = self._model_succeeded and bool(chosen)
+        if durable:
+            with self._checkpoint_lock:
+                latest = self._checkpoint()
+                if latest["revision"] != checkpoint["revision"]:
+                    return DreamReport(diagnostics=("dream_checkpoint_changed",))
+                # Save the proposals before applying profile mutations. On a crash
+                # replay the same proposals instead of buying the same inference.
+                coverage = {**checkpoint["coverage"], **{x.id: episode_hash(x) for x in chosen}}
+                checkpoint = {"coverage": coverage, "pending": [x.to_dict() for x in ops],
+                              "revision": checkpoint["revision"] + 1}
+                atomic_write_json(self.checkpoint_path, checkpoint)
         if not ops:
             return DreamReport(episode_ids=tuple(x.id for x in chosen), diagnostics=("no_profile_operations",))
-        result = self.store.apply(ops, checkpoint_reason=f"dream:{reason}")
+        result = self._apply(ops, reason=reason)
+        if durable:
+            with self._checkpoint_lock:
+                latest = self._checkpoint()
+                if latest["revision"] == checkpoint["revision"]:
+                    atomic_write_json(self.checkpoint_path, {**checkpoint, "pending": [],
+                                                            "revision": checkpoint["revision"] + 1})
         return DreamReport(
             applied=len(result.record_ids),
             rejected=len(result.rejected),
@@ -87,6 +160,7 @@ class UserProfileDreamer:
         return out
 
     def _model_ops(self, episodes: list[UserEpisode], *, reason: str, scope: UserMemoryScope | None) -> list[ProfileOperation]:
+        self._model_succeeded = False
         if self.model_adapter is None or not episodes:
             return []
         payload = {
@@ -110,6 +184,7 @@ class UserProfileDreamer:
         rows = response.get("operations") if isinstance(response, Mapping) else None
         if not isinstance(rows, list):
             return []
+        self._model_succeeded = True
         out: list[ProfileOperation] = []
         evidence_union = tuple(dict.fromkeys(eid for episode in episodes for eid in episode.evidence_ids))
         for row in rows[: self.config.max_operations]:

@@ -182,7 +182,7 @@ class EpisodeRollupStore:
                         if token_cost(" ".join((*paragraphs, text))) <= self.config.recap_tokens:
                             paragraphs.append(text)
                 return " ".join(paragraphs)
-        except (ValueError, KeyError, TypeError, OSError):
+        except (ValueError, KeyError, TypeError, OSError, AttributeError):
             # A corrupt/invalidated projection is never used as canonical memory.
             return ""
 
@@ -201,7 +201,9 @@ class EpisodeRollupStore:
         """Remove derived text as well as coverage; no forgotten text in this file."""
         wanted = set(evidence_ids)
         with self.episodes.lock, self.lock:
-            affected = {x.id for x in self.episodes.all(include_archived=True) if wanted & {x.id, *x.evidence_ids}}
+            affected = {x.id for x in (*self.episodes._items.values(), *self.episodes._archive.values(),
+                                       *self.episodes._history.values()) if wanted & {x.id, *x.evidence_ids}}
+            affected.update(wanted)
             doc = self._load()
             entries = {key: value for key, value in doc["entries"].items()
                        if not (set(value.get("coverage", {})) & affected)}

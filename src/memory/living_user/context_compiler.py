@@ -4,10 +4,9 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import math
-import re
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from memory.semantic_memory import normalize_text
 from memory.memory_admission import MemoryAdmissionPolicy
@@ -15,7 +14,7 @@ from memory.memory_admission import MemoryAdmissionPolicy
 from .action_memory import ActionMemoryStore
 from .clarification import MemoryClarificationPolicy
 from .episode_store import UserEpisodeStore
-from .models import ProfileContextItem, ProfileContextPacket, ProfileRecord, UserMemoryScope, compact_text
+from .models import ProfileContextItem, ProfileContextPacket, ProfileRecord, UserMemoryScope
 from .episode_projection import episode_view, token_cost
 from .store import UserProfileStore
 
@@ -163,7 +162,7 @@ class ProfileContextCompiler:
                 episodes = self.episode_rollups.recent(scope=active_scope, now=current, include_sensitive=include_sensitive)
             episode_recap = self.episode_rollups.render(scope=active_scope, now=current, include_sensitive=include_sensitive)
             chosen = []
-            remaining = max(0, budget - estimated_tokens)
+            remaining = max(0, budget - estimated_tokens - token_cost(episode_recap))
             for episode in episodes:
                 if token_cost([episode_view(x, now=current) for x in (*chosen, episode)]) <= remaining:
                     chosen.append(episode)

@@ -42,7 +42,7 @@ def local_date(timestamp: float):
 
 def time_anchor(timestamp: float) -> str:
     day = local_date(timestamp)
-    return (day - timedelta(days=day.weekday())).isoformat()
+    return max(day - timedelta(days=day.weekday()), day.replace(day=1)).isoformat()
 
 
 def relative_time(timestamp: float, *, now: float) -> str:
@@ -69,7 +69,7 @@ def anchor_label(anchor: str, *, now: float) -> str:
     day = datetime.fromisoformat(anchor).date()
     today = local_date(now)
     week = today - timedelta(days=today.weekday())
-    weeks = math.floor((week - day).days / 7)
+    weeks = math.floor((week - (day - timedelta(days=day.weekday()))).days / 7)
     if weeks == 0:
         return "tuần này"
     if weeks == 1:

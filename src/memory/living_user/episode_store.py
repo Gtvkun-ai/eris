@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from copy import deepcopy
 from functools import wraps
 from pathlib import Path
@@ -21,11 +20,11 @@ def _mutation(method):
     @wraps(method)
     def run(self, *args, **kwargs):
         with self.lock:
-            before = deepcopy((self._items, self._archive, self._history, self._suppressed))
+            before = deepcopy((self._items, self._archive, self._history, self._suppressed, self._blocked_evidence))
             try:
                 return method(self, *args, **kwargs)
             except Exception:
-                self._items, self._archive, self._history, self._suppressed = before
+                self._items, self._archive, self._history, self._suppressed, self._blocked_evidence = before
                 raise
     return run
 
@@ -38,6 +37,7 @@ class UserEpisodeStore:
         self._archive: dict[str, UserEpisode] = {}
         self._history: dict[str, UserEpisode] = {}
         self._suppressed: set[str] = set()
+        self._blocked_evidence: set[str] = set()
         self.lock = lock_for_path(self.path)
         self.load()
 
@@ -55,6 +55,9 @@ class UserEpisodeStore:
 
     @_mutation
     def add(self, episode: UserEpisode) -> UserEpisode:
+        from .episode_projection import content_hash
+        if self._blocked_evidence & {content_hash(x) for x in (episode.id, *episode.evidence_ids)}:
+            return episode  # Never re-persist a forgotten source from a delayed job.
         existing = self._find_same_session(episode)
         if existing is not None:
             self._history[episode_hash(existing)] = deepcopy(existing)
@@ -216,10 +219,12 @@ class UserEpisodeStore:
     def suppress_evidence(self, evidence_ids: Iterable[str]) -> int:
         """Hide secondary interpretations after correction/soft forget, keep originals."""
         wanted = set(evidence_ids)
+        from .episode_projection import content_hash
+        self._blocked_evidence.update(content_hash(x) for x in wanted)
         affected = {x.id for x in (*self._items.values(), *self._archive.values(), *self._history.values())
                     if wanted & {x.id, *x.evidence_ids}}
         self._suppressed.update(affected)
-        if affected:
+        if wanted:
             self.save()
         return len(affected)
 
@@ -233,6 +238,8 @@ class UserEpisodeStore:
         wanted = {str(item) for item in evidence_ids if str(item).strip()}
         if not wanted:
             return 0
+        from .episode_projection import content_hash
+        self._blocked_evidence.update(content_hash(x) for x in wanted)
         removed_ids = {
             item.id for item in (*self._items.values(), *self._archive.values(), *self._history.values())
             if wanted & {item.id, *item.evidence_ids}
@@ -242,8 +249,7 @@ class UserEpisodeStore:
             self._archive.pop(item_id, None)
         self._history = {key: item for key, item in self._history.items() if item.id not in removed_ids}
         self._suppressed.update(removed_ids)
-        if removed_ids:
-            self.save()
+        self.save()
         return len(removed_ids)
 
     def _trim(self) -> None:
@@ -265,8 +271,9 @@ class UserEpisodeStore:
                 self._archive = {x.id: x for x in (UserEpisode.from_dict(row) for row in raw.get("archive", []))}
                 self._history = {episode_hash(x): x for x in (UserEpisode.from_dict(row) for row in raw.get("history", []))}
                 self._suppressed = set(raw.get("suppressed_ids", []))
-        except Exception:
-            self._items = {}
+                self._blocked_evidence = set(raw.get("blocked_evidence", []))
+        except Exception as exc:
+            raise ValueError("episode_store_load_failed") from exc
 
     def save(self) -> None:
         with self.lock:
@@ -274,7 +281,7 @@ class UserEpisodeStore:
                 "episodes": [x.to_dict() for x in self._items.values()],
                 "archive": [x.to_dict() for x in self._archive.values()],
                 "history": [x.to_dict() for x in self._history.values()],
-                "suppressed_ids": sorted(self._suppressed)})
+                "suppressed_ids": sorted(self._suppressed), "blocked_evidence": sorted(self._blocked_evidence)})
 
 
 def _cosine(left: Iterable[float], right: Iterable[float]) -> float:

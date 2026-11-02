@@ -13,11 +13,11 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .action_memory import ActionMemoryStore, ActionMemoryOperation, GoalRecord, CommitmentRecord, WorkflowRecord
+from .action_memory import ActionMemoryStore, ActionMemoryOperation, GoalRecord, WorkflowRecord
 from .authority import UserMemoryAuthorityEvent, UserMemoryAuthorityLedger
 from .clarification import MemoryClarificationPolicy
 from .context_compiler import ProfileContextCompiler, ProfileContextCompilerConfig
@@ -25,6 +25,7 @@ from .dreamer import UserProfileDreamer
 from .episode_builder import UserEpisodeBuilder
 from .episode_store import UserEpisodeStore
 from .episode_rollup import EpisodeRollupStore
+from .episode_projection import episode_hash
 from .extractor import UserProfileExtractor, UserProfileModelAdapter
 from .models import DreamReport, ProfileContextPacket, ProfileOperation, UserEpisode, UserMemoryScope
 from .sources import MemoryExplanation, MemorySourceTracker
@@ -105,7 +106,8 @@ class LivingUserMemoryService:
         self.clarification_policy = MemoryClarificationPolicy()
         self.extractor = UserProfileExtractor(model_adapter=model_adapter)
         self.episode_builder = UserEpisodeBuilder(model_adapter=model_adapter)
-        self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter)
+        self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter,
+            authority_guard=self.authority_ledger.guard_operations, source_validator=self._validate_episode_sources)
         self.context_compiler = ProfileContextCompiler(
             self.profile_store,
             self.episode_store,
@@ -898,10 +900,16 @@ class LivingUserMemoryService:
         # first; a crash can lose a projection, never expose a forgotten recap.
         with self.episode_store.lock:
             self.episode_rollups.invalidate_evidence(ids)
+            self.dreamer.scrub_checkpoint()
             if hard:
                 self.episode_store.scrub_evidence(ids)
             else:
                 self.episode_store.suppress_evidence(ids)
+
+    def _validate_episode_sources(self, episodes: Iterable[UserEpisode]) -> bool:
+        with self.episode_store.lock:
+            hashes = {x.id: episode_hash(x) for x in self.episode_store.all(include_archived=True)}
+            return all(hashes.get(x.id) == episode_hash(x) for x in episodes)
 
 
 
