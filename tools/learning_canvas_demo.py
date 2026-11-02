@@ -49,7 +49,7 @@ def main():
             fixture = {"snapshot": snapshot, "details": [canvas.pack.detail(key) for key in canvas.pack.path.kp_ids],
                        "exercise_previews": [canvas.exercises.open(node["id"], exercise["id"], "fixture:" + exercise["id"])
                                              for node in canvas.pack.nodes for exercise in node["exercises"]]}
-            target = Path(__file__).parent / "ui-preview" / "learning_canvas_fixture.json"
+            target = Path(__file__).parent / "web-canvas" / "learning_canvas_fixture.json"
             target.write_text(json.dumps(fixture, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             store.close()
             print(target)

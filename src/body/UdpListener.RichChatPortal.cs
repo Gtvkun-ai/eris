@@ -26,7 +26,7 @@ public partial class UdpListener
     private string _richChatUrl = "";
     private string _richChatSnapshot = "{\"messages\":[],\"status\":\"Đang kết nối\"}";
     private ulong _richChatLastSnapshotMs;
-    private void OpenRichChatPortal()
+    private void OpenRichChatPortal(string page = "")
     {
         if (_companionPreview) return;
         try
@@ -45,7 +45,7 @@ public partial class UdpListener
                 GD.Print("[RichChat] Browser portal started on loopback only");
             }
             UpdateRichChatSnapshot();
-            Error launch = OS.ShellOpen(_richChatUrl);
+            Error launch = OS.ShellOpen(_richChatUrl + page);
             if (launch != Error.Ok)
                 throw new InvalidOperationException("Không mở được trình duyệt mặc định: " + launch);
         }
@@ -68,7 +68,7 @@ public partial class UdpListener
         Assembly assembly = typeof(UdpListener).Assembly;
         var resources = assembly.GetManifestResourceNames();
         string[] files = {
-            "index.html", "chat.css", "chat.js", "artifacts.js", "vendor/mathjax.js", "vendor/prism.css",
+            "index.html", "chat.css", "chat.js", "artifacts.js", "canvas.html", "canvas.css", "canvas.js", "vendor/mathjax.js", "vendor/prism.css",
             "vendor/prism.js", "vendor/prism-clike.js", "vendor/prism-python.js",
             "vendor/prism-javascript.js", "vendor/prism-typescript.js", "vendor/prism-csharp.js",
             "vendor/prism-c.js", "vendor/prism-cpp.js", "vendor/prism-java.js", "vendor/prism-css.js",
@@ -144,6 +144,12 @@ public partial class UdpListener
                 if (!path.StartsWith(routePrefix, StringComparison.Ordinal))
                 { Reply(net, 404, "text/plain", Array.Empty<byte>()); return; }
                 string relative = path.Substring(routePrefix.Length);
+                if (method == "GET" && relative == "api/canvas/state")
+                {
+                    Reply(net, 200, "application/json; charset=utf-8",
+                        Encoding.UTF8.GetBytes(Volatile.Read(ref _webCanvasStateJson)));
+                    return;
+                }
                 if (method == "GET" && relative == "api/state")
                 {
                     string snapshot = Volatile.Read(ref _richChatSnapshot);
@@ -157,13 +163,13 @@ public partial class UdpListener
                     else Reply(net, 404, "text/plain", Array.Empty<byte>());
                     return;
                 }
-                if (method == "POST" && (relative == "api/send" || relative == "api/feedback" || relative == "api/artifact/edit"))
+                if (method == "POST" && (relative == "api/send" || relative == "api/feedback" || relative == "api/artifact/edit" || relative == "api/canvas/request"))
                 {
                     int length = -1;
                     foreach (string line in lines.Skip(1))
                         if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
                             int.TryParse(line.Substring(15).Trim(), out int value)) length = value;
-                    if (length < 1 || length > (relative == "api/artifact/edit" ? 80_000 : 12_000))
+                    if (length < 1 || length > (relative == "api/artifact/edit" ? 80_000 : relative == "api/canvas/request" ? 20_000 : 12_000))
                     { Reply(net, 413, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
                     int contentOffset = headerEnd + 4;
                     while (data.Length - contentOffset < length && data.Length < 100_000)
@@ -174,6 +180,20 @@ public partial class UdpListener
                     }
                     bytes = data.ToArray();
                     using JsonDocument json = JsonDocument.Parse(bytes.AsMemory(contentOffset, length));
+                    if (relative == "api/canvas/request")
+                    {
+                        string expectedOrigin = "Origin: http://" + expectedHost;
+                        bool sameOrigin = lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase));
+                        if (!sameOrigin)
+                        {
+                            Reply(net, 403, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}"));
+                            return;
+                        }
+                        bool accepted = TryQueueWebCanvasRequest(json.RootElement);
+                        Reply(net, accepted ? 202 : 400, "application/json; charset=utf-8",
+                            Encoding.UTF8.GetBytes(accepted ? "{\"ok\":true}" : "{\"ok\":false}"));
+                        return;
+                    }
                     if (relative == "api/feedback")
                     {
                         // The page MUST be served by this listener, not a cross-origin page.
@@ -281,5 +301,6 @@ public partial class UdpListener
         _richChatCancellation?.Dispose();
         _richChatCancellation = null;
         _richChatUrl = "";
+        ResetWebCanvasPortal();
     }
 }

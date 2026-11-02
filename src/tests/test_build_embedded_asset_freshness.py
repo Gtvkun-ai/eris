@@ -10,7 +10,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize('filename', ['chat.js', 'index.html', 'chat.css'])
+@pytest.mark.parametrize('filename', ['chat.js', 'index.html', 'chat.css', 'canvas.js', 'canvas.html', 'canvas.css'])
 def test_fast_build_rejects_export_older_than_embedded_asset(tmp_path, filename):
     tree = ast.parse((REPO / '_fullbuild.py').read_text(encoding='utf-8-sig'))
     functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
