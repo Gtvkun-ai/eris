@@ -77,8 +77,15 @@ def test_episode_sources_survive_reconsolidation_but_stay_out_of_root(tmp_path):
     snapshot = {"memory_state":{"living_user":{"recent_episodes":[saved.to_dict()]}}}
     before = deepcopy(snapshot)
     projected = project_self_view(snapshot)
-    assert "source_turns" not in projected["memory_state"]["living_user"]["recent_episodes"][0]["metadata"]
+    projected_episode = projected["memory_state"]["living_user"]["recent_episodes"][0]
+    # The Root projection drops audit/provenance entirely but keeps the telling.
+    for cut in ("evidence_ids", "metadata", "started_at", "ended_at", "session_id"):
+        assert cut not in projected_episode, cut
+    assert projected_episode["summary"] == "Đùa về video"
+    assert projected_episode["title"] == "Trêu vui"
     assert snapshot == before
+    # The canonical store still holds source_turns (to_dict is untouched), so
+    # scrub_evidence operates on the full record, not the projection.
     assert store.scrub_evidence(["u1"]) == 1
     assert not UserEpisodeStore(store.path).all()
 

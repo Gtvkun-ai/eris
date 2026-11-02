@@ -35,11 +35,26 @@ def state_difference(previous: Any, current: Any) -> Any:
     return {"__value_now_null": True} if current is None else current
 
 
-def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
-    """Lossless defaults/aliases; keep every record, value and metadata qualifier.
+# Pure audit/provenance fields dropped from each profile record on the Root
+# prompt path. They never steer a response and are the heaviest part of the
+# block: evidence_ids (up to 96 ids/record) plus four raw epoch timestamps and
+# the free-text metadata dict. The canonical store keeps them via to_dict();
+# only this projection omits them. valid_until/expires_at are intentionally
+# left for the defaults pass (they are retention qualifiers, not audit ids).
+_PROFILE_AUDIT_FIELDS = (
+    "evidence_ids", "metadata",
+    "created_at", "updated_at", "last_confirmed_at", "valid_from",
+)
 
-    No semantic filtering: even free-text metadata.reason is retained because it
-    may contain conditions not repeated in value. Exceptions stay on each row.
+
+def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for Root: drop audit/provenance, keep the telling.
+
+    Keeps path/value and every lightweight qualifier (explicitness, scope,
+    status, source, confidence...). Drops evidence_ids, the raw epoch
+    timestamps and the metadata dict because no Root-prompt consumer reads
+    them and they dominate the block size. Not lossless; the canonical store
+    is untouched (store.save() uses ProfileRecord.to_dict(), not this).
     """
     result = deepcopy(dict(profile))
     records = result.get("records")
@@ -47,6 +62,9 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
         return result
     if result.get("projection_schema") == "eris.root_profile.v1":
         return result
+    for row in records:
+        for field in _PROFILE_AUDIT_FIELDS:
+            row.pop(field, None)
     defaults: dict[str, Any] = {}
     for key in ("scope", "status", "sensitivity", "cardinality", "recurrence", "tier",
                 "source", "value_type", "valid_until", "expires_at"):
@@ -60,14 +78,37 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
         for row in records:
             if _same_json(row[key], defaults[key]):
                 del row[key]
-    aliases: dict[str, str] = {}
-    for source, target in (("updated_at", "last_confirmed_at"), ("created_at", "valid_from")):
-        if all(source in row and target in row for row in records):
-            aliases[source] = target
-            for row in records:
-                if _same_json(row[source], row[target]):
-                    del row[source]
-    result.update(projection_schema="eris.root_profile.v1", defaults=defaults, aliases=aliases)
+    # Timestamp aliases are gone: both alias sources (updated_at, created_at)
+    # and one target (valid_from) are now cut above, so no alias can form.
+    result.update(projection_schema="eris.root_profile.v1", defaults=defaults, aliases={})
+    return result
+
+
+# Audit/provenance fields dropped from each episode on the Root prompt path.
+# evidence_ids runs up to 128 ids/episode; session_id/source are internal
+# plumbing; started_at/ended_at are raw epochs; metadata carried source_turns.
+# The telling (title/summary/outcome and the signal lists) is kept intact.
+_EPISODE_AUDIT_FIELDS = (
+    "evidence_ids", "metadata", "started_at", "ended_at", "session_id", "source",
+)
+
+
+def compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for one Root episode: drop audit, keep the telling.
+
+    Keeps title/summary/outcome/topics/entities/decisions/open_loops/
+    user_signals/importance/scope/id (length caps already applied by
+    UserEpisode.__post_init__). Idempotent via a projection marker so
+    state_difference never sees a phantom delta between turns.
+    """
+    if not isinstance(episode, Mapping):
+        return episode  # type: ignore[return-value]
+    result = deepcopy(dict(episode))
+    if result.get("projection_schema") == "eris.root_episode.v1":
+        return result
+    for field in _EPISODE_AUDIT_FIELDS:
+        result.pop(field, None)
+    result["projection_schema"] = "eris.root_episode.v1"
     return result
 
 
@@ -84,11 +125,15 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             living.pop(key, None)
         if isinstance(living.get("profile"), Mapping):
             living["profile"] = compact_profile(living["profile"])
-        # Source windows belong to the Gemini memory lane, not every Root
-        # bootstrap. Root retains the episode summary and its evidence refs.
-        for episode in living.get("recent_episodes", ()):
-            if isinstance(episode, dict) and isinstance(episode.get("metadata"), dict):
-                episode["metadata"].pop("source_turns", None)
+        # Episodes carry audit refs (evidence_ids/source_turns), internal ids
+        # and raw epochs that no Root-prompt consumer reads. Keep the telling
+        # (title/summary/outcome/signal lists); drop the audit/provenance.
+        episodes = living.get("recent_episodes")
+        if isinstance(episodes, list):
+            living["recent_episodes"] = [
+                compact_episode(episode) if isinstance(episode, Mapping) else episode
+                for episode in episodes
+            ]
     active = memory.get("active_state")
     metadata = active.get("metadata") if isinstance(active, dict) else None
     if isinstance(metadata, dict) and "internal_state" in memory and _same_json(metadata.get("internal_state"), memory["internal_state"]):

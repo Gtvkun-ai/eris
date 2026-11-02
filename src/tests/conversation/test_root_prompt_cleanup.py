@@ -99,7 +99,7 @@ def test_overlay_preserves_bool_number_type_changes():
     assert json.dumps(apply_overlay({"flag": False, "rows": [True]}, patch)) == '{"flag": 0, "rows": [1]}'
 
 
-def test_compact_profile_roundtrips_qualifiers_exceptions_and_timestamps():
+def test_compact_profile_cuts_audit_keeps_telling_and_qualifiers():
     rows = [
         {"id": str(i), "path": "communication.style", "value": {"when": "roleplay", "style": "cute"},
          "scope": {"kind": "session", "key": "s"}, "status": "active", "sensitivity": "normal",
@@ -114,14 +114,19 @@ def test_compact_profile_roundtrips_qualifiers_exceptions_and_timestamps():
     source = {"version": 1, "record_count": 3, "records": rows}
     before = copy.deepcopy(source)
     projected = compact_profile(source)
-    decoded = []
-    for row in projected["records"]:
+    # Audit/provenance is gone from every record (also not promoted to defaults).
+    for cut in ("evidence_ids", "metadata", "created_at", "updated_at", "last_confirmed_at", "valid_from"):
+        assert all(cut not in row for row in projected["records"]), cut
+        assert cut not in projected["defaults"], cut
+    assert projected["aliases"] == {}
+    # The telling and lightweight qualifiers are kept, reconstructable via defaults.
+    for row, original in zip(projected["records"], rows):
         full = {**copy.deepcopy(projected["defaults"]), **copy.deepcopy(row)}
-        for key, target in projected["aliases"].items():
-            if key not in full:
-                full[key] = copy.deepcopy(full[target])
-        decoded.append(full)
-    assert decoded == rows
+        assert full["path"] == original["path"]
+        assert full["value"] == original["value"]
+        assert full["explicitness"] == original["explicitness"]
+        assert full["scope"] == original["scope"]
+    # Input is never mutated and the projection is idempotent.
     assert source == before
     assert compact_profile(projected) == projected
 
@@ -135,7 +140,10 @@ def test_self_view_removes_debug_and_clones_without_changing_owner():
         "ai_orchestrated_state": persisted, "internal_state": {"energy": 0.1},
         "active_state": {"metadata": {"internal_state": {"energy": 0.1}}},
         "living_user": {"replay": {"timeline": ["raw debug"]}, "pending_turns": 3,
-                        "recent_episodes": [{"summary": "real memory"}], "last_dream_report": {"applied": 1}},
+                        "recent_episodes": [{"title": "T", "summary": "real memory", "evidence_ids": ["u:1"],
+                                             "session_id": "s", "started_at": 10, "ended_at": 20,
+                                             "metadata": {"source_turns": [{"text": "raw"}]}}],
+                        "last_dream_report": {"applied": 1}},
     }}
     original = copy.deepcopy(source)
     view = project_self_view(source)
@@ -143,7 +151,11 @@ def test_self_view_removes_debug_and_clones_without_changing_owner():
     assert view["mind_state"] == mind
     assert view["memory_state"]["persisted_mind_variants"] == {"relationship": {"last_event": "persisted variant"}}
     assert "internal_state" not in view["memory_state"]["active_state"]["metadata"]
-    assert view["memory_state"]["living_user"] == {"recent_episodes": [{"summary": "real memory"}]}
+    episode = view["memory_state"]["living_user"]["recent_episodes"][0]
+    assert episode["title"] == "T" and episode["summary"] == "real memory"
+    for cut in ("evidence_ids", "metadata", "session_id", "started_at", "ended_at"):
+        assert cut not in episode, cut
+    assert view["memory_state"]["living_user"].keys() == {"recent_episodes"}
     assert project_self_view(view) == view
     context = {"conversation_status": {"latest_observation": mind["latest_observation"]},
                "grounding_context": "vision detail unchanged", "other": 1}
