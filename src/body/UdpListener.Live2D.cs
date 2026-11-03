@@ -14,6 +14,33 @@ public partial class UdpListener
 	private bool _live2DInitialized;
 	private Rect2I _live2DWindowRectScreen;
 	private bool _hasLive2DWindowRect;
+	private ulong _nextLive2DInputRectsAt;
+
+	private void SyncLive2DInputExclusionRects()
+	{
+		if (!_isLive2DMode || !(_live2DManager?.IsRunning ?? false))
+			return;
+		ulong now = Time.GetTicksMsec();
+		if (now < _nextLive2DInputRectsAt)
+			return;
+		_nextLive2DInputRectsAt = now + 50;
+		var rects = new System.Collections.Generic.List<object>();
+		foreach (Control control in new Control[] {
+			_characterContextMenu, _chatPanel, _emotionPanel, _privateMindPanel,
+			_settingsPanel, _memoryPanel, _capabilityPanel, _conversationHistoryPanel,
+			_autonomyGoalsPanel, _artifactWorkspacePanel, _plannerReminderToast,
+			_tutorHideButton, ActiveSpeechBubble() })
+		{
+			if (control == null || !control.IsVisibleInTree())
+				continue;
+			Transform2D transform = control.GetScreenTransform();
+			Rect2 bounds = transform * new Rect2(Vector2.Zero, control.Size);
+			rects.Add(new { x = Mathf.FloorToInt(bounds.Position.X), y = Mathf.FloorToInt(bounds.Position.Y),
+				width = Mathf.CeilToInt(bounds.Size.X), height = Mathf.CeilToInt(bounds.Size.Y) });
+		}
+		_live2DForward.PutPacket(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {
+			protocol = "eris.live2d.control", type = "set_input_exclusion_rects", rects })));
+	}
 	private Color _spriteSelfModulateBeforeLive2D = Colors.White;
 	private bool _capturedSpriteVisual;
 	private Vector2 _bodyPositionBeforeLive2D;
@@ -147,17 +174,17 @@ public partial class UdpListener
 	{
 		int width = Math.Clamp(Live2DWindowWidth, 320, 1600);
 		int height = Math.Clamp(Live2DWindowHeight, 480, 1800);
-		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
 		Vector2 bodyPosition = _body?.GlobalPosition ?? GetViewportRect().Size * 0.5f;
-		int x = overlayScreenPosition.X + Mathf.RoundToInt(bodyPosition.X - width * 0.5f);
-		int y = overlayScreenPosition.Y + Mathf.RoundToInt(bodyPosition.Y + _spriteHalfSize.Y - height);
+		Vector2 bodyScreen = GetViewport().GetScreenTransform() * (bodyPosition + new Vector2(0f, _spriteHalfSize.Y));
+		int x = Mathf.RoundToInt(bodyScreen.X - width * 0.5f);
+		int y = Mathf.RoundToInt(bodyScreen.Y - height);
 
-		int screen = DisplayServer.WindowGetCurrentScreen();
-		Vector2I screenPosition = DisplayServer.ScreenGetPosition(screen);
-		Vector2I screenSize = DisplayServer.ScreenGetSize(screen);
-		x = Math.Clamp(x, screenPosition.X, Math.Max(screenPosition.X, screenPosition.X + screenSize.X - width));
-		y = Math.Clamp(y, screenPosition.Y, Math.Max(screenPosition.Y, screenPosition.Y + screenSize.Y - height));
-		return new Rect2I(x, y, width, height);
+		// Kẹp cửa sổ Live2D vào ĐÚNG hình chữ nhật cửa sổ Godot overlay, không chỉ
+		// theo biên màn hình. Overlay (bubble + context menu) bị giới hạn trong
+		// viewport cửa sổ Godot; nếu model rơi ra ngoài vùng này (đa màn hình,
+		// DPI lệch) thì overlay bị clamp về mép và không bám sát model. Giữ model
+		// trong cùng vùng pixel với overlay bảo đảm chúng luôn ở cạnh nhau.
+		return ClampLive2DRectToOverlayWindow(x, y, width, height);
 	}
 
 	private void HideOnly2DSpriteVisual()
@@ -266,22 +293,33 @@ public partial class UdpListener
 		if (!_isLive2DMode)
 			return;
 		DisplayServer.WindowMoveToForeground();
-		Vector2I windowPosition = DisplayServer.WindowGetPosition();
-		Vector2 localPosition = new(screenX - windowPosition.X, screenY - windowPosition.Y);
+		// Desktop pixels and viewport coordinates can differ under DPI/content scaling.
+		Vector2 screenPosition = new(screenX, screenY);
+		if (_hasLive2DWindowRect)
+		{
+			Rect2 modelRect = new(_live2DWindowRectScreen.Position, _live2DWindowRectScreen.Size);
+			// A delayed/global cursor sample must not pin the model's menu to a screen edge.
+			if (!modelRect.Grow(8f).HasPoint(screenPosition))
+				screenPosition = modelRect.Position + modelRect.Size * new Vector2(0.5f, 0.35f);
+		}
+		Vector2 localPosition = Live2DScreenToViewport(screenPosition);
 		ShowCharacterContextMenu(localPosition);
+		RunLogger.Log($"[Live2D] Context menu: cursor=({screenX},{screenY}) screen={screenPosition} viewport={localPosition} menu={_characterContextMenu.GlobalPosition} model={_live2DWindowRectScreen}");
+	}
+
+	private Vector2 Live2DScreenToViewport(Vector2 screenPosition)
+	{
+		return GetViewport().GetScreenTransform().AffineInverse() * screenPosition;
 	}
 
 	private void SyncLive2DBodyAnchor()
 	{
 		if (!_isLive2DMode || !_hasLive2DWindowRect || _body == null)
 			return;
-		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
 		float anchorScreenX = _live2DWindowRectScreen.Position.X + _live2DWindowRectScreen.Size.X * 0.5f;
 		float anchorScreenY = _live2DWindowRectScreen.Position.Y
 			+ _live2DWindowRectScreen.Size.Y * Mathf.Clamp(Live2DBubbleAnchorY, 0.20f, 0.50f);
-		_body.GlobalPosition = new Vector2(
-			anchorScreenX - overlayScreenPosition.X,
-			anchorScreenY - overlayScreenPosition.Y);
+		_body.GlobalPosition = Live2DScreenToViewport(new Vector2(anchorScreenX, anchorScreenY));
 	}
 
 	private void MoveLive2DWindowForBodyPosition(Vector2 bodyPosition)
@@ -296,15 +334,47 @@ public partial class UdpListener
 
 		int width = Math.Max(1, _live2DWindowRectScreen.Size.X);
 		int height = Math.Max(1, _live2DWindowRectScreen.Size.Y);
-		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
 		float anchorY = Mathf.Clamp(Live2DBubbleAnchorY, 0.20f, 0.50f);
-		int x = overlayScreenPosition.X + Mathf.RoundToInt(bodyPosition.X - width * 0.5f);
-		int y = overlayScreenPosition.Y + Mathf.RoundToInt(bodyPosition.Y - height * anchorY);
+		Vector2 bodyScreen = GetViewport().GetScreenTransform() * bodyPosition;
+		int x = Mathf.RoundToInt(bodyScreen.X - width * 0.5f);
+		int y = Mathf.RoundToInt(bodyScreen.Y - height * anchorY);
 
-		_live2DWindowRectScreen = new Rect2I(x, y, width, height);
+		// Giữ cửa sổ Live2D trong hình chữ nhật overlay Godot để kéo model không
+		// trôi sang màn hình khác nơi bubble/menu không với tới được.
+		_live2DWindowRectScreen = ClampLive2DRectToOverlayWindow(x, y, width, height);
 		_hasLive2DWindowRect = true;
-		_body.GlobalPosition = bodyPosition;
+		// Đồng bộ lại _body theo rect đã kẹp, tránh lệch neo khi bị clamp.
+		SyncLive2DBodyAnchor();
 		SendLive2DWindowGeometry(_live2DWindowRectScreen);
+	}
+
+	// Kẹp một rect (tọa độ màn hình) vào vùng cửa sổ Godot overlay. Overlay phủ
+	// trọn màn hình Godot đang ở (FillScreenOverlay), nên dùng chính rect cửa sổ
+	// Godot làm biên là cách DPI/đa-màn-hình an toàn nhất: model luôn nằm cùng
+	// vùng pixel với bubble/menu, bất kể màn hình nào hay mức scale nào.
+	private Rect2I ClampLive2DRectToOverlayWindow(int x, int y, int width, int height)
+	{
+		Vector2I overlayPosition = DisplayServer.WindowGetPosition();
+		Vector2I overlaySize = DisplayServer.WindowGetSize();
+
+		// Dự phòng: nếu vì lý do nào đó cửa sổ Godot chưa có kích thước hợp lệ,
+		// lùi về biên màn hình hiện tại như hành vi cũ.
+		if (overlaySize.X <= 0 || overlaySize.Y <= 0)
+		{
+			int screen = DisplayServer.WindowGetCurrentScreen();
+			overlayPosition = DisplayServer.ScreenGetPosition(screen);
+			overlaySize = DisplayServer.ScreenGetSize(screen);
+		}
+
+		// Không để cửa sổ Live2D lớn hơn vùng overlay.
+		width = Math.Min(width, Math.Max(1, overlaySize.X));
+		height = Math.Min(height, Math.Max(1, overlaySize.Y));
+
+		int maxX = Math.Max(overlayPosition.X, overlayPosition.X + overlaySize.X - width);
+		int maxY = Math.Max(overlayPosition.Y, overlayPosition.Y + overlaySize.Y - height);
+		x = Math.Clamp(x, overlayPosition.X, maxX);
+		y = Math.Clamp(y, overlayPosition.Y, maxY);
+		return new Rect2I(x, y, width, height);
 	}
 
 	private void ApplyLive2DBubbleVisualState()
@@ -338,12 +408,9 @@ public partial class UdpListener
 		if (viewportSize.X <= 0f || viewportSize.Y <= 0f)
 			return;
 
-		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
-		Rect2 liveRect = new(
-			new Vector2(
-				_live2DWindowRectScreen.Position.X - overlayScreenPosition.X,
-				_live2DWindowRectScreen.Position.Y - overlayScreenPosition.Y),
-			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
+		Vector2 start = Live2DScreenToViewport(_live2DWindowRectScreen.Position);
+		Vector2 end = Live2DScreenToViewport(_live2DWindowRectScreen.End);
+		Rect2 liveRect = new(start, end - start);
 		Vector2 bubbleSize = liveBubble.Size;
 		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
 			bubbleSize = new Vector2(380f, 110f);

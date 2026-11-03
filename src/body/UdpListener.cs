@@ -668,6 +668,7 @@ public partial class UdpListener : Node2D
 
 	private void UpdateMousePassthrough()
 	{
+		SyncLive2DInputExclusionRects();
 		if (!EnableDesktopOverlayWindow)
 			return;
 
@@ -677,8 +678,14 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		Vector2I windowPos = DisplayServer.WindowGetPosition();
 		Vector2I screenMouse = DisplayServer.MouseGetPosition();
+		// Vị trí chuột dùng để so với GetGlobalRect() của panel phải ở cùng hệ
+		// tọa độ viewport. screenMouse - WindowGetPosition() là cách đã kiểm
+		// chứng khớp GetGlobalRect(); GetScreenTransform().AffineInverse() có thể
+		// lệch (chưa hợp lệ lúc khởi tạo, hoặc gồm transform canvas) khiến điểm
+		// chuột rơi ngoài mọi panel -> overlay không capture -> click xuyên qua
+		// nút. Đây là nguyên nhân nút thanh điều khiển không bấm được.
+		Vector2I windowPos = DisplayServer.WindowGetPosition();
 		Vector2 mouse = new(screenMouse.X - windowPos.X, screenMouse.Y - windowPos.Y);
 
 		// Windows dùng polygon passthrough như một window-shape: phần nằm ngoài
@@ -3935,7 +3942,10 @@ public partial class UdpListener : Node2D
 			float needed = menuBox.GetCombinedMinimumSize().Y + 16f; // offset top(8)+bottom(8)
 			height = Mathf.Max(CharacterContextMenuMinSize.Y, needed);
 		}
-		_characterContextMenu.Size = new Vector2(CharacterContextMenuMinSize.X, height);
+		float width = CharacterContextMenuMinSize.X;
+		if (GetNodeOrNull<VBoxContainer>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer") is { } widthBox)
+			width = Mathf.Max(width, widthBox.GetCombinedMinimumSize().X + 12f);
+		_characterContextMenu.Size = new Vector2(width, height);
 
 		Vector2 screenSize = GetViewportRect().Size;
 		Vector2 menuSize = _characterContextMenu.Size;
@@ -3944,7 +3954,8 @@ public partial class UdpListener : Node2D
 			Mathf.Clamp(mousePosition.Y, 0f, Mathf.Max(0f, screenSize.Y - menuSize.Y)));
 		clamped = AvoidSpeechBubbleOverlap(clamped, menuSize, screenSize);
 
-		_characterContextMenu.Position = clamped;
+		// clamped is in viewport coordinates; the menu's parent can have an offset.
+		_characterContextMenu.GlobalPosition = _characterContextMenu.GetCanvasTransform().AffineInverse() * clamped;
 		ScheduleTransientOverlayRefresh();
 	}
 
@@ -4007,12 +4018,9 @@ public partial class UdpListener : Node2D
 		if (!_isLive2DMode || !_hasLive2DWindowRect)
 			return false;
 
-		Vector2I overlayScreenPosition = DisplayServer.WindowGetPosition();
-		Rect2 liveRect = new(
-			new Vector2(
-				_live2DWindowRectScreen.Position.X - overlayScreenPosition.X,
-				_live2DWindowRectScreen.Position.Y - overlayScreenPosition.Y),
-			new Vector2(_live2DWindowRectScreen.Size.X, _live2DWindowRectScreen.Size.Y));
+		Vector2 start = Live2DScreenToViewport(_live2DWindowRectScreen.Position);
+		Vector2 end = Live2DScreenToViewport(_live2DWindowRectScreen.End);
+		Rect2 liveRect = new(start, end - start);
 		return liveRect.Grow(8f).HasPoint(mousePosition);
 	}
 
