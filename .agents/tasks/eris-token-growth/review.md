@@ -1,76 +1,174 @@
-# Audit-cut Self projection for agent_mind, active_state and semantic_memory
+# Audit-cut of mind_state telemetry + profile qualifiers on the Root Self projection
+# Audit-cut of mind_state telemetry + profile qualifiers on the Root Self projection
 
-Commit `410f6792` extends the already-merged `compact_profile`/`compact_episode` pattern to the three remaining heavy Self branches that feed the Root prompt. Three new pure functions — `compact_agent_mind`, `compact_active_state`, `compact_semantic_item` — are added to `self_prompt_view.py` and wired into `project_self_view`, the single projection gate that `_read_self` returns through. Each drops per-record audit/provenance (raw epochs, evidence id lists, decay knobs, embedding hashes, access counters, the `raw_content` duplicate of `claim`) and empty/zero/default fields, while preserving the cognitive content: beliefs, preferences, claims, and — critically — non-empty `contradiction_ids`. Persistence is untouched; the change lives entirely on the projection path on a `deepcopy`.
+The change adds three transport-only projection helpers (`compact_personality`,
+`compact_identity`, `compact_mind_state`) to `self_prompt_view.py` and wires
+`compact_mind_state` into `project_self_view`, dropping the accumulating
+telemetry/history/identifier fields from the `mind_state` block of the Root Self
+prefix. It also extends `_PROFILE_AUDIT_FIELDS` (and trims the `defaults`
+promotion list in `compact_profile`) to drop six technical qualifiers
+(`id/value_type/cardinality/recurrence/tier/source`) from each profile record.
+The goal is to stop the per-session growth of the Self prefix (trajectory loads
+up to 96 records, ledgers, counter dicts) without touching stored state or
+cognitive content. Everything is cut at the projection layer only; the reducer's
+`to_dict()` persistence is untouched.
 
-Watch for: the commit bundles episode-fading plumbing (`project_bootstrap_self`, a `project_runtime_context` guard, a `_same_json` `zip(strict=False)` tweak) alongside the three-branch audit-cut (confirmed). The delta-reconstruction test exercises the projection+overlay mechanism but on a synthetic `memory_state`, not on the three specific nested-record branches (confirmed). Neither is blocking.
+Watch for: nothing blocking. The delta-reconstruction invariant is preserved
+because bootstrap-snapshot and self-now both route through the same compacted
+`project_self_view` (confirmed), and the regression test proving this passes per
+the recorded evidence. The one behavioral side effect — `persisted_mind_variants`
+now carries projection-marker tombstones — is benign persistence evidence, not
+cognitive content, and is covered by an updated test (confirmed).
 
 **Verdict**: APPROVED
 
 ## High-level view
 
-The cut is placed in the one correct spot. `_read_self` (`root_session.py`) ends with `return project_self_view(result)`, so every memory_state branch flows through a single door, while `store.save()` serializes through the canonical `*.to_dict()` which this path never calls. The `--stat` for commit `410f6792` lists only `self_prompt_view.py`, the test file, and task docs — no persistence file is touched, so the canonical stores keep their full audit shape.
+The cut sits entirely in `project_self_view` via `compact_mind_state`, placed
+before the persisted-variant diff reads `mind_state` as `primary`. Because
+`_read_self` returns `project_self_view(result)`, and both the bootstrap path
+(`project_bootstrap_self(_read_self(host))`) and the self-now path
+(`_read_self(host)`) call it, both sides of `_changed()` compare already-compacted
+shapes. No phantom delta can arise from the cut. The marker
+`eris.mind_state.v1` makes the helper idempotent.
 
-The three functions honor the audit-cut contract rather than top-k or summarization. `compact_agent_mind` pops only bookkeeping fields from each belief/preference record and never removes a record; `claim/confidence/tags/polarity/strength/stability` are explicitly outside the cut tuples and asserted to survive. Conflicting beliefs are protected: `contradiction_ids` is dropped only when falsy, kept verbatim when non-empty, on both the agent_mind and semantic branches — the "Root phải thấy belief trái chiều" requirement holds.
+The field classification matches the verified CUT/KEEP list exactly. Only the
+`THỪA` telemetry/history/identifier fields are dropped at three levels (top-level
+`schema/version/last_applied_turn_seq/updated_at`; personality
+`trajectory/consolidation_ledger/corroboration_records/corroboration/streaks/day_usage/last_*_at/schema/version`;
+identity `ledger/corroboration/last_updated_at/schema/version`). Every cognitive
+branch survives, including the conflicting-belief fields
+(`identity.beliefs` with `contradiction_ids`, `active_conflict`, `emergent_values`).
 
-`compact_active_state` follows the fail-safe rule: `_is_empty_default` treats only `None`, `""`, `[]`, `()`, `{}` and real numeric zero as droppable, and explicitly excludes bools so `False` is kept as a real value. Meaningful non-defaults (trust=0.25, valence=0.02, curiosity=0.576, `rhythm_phase="settled"`, `last_event="maintenance_reset"`) survive; when a value is neither empty nor zero it is kept. `compact_semantic_item` drops the `raw_content` metadata duplicate of `claim` plus embedding/access audit while leaving `claim` and the light qualifiers intact.
+The "keep when unverified" rule is honored: `memory_candidates`,
+`identity.pending_strategies`, and `identity.imprints` are not in any audit tuple
+and are asserted present in the test.
 
-Idempotency is enforced by a per-branch `projection_schema` marker and a `deepcopy` of the input, so `state_difference` (which compares bootstrap-self against self-now, both already projected) cannot manufacture a phantom delta across turns. The reconstruction test confirms `apply_overlay(bootstrap, delta) == _read_self(host)`.
-
-Measurement is real and read-only: a copy of the live `memory/core` is loaded and run through the patched `project_self_view`, giving active_state 6198→3102, agent_mind 7852→4189, semantic_memory 3389→1646 chars, with `raw_per_key_chars` unchanged as independent evidence that serialization didn't move. No personal content is printed.
+Persistence is untouched. The commit changes only `self_prompt_view.py`, the
+test, the measure script, and the report doc — none of the four `to_dict()`
+owners (`contracts.py`, `personality.py`, `identity.py`, `models.py`) appear in
+the diff.
 
 <details>
-<summary>Issues (2)</summary>
+<summary>Issues (0)</summary>
 
-1. **Bundled episode-fading changes** — the commit also adds `project_bootstrap_self`, a `project_runtime_context` `isinstance` guard, and a `_same_json` `zip(strict=False)` tweak that belong to the episode-fading work, not the three-branch audit-cut. Non-blocking; worth a note so a future bisect isn't misled about what this commit scoped.
-2. **Delta test uses synthetic state** — `test_every_request_can_reconstruct_current_self_and_context` validates the projected-shape overlay/reconstruction on a flat synthetic `memory_state`, not on the agent_mind/active_state/semantic nested records. Per-function idempotency tests cover the phantom-delta risk, so coverage is adequate, but a reconstruction test over a realistic three-branch payload would close the gap directly.
+No blocking or non-blocking action items. The one behavioral change
+(`persisted_mind_variants` marker tombstones) is intended, in-scope, and
+test-covered.
 
 </details>
 
 <details>
 <summary>Details</summary>
 
-### Projection-only placement, persistence confirmed untouched
+### Delta reconstruction stays correct (review point 1 — confirmed)
 
-The entire product change is in `self_prompt_view.py`. `git show --stat 410f6792` lists `self_prompt_view.py`, `test_root_prompt_cleanup.py`, `plan.md`, `agent-mind-active-semantic-cut.md`, and `remaining-self-measurement.raw.json` — nothing under `cortex/agent_mind_persistence.py`, `memory/active_state_snapshot.py`, or `memory/semantic_memory.py`. `PersistentAgentMindStore.to_dict`, `ActiveStateSnapshot.to_dict`, and `SemanticMemoryItem.to_dict` are not in the diff, so `store.save()` still emits the full audit shape (confirmed). Each `compact_*` opens with `deepcopy(dict(...))` and mutates only the copy, so the in-RAM store objects are not touched (confirmed; the per-function tests assert `source == before`). The wiring is added inside `project_self_view` only — the one-shot `render_prompt_context` path is in another module and is not called here (confirmed from the diff).
+`_read_self` ends in `return project_self_view(result)` (root_session.py:81), so
+the mind_state compaction happens inside every Self read. The bootstrap snapshot
+is `project_bootstrap_self(_read_self(self._host))` (root_session.py:295) and
+`project_bootstrap_self` only pops `living_user` episodes — it does not touch
+`mind_state`, so the snapshot it stores is already compacted. Self-now is
+`_read_self(self._host)` (root_session.py:360), also compacted. The delta is
+`_changed(state.bootstrap_self_snapshot, self_now)` (root_session.py:361),
+comparing two compacted shapes. There is no path where a raw mind_state meets a
+compacted one, so no phantom delta.
 
-### agent_mind: records kept, bookkeeping dropped, conflicts protected
+`test_every_request_can_reconstruct_current_self_and_context` exercises `_prime`
++ three `ask` turns + a revert, asserting `current == _read_self(host)` each time
+and that the bootstrap fingerprint/prefix are stable. Because `current` is the
+bootstrap snapshot with the accumulated overlay applied, this is the
+every-request-can-reconstruct-current-self invariant the task requires. The
+report records this test passing in the 47-passed run; the routing I traced in
+code is consistent with that result, so I did not re-run it.
 
-`compact_agent_mind` iterates `beliefs`/`preferences` dict-of-records and pops the audit tuples (`created_at/updated_at/last_seen/source_ids/positive_evidence_count/negative_evidence_count/decay_rate` on beliefs; `created_at/updated_at/last_reinforced/source` on preferences). No record is ever removed. `claim/confidence/tags/domain/key` and `polarity/strength/stability` are outside the cut tuples. The guard `if not record.get("contradiction_ids"): record.pop("contradiction_ids", None)` drops the field only when it is empty/falsy and keeps a non-empty list verbatim (confirmed; `test_compact_agent_mind_cuts_audit_keeps_beliefs_and_contradictions` asserts `b.conflict` keeps `["b.keep"]` while `b.keep`'s empty list is dropped). Empty `habits`/`last_feedback_events` and the top-level epoch `updated_at` are dropped; `schema_version` is kept.
+The call site is ordered correctly: `compact_mind_state` runs immediately before
+`primary = result.get("mind_state")` and the `state_difference(primary, persisted)`
+call. Placing it earlier than the persisted diff is what keeps `primary` compacted
+while `persisted` (`ai_orchestrated_state`) stays raw.
 
-### active_state: fail-safe prune, bool False preserved
+### Field classification matches the verified list (review points 2, 3, 4 — confirmed)
 
-`_is_empty_default` returns True only for `None`, empty string/list/tuple/dict, and real numeric zero, and returns False for any bool before the numeric branch — so `False` is never mistaken for `0` and is kept (confirmed; test asserts `last_social_presence_present is False` survives). `_prune_empty` recurses through the nested `metadata.internal_state`/`*_dynamics`/`action_memory` dicts, dropping empty-default keys and collapsing dicts that become empty. Non-default values survive: the test confirms trust=0.25, valence=0.02, curiosity=0.576, preferred_distance=0.58, `attachment_drift="guarded"`, `rhythm_phase="settled"`, `last_event="maintenance_reset"` are all kept, and `goal_persistence` collapses to just its real string `{"status": "empty"}`. `session_arc == "unknown"` is explicitly treated as a default and dropped. The rule only ever removes empties/zeros, so no meaningful non-default value is at risk.
+The three audit tuples in the diff are exactly the plan's CUT lists:
 
-The existing `test_self_view_removes_debug_and_clones_without_changing_owner` was updated to reflect that once the duplicate `internal_state` is popped and the remaining active_state body prunes to nothing, only the `projection_schema` marker remains — `internal_state` no longer leaks into the prompt. The ordering in `project_self_view` pops the duplicate `internal_state` before `compact_active_state` runs, and the function is idempotent regardless.
+```
+_PERSONALITY_AUDIT_FIELDS = trajectory, consolidation_ledger, corroboration_records,
+                            corroboration, streaks, day_usage,
+                            last_consolidated_at, last_decay_at, last_updated_at,
+                            schema, version
+_IDENTITY_AUDIT_FIELDS    = ledger, corroboration, last_updated_at, schema, version
+_MIND_TOP_AUDIT_FIELDS    = schema, version, last_applied_turn_seq, updated_at
+```
 
-### semantic_memory: raw_content duplicate removed, claim intact
+No cognitive field appears in any tuple. The test asserts the kept set survives
+unchanged at each level: personality `core/temperament/mood` plus the
+`*_anchor/*_baseline` attractors and `strategy_reinforcement/narrative/relationship_profiles`;
+identity `values/motives/defenses/beliefs/emergent_values/relationships/strategies/active_motives/active_defenses/active_conflict/latest_value_choice`;
+and the top-level `relationship/appraisal/latest_observation/latest_intention/open_loops/goal_records`.
 
-`compact_semantic_item` drops top-level `evidence_ids/first_seen_at/updated_at` and the metadata audit set `raw_content/embedding_text_hash/embedding_version/access_count/last_accessed_at/fact_profile_evidence`; `raw_content` is a verbatim copy of `claim` on the real store, so dropping it is pure dedup (confirmed; the test seeds `metadata.raw_content == claim` and asserts it is cut while `claim` stays). `id/claim/confidence/status/tags` and the light qualifiers `fact_key/domain/importance` are kept, and the same non-empty-`contradiction_ids` protection applies. Emptied `metadata` is dropped. Items that aren't a `Mapping` are returned untouched.
+Conflicting belief preservation is explicit: the fixture carries a `b.conflict`
+belief with `contradiction_ids: ["b.keep"]` and an `active_conflict`, and the
+test asserts both survive. `emergent_values` is also kept.
 
-### Idempotency and the bootstrap/delta contract
+The "keep when unverified" fields are protected structurally (absent from every
+audit tuple) and behaviorally (asserted present): `memory_candidates` at
+top-level, `pending_strategies` and `imprints` under identity. The code correctly
+places `pending_strategies` in `compact_identity`, not `compact_personality` —
+the risk the plan flagged.
 
-Each function returns early when its `projection_schema` marker is already present, and `state_difference` compares two already-projected snapshots, so a double projection cannot create a phantom delta. `test_every_request_can_reconstruct_current_self_and_context` primes a bootstrap self, then across several turns asserts `apply_overlay(bootstrap, step["self_changes_since_bootstrap"]) == _read_self(host)` and that returning to the original state restores the exact prefix — validating the overlay/reconstruction over the projected shape. This test drives a synthetic flat `memory_state` rather than the three nested-record branches, so it validates the mechanism but not the specific branch payloads; the per-function idempotency assertions (`compact_x(compact_x(src)) == compact_x(src)`) cover the phantom-delta risk for those branches directly.
+For the profile side, `_PROFILE_AUDIT_FIELDS` gains
+`id/value_type/cardinality/recurrence/tier/source`, and the five of those that
+were previously `defaults` candidates are removed from the promotion loop (only
+`scope/status/sensitivity/valid_until/expires_at` remain). Without that second
+change the fields would be popped per-record but re-promoted to `defaults`,
+yielding no savings — the diff does both. `scope` and `sensitivity` are kept
+(not cut), matching the requirement.
 
-I ran only `test_root_prompt_cleanup.py` as a narrow spot-check (the delta and idempotency behaviour gates two of the checks): **11 passed in 0.90s**, matching the report. I did not re-run the broad suites; the report's base-vs-changed comparison shows all 7 changed-run failures are red on base as well (action-guard/claim/schema contracts and one one-shot render-path test unrelated to this projection), i.e. no regression introduced by this change.
+### Persistence untouched (review point 5 — confirmed)
 
-### Measurement evidence
+The commit touches four files: `self_prompt_view.py`, the test, the measure
+script, and `mind-state-profile-telemetry-cut.md`. None of the four `to_dict()`
+owners (`contracts.py`, `personality.py`, `identity.py`,
+`memory/living_user/models.py`) are in the diff, so
+`RuntimeMindState/PersonalityProfile/IdentityProfile/ProfileRecord.to_dict()` are
+unchanged and `store.save()` still serializes the full field set. The
+`render_prompt_context` one-shot and `project_root_messages` history projection
+are not touched by the diff. Idempotency is enforced by the `projection_schema`
+markers (`eris.personality.v1`, `eris.identity.v1`, `eris.mind_state.v1`), and
+each helper `deepcopy`s its input before popping, so the owner's state is never
+mutated — the test asserts `source == before` and `compact_mind_state(projected)
+== projected`.
 
-`remaining-self-measurement.raw.json` holds real counts measured on a copy of `C:\Users\Gtvkun\Documents\ErisLive\memory\core` run through the patched `project_self_view`: active_state 6198→3102 (−50%), agent_mind 7852→4189 (−47%), semantic_memory 3389→1646 (−51%), projected_total 27897→19395 (−30%). `raw_per_key_chars` still reads 6198/7852/3389 — independent evidence that the on-disk serialization did not change because projection runs on a deepcopy. Only sizes are recorded; no belief/claim text is printed. `mind_state` and `subject_self` are flagged as runtime-only and not measurable from the static store, consistent with them being out of scope.
+### persisted_mind_variants tombstones (behavioral side effect — confirmed, in-scope)
 
-### Bundled, out-of-scope changes
+Because `primary` (mind_state) is now compacted while `persisted`
+(`ai_orchestrated_state`) stays raw, `state_difference` surfaces the dropped
+fields and the new markers under `persisted_mind_variants`. The updated
+`test_self_view_removes_debug_and_clones_without_changing_owner` encodes the new
+expected shape: the real persisted variant plus `projection_schema` /
+`identity.projection_schema` tombstones (`{"__erased_from_self": True}`). This is
+persistence-diff evidence, small and non-cognitive. The plan explicitly scoped
+out running the persisted branch through the same compaction; leaving it raw and
+only updating the expected test value is the correct minimal choice.
 
-Besides the three-branch audit-cut, commit `410f6792` adds `project_bootstrap_self` (strips `recent_episodes`/`episode_recap` from the bootstrap overlay), guards `project_runtime_context`'s `living_user` lookup with `isinstance`, and switches `_same_json`'s `zip` to `strict=False`. These belong to the episode-fading effort rather than this task's stated scope (audit-cut of the three Self branches). Low-risk, but bundling them into this commit muddies the scope boundary the plan drew and will mislead a future bisect.
+### Measurement (review point 6 — recorded in evidence)
+
+The report records the measure-script output: profile marginal saving 1,559
+chars (3,923 → 2,364 on the real store copy, read-only), consistent with the
+~1,500–2,500 estimate; mind_state fixture 12,147 → 1,679 (−10,468) on a fixture
+that fills the caps (trajectory 96, ledger 24, corroboration 16/key). The
+fixture figure is a cap-saturated upper bound, not a live measurement — the
+report states this limitation clearly. Both blocks demonstrably shrank.
 
 </details>
 
 <details>
 <summary>File map</summary>
 
-- `src/runtime/conversation/self_prompt_view.py` — adds `compact_agent_mind`, `compact_active_state` (+ `_is_empty_default`/`_prune_empty`), `compact_semantic_item`; wires the three into `project_self_view`; also adds `project_bootstrap_self` and tweaks `project_runtime_context`/`_same_json` (episode-fading, bundled).
-- `src/tests/conversation/test_root_prompt_cleanup.py` — three new audit-cut tests plus an updated active_state assertion; 11 pass.
-- `.agents/tasks/eris-token-growth/remaining-self-measurement.raw.json` — real before/after char/token counts.
-- `.agents/tasks/eris-token-growth/plan.md`, `agent-mind-active-semantic-cut.md` — plan and coder report.
+- `src/runtime/conversation/self_prompt_view.py` — adds `compact_personality/compact_identity/compact_mind_state` + three audit tuples; extends `_PROFILE_AUDIT_FIELDS` and trims the `defaults` promotion list; wires `compact_mind_state` into `project_self_view` before the persisted-variant diff.
+- `src/tests/conversation/test_root_prompt_cleanup.py` — new `test_compact_mind_state_cuts_telemetry_keeps_cognition`; extended profile test (qualifiers + scope/sensitivity); updated `test_self_view_...` for the marker/tombstone shape.
+- `.agents/tasks/eris-token-growth/measure_self_cut.py` — read-only char-count measurement on a store copy + mind_state fixture.
+- `.agents/tasks/eris-token-growth/mind-state-profile-telemetry-cut.md` — coder report with CUT/KEEP anchors, test result (47 passed), and char counts.
 
-Full diff: `git show 410f6792 -- src/runtime/conversation/self_prompt_view.py`
+Full diff: `git show cce85311`.
 
 </details>

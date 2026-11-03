@@ -1,0 +1,7 @@
+﻿
+FullName                                                        Length LastWrit
+                                                                       eTime   
+--------                                                        ------ --------
+C:\Users\Gtvkun\Documents\ErisLive\logs\autonomous_trace.jsonl 5138924 3/11/...
+
+

@@ -1,0 +1,13 @@
+﻿C:\Users\Gtvkun\Documents\ErisLive\logs\autonomous_trace.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\logs\project_ops_ledger.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\living_user_trace.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\memory_feed_trace.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\anchor_journal.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\thought_stream.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\behavior_observations.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\maintenance_audit.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\backups\maintenance_20260813_192926_factory_reset_087d46\living_user_trace.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\memory\core\backups\maintenance_20260813_192926_factory_reset_087d46\thought_stream.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\mentor\capability_history.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\mentor\engineering_mentor_evaluation.jsonl
+C:\Users\Gtvkun\Documents\ErisLive\state\identity_events.jsonl
