@@ -38,21 +38,26 @@ def state_difference(previous: Any, current: Any) -> Any:
 # Pure audit/provenance fields dropped from each profile record on the Root
 # prompt path. They never steer a response and are the heaviest part of the
 # block: evidence_ids (up to 96 ids/record) plus four raw epoch timestamps and
-# the free-text metadata dict. The canonical store keeps them via to_dict();
-# only this projection omits them. valid_until/expires_at are intentionally
-# left for the defaults pass (they are retention qualifiers, not audit ids).
+# the free-text metadata dict. Also dropped are the technical qualifiers that no
+# Root-prompt consumer reads: id/value_type/cardinality/recurrence/tier/source
+# (internal identifiers and book-keeping, not the telling). The canonical store
+# keeps them all via to_dict(); only this projection omits them. valid_until/
+# expires_at are intentionally left for the defaults pass (retention qualifiers,
+# not audit ids). scope/sensitivity are KEPT (scope/redaction downstream).
 _PROFILE_AUDIT_FIELDS = (
     "evidence_ids", "metadata",
     "created_at", "updated_at", "last_confirmed_at", "valid_from",
+    "id", "value_type", "cardinality", "recurrence", "tier", "source",
 )
 
 
 def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     """Transport projection for Root: drop audit/provenance, keep the telling.
 
-    Keeps path/value and every lightweight qualifier (explicitness, scope,
-    status, source, confidence...). Drops evidence_ids, the raw epoch
-    timestamps and the metadata dict because no Root-prompt consumer reads
+    Keeps path/value and the telling qualifiers (explicitness, status,
+    confidence) plus scope/sensitivity. Drops evidence_ids, the raw epoch
+    timestamps, the metadata dict and the technical qualifiers (id/value_type/
+    cardinality/recurrence/tier/source) because no Root-prompt consumer reads
     them and they dominate the block size. Not lossless; the canonical store
     is untouched (store.save() uses ProfileRecord.to_dict(), not this).
     """
@@ -65,9 +70,11 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     for row in records:
         for field in _PROFILE_AUDIT_FIELDS:
             row.pop(field, None)
+    # cardinality/recurrence/tier/source/value_type are popped at the record
+    # level above (audit qualifiers), so they are no longer candidates to
+    # promote. Only the kept qualifiers factor into defaults.
     defaults: dict[str, Any] = {}
-    for key in ("scope", "status", "sensitivity", "cardinality", "recurrence", "tier",
-                "source", "value_type", "valid_until", "expires_at"):
+    for key in ("scope", "status", "sensitivity", "valid_until", "expires_at"):
         if not all(key in row for row in records):
             continue
         encoded = [json.dumps(row[key], ensure_ascii=False, sort_keys=True, separators=(",", ":")) for row in records]
@@ -273,6 +280,101 @@ def compact_semantic_item(item: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Telemetry/history popped from the mind_state block on the Root prompt path.
+# These three lists are the per-session growth source (trajectory loads up to 96
+# records, corroboration_records 16/key, consolidation_ledger 24) plus the
+# counter dicts (corroboration/streaks/day_usage) and the raw epoch timestamps.
+# No Root-prompt consumer reads them: prompt_summary()/prompt_context() never
+# touch them, and SELF_BOOTSTRAP_INSTRUCTION points Root at belief/value/stance,
+# not at trajectory/ledger/counters. The cognitive content (core/temperament/
+# mood and the *_anchor/*_baseline attractors) is kept intact.
+_PERSONALITY_AUDIT_FIELDS = (
+    "trajectory", "consolidation_ledger", "corroboration_records",
+    "corroboration", "streaks", "day_usage",
+    "last_consolidated_at", "last_decay_at", "last_updated_at",
+    "schema", "version",
+)
+# Audit/book-keeping popped from the identity block on the Root prompt path.
+# ledger/corroboration are the accumulating audit trail; last_updated_at is a
+# raw epoch; schema/version are identifiers. The cognitive content stays:
+# values/beliefs/motives/defenses/emergent_values/relationships, active_conflict
+# and latest_value_choice (conflicting beliefs), plus pending_strategies/imprints
+# and active_motives/active_defenses (kept per the "keep when unverified" rule).
+_IDENTITY_AUDIT_FIELDS = (
+    "ledger", "corroboration", "last_updated_at", "schema", "version",
+)
+# Top-level RuntimeMindState identifiers/telemetry. schema/version are version
+# ids, last_applied_turn_seq is a sequence counter and updated_at is a raw epoch;
+# none steer a response. The telling branches stay: relationship, appraisal,
+# personality (compacted), identity (compacted), identity_learning_enabled,
+# latest_observation, latest_intention, open_loops, goal_records (the user's
+# goals) and memory_candidates.
+_MIND_TOP_AUDIT_FIELDS = (
+    "schema", "version", "last_applied_turn_seq", "updated_at",
+)
+
+
+def compact_personality(personality: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for mind_state.personality: drop telemetry/history.
+
+    Keeps core/temperament/mood and the *_anchor/*_baseline attractors plus
+    strategy_reinforcement/narrative/relationship_profiles (the cognitive
+    content). Drops trajectory/consolidation_ledger/corroboration_records and
+    the counter dicts/timestamps because no Root-prompt consumer reads them and
+    they are the per-session growth source. The canonical
+    PersonalityProfile.to_dict() is untouched. Idempotent via a marker.
+    """
+    result = deepcopy(dict(personality))
+    if result.get("projection_schema") == "eris.personality.v1":
+        return result
+    for field in _PERSONALITY_AUDIT_FIELDS:
+        result.pop(field, None)
+    result["projection_schema"] = "eris.personality.v1"
+    return result
+
+
+def compact_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for mind_state.identity: drop audit/book-keeping.
+
+    Keeps values/beliefs/motives/defenses/emergent_values/relationships,
+    active_conflict and latest_value_choice (conflicting beliefs the product
+    requires), plus pending_strategies/imprints/active_motives/active_defenses.
+    Drops the ledger/corroboration audit trail and the raw timestamp/ids. The
+    canonical IdentityProfile.to_dict() is untouched. Idempotent via a marker.
+    """
+    result = deepcopy(dict(identity))
+    if result.get("projection_schema") == "eris.identity.v1":
+        return result
+    for field in _IDENTITY_AUDIT_FIELDS:
+        result.pop(field, None)
+    result["projection_schema"] = "eris.identity.v1"
+    return result
+
+
+def compact_mind_state(mind_state: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for the Root mind_state block: cut telemetry/history.
+
+    Compacts the personality/identity sub-blocks (see compact_personality /
+    compact_identity) and drops the top-level version/schema/sequence/epoch
+    identifiers. Keeps every cognitive branch (relationship, appraisal,
+    latest_observation/intention, open_loops, goal_records, memory_candidates).
+    The reducer's RuntimeMindState.to_dict() / persistence is untouched.
+    Idempotent via a marker so state_difference sees no phantom delta between
+    the bootstrap snapshot and self-now (both run through project_self_view).
+    """
+    result = deepcopy(dict(mind_state))
+    if result.get("projection_schema") == "eris.mind_state.v1":
+        return result
+    if isinstance(result.get("personality"), Mapping):
+        result["personality"] = compact_personality(result["personality"])
+    if isinstance(result.get("identity"), Mapping):
+        result["identity"] = compact_identity(result["identity"])
+    for field in _MIND_TOP_AUDIT_FIELDS:
+        result.pop(field, None)
+    result["projection_schema"] = "eris.mind_state.v1"
+    return result
+
+
 def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Remove diagnostic views and exact clones, preserving differing source data."""
     result = deepcopy(dict(snapshot))
@@ -313,6 +415,15 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             compact_semantic_item(entry) if isinstance(entry, Mapping) else entry
             for entry in memory["semantic_memory"]
         ]
+    # mind_state is the top-level Self prefix branch (set by _read_self, NOT in
+    # memory_state). Cut its telemetry/history/identifiers here, before the
+    # persisted-variant diff below reads it as `primary`, so both bootstrap and
+    # self-now go through the same compacted shape (no phantom delta). persisted
+    # (ai_orchestrated_state) stays raw, so state_difference will surface the
+    # cut fields under persisted_mind_variants; that is persistence evidence,
+    # not cognitive content, and stays small.
+    if isinstance(result.get("mind_state"), Mapping):
+        result["mind_state"] = compact_mind_state(result["mind_state"])
     persisted = memory.get("ai_orchestrated_state")
     primary = result.get("mind_state")
     if isinstance(persisted, dict) and isinstance(primary, dict):

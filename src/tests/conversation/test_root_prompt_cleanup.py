@@ -14,6 +14,7 @@ from runtime.conversation.self_prompt_view import compact_profile, project_self_
 from runtime.conversation.self_prompt_view import (
     compact_agent_mind,
     compact_active_state,
+    compact_mind_state,
     compact_semantic_item,
 )
 from runtime.conversation.self_prompt_view import state_difference
@@ -119,18 +120,23 @@ def test_compact_profile_cuts_audit_keeps_telling_and_qualifiers():
     source = {"version": 1, "record_count": 3, "records": rows}
     before = copy.deepcopy(source)
     projected = compact_profile(source)
-    # Audit/provenance is gone from every record (also not promoted to defaults).
-    for cut in ("evidence_ids", "metadata", "created_at", "updated_at", "last_confirmed_at", "valid_from"):
+    # Audit/provenance + technical qualifiers are gone from every record (and
+    # not promoted to defaults).
+    for cut in ("evidence_ids", "metadata", "created_at", "updated_at", "last_confirmed_at", "valid_from",
+                "id", "value_type", "cardinality", "recurrence", "tier", "source"):
         assert all(cut not in row for row in projected["records"]), cut
         assert cut not in projected["defaults"], cut
     assert projected["aliases"] == {}
-    # The telling and lightweight qualifiers are kept, reconstructable via defaults.
+    # The telling and kept qualifiers (scope/sensitivity) are reconstructable.
     for row, original in zip(projected["records"], rows):
         full = {**copy.deepcopy(projected["defaults"]), **copy.deepcopy(row)}
         assert full["path"] == original["path"]
         assert full["value"] == original["value"]
         assert full["explicitness"] == original["explicitness"]
+        assert full["status"] == original["status"]
+        assert full["confidence"] == original["confidence"]
         assert full["scope"] == original["scope"]
+        assert full["sensitivity"] == original["sensitivity"]
     # Input is never mutated and the projection is idempotent.
     assert source == before
     assert compact_profile(projected) == projected
@@ -316,6 +322,101 @@ def test_compact_semantic_item_drops_raw_content_dupe_and_audit():
     assert compact_semantic_item(projected) == projected
 
 
+def test_compact_mind_state_cuts_telemetry_keeps_cognition():
+    source = {
+        "schema": "eris.mind.v1",
+        "version": 7,
+        "last_applied_turn_seq": 42,
+        "updated_at": 1787.0,
+        "relationship": {"trust": 0.3, "closeness": 0.2, "rupture": 0.0},
+        "appraisal": {"pleasantness": 0.1, "curiosity": 0.5, "pressure": 0.0},
+        "personality": {
+            "schema": "personality.v1", "version": 3,
+            "core": {"warmth": 0.6}, "temperament": {"reactivity": 0.4},
+            "mood": {"valence": 0.1}, "core_anchor": {"warmth": 0.55},
+            "temperament_attractor": {"reactivity": 0.42}, "mood_baseline": {"valence": 0.05},
+            "strategy_reinforcement": {"mirror": 0.3},
+            "narrative": {"text": "settled", "confidence": 0.7},
+            "relationship_profiles": {"primary": {"stance": "warm"}},
+            "trajectory": [{"t": i} for i in range(96)],
+            "consolidation_ledger": [{"c": i} for i in range(24)],
+            "corroboration_records": {"warmth": [{"r": i} for i in range(16)]},
+            "corroboration": {"warmth": 3}, "streaks": {"warmth": {"n": 5}},
+            "day_usage": {"2026-10-14": 12},
+            "last_consolidated_at": 1700.0, "last_decay_at": 1710.0, "last_updated_at": 1787.0,
+        },
+        "identity": {
+            "schema": "identity.v1", "version": 2,
+            "values": {"honesty": 0.8}, "motives": {"connect": 0.6},
+            "defenses": {"withdraw": 0.2},
+            "beliefs": {
+                "b.keep": {"claim": "User likes directness.", "confidence": 0.7},
+                "b.conflict": {"claim": "User wants silence now.", "confidence": 0.5,
+                               "contradiction_ids": ["b.keep"]},
+            },
+            "emergent_values": {"playfulness": 0.4},
+            "relationships": {"primary": {"trust": 0.3}},
+            "strategies": {"mirror": {"weight": 0.3}},
+            "pending_strategies": [{"name": "soften"}],
+            "imprints": [{"moment": "first laugh"}],
+            "active_motives": [{"name": "connect"}],
+            "active_defenses": [{"name": "withdraw"}],
+            "active_conflict": {"between": ["honesty", "kindness"]},
+            "latest_value_choice": {"chose": "honesty"},
+            "ledger": [{"l": i} for i in range(30)],
+            "corroboration": {"honesty": 4},
+            "last_updated_at": 1787.0,
+        },
+        "identity_learning_enabled": True,
+        "latest_observation": {"turn_id": "t1", "confidence": 0.8},
+        "latest_intention": {"plan": "listen"},
+        "open_loops": [{"loop": "ask about trip"}],
+        "goal_records": [{"goal": "support the user"}],
+        "memory_candidates": [{"candidate": "user travels soon"}],
+    }
+    before = copy.deepcopy(source)
+    projected = compact_mind_state(source)
+    # Top-level telemetry/identifiers are gone.
+    for cut in ("schema", "version", "last_applied_turn_seq", "updated_at"):
+        assert cut not in projected, cut
+    # Cognitive top-level branches survive untouched.
+    assert projected["relationship"] == source["relationship"]
+    assert projected["appraisal"] == source["appraisal"]
+    assert projected["identity_learning_enabled"] is True
+    assert projected["latest_observation"] == source["latest_observation"]
+    assert projected["latest_intention"] == source["latest_intention"]
+    assert projected["open_loops"] == source["open_loops"]
+    assert projected["goal_records"] == source["goal_records"]
+    assert projected["memory_candidates"] == source["memory_candidates"]
+    # Personality: telemetry/history cut, cognition/anchors kept.
+    pers = projected["personality"]
+    for cut in ("trajectory", "consolidation_ledger", "corroboration_records",
+                "corroboration", "streaks", "day_usage", "last_consolidated_at",
+                "last_decay_at", "last_updated_at", "schema", "version"):
+        assert cut not in pers, cut
+    for keep in ("core", "temperament", "mood", "core_anchor", "temperament_attractor",
+                 "mood_baseline", "strategy_reinforcement", "narrative", "relationship_profiles"):
+        assert pers[keep] == source["personality"][keep], keep
+    # Identity: audit cut, cognition + conflicting belief kept.
+    ident = projected["identity"]
+    for cut in ("ledger", "corroboration", "last_updated_at", "schema", "version"):
+        assert cut not in ident, cut
+    for keep in ("values", "motives", "defenses", "beliefs", "emergent_values",
+                 "relationships", "strategies", "pending_strategies", "imprints",
+                 "active_motives", "active_defenses", "active_conflict", "latest_value_choice"):
+        assert ident[keep] == source["identity"][keep], keep
+    # Conflicting belief (belief trái chiều) is preserved.
+    assert ident["beliefs"]["b.conflict"]["contradiction_ids"] == ["b.keep"]
+    assert ident["active_conflict"] == {"between": ["honesty", "kindness"]}
+    # Unverified-but-kept branches are NOT cut.
+    assert ident["imprints"] == [{"moment": "first laugh"}]
+    assert ident["pending_strategies"] == [{"name": "soften"}]
+    assert projected["memory_candidates"] == [{"candidate": "user travels soon"}]
+    # Input untouched, projection idempotent.
+    assert source == before
+    assert compact_mind_state(projected) == projected
+
+
 def test_self_view_removes_debug_and_clones_without_changing_owner():
     mind = {"identity": {"beliefs": ["uncertain", "opposing"]}, "relationship": {"last_event": "current"},
             "latest_observation": {"turn_id": "old", "confidence": 0.4}}
@@ -333,8 +434,23 @@ def test_self_view_removes_debug_and_clones_without_changing_owner():
     original = copy.deepcopy(source)
     view = project_self_view(source)
     assert source == original
-    assert view["mind_state"] == mind
-    assert view["memory_state"]["persisted_mind_variants"] == {"relationship": {"last_event": "persisted variant"}}
+    # mind_state is now compacted: identity gets its own marker, the top-level
+    # gets eris.mind_state.v1; the cognitive content (beliefs/relationship) is
+    # unchanged. No telemetry fields existed in this fixture to drop.
+    expected_mind = {
+        "identity": {"beliefs": ["uncertain", "opposing"], "projection_schema": "eris.identity.v1"},
+        "relationship": {"last_event": "current"},
+        "latest_observation": {"turn_id": "old", "confidence": 0.4},
+        "projection_schema": "eris.mind_state.v1",
+    }
+    assert view["mind_state"] == expected_mind
+    # persisted stays raw, so state_difference surfaces the projection markers
+    # (absent from persisted -> tombstones) plus the real persisted variant.
+    assert view["memory_state"]["persisted_mind_variants"] == {
+        "relationship": {"last_event": "persisted variant"},
+        "projection_schema": {"__erased_from_self": True},
+        "identity": {"projection_schema": {"__erased_from_self": True}},
+    }
     # The duplicate internal_state is popped; the now-empty metadata (and the
     # emptied active_state body) is then pruned by compact_active_state, leaving
     # only the projection marker. internal_state no longer leaks into the prompt.
