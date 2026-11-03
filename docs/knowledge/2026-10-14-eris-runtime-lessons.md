@@ -1,5 +1,9 @@
 # Tri thức Eris: bài học từ điều tra runtime và gói rescue
 
+Cập nhật Live2D ngày 03/11: [menu và hệ tọa độ overlay](2026-11-03-live2d-menu-geometry.md).
+Ảnh user cho thấy clamp overlay/DPI riêng chưa đủ xác nhận menu bám model;
+đã sửa đổi desktop/viewport và kiểm fixture, chưa xác nhận trực quan hai màn hình.
+
 Ngày tổng hợp: **15/10/2026**. Cuộc điều tra được thuật lại chủ yếu liên quan
 đến phiên và thay đổi ngày **14/10/2026**.
 
