@@ -115,3 +115,5 @@ eris-code/
 
 # Source snapshots for external AI review
 /exports/
+output/
+tmp/

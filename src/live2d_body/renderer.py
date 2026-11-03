@@ -492,14 +492,81 @@ class Live2DRenderer:
         screen_size = (0, 0)
         window_pos = (0, 0)
         try:
-            monitor = glfw.get_primary_monitor()
-            mode = glfw.get_video_mode(monitor)
-            screen_width = int(mode.size.width)
-            screen_height = int(mode.size.height)
-            screen_size = (screen_width, screen_height)
-            x = self.config.x if self.config.x is not None else max(0, screen_width - self.config.width - 30)
-            y = self.config.y if self.config.y is not None else max(0, screen_height - self.config.height - 70)
-            glfw.set_window_pos(window, x, y)
+            target_x = self.config.x
+            target_y = self.config.y
+
+            monitors = None
+            try:
+                monitors = glfw.get_monitors()
+            except Exception:
+                monitors = None
+
+            chosen_monitor = None
+            if monitors and (target_x is not None or target_y is not None):
+                best_dist = float("inf")
+                for m in monitors:
+                    try:
+                        mx, my = glfw.get_monitor_pos(m)
+                        mode = glfw.get_video_mode(m)
+                        mw = int(mode.size.width)
+                        mh = int(mode.size.height)
+                    except Exception:
+                        continue
+
+                    inside_x = (target_x is None) or (mx <= target_x <= mx + mw)
+                    inside_y = (target_y is None) or (my <= target_y <= my + mh)
+                    if inside_x and inside_y:
+                        chosen_monitor = m
+                        break
+
+                    dx = 0
+                    if target_x is not None:
+                        if target_x < mx:
+                            dx = mx - target_x
+                        elif target_x > mx + mw:
+                            dx = target_x - (mx + mw)
+                    dy = 0
+                    if target_y is not None:
+                        if target_y < my:
+                            dy = my - target_y
+                        elif target_y > my + mh:
+                            dy = target_y - (my + mh)
+                    dist = dx * dx + dy * dy
+                    if dist < best_dist:
+                        best_dist = dist
+                        chosen_monitor = m
+
+            if chosen_monitor is None:
+                try:
+                    chosen_monitor = glfw.get_primary_monitor()
+                except Exception:
+                    chosen_monitor = None
+                if chosen_monitor is None and monitors:
+                    chosen_monitor = monitors[0]
+
+            if chosen_monitor is not None:
+                mx, my = glfw.get_monitor_pos(chosen_monitor)
+                mode = glfw.get_video_mode(chosen_monitor)
+                screen_width = int(mode.size.width)
+                screen_height = int(mode.size.height)
+                screen_size = (screen_width, screen_height)
+
+                max_x = max(mx, mx + screen_width - self.config.width)
+                if self.config.x is not None:
+                    x = max(mx, min(int(self.config.x), max_x))
+                else:
+                    x = mx + max(0, screen_width - self.config.width - 30)
+
+                max_y = max(my, my + screen_height - self.config.height)
+                if self.config.y is not None:
+                    y = max(my, min(int(self.config.y), max_y))
+                else:
+                    y = my + max(0, screen_height - self.config.height - 70)
+            else:
+                x = self.config.x if self.config.x is not None else 0
+                y = self.config.y if self.config.y is not None else 0
+
+            glfw.set_window_pos(window, int(x), int(y))
             window_pos = (int(x), int(y))
         except Exception:
             pass
@@ -562,6 +629,9 @@ class Live2DRenderer:
 
         local_x = float(cursor[0] - geometry.x)
         local_y = float(cursor[1] - geometry.y)
+        if self._cursor_over_godot_ui(cursor):
+            self._set_mouse_passthrough(glfw, window, True)
+            return
         if local_x < 0.0 or local_y < 0.0 or local_x >= geometry.width or local_y >= geometry.height:
             self._set_mouse_passthrough(glfw, window, True)
             return
@@ -574,6 +644,13 @@ class Live2DRenderer:
             window_height=geometry.height,
         )
         self._set_mouse_passthrough(glfw, window, not hit)
+
+    def _cursor_over_godot_ui(self, cursor: tuple[float, float]) -> bool:
+        receiver = getattr(self, "receiver", None)
+        return any(
+            x <= cursor[0] < x + width and y <= cursor[1] < y + height
+            for x, y, width, height in getattr(receiver, "input_exclusion_rects", ())
+        )
 
     @staticmethod
     def _model_hit_test(
@@ -684,7 +761,8 @@ class Live2DRenderer:
         local_x = float(cursor[0] - geometry.x)
         local_y = float(cursor[1] - geometry.y)
         if (
-            0.0 <= local_x < geometry.width
+            not self._cursor_over_godot_ui(cursor)
+            and 0.0 <= local_x < geometry.width
             and 0.0 <= local_y < geometry.height
             and self._model_hit_test(
                 model,

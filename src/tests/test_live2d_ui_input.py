@@ -1,0 +1,59 @@
+from types import SimpleNamespace
+
+from live2d_body.renderer import Live2DRenderer
+from live2d_body.stage_state import Live2DStageState
+from live2d_body.udp_receiver import Live2DStageReceiver
+from live2d_body.window_bridge import WindowGeometry
+
+
+def test_ui_rects_replace_clear_and_keep_negative_desktop_coordinates():
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    packet = {"protocol": "eris.live2d.control", "type": "set_input_exclusion_rects"}
+    receiver._handle_renderer_control({**packet, "rects": [{"x": -1500, "y": 200, "width": 300, "height": 500}]})
+    assert receiver.input_exclusion_rects == ((-1500, 200, 300, 500),)
+    receiver._handle_renderer_control({**packet, "rects": []})
+    assert receiver.input_exclusion_rects == ()
+
+
+def test_ui_over_model_yields_mouse_and_restores_model_input_after_close():
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    packet = {"protocol": "eris.live2d.control", "type": "set_input_exclusion_rects"}
+    receiver._handle_renderer_control({**packet, "rects": [{"x": 100, "y": 100, "width": 300, "height": 500}]})
+    renderer = object.__new__(Live2DRenderer)
+    renderer.receiver = receiver
+    renderer.config = SimpleNamespace(transparent=True)
+    renderer._mouse_passthrough_supported = True
+    renderer._dragging_window = False
+    renderer._bridge = SimpleNamespace(cursor_screen=lambda: (200, 200))
+    hit_calls = []
+    renderer._model_hit_test = lambda *a, **kw: hit_calls.append(True) or True
+    passthrough = []
+    renderer._set_mouse_passthrough = lambda *a: passthrough.append(a[-1])
+    geometry = WindowGeometry(0, 0, 520, 900)
+    renderer._update_mouse_passthrough(None, None, None, geometry)
+    assert passthrough == [True]
+    assert hit_calls == []
+    receiver._handle_renderer_control({**packet, "rects": []})
+    renderer._update_mouse_passthrough(None, None, None, geometry)
+    assert passthrough == [True, False]
+    assert hit_calls == [True]
+
+
+def test_stale_press_on_ui_replays_even_when_model_is_opaque():
+    renderer = object.__new__(Live2DRenderer)
+    renderer.receiver = SimpleNamespace(input_exclusion_rects=((100, 100, 300, 500),))
+    renderer.config = SimpleNamespace(transparent=True)
+    renderer._mouse_passthrough_supported = True
+    renderer._dragging_window = False
+    renderer._mouse_replay_guard_until = 0
+    replayed = []
+    renderer._bridge = SimpleNamespace(
+        cursor_screen=lambda: (200, 200),
+        geometry=lambda *a: WindowGeometry(0, 0, 520, 900),
+        replay_mouse_button_down=lambda b: replayed.append(b) or True,
+    )
+    renderer._model_hit_test = lambda *a, **kw: True
+    renderer._set_mouse_passthrough = lambda *a: None
+    glfw = SimpleNamespace(MOUSE_BUTTON_LEFT=0, MOUSE_BUTTON_RIGHT=1, MOUSE_BUTTON_MIDDLE=2)
+    assert renderer._forward_stale_mouse_press(glfw, None, None, 0)
+    assert replayed == ["left"]

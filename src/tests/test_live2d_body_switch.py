@@ -502,3 +502,201 @@ def test_live2d_stale_mouse_press_is_replayed_below_window() -> None:
     assert renderer._forward_stale_mouse_press(FakeGlfw(), "window", object(), 0) is True
     assert passthrough == [True]
     assert renderer._bridge.replayed == ["left"]
+
+
+def test_position_window_selects_monitor_covering_xy_coordinates() -> None:
+    from types import SimpleNamespace
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeMonitor:
+        def __init__(self, name: str, pos: tuple[int, int], size: tuple[int, int]) -> None:
+            self.name = name
+            self.pos = pos
+            self.size = size
+
+    class FakeMode:
+        def __init__(self, width: int, height: int) -> None:
+            self.size = SimpleNamespace(width=width, height=height)
+
+    class FakeGlfw:
+        def __init__(self, monitors: list[FakeMonitor], primary: FakeMonitor) -> None:
+            self.monitors = monitors
+            self.primary = primary
+            self.set_pos_calls: list[tuple[int, int]] = []
+
+        def get_monitors(self) -> list[FakeMonitor]:
+            return self.monitors
+
+        def get_primary_monitor(self) -> FakeMonitor:
+            return self.primary
+
+        def get_monitor_pos(self, monitor: FakeMonitor) -> tuple[int, int]:
+            return monitor.pos
+
+        def get_video_mode(self, monitor: FakeMonitor) -> FakeMode:
+            return FakeMode(monitor.size[0], monitor.size[1])
+
+        def set_window_pos(self, _window: Any, x: int, y: int) -> None:
+            self.set_pos_calls.append((x, y))
+
+    m0 = FakeMonitor("primary", (0, 0), (1920, 1080))
+    m1 = FakeMonitor("secondary", (1920, 0), (2560, 1440))
+    glfw = FakeGlfw([m0, m1], m0)
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer.config = SimpleNamespace(x=2200, y=100, width=520, height=900)
+
+    screen_size, window_pos = renderer._position_window(glfw, "dummy_window")
+
+    assert screen_size == (2560, 1440)
+    assert window_pos == (2200, 100)
+    assert glfw.set_pos_calls == [(2200, 100)]
+
+
+def test_position_window_falls_back_to_primary_when_no_coords() -> None:
+    from types import SimpleNamespace
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeMonitor:
+        def __init__(self, name: str, pos: tuple[int, int], size: tuple[int, int]) -> None:
+            self.name = name
+            self.pos = pos
+            self.size = size
+
+    class FakeMode:
+        def __init__(self, width: int, height: int) -> None:
+            self.size = SimpleNamespace(width=width, height=height)
+
+    class FakeGlfw:
+        def __init__(self, monitors: list[FakeMonitor], primary: FakeMonitor) -> None:
+            self.monitors = monitors
+            self.primary = primary
+            self.set_pos_calls: list[tuple[int, int]] = []
+
+        def get_monitors(self) -> list[FakeMonitor]:
+            return self.monitors
+
+        def get_primary_monitor(self) -> FakeMonitor:
+            return self.primary
+
+        def get_monitor_pos(self, monitor: FakeMonitor) -> tuple[int, int]:
+            return monitor.pos
+
+        def get_video_mode(self, monitor: FakeMonitor) -> FakeMode:
+            return FakeMode(monitor.size[0], monitor.size[1])
+
+        def set_window_pos(self, _window: Any, x: int, y: int) -> None:
+            self.set_pos_calls.append((x, y))
+
+    m0 = FakeMonitor("primary", (0, 0), (1920, 1080))
+    m1 = FakeMonitor("secondary", (1920, 0), (2560, 1440))
+    glfw = FakeGlfw([m0, m1], m0)
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer.config = SimpleNamespace(x=None, y=None, width=520, height=900)
+
+    screen_size, window_pos = renderer._position_window(glfw, "dummy_window")
+
+    assert screen_size == (1920, 1080)
+    assert window_pos == (1370, 110)
+    assert glfw.set_pos_calls == [(1370, 110)]
+
+
+def test_position_window_handles_negative_monitor_coordinates() -> None:
+    from types import SimpleNamespace
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeMonitor:
+        def __init__(self, name: str, pos: tuple[int, int], size: tuple[int, int]) -> None:
+            self.name = name
+            self.pos = pos
+            self.size = size
+
+    class FakeMode:
+        def __init__(self, width: int, height: int) -> None:
+            self.size = SimpleNamespace(width=width, height=height)
+
+    class FakeGlfw:
+        def __init__(self, monitors: list[FakeMonitor], primary: FakeMonitor) -> None:
+            self.monitors = monitors
+            self.primary = primary
+            self.set_pos_calls: list[tuple[int, int]] = []
+
+        def get_monitors(self) -> list[FakeMonitor]:
+            return self.monitors
+
+        def get_primary_monitor(self) -> FakeMonitor:
+            return self.primary
+
+        def get_monitor_pos(self, monitor: FakeMonitor) -> tuple[int, int]:
+            return monitor.pos
+
+        def get_video_mode(self, monitor: FakeMonitor) -> FakeMode:
+            return FakeMode(monitor.size[0], monitor.size[1])
+
+        def set_window_pos(self, _window: Any, x: int, y: int) -> None:
+            self.set_pos_calls.append((x, y))
+
+    m0 = FakeMonitor("primary", (0, 0), (1920, 1080))
+    m1 = FakeMonitor("secondary_left", (-1920, -1), (1920, 1080))
+    glfw = FakeGlfw([m0, m1], m0)
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer.config = SimpleNamespace(x=-1500, y=100, width=520, height=900)
+
+    screen_size, window_pos = renderer._position_window(glfw, "dummy_window")
+
+    assert screen_size == (1920, 1080)
+    assert window_pos == (-1500, 100)
+    assert glfw.set_pos_calls == [(-1500, 100)]
+
+
+def test_position_window_clamps_offscreen_coordinates_to_monitor() -> None:
+    from types import SimpleNamespace
+    from live2d_body.renderer import Live2DRenderer
+
+    class FakeMonitor:
+        def __init__(self, name: str, pos: tuple[int, int], size: tuple[int, int]) -> None:
+            self.name = name
+            self.pos = pos
+            self.size = size
+
+    class FakeMode:
+        def __init__(self, width: int, height: int) -> None:
+            self.size = SimpleNamespace(width=width, height=height)
+
+    class FakeGlfw:
+        def __init__(self, monitors: list[FakeMonitor], primary: FakeMonitor) -> None:
+            self.monitors = monitors
+            self.primary = primary
+            self.set_pos_calls: list[tuple[int, int]] = []
+
+        def get_monitors(self) -> list[FakeMonitor]:
+            return self.monitors
+
+        def get_primary_monitor(self) -> FakeMonitor:
+            return self.primary
+
+        def get_monitor_pos(self, monitor: FakeMonitor) -> tuple[int, int]:
+            return monitor.pos
+
+        def get_video_mode(self, monitor: FakeMonitor) -> FakeMode:
+            return FakeMode(monitor.size[0], monitor.size[1])
+
+        def set_window_pos(self, _window: Any, x: int, y: int) -> None:
+            self.set_pos_calls.append((x, y))
+
+    m0 = FakeMonitor("primary", (0, 0), (1920, 1080))
+    m1 = FakeMonitor("secondary", (1920, 0), (2560, 1440))
+    glfw = FakeGlfw([m0, m1], m0)
+
+    renderer = object.__new__(Live2DRenderer)
+    renderer.config = SimpleNamespace(x=5000, y=5000, width=520, height=900)
+
+    screen_size, window_pos = renderer._position_window(glfw, "dummy_window")
+
+    # Clamped within m1 bounds: max_x = 1920 + 2560 - 520 = 3960, max_y = 0 + 1440 - 900 = 540
+    assert screen_size == (2560, 1440)
+    assert window_pos == (3960, 540)
+    assert glfw.set_pos_calls == [(3960, 540)]
+

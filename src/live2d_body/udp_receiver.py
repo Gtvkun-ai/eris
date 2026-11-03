@@ -40,6 +40,7 @@ class Live2DStageReceiver:
         self._desired_visible = True
         self._shutdown_requested = False
         self._requested_window_geometry: Any | None = None
+        self._input_exclusion_rects: tuple[tuple[int, int, int, int], ...] = ()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -92,6 +93,18 @@ class Live2DStageReceiver:
             return False
         command = str(payload.get("type", "") or "").strip().lower()
         with self._control_lock:
+            if command == "set_input_exclusion_rects":
+                rects = []
+                values = payload.get("rects")
+                for rect in (values if isinstance(values, list) else [])[:64]:
+                    try:
+                        x, y, width, height = (int(rect[key]) for key in ("x", "y", "width", "height"))
+                        if width > 0 and height > 0:
+                            rects.append((x, y, width, height))
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        continue
+                self._input_exclusion_rects = tuple(rects)
+                return True
             if command == "set_visibility":
                 self._desired_visible = bool(payload.get("visible", True))
                 return True
@@ -107,6 +120,11 @@ class Live2DStageReceiver:
                 self._shutdown_requested = True
                 return True
         return True
+
+    @property
+    def input_exclusion_rects(self) -> tuple[tuple[int, int, int, int], ...]:
+        with self._control_lock:
+            return self._input_exclusion_rects
 
     @property
     def desired_visible(self) -> bool:
