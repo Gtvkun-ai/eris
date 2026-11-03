@@ -372,7 +372,7 @@ class ProfileContextCompiler:
             return 0.0
         if not vector or len(vector) != len(query_vector):
             return 0.0
-        dot = sum(a * b for a, b in zip(query_vector, vector))
+        dot = sum(a * b for a, b in zip(query_vector, vector, strict=False))
         na = math.sqrt(sum(a * a for a in query_vector))
         nb = math.sqrt(sum(b * b for b in vector))
         return max(0.0, dot / (na * nb)) if na and nb else 0.0

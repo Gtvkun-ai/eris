@@ -1,0 +1,37 @@
+{
+  "initial_attempt": {
+    "synthetic_only": true,
+    "result": {
+      "status": "failed",
+      "error": "CuratorInferenceError",
+      "calls": 1,
+      "committed": 0
+    },
+    "view": {
+      "recent_episodes": [],
+      "episode_recap": ""
+    },
+    "second_run": {
+      "status": "deferred",
+      "calls": 0
+    }
+  },
+  "diagnostic_attempt": {
+    "synthetic_only": true,
+    "result": {
+      "status": "failed",
+      "error": "CuratorInferenceError",
+      "reason": "timeout",
+      "calls": 1,
+      "committed": 0
+    },
+    "view": {
+      "recent_episodes": [],
+      "episode_recap": ""
+    },
+    "second_run": {
+      "status": "deferred",
+      "calls": 0
+    }
+  }
+}

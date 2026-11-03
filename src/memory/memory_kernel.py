@@ -1,6 +1,3 @@
-from __future__ import annotations
-from core.di import resolve_dependency
-
 """
 memory_kernel.py
 ================
@@ -24,11 +21,13 @@ Lưu ý quan trọng:
 Đây là facade thật, không phải thêm một lớp trang trí chỉ để repo trông có vẻ
 kiến trúc hơn. Thế giới đã có đủ facade vô dụng rồi.
 """
+from __future__ import annotations
+from core.di import resolve_dependency
 
 import time
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from .memory_cognition import CommitPolicy, MemoryCognitionCore, MemoryQuery
 from .memory_commit_policy import MemoryCommitPolicy
@@ -518,8 +517,11 @@ class MemoryKernel:
         living_user = self.living_user
         rollup = getattr(living_user, "rollup_episodes", None)
         if callable(rollup):
-            result = rollup()
-            report.notes.append(f"episode_rollup:{result.get('status')} calls={result.get('calls', 0)}")
+            try:
+                result = rollup()
+                report.notes.append(f"episode_rollup:{result.get('status')} calls={result.get('calls', 0)}")
+            except Exception as exc:
+                report.warnings.append(f"episode_rollup_failed:{type(exc).__name__}")
         if living_user is not None and getattr(living_user.config, "auto_dream_on_maintenance", False):
             try:
                 self.last_user_memory_dream = living_user.dream(reason=reason)
@@ -783,13 +785,13 @@ class MemoryKernel:
         metadata.setdefault("memory_kernel_source", source)
         metadata.setdefault("memory_kernel_context", dict(context or {}))
         try:
-            setattr(request, "metadata", metadata)
+            request.metadata = metadata
         except Exception:
             pass
         try:
             current_evidence = list(getattr(request, "evidence_ids", []) or [])
             if evidence_ids and not current_evidence:
-                setattr(request, "evidence_ids", list(evidence_ids))
+                request.evidence_ids = list(evidence_ids)
         except Exception:
             pass
         return request

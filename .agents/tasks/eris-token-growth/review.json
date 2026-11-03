@@ -1,8 +1,18 @@
 {
   "verdict": "APPROVED",
   "findings": [
-    "valid_until/expires_at retained via the defaults pass instead of being cut like the other four timestamps. Intentional and documented (retention qualifiers, not audit ids); consistent with the task's keep-qualifiers requirement. Non-blocking, noted for traceability against the plan's six-timestamp list.",
-    "The ~51%/64%/31% size-reduction numbers come from a representative fixture built to code caps, not a live portable request. Honestly disclosed; direction and magnitude are solid, absolute numbers are an estimate. Non-blocking."
+    {
+      "label": "Bundled episode-fading changes",
+      "severity": "non-blocking",
+      "confidence": "confirmed",
+      "detail": "Commit 410f6792 also adds project_bootstrap_self, an isinstance guard in project_runtime_context, and a _same_json zip(strict=False) tweak that belong to the episode-fading work, not the three-branch audit-cut. Scope-hygiene note only; does not affect correctness of the audit-cut."
+    },
+    {
+      "label": "Delta reconstruction test uses synthetic state",
+      "severity": "non-blocking",
+      "confidence": "confirmed",
+      "detail": "test_every_request_can_reconstruct_current_self_and_context validates apply_overlay/_read_self reconstruction over the projected shape but on a flat synthetic memory_state, not on the agent_mind/active_state/semantic nested-record branches. Per-function idempotency assertions cover the phantom-delta risk for those branches, so coverage is adequate; a reconstruction test over a realistic three-branch payload would close the gap directly."
+    }
   ],
-  "reviewDoc": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eris-token-growth\\self-context-cut-review.md"
+  "reviewDoc": "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eris-token-growth\\review.md"
 }

@@ -2180,3 +2180,26 @@ riêng qua MemoryKernel.maintain từ background digest worker và session. Inte
 worker mặc định 300s có các gate, không chứng minh số call/tần suất live. Giữ
 kết luận source rằng output profile/semantic đã có persist và checkpoint nguồn
 còn thiếu; chưa đo re-distill thực tế trong lượt đánh giá này.
+
+## Cập nhật 02/11: triển khai episode mờ dần trong source
+
+Theo yêu cầu tiếp theo, đã thêm rolling recap theo scope, lưu narrative+coverage
+nguyên tử, source hash/revision/authority check và retry; archive episode v2 giữ
+nguồn trước trim/merge. Dreamer profile có checkpoint/pending replay riêng;
+consumer episodic→semantic ghi tag/hash và quyết định skip riêng. Xem
+[báo cáo triển khai](2026-11-02-episode-fading-memory-v1.md).
+
+**Thay trạng thái “chưa triển khai” của đánh giá trước cho các phần trên.** Self
+không còn cấp 8 episode mặc định: episode view lấy từ facade hiện tại, tối đa
+4 episode trong 7 ngày + recap cũ. Episode không đóng băng trong bootstrap
+bất biến; mỗi request nhận projection hiện tại trong overlay, tránh chi tiết
+đã mờ/quên vẫn kẹt trong prefix. Profile/MindState giữ cơ chế cũ, không thêm
+Root warm-up khi aging. Budget dùng UTF-8 byte bound bảo thủ, chưa đo usage thật.
+
+Nhóm 18 file: **191 passed, 4 failed**; 35 test mới pass. Bốn lỗi selection/UI
+đã tái hiện trên baseline 24614d18; Ruff và diff whitespace pass. Request Root
+được kiểm qua fake router, không phải model live. Smoke Gemini chỉ dùng dữ
+liệu giả bị timeout, giữ checkpoint và deferred retry. Chưa xác nhận chất
+lượng recap Gemini thật hoặc giảm token/latency portable; chưa ghi memory thật,
+copy source portable, restart hay deploy. Semantic commit và mark nguồn vẫn
+khác file, nên không tuyên bố exactly-once nếu crash giữa hai bước.

@@ -63,4 +63,4 @@ def test_legacy_gitpilot_project_telemetry_is_not_rendered_in_companion_panel() 
 
 def test_context_menu_names_panel_as_user_model_not_exam_score() -> None:
     text = LISTENER.read_text(encoding="utf-8")
-    assert 'ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn"' in text
+    assert 'ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn"' not in text

@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 
 from llm.token_budget import detect_provider, estimate_tokens, hard_cap_for_provider
 from llm.provider_errors import provider_failure
-from .self_prompt_view import project_self_view, project_runtime_context, state_difference as _changed
+from .self_prompt_view import project_self_view, project_bootstrap_self, project_runtime_context, state_difference as _changed
 from .root_session_projector import (
     RootSessionState, SelfReference, TurnRecord, bootstrap_content, project_root_messages,
 )
@@ -76,7 +76,8 @@ def _read_self(host: Any) -> dict[str, Any]:
         from memory.living_user.models import UserMemoryScope
         project_id = str(getattr(host, "project_id", "") or "")
         scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
-        memory.setdefault("living_user", {}).update(episode_view(scope=scope))
+        living = memory.get("living_user")
+        memory["living_user"] = {**(living if isinstance(living, Mapping) else {}), **episode_view(scope=scope)}
     return project_self_view(result)
 
 
@@ -127,7 +128,7 @@ def _ingest_recent_turns(state: RootSessionState, recent_history: Sequence[Mappi
     # history vào step_payload và KHÔNG resend phần đã có.
     overlap = 0
     for count in range(min(len(state.turns), len(incoming)), 0, -1):
-        if all(same(old, new) for old, new in zip(state.turns[-count:], incoming[:count])):
+        if all(same(old, new) for old, new in zip(state.turns[-count:], incoming[:count], strict=False)):
             overlap = count
             break
     # Trường hợp state vừa thay đổi mà snapshot đã xuất hiện trước đó (caller
@@ -135,7 +136,7 @@ def _ingest_recent_turns(state: RootSessionState, recent_history: Sequence[Mappi
     match_at = None
     if not overlap and state.turns and len(incoming) <= len(state.turns):
         for offset in range(len(state.turns) - len(incoming), -1, -1):
-            if all(same(old, new) for old, new in zip(state.turns[offset:], incoming)):
+            if all(same(old, new) for old, new in zip(state.turns[offset:], incoming, strict=False)):
                 overlap = len(incoming)
                 match_at = offset
                 break
@@ -289,7 +290,9 @@ class RootConversationSession:
         self._clear()
         if self._host is None:
             return False
-        self_context = _read_self(self._host)
+        # Episode windows/recaps must age out of the actual request, not merely
+        # be overridden while their original detail survives in this prefix.
+        self_context = project_bootstrap_self(_read_self(self._host))
         if not self_context:
             self._log("warning", "[root-session] Self owner chưa sẵn sàng")
             return False

@@ -8,6 +8,7 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from typing import Any, Iterable, Mapping
 import json
 
@@ -36,12 +37,14 @@ class UserProfileDreamer:
         config: UserProfileDreamConfig | None = None,
         authority_guard: Any = None,
         source_validator: Any = None,
+        source_lock: Any = None,
     ) -> None:
         self.store = store
         self.model_adapter = model_adapter
         self.config = resolve_dependency(config, lambda: UserProfileDreamConfig())
         self.authority_guard = authority_guard
         self.source_validator = source_validator
+        self.source_lock = source_lock if source_lock is not None else nullcontext()
         self.checkpoint_path = store.path.with_name("living_user_dream_checkpoint.json")
         self._checkpoint_lock = lock_for_path(self.checkpoint_path)
         self._job_lock = lock_for_path(str(self.checkpoint_path) + ".inference")
@@ -76,7 +79,17 @@ class UserProfileDreamer:
         # pending batch; source suppression prevents it being re-created later.
         with self._checkpoint_lock:
             doc = self._checkpoint()
-            atomic_write_json(self.checkpoint_path, {**doc, "pending": [], "revision": doc["revision"] + 1})
+            pending_sources = doc.get("pending_sources", doc["coverage"] if doc["pending"] else {})
+            coverage = {key: value for key, value in doc["coverage"].items() if key not in pending_sources}
+            atomic_write_json(self.checkpoint_path, {**doc, "coverage": coverage, "pending": [], "pending_sources": {},
+                                                    "revision": doc["revision"] + 1})
+
+    def pending_evidence(self, path_prefix: str, *, scope: UserMemoryScope | None = None) -> set[str]:
+        with self._checkpoint_lock:
+            return {str(eid) for row in self._checkpoint()["pending"]
+                    if (scope is None or UserMemoryScope.from_value(row.get("scope")).identity == scope.identity)
+                    and (row.get("path") == path_prefix or str(row.get("path", "")).startswith(path_prefix + "."))
+                    for eid in row.get("evidence_ids", [])}
 
     def _apply(self, operations: list[ProfileOperation], *, reason: str):
         if self.authority_guard is not None:
@@ -85,14 +98,18 @@ class UserProfileDreamer:
 
     def _consolidate(self, episodes: Iterable[UserEpisode], *, semantic_operations: Iterable[ProfileOperation],
                      reason: str, scope: UserMemoryScope | None) -> DreamReport:
-        checkpoint = self._checkpoint()
-        if checkpoint["pending"]:
-            self._apply([ProfileOperation.from_dict(x) for x in checkpoint["pending"]], reason="resume")
-            with self._checkpoint_lock:
-                latest = self._checkpoint()
-                if latest["revision"] != checkpoint["revision"]:
-                    return DreamReport(diagnostics=("dream_checkpoint_changed",))
-                checkpoint = {**checkpoint, "pending": [], "revision": checkpoint["revision"] + 1}
+        with self.source_lock, self._checkpoint_lock:
+            checkpoint = self._checkpoint()
+            if checkpoint["pending"]:
+                pending_sources = checkpoint.get("pending_sources", checkpoint["coverage"])
+                valid = self.source_validator is None or self.source_validator(pending_sources)
+                if valid:
+                    self._apply([ProfileOperation.from_dict(x) for x in checkpoint["pending"]], reason="resume")
+                else:
+                    checkpoint["coverage"] = {key: value for key, value in checkpoint["coverage"].items()
+                                               if key not in pending_sources}
+                checkpoint = {**checkpoint, "pending": [], "pending_sources": {},
+                              "revision": checkpoint["revision"] + 1}
                 atomic_write_json(self.checkpoint_path, checkpoint)
         chosen = [x for x in episodes if x.importance >= self.config.min_episode_importance]
         chosen = sorted(chosen, key=lambda x: (x.importance, x.ended_at), reverse=True)[: self.config.max_episodes]
@@ -102,6 +119,11 @@ class UserProfileDreamer:
         ops.extend(self._deterministic_episode_ops(chosen, scope=scope))
         ops.extend(self._model_ops(chosen, reason=reason, scope=scope))
         ops = _dedupe(ops)[: self.config.max_operations]
+        with self.source_lock:
+            return self._finish(chosen, ops, checkpoint, reason=reason)
+
+    def _finish(self, chosen: list[UserEpisode], ops: list[ProfileOperation], checkpoint: dict[str, Any],
+                *, reason: str) -> DreamReport:
         if self.source_validator is not None and not self.source_validator(chosen):
             return DreamReport(diagnostics=("dream_sources_changed",))
         durable = self._model_succeeded and bool(chosen)
@@ -114,6 +136,7 @@ class UserProfileDreamer:
                 # replay the same proposals instead of buying the same inference.
                 coverage = {**checkpoint["coverage"], **{x.id: episode_hash(x) for x in chosen}}
                 checkpoint = {"coverage": coverage, "pending": [x.to_dict() for x in ops],
+                              "pending_sources": {x.id: episode_hash(x) for x in chosen},
                               "revision": checkpoint["revision"] + 1}
                 atomic_write_json(self.checkpoint_path, checkpoint)
         if not ops:
@@ -123,7 +146,7 @@ class UserProfileDreamer:
             with self._checkpoint_lock:
                 latest = self._checkpoint()
                 if latest["revision"] == checkpoint["revision"]:
-                    atomic_write_json(self.checkpoint_path, {**checkpoint, "pending": [],
+                    atomic_write_json(self.checkpoint_path, {**checkpoint, "pending": [], "pending_sources": {},
                                                             "revision": checkpoint["revision"] + 1})
         return DreamReport(
             applied=len(result.record_ids),

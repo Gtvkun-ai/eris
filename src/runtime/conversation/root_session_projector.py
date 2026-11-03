@@ -3,7 +3,8 @@
 
 Không gọi I/O, không đọc clock, không ghi ngược state. Mỗi lượt chỉ có một
 step_payload tạm thời; không giữ lịch sử quyết định nội bộ hay raw reply trong
-prompt. Self đầy đủ luôn nằm trong prefix; không lọc top-k.
+prompt. Self bền vững nằm trong prefix; episode view hiện tại nằm trong overlay.
+Không lọc top-k belief của nhân vật.
 """
 from __future__ import annotations
 
@@ -21,9 +22,12 @@ SELF_BOOTSTRAP_INSTRUCTION = (
     "Mỗi request sau có self_changes_since_bootstrap áp lên CHÍNH bản Self này: "
     "merge object, thay toàn bộ array/scalar; __erased_from_self=true xóa field, "
     "__value_now_null=true đặt null. Không áp overlay lên overlay lượt trước. "
+    "recent_episodes và episode_recap được cấp đầy đủ trong overlay hiện tại, không đóng băng trong prefix. "
+    "Recap là ký ức khái quát thứ cấp, không phải receipt hoàn tất hành động; chưa xong vẫn là chưa xong. "
     "runtime_context là snapshot đầy đủ của request hiện tại. "
     "Profile projection dùng defaults cho field vắng ở mỗi record, rồi aliases cho timestamp vắng; "
-    "mọi value, evidence và metadata vẫn được giữ. persisted_mind_variants là phần khác của bản "
+    "provenance nặng có thể chỉ nằm ở store, không coi thiếu evidence trong prompt là xác nhận fact. "
+    "persisted_mind_variants là phần khác của bản "
     "persistence so với mind_state; reducer mind_state là owner hiện tại. "
     "Trả action JSON kind=no_reply, reason='self_loaded'."
 )

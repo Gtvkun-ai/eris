@@ -429,7 +429,6 @@ public partial class UdpListener : Node2D
 		MakePanelDraggable(_tutorPanel);
 		MakePanelDraggable(_settingsPanel);
 		MakePanelDraggable(_memoryPanel);
-		MakePanelDraggable(_capabilityPanel);
 
 		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
 
@@ -807,7 +806,6 @@ public partial class UdpListener : Node2D
 			|| TryGetVisibleControlMouseRect(_privateMindPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_settingsPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_memoryPanel, mouse, out rect)
-			|| TryGetVisibleControlMouseRect(_capabilityPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_learningCanvasPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_conversationHistoryPanel, mouse, out rect)
 			|| TryGetVisibleControlMouseRect(_autonomyGoalsPanel, mouse, out rect)
@@ -835,7 +833,6 @@ public partial class UdpListener : Node2D
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _privateMindPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _settingsPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _memoryPanel, 4f);
-		MergeVisibleControlRect(ref aggregate, ref hasRect, _capabilityPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _learningCanvasPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _conversationHistoryPanel, 4f);
 		MergeVisibleControlRect(ref aggregate, ref hasRect, _autonomyGoalsPanel, 4f);
@@ -1174,11 +1171,6 @@ public partial class UdpListener : Node2D
 				CloseMemoryPanel();
 				GetViewport().SetInputAsHandled();
 			}
-			if (_capabilityPanel != null && _capabilityPanel.Visible)
-			{
-				CloseCapabilityPanel();
-				GetViewport().SetInputAsHandled();
-			}
 			if (_learningCanvasPanel?.Visible == true)
 			{
 				CloseLearningCanvas();
@@ -1236,15 +1228,6 @@ public partial class UdpListener : Node2D
 		)
 		{
 			CloseMemoryPanel();
-		}
-		if (
-			mouseEvent.ButtonIndex == MouseButton.Left
-			&& _capabilityPanel != null
-			&& _capabilityPanel.Visible
-			&& !IsMouseOverControl(_capabilityPanel, mouseEvent.Position)
-		)
-		{
-			CloseCapabilityPanel();
 		}
 		if (
 			mouseEvent.ButtonIndex == MouseButton.Left
@@ -1943,13 +1926,6 @@ public partial class UdpListener : Node2D
 				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
 				container.MoveChild(_contextMemoryButton, Mathf.Max(0, closeIndex));
 			}
-			if (_contextCapabilityButton == null)
-			{
-				_contextCapabilityButton = new Button { Name = "CapabilityButton" };
-				container.AddChild(_contextCapabilityButton);
-				int closeIndex = _contextCloseButton != null ? _contextCloseButton.GetIndex() : container.GetChildCount() - 1;
-				container.MoveChild(_contextCapabilityButton, Mathf.Max(0, closeIndex));
-			}
 			if (_contextLearningCanvasButton == null)
 			{
 				_contextLearningCanvasButton = new Button { Name = "LearningCanvasButton" };
@@ -1981,7 +1957,6 @@ public partial class UdpListener : Node2D
 		_contextConversationHistoryButton.Visible = true; // Chức năng riêng xem lịch sử & kế hoạch.
 		ConfigureContextMenuButton(_contextPrivateMindButton, "Inner Diary", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextMemoryButton, "ERIS nhớ gì về bạn", "res://asset/Resource/emotion.png");
-		ConfigureContextMenuButton(_contextCapabilityButton, "Eris hiểu bạn", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextLearningCanvasButton, "Learning Canvas · Java DI", "res://asset/Resource/chat.png");
 		ConfigureContextMenuButton(_contextSettingsButton, "Cài đặt", "res://asset/Resource/emotion.png");
 		ConfigureContextMenuButton(_contextExitButton, "Thoát ERIS", "res://asset/Resource/exit.png");

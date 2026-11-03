@@ -16,8 +16,8 @@ Bản này sửa phần recall:
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 import json
-import math
 import os
 import re
 import time
@@ -25,6 +25,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+from .json_store_io import atomic_write_json, locked_path
 
 
 def iso_now() -> str:
@@ -49,7 +50,10 @@ def clamp01(value: float) -> float:
 
 
 
-from .json_store_io import atomic_write_json
+def distillation_hash(row: dict[str, Any]) -> str:
+    content = {key: row.get(key) for key in ("id", "timestamp", "frame_id", "summary", "scene",
+                                            "user_input", "eris_action", "outcome", "evidence_ids")}
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +68,7 @@ STOPWORDS = {
     "cho", "co", "con", "cua", "cung", "da", "dang", "day", "de", "den",
     "di", "do", "duoc", "em", "gi", "ha", "hay", "hoi", "hon", "khi",
     "khong", "kia", "la", "lai", "lam", "len", "luc", "ma", "may", "minh",
-    "mot", "nay", "neu", "ban", "nguoi", "nhu", "nhung", "noi", "nua",
+    "mot", "nay", "neu", "nguoi", "nhu", "nhung", "noi", "nua",
     "o", "qua", "ra", "rang", "roi", "sao", "se", "thi", "thoi", "toi",
     "trong", "tu", "van", "ve", "vi", "vua", "voi",
 }
@@ -182,7 +186,7 @@ def parse_timestamp(timestamp: str) -> float:
         return 0.0
 
     # Format hiện tại: YYYY-mm-ddTHH:MM:SS+0700
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+    for _fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
         try:
             return time.mktime(time.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S"))
         except (ValueError, TypeError):
@@ -339,10 +343,47 @@ class EpisodicMemoryStore:
         return [EpisodicMemoryItem.from_dict(item) for item in raw_items if isinstance(item, dict)]
 
     def save(self, items: list[EpisodicMemoryItem]) -> None:
-        items = self._trim(items)
-        atomic_write_json(self.path, {"version": 1, "items": [item.to_dict() for item in items]})
+        with locked_path(self.path):
+            # Recall/access decay may save a snapshot obtained before distillation.
+            # Preserve its consumer checkpoint when the source content is identical.
+            current = {x.id: x for x in self.load()}
+            for item in items:
+                old = current.get(item.id)
+                if old and old.metadata.get("distilled_hash") == distillation_hash(item.to_dict()):
+                    item.metadata["distilled_hash"] = old.metadata["distilled_hash"]
+                    item.metadata["distill_decision"] = old.metadata.get("distill_decision", "accepted")
+                    if "distilled" not in item.tags:
+                        item.tags.append("distilled")
+            items = self._trim(items)
+            atomic_write_json(self.path, {"version": 1, "items": [item.to_dict() for item in items]})
+
+    def mark_distilled(self, snapshots: list[dict[str, Any]], *, decision: str = "accepted") -> int:
+        with locked_path(self.path):
+            wanted = {row["id"]: distillation_hash(row) for row in snapshots}
+            items = self.load()
+            changed = 0
+            for item in items:
+                fingerprint = distillation_hash(item.to_dict())
+                if wanted.get(item.id) == fingerprint:
+                    item.metadata["distilled_hash"] = fingerprint
+                    item.metadata["distill_decision"] = decision
+                    if "distilled" not in item.tags:
+                        item.tags.append("distilled")
+                    changed += 1
+            if changed:
+                self.save(items)
+            return changed
+
+    def distillation_sources_current(self, snapshots: list[dict[str, Any]]) -> bool:
+        with locked_path(self.path):
+            current = {x.id: distillation_hash(x.to_dict()) for x in self.load()}
+            return all(current.get(row["id"]) == distillation_hash(row) for row in snapshots)
 
     def apply_commit(self, request: Any, *, frame: Any = None) -> EpisodicMemoryItem | None:
+        with locked_path(self.path):
+            return self._apply_commit(request, frame=frame)
+
+    def _apply_commit(self, request: Any, *, frame: Any = None) -> EpisodicMemoryItem | None:
         content = compact_text(getattr(request, "content", "") or "", limit=600)
         if not content:
             return None
@@ -363,7 +404,6 @@ class EpisodicMemoryStore:
         # Episodic không dedup cứng như semantic vì sự kiện có thể lặp có chủ đích,
         # nhưng log spam (cùng 1 câu commit lặp lại) thì không cần giữ N bản.
         now_ts = float(time.time())
-        content_norm = normalize_text(content)
         for existing in items[-24:]:  # Chỉ xét 24 item gần nhất để tránh O(n²)
             try:
                 age = now_ts - parse_timestamp(existing.timestamp)
@@ -594,6 +634,10 @@ class EpisodicMemoryStore:
         )
 
     def _mark_accessed(self, selected: list[EpisodicMemoryItem]) -> None:
+        with locked_path(self.path):
+            self._mark_accessed_locked(selected)
+
+    def _mark_accessed_locked(self, selected: list[EpisodicMemoryItem]) -> None:
         """Tăng access_count cho item đã recall.
 
         Mục đích:

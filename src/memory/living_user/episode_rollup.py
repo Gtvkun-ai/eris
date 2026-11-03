@@ -41,6 +41,7 @@ class EpisodeRollupConfig:
     episode_tokens: int = 3000
     stable_seconds: float = 3600.0
     retry_seconds: float = 300.0
+    max_calls_per_run: int = 1
 
 
 class EpisodeRollupStore:
@@ -85,7 +86,7 @@ class EpisodeRollupStore:
         return (entry.get("prompt_version") == 1 and entry.get("authority") == self._authority_hash(scope)
                 and all(sources.get(key) == value for key, value in entry.get("coverage", {}).items()))
 
-    def run(self, adapter: Any, *, now: float | None = None, active_session_id: str = "") -> dict[str, Any]:
+    def run(self, adapter: Any, *, now: float | None = None) -> dict[str, Any]:
         current = time.time() if now is None else now
         generate = getattr(adapter, "summarize_episode_rollup", None)
         if not callable(generate):
@@ -96,7 +97,9 @@ class EpisodeRollupStore:
         try:
             rows = self.episodes.all(include_archived=True)
             scopes = {x.scope.identity: x.scope for x in rows if self._public(x)}
-            for scope in list(scopes.values())[:4]:
+            for scope in scopes.values():
+                if calls >= self.config.max_calls_per_run:
+                    break
                 # Lock order is always sources -> recap. Never hold either during inference.
                 with self.episodes.lock, self.lock:
                     all_rows = [x for x in self.episodes.all(include_archived=True)
@@ -142,7 +145,8 @@ class EpisodeRollupStore:
             return {"status": "committed" if committed else "unchanged", "calls": calls, "committed": committed}
         except Exception as exc:
             self._retry_at = current + self.config.retry_seconds
-            return {"status": "failed", "error": type(exc).__name__, "calls": calls, "committed": committed}
+            return {"status": "failed", "error": type(exc).__name__, "reason": getattr(exc, "status", ""),
+                    "calls": calls, "committed": committed}
         finally:
             self._job.release()
 

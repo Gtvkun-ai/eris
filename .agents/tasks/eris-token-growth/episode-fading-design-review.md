@@ -1,5 +1,10 @@
 # Đánh giá episode mờ dần — 02/11/2026
 
+Cập nhật sau khi user duyệt triển khai: xem
+[báo cáo v1](../../../docs/knowledge/2026-11-02-episode-fading-memory-v1.md).
+Các đoạn “chưa triển khai/chưa test” dưới đây là trạng thái tại lúc đánh giá,
+được thay thế trong phạm vi nêu ở báo cáo v1; không phải xác nhận đã deploy.
+
 Phạm vi: đọc source checkout và báo cáo cũ; không sửa runtime/canonical memory,
 không gọi Gemini, chạy GC, test hay deploy. Đã đọc bài học runtime theo AGENTS.md.
 Các ngưỡng dưới đây là đề xuất thử nghiệm, chưa phải cấu hình đã được đo tối ưu.

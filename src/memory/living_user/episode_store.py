@@ -58,7 +58,7 @@ class UserEpisodeStore:
         from .episode_projection import content_hash
         if self._blocked_evidence & {content_hash(x) for x in (episode.id, *episode.evidence_ids)}:
             return episode  # Never re-persist a forgotten source from a delayed job.
-        existing = self._find_same_session(episode)
+        existing = self._items.get(episode.id) or self._archive.get(episode.id) or self._find_same_session(episode)
         if existing is not None:
             self._history[episode_hash(existing)] = deepcopy(existing)
             # Một session được consolidate nhiều lần thì merge, không nhân bản recap.
@@ -149,7 +149,7 @@ class UserEpisodeStore:
             if d_vecs is not None:
                 dense = max(0.0, _cosine(q_vec, d_vecs[idx]))
             score = lexical * 0.50 + phrase * 0.20 + dense * 0.20 + episode.importance * 0.08 + _recency(episode.ended_at) * 0.02
-            if score >= 0.08:
+            if score >= 0.08 and (lexical > 0.0 or phrase > 0.0 or dense >= 0.20):
                 scored.append((score, episode))
         scored.sort(key=lambda x: x[0], reverse=True)
         return tuple(item for _, item in scored[: max(1, limit)])
@@ -157,6 +157,18 @@ class UserEpisodeStore:
     def recent(self, *, limit: int = 8, scope: UserMemoryScope | None = None) -> tuple[UserEpisode, ...]:
         items = [x for x in self.all(include_archived=True) if scope is None or x.scope.matches(scope)]
         return tuple(sorted(items, key=lambda x: x.ended_at, reverse=True)[:limit])
+
+    @_mutation
+    def archive_cold(self, *, older_than_days: float = 7.0, now: float | None = None) -> int:
+        """Move originals to cold storage without rewriting their content/identity."""
+        import time
+        cutoff = (time.time() if now is None else now) - older_than_days * 86400
+        cold = {key: value for key, value in self._items.items() if value.ended_at < cutoff}
+        if cold:
+            self._archive.update(cold)
+            self._items = {key: value for key, value in self._items.items() if key not in cold}
+            self.save()
+        return len(cold)
 
     @_mutation
     def compact(
@@ -295,7 +307,7 @@ def _cosine(left: Iterable[float], right: Iterable[float]) -> float:
         return 0.0
     if not a or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     return dot / (na * nb) if na and nb else 0.0

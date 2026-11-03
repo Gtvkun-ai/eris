@@ -107,7 +107,8 @@ class LivingUserMemoryService:
         self.extractor = UserProfileExtractor(model_adapter=model_adapter)
         self.episode_builder = UserEpisodeBuilder(model_adapter=model_adapter)
         self.dreamer = UserProfileDreamer(self.profile_store, model_adapter=model_adapter,
-            authority_guard=self.authority_ledger.guard_operations, source_validator=self._validate_episode_sources)
+            authority_guard=self.authority_ledger.guard_operations, source_validator=self._validate_episode_sources,
+            source_lock=self.episode_store.lock)
         self.context_compiler = ProfileContextCompiler(
             self.profile_store,
             self.episode_store,
@@ -473,13 +474,16 @@ class LivingUserMemoryService:
         report = self.dreamer.consolidate(episodes, semantic_operations=semantic_ops, reason=reason, scope=scope)
         decayed = self.profile_store.decay()
         compacted_profile = self.profile_store.compact()
-        compacted_episodes = self.episode_store.compact()
+        # Cold storage must not rewrite an episode just covered by a rolling recap.
+        archived_episodes = self.episode_store.archive_cold() if self.config.episode_rollup_enabled else 0
+        compacted_episodes = 0 if self.config.episode_rollup_enabled else self.episode_store.compact()
         archived_actions = self.action_store.archive_stale()
         self.trace_journal.append("dream", {
             "applied": report.applied, "rejected_count": report.rejected,
             "operation_count": len(report.operations), "episode_ids": list(report.episode_ids),
             "decayed": decayed, "compacted_profile": compacted_profile,
             "compacted_episodes": compacted_episodes, "archived_actions": archived_actions,
+            "archived_episodes": archived_episodes,
         })
         self.last_dream_report = report
         return report
@@ -488,7 +492,7 @@ class LivingUserMemoryService:
         """Maintenance-only; never invoked while reading Self/context."""
         if not self.config.enabled or not self.config.episode_rollup_enabled:
             return {"status": "disabled", "calls": 0}
-        result = self.episode_rollups.run(self.model_adapter, now=now, active_session_id=self._active_session_id)
+        result = self.episode_rollups.run(self.model_adapter, now=now)
         self.trace_journal.append("episode_rollup", result)
         return result
 
@@ -858,7 +862,8 @@ class LivingUserMemoryService:
 
     def _collect_memory_evidence(self, path_or_prefix: str, *, scope: UserMemoryScope) -> set[str]:
         root = str(path_or_prefix or "").strip().lower()
-        evidence: set[str] = set()
+        # A crash can leave an unapplied proposal outside the profile store.
+        evidence: set[str] = self.dreamer.pending_evidence(root, scope=scope)
         for record in self.profile_store.all(include_inactive=True):
             if record.scope.identity != scope.identity:
                 continue
@@ -909,7 +914,8 @@ class LivingUserMemoryService:
     def _validate_episode_sources(self, episodes: Iterable[UserEpisode]) -> bool:
         with self.episode_store.lock:
             hashes = {x.id: episode_hash(x) for x in self.episode_store.all(include_archived=True)}
-            return all(hashes.get(x.id) == episode_hash(x) for x in episodes)
+            expected = episodes if isinstance(episodes, Mapping) else {x.id: episode_hash(x) for x in episodes}
+            return all(hashes.get(key) == value for key, value in expected.items())
 
 
 

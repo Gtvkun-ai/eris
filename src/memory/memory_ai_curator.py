@@ -25,7 +25,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from contextlib import nullcontext
 from typing import Any, Mapping
+
+from .episodic_memory import distillation_hash
+from .json_store_io import lock_for_path, locked_path
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +174,16 @@ class MemoryAICurator:
     # ------------------------------------------------------------------
 
     def run_distillation(self, *, budget: str = "normal") -> CuratorResult:
+        store = getattr(self.memory_core, "episodic", None)
+        job_lock = lock_for_path(str(getattr(store, "path", id(self.memory_core))) + ".distillation")
+        if not job_lock.acquire(blocking=False):
+            return CuratorResult(skipped=1, notes=["distillation_busy"])
+        try:
+            return self._run_distillation(budget=budget)
+        finally:
+            job_lock.release()
+
+    def _run_distillation(self, *, budget: str = "normal") -> CuratorResult:
         """Distill episodic clusters → semantic facts."""
         result = CuratorResult()
         if self.memory_core is None or self.llm_service is None:
@@ -190,20 +204,39 @@ class MemoryAICurator:
         clusters = self._cluster_episodes(items, limit=limit)
 
         for cluster in clusters:
+            # The model prompt reads at most eight sources. Do not mark unseen
+            # members of a larger cluster as processed.
+            cluster = cluster[:8]
             if len(cluster) < self.MIN_CLUSTER_SIZE:
                 result.skipped += 1
                 continue
             try:
                 fact = self._distill_cluster(cluster)
-                if fact is None or fact.get("skip"):
+                if fact is None:
                     result.skipped += 1
                     continue
-                committed = self._commit_semantic_fact(fact, evidence_ids=[item.get("id", "") for item in cluster])
-                if committed:
-                    result.distilled += 1
-                    result.notes.append(f"distilled:{fact.get('fact_key') or fact.get('domain')}:{_compact(fact.get('claim',''), 60)}")
-                else:
-                    result.skipped += 1
+                path = getattr(episodic_store, "path", None)
+                with locked_path(path) if path else nullcontext():
+                    validate = getattr(episodic_store, "distillation_sources_current", None)
+                    if callable(validate) and not validate(cluster):
+                        result.skipped += 1
+                        result.notes.append("distillation_sources_changed")
+                        continue
+                    if fact.get("skip") is True:
+                        marker = getattr(episodic_store, "mark_distilled", None)
+                        if callable(marker):
+                            marker(cluster, decision="skipped")
+                        result.skipped += 1
+                        continue
+                    committed = self._commit_semantic_fact(fact, evidence_ids=[item.get("id", "") for item in cluster])
+                    if committed:
+                        marker = getattr(episodic_store, "mark_distilled", None)
+                        if callable(marker):
+                            marker(cluster)
+                        result.distilled += 1
+                        result.notes.append(f"distilled:{fact.get('fact_key') or fact.get('domain')}:{_compact(fact.get('claim',''), 60)}")
+                    else:
+                        result.skipped += 1
             except Exception as exc:
                 result.warnings.append(f"distill_error:{type(exc).__name__}:{exc}")
 
@@ -256,7 +289,9 @@ class MemoryAICurator:
             for item in items
         ]
         # Chỉ xét episode chưa được distill
-        undistilled = [d for d in dicts if "distilled" not in (d.get("tags") or [])]
+        undistilled = [d for d in dicts if "distilled" not in (d.get("tags") or [])
+                       or (d.get("metadata", {}).get("distilled_hash") is not None
+                           and d["metadata"]["distilled_hash"] != distillation_hash(d))]
         if not undistilled:
             return []
 
@@ -308,7 +343,8 @@ class MemoryAICurator:
     # ------------------------------------------------------------------
 
     def _load_concerns(self, path: str | None) -> list[dict]:
-        import os, json as _json
+        import os
+        import json as _json
         if not path:
             path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
         try:
@@ -428,7 +464,8 @@ class MemoryAICurator:
 
     def _mark_concern_bridged(self, concern: dict, path: str | None) -> None:
         """Đánh dấu concern đã được bridge để không gọi lại."""
-        import os, json as _json
+        import os
+        import json as _json
         if not path:
             path = os.path.join(os.getenv("ERIS_MEMORY_CORE_DIR", "memory_core"), "private_concerns.json")
         try:

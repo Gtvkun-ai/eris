@@ -37,18 +37,9 @@ public partial class UdpListener : Node2D
 
 	private void InitializeCapabilityPanel()
 	{
-		_capabilityPanel = new Panel
-		{
-			Name = "CapabilityPanel",
-			Visible = false,
-			CustomMinimumSize = CapabilityPanelMinSize,
-			Size = CapabilityPanelPreferredSize,
-			ZIndex = 99,
-		};
-		GetNode<Control>("CanvasLayer/Control").AddChild(_capabilityPanel);
-		BuildCapabilityPanelUi();
-		if (_contextCapabilityButton != null)
-			_contextCapabilityButton.Pressed += OnContextCapabilityPressed;
+		// Panel "Eris hiểu bạn" độc lập đã retire khỏi Desktop UI. Không dựng control trong scene.
+		_capabilityPanel = null;
+		_contextCapabilityButton = null;
 	}
 
 	private void OnContextCapabilityPressed()
