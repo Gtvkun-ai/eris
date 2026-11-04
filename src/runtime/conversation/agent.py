@@ -167,7 +167,7 @@ ROOT_BATCH_STEP_SCHEMA: dict[str, Any] = {
 
 
 def interaction_choices_enabled() -> bool:
-    return os.getenv("ERIS_ROOT_INTERACTION_CHOICES", "1").strip().lower() not in {"0", "false", "off", "no"}
+    return os.getenv("ERIS_ROOT_INTERACTION_CHOICES", "0").strip().lower() not in {"0", "false", "off", "no"}
 
 
 def root_step_schema() -> dict[str, Any]:

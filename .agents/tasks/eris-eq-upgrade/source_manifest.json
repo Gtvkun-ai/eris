@@ -1,0 +1,13 @@
+{
+  "src/runtime/conversation/interaction_choice.py": "540a75a7a142c30c0911e5cfd4869df4a330c45d65da0eb9d6e88757b11ddc8f",
+  "src/runtime/conversation/agent.py": "875ba45b722b839061faca09bd6c57e67e0b2edfa3baebd87e9c678e5db3643f",
+  "src/runtime/conversation/contracts.py": "c2a05c0f3f4dcab73b231d4f83d4788f9ace1355243c5d37490b19129e5084eb",
+  "src/runtime/conversation/delivery_adapter.py": "e7e8cb63582313a82ba154d4024b76346f6e16a63efc0dc93e5d391f327d13c4",
+  "src/runtime/conversation/observation_bridge.py": "d0c9fc6ef854baf98dd0b80dd387f0ce2fb74f1e2bf27de23654c777efd1c9a0",
+  "src/runtime/conversation/root_prompt_contract.py": "eacf18dd89853131a14295bf0bfc3cc108385233ccb83a80f8295e6b6cfd2192",
+  "src/runtime/conversation/runtime_writer.py": "4776a5dbd3b2e2e3758b6fbbc2492b92a7b23f00de117045749852180cefb3aa",
+  "src/runtime/ai_orchestrated/identity.py": "483238d7ed391cab0d802971afb80788818ab39d615f789354304ef1b4723bb9",
+  "src/runtime/ai_orchestrated/identity_reducer.py": "b9d351e9a7f14ea3b7f4329cf4a8191aa31205b04e15c703590f24f11d6505f9",
+  "src/runtime/ai_orchestrated/state_reducer.py": "bbf5ff5b3894725add579035845440b93f519c30f0054c8b24b856ca25396e84",
+  "src/runtime/ai_orchestrated/model_router.py": "013b7e5debb72c9063ed8ac5d3573b3188c7e29501246ee0306c60bcfb0e226c"
+}

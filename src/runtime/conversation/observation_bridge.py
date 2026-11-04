@@ -242,6 +242,7 @@ class ConversationObservationBridge:
                 self.host, choice=interaction_choice or {}, delivery_id=turn_ref,
                 session_id=session_id, turn_seq=turn_index, goal=choice_goal,
                 assistant_text=text,
+                user_text=str(user_text or ""),
             )
         except Exception as exc:
             self._debug("pending_strategy", exc)

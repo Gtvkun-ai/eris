@@ -1,0 +1,19 @@
+{
+  "deepseek_web": {
+    "n": 8,
+    "ratings": {
+      "pass": 5,
+      "mixed": 3
+    },
+    "median_seconds": 3.9379999999999997
+  },
+  "gemini_web": {
+    "n": 8,
+    "ratings": {
+      "mixed": 1,
+      "pass": 5,
+      "fail": 2
+    },
+    "median_seconds": 7.703
+  }
+}

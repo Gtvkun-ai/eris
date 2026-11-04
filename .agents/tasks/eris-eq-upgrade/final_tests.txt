@@ -1,0 +1,114 @@
+..........................................................FF............ [ 11%]
+...........................FF........................................... [ 23%]
+................................................F....................... [ 34%]
+.....................................................................F.. [ 46%]
+........................................................................ [ 57%]
+........................................................................ [ 69%]
+........................................................................ [ 81%]
+........................................................................ [ 92%]
+..............................................                           [100%]
+================================== FAILURES ===================================
+___________ test_writer_manifest_empty_does_not_bypass_action_guard ___________
+
+    def test_writer_manifest_empty_does_not_bypass_action_guard():
+>       with pytest.raises(RuntimeError, match='public_action_receipt_missing'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RuntimeError
+
+src\tests\conversation\test_action_claim_integrity_v12.py:112: Failed
+___________ test_writer_allows_effect_supported_by_runtime_registry ___________
+
+    def test_writer_allows_effect_supported_by_runtime_registry():
+        registry = RootCapabilityRegistry({})
+        registry.record_result(name='action', invocation_id='real:1', event=EVENT,
+                               run_id=RUN, result={
+                                   'status':'completed', 'success':True,
+                                   'action_id':'send_email',
+                               })
+        rendered = writer({'text':'T\u1edb \u0111\xe3 g\u1eedi email r\u1ed3i.',
+                           'speech_text':'\u30e1\u30fc\u30eb\u3092\u9001\u4fe1\u3057\u307e\u3057\u305f\u3002', 'claim_manifest': []}, registry)
+>       assert len(rendered.metadata['action_claim_receipts']) == 1
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'action_claim_receipts'
+
+src\tests\conversation\test_action_claim_integrity_v12.py:125: KeyError
+______________ test_writer_checks_target_independent_of_manifest ______________
+
+    def test_writer_checks_target_independent_of_manifest():
+        payload = {'text': 'T\u1edb \u0111\xe3 g\u1eedi email cho An.', 'speech_text': '\u30e1\u30fc\u30eb\u3092\u9001\u4fe1\u3057\u307e\u3057\u305f\u3002',
+                   'claim_manifest': []}
+>       with pytest.raises(RuntimeError, match='send'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RuntimeError
+
+src\tests\conversation\test_action_claim_integrity_v2.py:191: Failed
+_________________ test_writer_checks_tts_japanese_action_type _________________
+
+    def test_writer_checks_tts_japanese_action_type():
+>       with pytest.raises(RuntimeError, match='send'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE RuntimeError
+
+src\tests\conversation\test_action_claim_integrity_v2.py:198: Failed
+___________ test_public_memory_text_and_records_share_one_selection ___________
+
+    def test_public_memory_text_and_records_share_one_selection():
+        """Regression: recall() ph\u1ea3i \u0111\u01b0\u1ee3c g\u1ecdi \u0111\xfang m\u1ed9t l\u1ea7n cho text V\xc0 sources."""
+        from memory.memory_kernel import MemoryKernel
+        from memory.memory_kernel_contracts import PublicMemoryContext
+        from memory.memory_packet_builder import MemoryPacket
+        record = MemoryRecord(id="r1", layer="semantic", text="C�u user n�i", metadata={})
+        packet = MemoryPacket(source_records=(record,))
+    
+        class Core:
+            calls = 0
+            def recall(self, query):
+                assert query == "c\xe2u h\u1ecfi"
+                self.calls += 1
+                return packet
+            def render_context_for_packet(self, selected, *, max_lines):
+                assert selected is packet and max_lines == 64
+                return "memory_context_from_same_packet"
+    
+        class LivingUser:
+            calls = 0
+            def compile_context(self, query, *, session_id, token_budget):
+                assert query == "c\xe2u h\u1ecfi" and session_id == "ss" and token_budget == 6000
+                self.calls += 1
+                return SimpleNamespace(items=(), episodes=(), action_context=None,
+                                       render_prompt_context=lambda: "")
+    
+        kernel = object.__new__(MemoryKernel)
+        kernel.core = Core()
+        kernel.living_user = LivingUser()
+        result = kernel.build_public_context("c\xe2u h\u1ecfi", session_id="ss")
+        assert isinstance(result, PublicMemoryContext)
+        assert result.text == "memory_context_from_same_packet"
+        assert result.records == (record,)
+>       assert result.degraded is False
+E       AssertionError: assert True is False
+E        +  where True = PublicMemoryContext(text='memory_context_from_same_packet', records=(MemoryRecord(id='r1', layer='semantic', text='C�u...nce_ids=(), decay_policy='normal', privacy_level='normal', surface_policy='silent_bias', metadata={}),), degraded=True).degraded
+
+src\tests\conversation\test_character_evidence_v1.py:133: AssertionError
+_______ test_empty_manifest_does_not_turn_unverified_action_into_phatic _______
+
+    def test_empty_manifest_does_not_turn_unverified_action_into_phatic():
+        outcome, router, delivery, _ = _run({
+            'text':'T\u1edb \u0111\xe3 g\u1eedi t\xe0i li\u1ec7u cho c\u1eadu r\u1ed3i.',
+            'speech_text':'\u30d5\u30a1\u30a4\u30eb\u3092\u9001\u3063\u305f\u3088\u3002', 'claim_manifest': [],
+        }, verdict={'_runtime_verifier_error':'VERIFIER_PROVIDER_ERROR'})
+>       assert outcome.status == 'writer_failed' and len(delivery.calls)==0
+E       AssertionError: assert ('delivering' == 'writer_failed'
+E         
+E         - writer_failed
+E         + delivering)
+
+src\tests\conversation\test_character_public_claim_gate_v1.py:84: AssertionError
+=========================== short test summary info ===========================
+FAILED src/tests/conversation/test_action_claim_integrity_v12.py::test_writer_manifest_empty_does_not_bypass_action_guard
+FAILED src/tests/conversation/test_action_claim_integrity_v12.py::test_writer_allows_effect_supported_by_runtime_registry
+FAILED src/tests/conversation/test_action_claim_integrity_v2.py::test_writer_checks_target_independent_of_manifest
+FAILED src/tests/conversation/test_action_claim_integrity_v2.py::test_writer_checks_tts_japanese_action_type
+FAILED src/tests/conversation/test_character_evidence_v1.py::test_public_memory_text_and_records_share_one_selection
+FAILED src/tests/conversation/test_character_public_claim_gate_v1.py::test_empty_manifest_does_not_turn_unverified_action_into_phatic
+6 failed, 616 passed in 32.67s

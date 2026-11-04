@@ -77,7 +77,8 @@ def test_root_internal_guide_and_batch_schemas_do_not_add_public_moves():
 def test_fallback_invoke_uses_batch_schema():
     router = FakeRouter({"kind": "no_reply", "reason": "done"})
     decide(router)
-    assert router.calls[0]["schema"] is ROOT_BATCH_STEP_SCHEMA
+    from runtime.conversation.agent import root_step_schema
+    assert router.calls[0]["schema"] == root_step_schema()
 
 
 def test_system_prompt_mentions_batch():

@@ -392,10 +392,11 @@ class IdentityKernelReducer:
         # New Root choices require actual, scoped next-user evidence. Inference
         # confidence alone cannot turn the assistant's prediction into reward.
         evidence = tuple(getattr(consequence, "evidence", ()) or ())
+        cited_refs = {str(item).strip().removeprefix("reaction_ref:").strip() for item in evidence}
         if matched.session_id and (
             not matched.reaction_ref or not matched.reaction_text
             or not matched.turn_seq < matched.reaction_turn_seq <= turn_seq
-            or matched.reaction_ref not in evidence
+            or matched.reaction_ref not in cited_refs
         ):
             return strategies, pending, [], False
 
@@ -423,10 +424,15 @@ class IdentityKernelReducer:
             unknown += 1
 
         shift = reinforcement * confidence * 0.08
+        if matched.strategy == "root_move":
+            # Unclassified moves have no shared behavioral policy to reinforce.
+            # Retain the case and its interpreted outcome, not an aggregate bias.
+            shift = 0.0
         contexts = dict(record.contexts)
         contexts[context] = signed01(float(contexts.get(context, 0.0) or 0.0) + shift)
         experience = {
             "assistant_ref": matched.strategy_use_id, "reaction_ref": matched.reaction_ref,
+            "settled_at": now, "goal": matched.goal,
             "session_id": matched.session_id, "situation": matched.situation,
             "context": context, "expected_effect": matched.expected_effect,
             "listener_action": matched.listener_action,

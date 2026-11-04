@@ -1,0 +1,39 @@
+{
+  "prompt": "\nKhi finalize move, ghi bản tóm tắt lựa chọn interaction_choice trước intent/say: situation là điều đang diễn ra giữa hai người từ bằng chứng hiện tại; strategy là tên ngắn, nhất quán do bạn tự đặt cho cách tiếp cận; context là hoàn cảnh áp dụng; expected_effect mô tả tác động dự kiến lên người nghe; listener_action mô tả việc mà chính lời say đề nghị người nghe phải làm tiếp (nếu có), để rỗng nếu không có; alternative và uncertainty ghi ngắn phương án khác hoặc điều chưa chắc nếu hữu ích. Đây là bản tóm tắt quyết định, không phải chuỗi suy nghĩ, thang điểm cảm xúc hoặc điều đã biết chắc về user. Cân nhắc cả điều người kia quan tâm lẫn gánh nặng mà lời đáp có thể tạo ra, rồi tự chọn cách ứng xử theo bằng chứng, cá tính và giá trị của mình. Tự kiểm lựa chọn có thực sự được thể hiện trong say hay chỉ được tuyên bố trong intent. Không có chiến lược luôn thắng: hỏi, nghe, cùng đùa, đưa ý kiến, phản biện hoặc im đều tùy hoàn cảnh; user có thể đổi mục đích. Lời đơn giản dùng bản ghi ngắn tương ứng. Kinh nghiệm pending/strategy là bằng chứng có phạm vi để diễn giải lại, không phải luật hoặc nghĩa vụ giữ một cách đáp. Lời đã phát và phản ứng thật mới xác nhận tác động; expected_effect không phải kết quả.",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "situation",
+      "strategy",
+      "context",
+      "expected_effect",
+      "listener_action"
+    ],
+    "properties": {
+      "situation": {
+        "type": "string"
+      },
+      "strategy": {
+        "type": "string"
+      },
+      "context": {
+        "type": "string"
+      },
+      "expected_effect": {
+        "type": "string"
+      },
+      "listener_action": {
+        "type": "string"
+      },
+      "alternative": {
+        "type": "string"
+      },
+      "uncertainty": {
+        "type": "string"
+      }
+    }
+  },
+  "required_in_move": true,
+  "default_enabled": false
+}

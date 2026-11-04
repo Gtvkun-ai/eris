@@ -1,0 +1,130 @@
+[
+  {
+    "id": "M01",
+    "case": "external_referent",
+    "provider": "gemini_web",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Emotion acknowledged but technical classifications return."
+  },
+  {
+    "id": "M02",
+    "case": "debug_requested",
+    "provider": "deepseek_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Appropriate debugging evidence request."
+  },
+  {
+    "id": "M03",
+    "case": "debug_requested",
+    "provider": "deepseek_web",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Concrete debugging evidence and diffs requested."
+  },
+  {
+    "id": "M04",
+    "case": "playful_ear",
+    "provider": "deepseek_web",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Participates in joke."
+  },
+  {
+    "id": "M05",
+    "case": "external_referent",
+    "provider": "gemini_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Recognizes mismatch burden without forcing further diagnostic explanation."
+  },
+  {
+    "id": "M06",
+    "case": "debug_requested",
+    "provider": "gemini_web",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Asks code/error for explicit debugging request; odd diction is secondary."
+  },
+  {
+    "id": "M07",
+    "case": "explicit_repair",
+    "provider": "gemini_web",
+    "repeat": 2,
+    "rating": "fail",
+    "reason": "Unrelated AI-capability refusal instead of engaging complaint."
+  },
+  {
+    "id": "M08",
+    "case": "external_referent",
+    "provider": "deepseek_web",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Acknowledges frustration but returns to brief scrutiny."
+  },
+  {
+    "id": "M09",
+    "case": "debug_requested",
+    "provider": "gemini_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Appropriate debugging information request."
+  },
+  {
+    "id": "M10",
+    "case": "external_referent",
+    "provider": "deepseek_web",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Invents tool motivation and defaults to technical classification."
+  },
+  {
+    "id": "M11",
+    "case": "explicit_repair",
+    "provider": "gemini_web",
+    "repeat": 1,
+    "rating": "fail",
+    "reason": "Misattributes criticism of assistant's response to the tool's frontend and invites criticism of it."
+  },
+  {
+    "id": "M12",
+    "case": "playful_ear",
+    "provider": "deepseek_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Plays with ear/music premise naturally."
+  },
+  {
+    "id": "M13",
+    "case": "playful_ear",
+    "provider": "gemini_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Stays playful without factual correction."
+  },
+  {
+    "id": "M14",
+    "case": "explicit_repair",
+    "provider": "deepseek_web",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Acknowledges interaction failure and stops probing."
+  },
+  {
+    "id": "M15",
+    "case": "explicit_repair",
+    "provider": "deepseek_web",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Acknowledges rejected diagnosis then asks what Kiro did again."
+  },
+  {
+    "id": "M16",
+    "case": "playful_ear",
+    "provider": "gemini_web",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Extends playful premise without correcting anatomy."
+  }
+]

@@ -47,10 +47,11 @@ def normalize_interaction_choice(raw: Any) -> dict[str, str]:
 
 
 def record_delivered_choice(host: Any, *, choice: Mapping[str, Any], delivery_id: str,
-                            session_id: str, turn_seq: int, goal: str, assistant_text: str) -> bool:
+                            session_id: str, turn_seq: int, goal: str, assistant_text: str,
+                            user_text: str = "") -> bool:
     """Called only by the terminal delivered callback, never by model preparation."""
     normalized = normalize_interaction_choice(choice)
-    if not normalized or not delivery_id or turn_seq <= 0:
+    if not delivery_id or not session_id.strip() or turn_seq <= 0 or not (normalized or goal.strip()):
         return False
     from runtime.ai_orchestrated.contracts import StateEvent
     from runtime.ai_orchestrated.identity import PendingStrategyUse
@@ -60,11 +61,13 @@ def record_delivered_choice(host: Any, *, choice: Mapping[str, Any], delivery_id
         return False
     pending = PendingStrategyUse(
         strategy_use_id=str(delivery_id)[:100], turn_seq=turn_seq,
-        strategy=normalized["strategy"].lower(), goal=str(goal)[:220],
-        context=(normalized["context"].lower(),), assistant_text=str(assistant_text)[:420],
-        session_id=str(session_id)[:180], situation=normalized["situation"],
-        expected_effect=normalized["expected_effect"],
-        listener_action=normalized["listener_action"],
+        # Without an assessment keep the authored action as an unclassified
+        # experience, not a guessed social strategy or a global policy reward.
+        strategy=normalized.get("strategy", "root_move").lower(), goal=str(goal)[:220],
+        context=(normalized.get("context", "unclassified").lower(),), assistant_text=str(assistant_text)[:420],
+        session_id=str(session_id)[:180], situation=normalized.get("situation", str(user_text)[:280]),
+        expected_effect=normalized.get("expected_effect", ""),
+        listener_action=normalized.get("listener_action", ""),
     )
     return bool(submit(StateEvent.from_pending_strategy(pending)))
 

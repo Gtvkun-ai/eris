@@ -1,0 +1,6 @@
+.agents\tasks\eris-eq-upgrade\before\src\runtime\ai_orchestrated\identity_reducer.py:16:5: F401 [*] `.identity.DEFAULT_BELIEFS` imported but unused
+.agents\tasks\eris-eq-upgrade\before\src\runtime\ai_orchestrated\identity_reducer.py:22:5: F401 [*] `.identity.Activation` imported but unused
+.agents\tasks\eris-eq-upgrade\before\src\runtime\ai_orchestrated\model_router.py:21:5: F401 [*] `runtime.eris_voice_contract.AUTONOMOUS_VOICE_CORE_V39` imported but unused
+.agents\tasks\eris-eq-upgrade\before\src\runtime\conversation\runtime_writer.py:133:13: B010 [*] Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.
+Found 4 errors.
+[*] 4 fixable with `--fix`.

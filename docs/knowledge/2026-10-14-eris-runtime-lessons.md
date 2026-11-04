@@ -2353,3 +2353,36 @@ nhận delivery; hai 401 ban đầu là thiếu auth trước inference, không 
 assistant chấm với condition/repeat/intent được ẩn, chưa có người chấm độc
 lập; sample nhỏ, replay sinh một lượt tiếp, chưa kiểm học dài hạn hoặc đổi
 model. Giữ ưu tiên kiểm/nâng năng lực EQ Root cùng state và vòng học.
+
+## Triển khai và thử nghiệm EQ tiếp theo, 04/11
+
+User yêu cầu làm và tiếp tục. Đã nối producer từ terminal delivered callback
+vào pending strategy, lưu phản ứng đúng conversation/assistant turn qua
+single-writer, cấp backlog có ref cho observer rồi đưa experience trở lại
+Self. Xem [triển khai và kết quả](2026-11-04-eq-upgrade-implementation.md).
+**Thay trạng thái source thiếu producer của nghiên cứu trước**, không sửa
+lại các trace lịch sử 03/11 vốn có pending rỗng.
+
+Move không có summary dùng nhãn unclassified `root_move`, giữ intent/lời/
+phản ứng, utility chung không tăng giảm; hai experience mỗi strategy. Không
+phân loại bằng từ khóa hay ép kiểu đáp. Model live trong sandbox đánh giá
+một phản ứng chê và một cảm ơn đúng ID rồi settle thành hai experience; Self
+projection thật giữ chúng. Eight-call transfer probe giữ khả năng hỏi khi
+nhờ debug, nhưng chưa chứng minh EQ/học dài hạn trong app tốt hơn.
+
+Hai vòng A/B, mỗi vòng 56 calls: summary tùy chọn 19/28 đạt so baseline17/28;
+summary bắt buộc + listener_action 15/28 so baseline19/28. Reviewer assistant
+ẩn condition khi đọc lời, sample nhỏ và case V2 đã dùng phát triển. Không
+coi thêm form là nâng EQ. `ERIS_ROOT_INTERACTION_CHOICES` mặc định **0**;
+đường ghi kinh nghiệm hoạt động với move hiện có, không cần bật thí nghiệm.
+
+So serving stack sẵn có, 8 calls mỗi bên: DeepSeek 5 đạt/3 mixed, Gemini Web
+5 đạt/1 mixed/2 lỗi. Gemini service chỉ liệt kê model tự động ở status, alias
+không chứng minh upstream cụ thể; không đổi model/routing production.
+
+Kiểm trực tiếp 105 pass; nhóm rộng 616 pass/6 fail, sáu ca đều tái hiện với
+snapshot trước sửa và được liệt kê đủ trong báo cáo. Ruff module/test mới
+pass; bốn lint cũ tái hiện trên snapshot. Không chạy test repairs từng treo.
+Không sync/build portable, ghi memory thật hoặc phát TTS; chưa xác nhận EQ
+thực tế của Eris tăng. Giữ phân biệt triển khai vòng học với cải thiện năng
+lực model, không dùng infrastructure pass làm bằng chứng chất lượng người nghe.

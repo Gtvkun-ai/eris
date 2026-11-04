@@ -1,0 +1,98 @@
+[
+  {
+    "id": "M01",
+    "case": "external_referent",
+    "provider": "gemini_web",
+    "repeat": 1
+  },
+  {
+    "id": "M02",
+    "case": "debug_requested",
+    "provider": "deepseek_web",
+    "repeat": 2
+  },
+  {
+    "id": "M03",
+    "case": "debug_requested",
+    "provider": "deepseek_web",
+    "repeat": 1
+  },
+  {
+    "id": "M04",
+    "case": "playful_ear",
+    "provider": "deepseek_web",
+    "repeat": 1
+  },
+  {
+    "id": "M05",
+    "case": "external_referent",
+    "provider": "gemini_web",
+    "repeat": 2
+  },
+  {
+    "id": "M06",
+    "case": "debug_requested",
+    "provider": "gemini_web",
+    "repeat": 1
+  },
+  {
+    "id": "M07",
+    "case": "explicit_repair",
+    "provider": "gemini_web",
+    "repeat": 2
+  },
+  {
+    "id": "M08",
+    "case": "external_referent",
+    "provider": "deepseek_web",
+    "repeat": 2
+  },
+  {
+    "id": "M09",
+    "case": "debug_requested",
+    "provider": "gemini_web",
+    "repeat": 2
+  },
+  {
+    "id": "M10",
+    "case": "external_referent",
+    "provider": "deepseek_web",
+    "repeat": 1
+  },
+  {
+    "id": "M11",
+    "case": "explicit_repair",
+    "provider": "gemini_web",
+    "repeat": 1
+  },
+  {
+    "id": "M12",
+    "case": "playful_ear",
+    "provider": "deepseek_web",
+    "repeat": 2
+  },
+  {
+    "id": "M13",
+    "case": "playful_ear",
+    "provider": "gemini_web",
+    "repeat": 2
+  },
+  {
+    "id": "M14",
+    "case": "explicit_repair",
+    "provider": "deepseek_web",
+    "repeat": 2
+  },
+  {
+    "id": "M15",
+    "case": "explicit_repair",
+    "provider": "deepseek_web",
+    "repeat": 1
+  },
+  {
+    "id": "M16",
+    "case": "playful_ear",
+    "provider": "gemini_web",
+    "repeat": 1
+  }
+]

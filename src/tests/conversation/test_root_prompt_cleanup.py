@@ -492,7 +492,8 @@ def test_root_loads_guide_then_executes_with_same_schema_and_no_fake_receipt(mon
                             runtime_context={"__root_capabilities": registry})
     assert decision.reason == "done"
     assert len(executions) == 1
-    assert all(call["schema"] == ROOT_BATCH_STEP_SCHEMA for call in router.calls)
+    from runtime.conversation.agent import root_step_schema
+    assert all(call["schema"] == root_step_schema() for call in router.calls)
     step = json.loads(router.calls[2]["conversation_messages"][-1]["content"])
     guide = step["tool_results"][0]
     assert guide["documentation"] == TOOL_GUIDES["math_workspace"]

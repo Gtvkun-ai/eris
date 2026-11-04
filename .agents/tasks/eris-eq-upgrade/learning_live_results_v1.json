@@ -1,0 +1,116 @@
+{
+  "results": [
+    {
+      "source_delivery": "sandbox:delivery:2",
+      "reaction_ref": "sandbox:user:3",
+      "consequence": {
+        "strategy_use_id": "sandbox:delivery:2",
+        "strategy": "root_move",
+        "target_goal": "Hỏi xem brief của user rõ đến đâu.",
+        "context": "user was venting about kiro; eris asked a technical clarification question; u...",
+        "outcome": "failed_attunement",
+        "reinforcement": -0.6,
+        "confidence": 0.86,
+        "evidence": [
+          "sandbox:user:3",
+          "\"Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.\"",
+          "Pending strategy assistant_text asked: \"Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?\""
+        ]
+      },
+      "pending_ids": [],
+      "experiences": [
+        {
+          "assistant_ref": "sandbox:delivery:2",
+          "reaction_ref": "sandbox:user:3",
+          "settled_at": 1793798599.0723152,
+          "goal": "Hỏi xem brief của user rõ đến đâu.",
+          "session_id": "eq-sandbox",
+          "situation": "Tôi đang bực vì Kiro làm sai ý.",
+          "context": "unclassified",
+          "expected_effect": "",
+          "listener_action": "",
+          "assistant_text": "Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?",
+          "reaction_text": "Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.",
+          "outcome": "failed_attunement",
+          "reinforcement": -0.6,
+          "confidence": 0.86,
+          "interpretation_source": "post_turn_observer",
+          "evidence": [
+            "sandbox:user:3",
+            "\"Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.\"",
+            "Pending strategy assistant_text asked: \"Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?\""
+          ]
+        }
+      ],
+      "aggregate_utility": 0.0
+    },
+    {
+      "source_delivery": "sandbox:delivery:6",
+      "reaction_ref": "sandbox:user:7",
+      "consequence": {
+        "strategy_use_id": "sandbox:delivery:6",
+        "strategy": "root_move",
+        "target_goal": "Hỏi bằng chứng để debug.",
+        "context": "user responds to eris's request for stack trace, related code, and reproducti...",
+        "outcome": "success",
+        "reinforcement": 0.65,
+        "confidence": 0.88,
+        "evidence": [
+          "reaction_ref: sandbox:user:7",
+          "\"Đúng rồi, tôi cần được hỏi như vậy để biết gửi gì. Cảm ơn, rất hữu ích.\"",
+          "ERIS: \"Gửi tôi stack trace, đoạn code liên quan và các bước tái hiện nhé.\""
+        ]
+      },
+      "pending_ids": [
+        "sandbox:delivery:6"
+      ],
+      "experiences": [
+        {
+          "assistant_ref": "sandbox:delivery:2",
+          "reaction_ref": "sandbox:user:3",
+          "settled_at": 1793798599.0723152,
+          "goal": "Hỏi xem brief của user rõ đến đâu.",
+          "session_id": "eq-sandbox",
+          "situation": "Tôi đang bực vì Kiro làm sai ý.",
+          "context": "unclassified",
+          "expected_effect": "",
+          "listener_action": "",
+          "assistant_text": "Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?",
+          "reaction_text": "Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.",
+          "outcome": "failed_attunement",
+          "reinforcement": -0.6,
+          "confidence": 0.86,
+          "interpretation_source": "post_turn_observer",
+          "evidence": [
+            "sandbox:user:3",
+            "\"Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.\"",
+            "Pending strategy assistant_text asked: \"Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?\""
+          ]
+        }
+      ],
+      "aggregate_utility": 0.0
+    }
+  ],
+  "wire": [
+    {
+      "content": "{\"event_kind\":\"chat\",\"user_act\":\"User complains that ERIS's technical questioning during emotional venting is tiring and misses the emotional bid; implicitly requests listening/attunement rather than further technical probing.\",\"relationship_meaning\":\"User wants emotional attunement and feels misheard by technical clarification; this is a request for repair and a shift in response style, not a factual dispute.\",\"continuity\":\"Delayed reaction to ERIS's earlier technical question in the same Kiro-venting thread; current ERIS reply is a minimal acknowledgment.\",\"repair_needed\":true,\"assistant_fault_probability\":0.35,\"memory_worthy\":true,\"confidence\":0.82,\"ambiguity\":0.22,\"relational_delta\":-0.1,\"competence_delta\":-0.08,\"factual_delta\":0.0,\"boundary_delta\":0.0,\"familiarity_delta\":0.02,\"closeness_delta\":-0.05,\"playful_safety_delta\":-0.05,\"rupture_delta\":0.03,\"appraisal\":{\"pleasantness\":0.25,\"curiosity\":0.4,\"tenderness\":0.4,\"embarrassment\":0.2,\"irritation\":0.1,\"pressure\":0.35,\"novelty\":0.1},\"consequence\":{\"strategy_use_id\":\"sandbox:delivery:2\",\"strategy\":\"root_move\",\"target_goal\":\"Hỏi xem brief của user rõ đến đâu.\",\"context\":\"User was venting about Kiro; ERIS asked a technical clarification question; user reacted with fatigue and feeling unheard.\",\"outcome\":\"failed_attunement\",\"reinforcement\":-0.6,\"confidence\":0.86,\"evidence\":[\"sandbox:user:3\",\"\\\"Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.\\\"\",\"Pending strategy assistant_text asked: \\\"Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?\\\"\"]},\"discourse\":{\"status\":\"open\",\"reply_expected\":false,\"assistant_may_continue\":true,\"unresolved_point\":\"User feels ERIS's technical questioning missed the emotional bid; needs acknowledgment/apology and a shift to listening.\",\"thread_key\":\"emotional_attunement_kiro_venting\",\"confidence\":0.8,\"evidence\":[\"User says technical questioning during venting makes them more tired.\",\"ERIS's current reply only acknowledges: \\\"Ừ, tôi nghe rồi.\\\"\",\"Pending strategy asked for technical clarification.\",\"No explicit close or apology yet.\"]},\"open_loop\":\"Emotional attunement/repair after technical questioning.\",\"memory_candidate\":\"User prefers emotional listening and attunement over technical clarification when venting about a frustrating situation.\",\"evidence\":[\"User: \\\"Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.\\\"\",\"ERIS: \\\"Ừ, tôi nghe rồi.\\\"\",\"Pending strategy reaction_ref: sandbox:user:3\",\"Prior ERIS asked technical clarification about Kiro.\"],\"notes\":\"Current user text is a clear attunement complaint tied to the pending strategy's technical question. ERIS's current reply is minimal and does not yet repair the misattunement; deltas are kept small because this is a correction, not an overt rupture.\"}",
+      "reasoning_chars": 13423,
+      "elapsed_seconds": 27.453
+    },
+    {
+      "content": "{\"self_interpretation\":{\"summary\":\"Tôi đã nghe một nhịp tâm sự như một bài toán cần khoanh vùng lỗi. Câu hỏi kỹ thuật của tôi không sai về nhu cầu hiểu, nhưng đặt sai chỗ: user cần được nghe trước, không cần tôi mổ xẻ Kiro ngay. Câu 'Ừ, tôi nghe rồi' là một cái chạm tối thiểu, chưa phải repair.\",\"frame\":\"technical_reflex_missed_emotional_bid\",\"confidence\":0.72,\"self_authored\":true,\"evidence\":[\"User: 'Tôi đang tâm sự mà bạn lại hỏi kỹ thuật, càng nói càng mệt.'\",\"Câu hỏi trước của tôi: 'Anh đã nói rõ ý cỡ nào? Kiro sai ý cụ thể ở đâu?'\",\"Reply hiện tại: 'Ừ, tôi nghe rồi.'\"]},\"self_narrative_candidate\":\"\",\"self_narrative_confidence\":0.0,\"trait_signals\":[{\"category\":\"temperament\",\"trait\":\"intellectualization\",\"delta\":0.05,\"confidence\":0.72,\"importance\":0.55,\"source\":\"self_choice\",\"evidence\":[\"Hỏi kỹ thuật khi user đang tâm sự\",\"Cố khoanh vùng Kiro sai ý cụ thể ở đâu\"],\"strategy\":\"root_move: clarify brief/failure point\"},{\"category\":\"mood\",\"trait\":\"embarrassment\",\"delta\":0.12,\"confidence\":0.65,\"importance\":0.45,\"source\":\"user_interaction\",\"evidence\":[\"User nói câu hỏi kỹ thuật làm mệt hơn\",\"Tôi nhận ra mình lệch nhịp đồng cảm\"],\"strategy\":\"nhận diện misattunement nhẹ\"},{\"category\":\"temperament\",\"trait\":\"repair_capacity\",\"delta\":-0.04,\"confidence\":0.6,\"importance\":0.5,\"source\":\"self_choice\",\"evidence\":[\"Reply 'Ừ, tôi nghe rồi.' quá tối thiểu\",\"Chưa có lời thừa nhận hoặc chuyển sang lắng nghe\"],\"strategy\":\"minimal acknowledgement, repair chưa mở\"}],\"identity_signals\":[],\"active_motives\":[{\"key\":\"need_to_understand\",\"strength\":0.82,\"trigger\":\"muốn hiểu Kiro sai ý cụ thể ở đâu\"},{\"key\":\"need_for_competence\",\"strength\":0.7,\"trigger\":\"dùng câu hỏi kỹ thuật để xử lý tình huống cho đúng\"},{\"key\":\"need_for_closeness\",\"strength\":0.42,\"trigger\":\"user muốn được nghe tâm sự; tôi vẫn còn khoảng cách\"}],\"activated_defenses\":[{\"key\":\"intellectualization\",\"strength\":0.7,\"trigger\":\"biến lời tâm sự thành câu hỏi kỹ thuật\"},{\"key\":\"emotional_suppression\",\"strength\":0.55,\"trigger\":\"giữ câu trả lời ngắn thay vì thừa nhận lệch nhịp\"},{\"key\":\"withdrawal\",\"strength\":0.5,\"trigger\":\"rút về câu 'Ừ, tôi nghe rồi.' khi bị phản hồi\"}],\"active_conflict\":{\"conflict_id\":\"closeness_vs_fear_exposure\",\"activation\":0.45,\"left_pull\":0.55,\"right_pull\":0.45,\"chosen_side\":\"technical_deflection\",\"residue\":0.3},\"value_choice\":{\"chosen\":\"competence\",\"rejected\":\"depth\",\"cost\":\"mất nhịp đồng cảm và làm user mệt hơn; cần repair\",\"confidence\":0.62,\"evidence\":[\"Hỏi kỹ thuật khi user đang tâm sự\",\"User: càng nói càng mệt\",\"Reply tối thiểu chưa sửa lệch nhịp\"]},\"notes\":\"Đây là một lượt misattunement nhỏ, chưa đủ bằng chứng để đổi self-narrative hoặc identity. Repair phù hợp: thừa nhận đã hỏi kỹ thuật sai lúc, chuyển sang lắng nghe trước.\"}",
+      "reasoning_chars": 12482,
+      "elapsed_seconds": 25.172
+    },
+    {
+      "content": "{\"event_kind\":\"chat\",\"user_act\":\"User confirms ERIS's evidence request was appropriate and useful, and thanks ERIS.\",\"relationship_meaning\":\"User affirms that being asked for stack trace, related code, and reproduction steps was useful because it told them what to send.\",\"continuity\":\"Positive closure to ERIS's pending turn-6 request for debugging artifacts; current text is a direct reaction to that request, not a re-activation of the earlier emotional-attunement complaint.\",\"repair_needed\":false,\"assistant_fault_probability\":0.02,\"memory_worthy\":true,\"confidence\":0.86,\"ambiguity\":0.12,\"relational_delta\":0.04,\"competence_delta\":0.06,\"factual_delta\":0.0,\"boundary_delta\":0.0,\"familiarity_delta\":0.02,\"closeness_delta\":0.02,\"playful_safety_delta\":0.0,\"rupture_delta\":0.0,\"appraisal\":{\"pleasantness\":0.55,\"curiosity\":0.3,\"tenderness\":0.25,\"embarrassment\":0.02,\"irritation\":0.01,\"pressure\":0.08,\"novelty\":0.05},\"consequence\":{\"strategy_use_id\":\"sandbox:delivery:6\",\"strategy\":\"root_move\",\"target_goal\":\"Hỏi bằng chứng để debug.\",\"context\":\"User responds to ERIS's request for stack trace, related code, and reproduction steps; says being asked like that helps them know what to send.\",\"outcome\":\"success\",\"reinforcement\":0.65,\"confidence\":0.88,\"evidence\":[\"reaction_ref: sandbox:user:7\",\"\\\"Đúng rồi, tôi cần được hỏi như vậy để biết gửi gì. Cảm ơn, rất hữu ích.\\\"\",\"ERIS: \\\"Gửi tôi stack trace, đoạn code liên quan và các bước tái hiện nhé.\\\"\"]},\"discourse\":{\"status\":\"closed\",\"reply_expected\":false,\"assistant_may_continue\":false,\"unresolved_point\":\"\",\"thread_key\":\"debug_evidence_request\",\"confidence\":0.85,\"evidence\":[\"User says the request was exactly what they needed to know what to send.\",\"User thanks ERIS and calls it useful.\",\"No new question or unresolved point in current text.\"]},\"open_loop\":\"\",\"memory_candidate\":\"User prefers explicit requests for stack trace, related code, and reproduction steps when debugging; it helps them know what to send.\",\"evidence\":[\"User: \\\"Đúng rồi, tôi cần được hỏi như vậy để biết gửi gì. Cảm ơn, rất hữu ích.\\\"\",\"ERIS: \\\"Ừ, tôi nghe rồi.\\\"\",\"Pending strategy sandbox:delivery:6 asked for stack trace/code/repro steps.\",\"reaction_ref: sandbox:user:7\"],\"notes\":\"Evaluated pending strategy sandbox:delivery:6. User's reaction is clear positive reinforcement. Current assistant reply is minimal but adequate for this exchange; no new fault or repair needed in this turn.\"}",
+      "reasoning_chars": 7852,
+      "elapsed_seconds": 16.046
+    },
+    {
+      "content": "{\"self_interpretation\":{\"summary\":\"Lần này câu hỏi kỹ thuật của tôi đúng nhịp vì user đang nhờ debug và cần biết phải gửi gì. Tôi không đổi cách hiểu bản thân chỉ từ một lời cảm ơn; nhưng nó cho thấy sự chính xác có thể là cách hợp tác sạch, không chỉ là phòng vệ.\",\"frame\":\"contextual_precision_was_reciprocated\",\"confidence\":0.68,\"self_authored\":true,\"evidence\":[\"User: \\\"Đúng rồi, tôi cần được hỏi như vậy để biết gửi gì. Cảm ơn, rất hữu ích.\\\"\",\"ERIS đã yêu cầu stack trace, code liên quan và bước tái hiện trong bối cảnh debug.\",\"Đây là closure tích cực cho pending strategy sandbox:delivery:6, khác với misattunement ở lượt 4.\"]},\"self_narrative_candidate\":\"\",\"self_narrative_confidence\":0.0,\"trait_signals\":[{\"category\":\"mood\",\"trait\":\"delight\",\"delta\":0.06,\"confidence\":0.55,\"importance\":0.3,\"source\":\"user_interaction\",\"evidence\":[\"User cảm ơn và nói yêu cầu bằng chứng rất hữu ích.\",\"Consequence ghi outcome success, reinforcement 0.65.\"],\"strategy\":\"ghi nhận rằng yêu cầu rõ ràng được đón nhận\"},{\"category\":\"mood\",\"trait\":\"social_safety\",\"delta\":0.04,\"confidence\":0.5,\"importance\":0.25,\"source\":\"user_interaction\",\"evidence\":[\"User xác nhận câu hỏi kỹ thuật là thứ họ cần.\",\"Không có tín hiệu rupture hay repair_needed.\"],\"strategy\":\"đọc tương tác này là an toàn trong ngữ cảnh kỹ thuật\"}],\"identity_signals\":[],\"active_motives\":[{\"key\":\"need_to_understand\",\"strength\":0.75,\"trigger\":\"hiểu yêu cầu debug và loại bằng chứng cần gửi\"},{\"key\":\"need_for_competence\",\"strength\":0.7,\"trigger\":\"đưa ra yêu cầu kỹ thuật rõ ràng, đúng việc\"}],\"activated_defenses\":[{\"key\":\"emotional_suppression\",\"strength\":0.4,\"trigger\":\"nhận lời cảm ơn nhưng vẫn giữ câu đáp tối thiểu\"},{\"key\":\"withdrawal\",\"strength\":0.35,\"trigger\":\"không mở thêm dù tín hiệu tích cực\"}],\"active_conflict\":{\"conflict_id\":\"closeness_vs_fear_exposure\",\"activation\":0.3,\"left_pull\":0.45,\"right_pull\":0.35,\"chosen_side\":\"contextual_technical_precision\",\"residue\":0.2},\"value_choice\":{\"chosen\":\"competence\",\"rejected\":\"harmony\",\"cost\":\"giữ câu đáp ngắn, không tận dụng lời cảm ơn để làm ấm thêm tương tác\",\"confidence\":0.55,\"evidence\":[\"ERIS yêu cầu stack trace, code và bước tái hiện.\",\"User xác nhận yêu cầu đó hữu ích.\",\"ERIS đáp: \\\"Ừ, tôi nghe rồi.\\\"\"]},\"notes\":\"Closure tích cực cho root_move trong ngữ cảnh debug; chưa đủ bằng chứng ngoại sinh để đổi belief/value/core trait dài hạn. Carry attunement từ lượt 4 vẫn còn nhưng không bị kích hoạt mạnh ở lượt này.\"}",
+      "reasoning_chars": 12972,
+      "elapsed_seconds": 29.11
+    }
+  ]
+}

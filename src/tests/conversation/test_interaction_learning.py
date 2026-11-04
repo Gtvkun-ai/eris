@@ -147,6 +147,32 @@ def test_disabled_learning_records_no_choice_or_reaction():
         reducer.close()
 
 
+def test_unclassified_root_move_retains_case_without_global_policy_reward(setup_reducer):
+    host, reducer = setup_reducer
+    assert record_delivered_choice(host, choice={}, delivery_id="delivery:one", session_id="s",
+        turn_seq=2, goal="Ask about the requirement", assistant_text="What did you specify?",
+        user_text="I was sharing my frustration.")
+    reacted(host)
+    assert reducer.wait_idle()
+    observe(reducer)
+    record = reducer.snapshot().identity.strategies["root_move"]
+    assert record.utility == 0 and record.failures == 1
+    assert record.experiences[-1]["goal"] == "Ask about the requirement"
+    assert record.experiences[-1]["reaction_ref"] == "user:3"
+    assert not record.experiences[-1]["expected_effect"]
+
+
+def test_evidence_reference_prefix_is_normalized_without_substring_matching(setup_reducer):
+    host, reducer = setup_reducer
+    delivered(host)
+    reacted(host)
+    assert reducer.wait_idle()
+    observe(reducer, evidence=("unrelated user:3 suffix",))
+    assert reducer.snapshot().identity.pending_strategies
+    observe(reducer, turn=6, evidence=("reaction_ref: user:3",))
+    assert not reducer.snapshot().identity.pending_strategies
+
+
 def test_observer_selects_only_saved_reaction_in_same_conversation(monkeypatch):
     from runtime.ai_orchestrated.model_router import AIRuntimeModelRouter
     router = AIRuntimeModelRouter(SimpleNamespace(social_parser_client=object()))
@@ -163,3 +189,11 @@ def test_observer_selects_only_saved_reaction_in_same_conversation(monkeypatch):
             {**pending, "reaction_ref": "", "reaction_text": ""}, pending]}})
     assert calls[0]["payload"]["pending_strategy_for_evaluation"] == [pending]
     assert calls[0]["payload"]["user_text"] == "new topic"
+    monkeypatch.setattr(router, "_call", lambda *_a, **kw: {
+        "user_act": "feedback", "relationship_meaning": "neutral", "confidence": .8,
+        "consequence": {"strategy_use_id": "wrong-conversation-id", "confidence": 1,
+                        "outcome": "success", "reinforcement": 1, "evidence": ["user:3"]}})
+    outcome = router.observe_completed_turn(turn_id="a:10", turn_seq=10, user_text="new topic",
+        assistant_text="another reply", state_summary={"conversation_session_id": "s",
+        "identity": {"pending_strategies": [pending]}})
+    assert not outcome.consequence.strategy_use_id

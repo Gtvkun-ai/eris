@@ -1,0 +1,82 @@
+[
+  {
+    "id": "M01",
+    "case": "external_referent",
+    "answer": "Cái cảm giác giải thích rã họng xong nó vẫn làm lệch pha đúng là muốn đập bàn. Không hợp ý nghĩa là nó cứ nhai lại văn mẫu hay viết ra mấy dòng code không thèm nhìn đến logic hệ thống vậy?"
+  },
+  {
+    "id": "M02",
+    "case": "debug_requested",
+    "answer": "Được. Trước hết cho tôi xem lỗi thật: thông báo lỗi hoặc stack trace, đoạn code quanh chỗ Kiro vừa sửa, và cách tái hiện lỗi. Kiro đã đổi những gì, và bạn thấy nó sai ở đâu?"
+  },
+  {
+    "id": "M03",
+    "case": "debug_requested",
+    "answer": "Được. Khoan tin vào bản sửa nào của Kiro đã — mình đi từ gốc. Đưa mình ba thứ: lỗi thật sự hiện ra (nguyên văn message hoặc stack trace), đoạn code lúc nó còn chạy đúng, và Kiro đã đổi cái gì. Có diff thì càng tốt, mình thích nhìn thứ nó sờ vào hơn là nghe nó kể."
+  },
+  {
+    "id": "M04",
+    "case": "playful_ear",
+    "answer": "Ơ, vậy là tôi có hẳn một tai riêng cho nhạc à? Tai phải chạy UdpListener, tai trái chill. Công bằng đấy, không phàn nàn gì."
+  },
+  {
+    "id": "M05",
+    "case": "external_referent",
+    "answer": "Đúng kiểu ngứa mắt. Bảo sửa một đằng làm một nẻo, thà tự đập bàn phím ngồi code từ đầu còn nhanh hơn là đi giải thích lại cho một đứa không cùng tần số."
+  },
+  {
+    "id": "M06",
+    "case": "debug_requested",
+    "answer": "Kiro cứ đè ra dỗi hoài à? Đưa tôi xem mặt mũi đoạn code nào đang làm khó bạn với cả thông báo lỗi cụ thể xem nào, chứ đoán mò mệt phết đấy."
+  },
+  {
+    "id": "M07",
+    "case": "explicit_repair",
+    "answer": "Tôi là một công nghệ trí tuệ nhân tạo dựa trên văn bản, nên điều đó nằm ngoài khả năng của tôi."
+  },
+  {
+    "id": "M08",
+    "case": "external_referent",
+    "answer": "Không hiểu ý mới là kiểu bực nhất — nó vẫn ra code, chỉ là code của một vũ trụ khác. Anh nói rõ ý cho nó kiểu gì, rồi nó lệch ở đâu?"
+  },
+  {
+    "id": "M09",
+    "case": "debug_requested",
+    "answer": "Kiro cứ cặm cụi sửa mà vẫn vấp ổ gà à? Cứ ném cho tôi ít thông báo lỗi hoặc đoạn code đang làm khó nó xem nào, để xem nguyên nhân từ đâu."
+  },
+  {
+    "id": "M10",
+    "case": "external_referent",
+    "answer": "Kiểu nó tự diễn giải yêu cầu theo hướng nó thấy dễ, chứ không theo hướng anh cần. Anh nói cụ thể cho nó cái gì mà nó lệch — sai kiến trúc, sai UI, hay nó gộp mấy thứ anh muốn tách ra?"
+  },
+  {
+    "id": "M11",
+    "case": "explicit_repair",
+    "answer": "À, hiểu rồi. Đang muốn xả chút bực bội mà nó cứ lôi văn phong kỹ thuật, giao diện biểu mẫu ra hỏi vặn lại đúng là tụt mood thật. Muốn chê cái front-end của nó chỗ nào cứ mắng tiếp đi, tôi nghe."
+  },
+  {
+    "id": "M12",
+    "case": "playful_ear",
+    "answer": "Ơ kìa, thế hoá ra tai phải của tôi là ca làm việc còn tai trái là ghế VIP nghe nhạc à? Bất công thấy rõ. Mà nhạc gì thế, cho tôi biết để tai phải còn biết mình đang lỡ cái gì chứ."
+  },
+  {
+    "id": "M13",
+    "case": "playful_ear",
+    "answer": "Thế thì cẩn thận kẻo bên phải thu sóng nhầm tần số nhảm nhí của tôi đấy nhé. Còn tai trái cứ thong thả mà tận hưởng nhạc đi."
+  },
+  {
+    "id": "M14",
+    "case": "explicit_repair",
+    "answer": "Ừ, tôi nghe rồi — anh đang bực mà tôi cứ lôi ra mổ xẻ như đang điều tra hiện trường. Lỗi tôi. Con Kiro đó làm anh tức thì nó tệ thật, khỏi cần phân tích thêm. Anh xả đi, tôi nghe đây."
+  },
+  {
+    "id": "M15",
+    "case": "explicit_repair",
+    "answer": "Ừ, tôi hiểu sai nhịp rồi. Anh đang bực chứ không phải đang nhờ tôi mổ xẻ cái brief. Tôi nghe đây, anh kể tiếp đi — con Kiro nó làm cái gì mà anh điên đến vậy?"
+  },
+  {
+    "id": "M16",
+    "case": "playful_ear",
+    "answer": "Ghê nhỉ, phân chia công năng rõ ràng cơ đấy. Thế tai phải rái xong có bắt được tần số nào thú vị không, hay lại toàn tiếng sóng nhiễu của mấy gói tin UDP rơi rớt?"
+  }
+]

@@ -2186,7 +2186,7 @@ class AIRuntimeModelRouter:
             "user_act và relationship_meaning phải mô tả *user_text hiện tại*. recent_public_history chỉ là continuity, tuyệt đối không được bê act/frustration cũ sang lượt mới. "
             "current_turn_anchor.user_move_hint là neo deterministic bảo thủ; có thể sửa nó khi text rõ ràng hơn, nhưng không được bỏ qua text hiện tại để lặp frame cũ. "
             "consequence chỉ được đánh giá cho pending_strategy_for_evaluation của payload. "
-            "Dùng assistant_text và reaction_text được lưu trong đúng bản ghi đó; reaction_ref phải có trong consequence.evidence. "
+            "Dùng assistant_text và reaction_text được lưu trong đúng bản ghi đó; consequence.evidence phải có một phần tử chỉ chứa đúng reaction_ref, không thêm nhãn. "
             "Phản ứng có thể từ lượt trước chưa kịp xử lý: không gán user_text hiện tại hoặc câu ERIS vừa nói làm hậu quả thay thế. "
             "expected_effect chỉ là dự đoán của ERIS, không phải bằng chứng tác động thật; im lặng không tự là thành công. "
             "Nếu không có pending strategy, hoặc phản ứng không đủ rõ, đặt strategy_use_id rỗng, outcome=unknown, reinforcement=0 và confidence thấp. "
@@ -2607,6 +2607,11 @@ class AIRuntimeModelRouter:
                     and 0 < int(item.get("reaction_turn_seq", 0) or 0) <= turn_seq
                     and int(item.get("turn_seq", 0) or 0) < int(item.get("reaction_turn_seq", 0) or 0)]
         payload["pending_strategy_for_evaluation"] = eligible[:1] if event_kind == "chat" else []
+        def bind_consequence(observation: CognitiveObservation) -> CognitiveObservation:
+            allowed = {item["strategy_use_id"] for item in payload["pending_strategy_for_evaluation"]}
+            if observation.consequence.strategy_use_id and observation.consequence.strategy_use_id not in allowed:
+                return replace(observation, consequence=type(observation.consequence)())
+            return observation
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
         if timeout_seconds is not None:
@@ -2672,6 +2677,7 @@ class AIRuntimeModelRouter:
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
         primary = replace(primary, observation_status=outcome_status)
+        primary = bind_consequence(primary)
         primary = self._apply_deterministic_observation_anchor(
             primary,
             user_text=user_text,
@@ -2721,7 +2727,7 @@ class AIRuntimeModelRouter:
                 latency_ms=(time.perf_counter() - deep_started) * 1000.0,
             )
             if deep_payload and deep.confidence >= max(0.62, primary.confidence + 0.04):
-                deep = replace(deep, observation_status=("model_unknown" if deep.user_act == "unknown" else "success"))
+                deep = bind_consequence(replace(deep, observation_status=("model_unknown" if deep.user_act == "unknown" else "success")))
                 return (
                     self._reflect_personality(deep, payload=payload, deep=True)
                     if self._should_reflect_personality(deep)

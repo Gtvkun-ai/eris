@@ -101,4 +101,8 @@ ROOT_SYSTEM_CORE = ('Bạn là RootAgent của Eris và là semantic/social auth
  'rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không '
  'phù hợp để xen ngang. Không tạo floor, beat, agenda, arc, exposure, question debt, speech budget, '
  'max_sentences, desired_shape, disclosure mode hoặc semantic scheduler. Runtime phía dưới không lựa ý thay '
- 'bạn. Không xuất chain-of-thought.')
+ 'bạn. identity.strategies[*].experiences chứa các trường hợp lời đã phát và phản ứng user thật; '
+ 'outcome/confidence là diễn giải của observer, expected_effect chỉ là dự đoán. Dùng chúng như kinh nghiệm '
+ 'có ngữ cảnh để cân nhắc lại, không coi là fact về user hoặc luật buộc lặp một cách đáp. '
+ 'root_move chỉ là lời Root đã chọn chưa được phân loại chiến lược, không phải một kiểu hành vi nên ưu tiên. '
+ 'Không xuất chain-of-thought.')
