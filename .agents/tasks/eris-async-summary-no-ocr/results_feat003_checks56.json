@@ -1,0 +1,201 @@
+{
+  "phase": "after",
+  "sleep_s": 6.0,
+  "python": "3.12.10",
+  "started_at": "2026-11-04 14:13:51",
+  "checks": {
+    "5": {
+      "verdict": "PASS",
+      "summary": "all ok",
+      "parts": {
+        "no_ocr_imports": true,
+        "no_backend_probe": true,
+        "no_pip_calls": true,
+        "worker_backend_is_none": true,
+        "snapshots_report_uia_only": true,
+        "no_force_ocr_true_in_chat": true,
+        "explicit_reference_captures_vision_same_turn": true,
+        "switch_on_restores_old_path": true
+      },
+      "off": {
+        "import_attempts": [],
+        "backend_constructions": [],
+        "subprocess_calls": [],
+        "pip_calls": [],
+        "worker_backend": null,
+        "worker_start_s": 0.001,
+        "refresh_snapshot_backend": "uia_only",
+        "background_snapshot_backend": "uia_only",
+        "turns": {
+          "explicit_nhin_man_hinh_di": {
+            "text": "nhin man hinh di",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": false,
+            "needs_visual": true,
+            "route_reason": "no_usable_screen_text_escalate_vision",
+            "capture_called_this_turn": true,
+            "pending_vision_queued": false,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": [
+              "vision"
+            ]
+          },
+          "direct_tu_xem_di": {
+            "text": "tu xem di",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": false,
+            "needs_visual": true,
+            "route_reason": "no_usable_screen_text_escalate_vision",
+            "capture_called_this_turn": true,
+            "pending_vision_queued": false,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": [
+              "vision"
+            ]
+          }
+        }
+      },
+      "on": {
+        "worker_backend": "fakeocr",
+        "refresh_snapshot_backend": "fakeocr",
+        "snapshot_has_ocr_block": true,
+        "force_ocr_true_passed": true,
+        "capture_called_this_turn": false,
+        "pending_vision_queued": true
+      },
+      "title": "OCR off never loads or forces OCR",
+      "duration_s": 0.06
+    },
+    "6": {
+      "verdict": "REPORT",
+      "summary": "ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 | ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 | ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 ...",
+      "table": {
+        "ocr_off(default)": [
+          {
+            "text": "vụ đó lâu rồi á",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "nó ko hiểu ý tôi. làm ko hợp ý",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          }
+        ],
+        "ocr_on": [
+          {
+            "text": "vụ đó lâu rồi á",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "nó ko hiểu ý tôi. làm ko hợp ý",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          }
+        ]
+      },
+      "fix_suggestion": "Stop matching accent-folded 'anh'/'code' anchors and 'no'/'do'/'day' deictics in screen_anaphora_rescue.py; match the accented original instead (e.g. 'ảnh').",
+      "note": "Report only. Not a pass/fail check.",
+      "title": "False-positive screen routing cost (report only)",
+      "duration_s": 0.02
+    }
+  },
+  "hot_path_timings_s": {},
+  "hypothesis_turn_buffer_lock_blocks_hot_path": null,
+  "total_duration_s": 0.1
+}

@@ -348,6 +348,7 @@ class StrategyRecord:
     contexts: Mapping[str, float] = field(default_factory=dict)
     relationship_scope: str = PRIMARY_RELATIONSHIP_ID
     last_used_turn: int = 0
+    experiences: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "StrategyRecord":
@@ -366,6 +367,9 @@ class StrategyRecord:
             } if isinstance(contexts, Mapping) else {},
             relationship_scope=compact(data.get("relationship_scope", PRIMARY_RELATIONSHIP_ID), 80) or PRIMARY_RELATIONSHIP_ID,
             last_used_turn=max(0, int(data.get("last_used_turn", 0) or 0)),
+            experiences=tuple(dict(item) for item in (data.get("experiences") or ())[-2:]
+                              if isinstance(item, Mapping))
+                if isinstance(data.get("experiences", ()), (list, tuple)) else (),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -384,6 +388,13 @@ class PendingStrategyUse:
     assistant_text: str = ""
     relationship_scope: str = PRIMARY_RELATIONSHIP_ID
     created_at: float = field(default_factory=time.time)
+    session_id: str = ""
+    situation: str = ""
+    expected_effect: str = ""
+    reaction_text: str = ""
+    reaction_ref: str = ""
+    reaction_turn_seq: int = 0
+    listener_action: str = ""
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "PendingStrategyUse":
@@ -404,6 +415,13 @@ class PendingStrategyUse:
             assistant_text=compact(data.get("assistant_text", ""), 420),
             relationship_scope=compact(data.get("relationship_scope", PRIMARY_RELATIONSHIP_ID), 80) or PRIMARY_RELATIONSHIP_ID,
             created_at=max(0.0, float(data.get("created_at", time.time()) or time.time())),
+            session_id=compact(data.get("session_id", ""), 180),
+            situation=compact(data.get("situation", ""), 280),
+            expected_effect=compact(data.get("expected_effect", ""), 240),
+            reaction_text=compact(data.get("reaction_text", ""), 2000),
+            reaction_ref=compact(data.get("reaction_ref", ""), 180),
+            reaction_turn_seq=max(0, int(data.get("reaction_turn_seq", 0) or 0)),
+            listener_action=compact(data.get("listener_action", ""), 180),
         )
 
     def to_dict(self) -> dict[str, Any]:

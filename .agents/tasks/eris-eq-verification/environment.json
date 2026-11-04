@@ -1,0 +1,22 @@
+{
+  "at_utc": "2026-11-04T09:37:16.629393+00:00",
+  "container_id": "43d9d7458557b49980c40c2ddbdf5ed293ed8b2c98e651fd54a7b50d615a582a",
+  "image_id": "sha256:6a2fb8181d5e3c72ab5c4c77d97684dfa008527e02c0e8916d5fa8e6b02ed5ab",
+  "image_name": "ghcr.io/tangsong404/whale2api:latest",
+  "started_at": "2026-11-04T09:34:26.638966808Z",
+  "models": {
+    "data": [
+      {
+        "id": "deepseek-flash",
+        "object": "model",
+        "created": 1677610602,
+        "owned_by": "deepseek",
+        "context_length": 896000,
+        "multimodal": true
+      }
+    ],
+    "object": "list"
+  },
+  "gateway_started_by": "user",
+  "auth_source": "portable config/secrets.json api_keys: executive, else shared; credential never exported"
+}

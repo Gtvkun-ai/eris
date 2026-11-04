@@ -1894,6 +1894,7 @@ def test_chat_screen_route_forces_ocr_refresh_before_vision(monkeypatch) -> None
     from screen.screen_relevance_router import ScreenRelevanceRouter
 
     monkeypatch.setenv("ERIS_CHAT_MAIN_VISION", "0")
+    monkeypatch.setenv("ERIS_SCREEN_OCR_ENABLED", "1")
     store = ScreenEvidenceStore()
 
     class _Worker:

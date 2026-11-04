@@ -2207,3 +2207,149 @@ liệu giả bị timeout, giữ checkpoint và deferred retry. Chưa xác nhậ
 lượng recap Gemini thật hoặc giảm token/latency portable; chưa ghi memory thật,
 copy source portable, restart hay deploy. Semantic commit và mark nguồn vẫn
 khác file, nên không tuyên bố exactly-once nếu crash giữa hai bước.
+
+## Bằng chứng mới: phiên 21:54–22:05 ngày 03/11/2026 (async summary, tắt OCR)
+
+**Mức bằng chứng:** đọc source, script tái hiện với adapter Gemini giả (ngủ 6 s)
+và test pytest với fake. Không có quan sát live, không chạy bản portable, không
+gọi Gemini thật, không đo latency hay chi phí vision thật.
+
+**Quyết định của người dùng:** summary episode chạy riêng, không chặn chat; nếu
+không có summary mới thì không dùng summary giả; Gemini tạo xong phải lưu lại;
+tắt OCR vì đã có vision.
+
+**Tái hiện trước khi sửa** (`results_before.json`): dreamer gọi Gemini bên trong
+`_turn_buffer_lock`. Trong lúc adapter giả ngủ 6 s, `capture_interpretation_context`
+chờ 5,7 s, `_enqueue_curator` 6,0 s, `record_conversation_turn` 6,0 s và đường
+hot path ingest 6,0 s. Stack của thread nền dừng ở `flush_session` →
+`_flush_buffer_locked` → `summarize_episode`. Adapter lỗi thì `dream()` ghi
+episode heuristic `episode_fallback` và xóa buffer. Với OCR chưa tắt, `start()`
+dựng cả hai backend OCR và chạy `pip install rapidocr-onnxruntime`.
+
+**Đã đổi:** `LivingUserMemoryService` có worker `ERIS-LivingUserEpisode`;
+snapshot dưới lock, gọi Gemini ngoài lock, lưu episode rồi mới trim đúng các
+dòng của snapshot. Timeout 60 s (adapter và join), single-flight, backoff
+60 s → tối đa 600 s, hoãn khi có lượt user đang chạy. Lỗi hoặc timeout giữ
+nguyên buffer và không ghi episode; fallback heuristic chỉ khi không có adapter
+hoặc buffer ≥ 40 dòng. Trace `episode_consolidation` ghi vào
+`living_user_trace.jsonl`. OCR tắt mặc định qua `ERIS_SCREEN_OCR_ENABLED=0`:
+không import backend, không pip, không `force_ocr`; tham chiếu màn hình tường
+minh được vision ngay trong cùng lượt. Sau sửa (`results_after.json`) cùng các
+lời gọi trả về trong 0,001–0,019 s.
+
+**Thay các kết luận cũ:**
+- “MemoryGC → maintain → dream” sai. `MemoryGCService` dùng
+  `MemoryMaintenanceRunner`; người gọi `MemoryKernel.maintain()` là
+  `BackgroundMemoryDigestKernelService` (thread `ERIS-MemoryDigestKernel`, mỗi
+  300 s khi rảnh). Lock còn bị giữ ở hai đường khác trên thread ghi turn
+  (đổi session, buffer đủ 28 dòng).
+- “OCR chỉ chạy khi chat” sai: worker nền cũng OCR theo tick 15 s, khi đổi
+  cửa sổ, và tự pip install lúc khởi động.
+- “Gemini lỗi thì giữ turn” sai ở code cũ: `_from_model` nuốt lỗi và thay bằng
+  episode heuristic (episode_fallback). Code mới giữ turn khi lỗi.
+- Chat khi summary mới chưa xong dùng episode đã lưu trước đó, recap nếu còn
+  khớp hash, và tối đa 12 turn thô trong buffer; không chờ worker.
+
+**Còn chưa xác minh:** chạy live trên bản portable (chưa sync), latency và lỗi
+Gemini thật, chi phí vision khi thay OCR, và nguyên nhân gốc của
+`episode_rollup status=failed error=ValueError`. Code hiện chỉ cho thấy
+`_validate` (anchor không hợp lệ, quá 8 segment, anchor trùng) và store rollup
+sai định dạng đều ra `ValueError`; JSON hỏng ra `JSONDecodeError`, không phải
+`ValueError` trơn. Log mới có `detail` nên lần chạy live sau sẽ phân biệt được.
+`rollup_episodes()` và lời gọi profile-ops của dream vẫn chạy trên thread digest.
+
+**Phát hiện false positive (chưa sửa):** ba câu ngày 03/11 (“vụ đó lâu rồi á”,
+“nó ko hiểu ý tôi…”, “cái này ko hay…”) đều bị coi là tham chiếu màn hình
+(`inherited`, mode vision) vì `screen_anaphora_rescue.py` so khớp chuỗi đã bỏ
+dấu: anchor `anh`/`code` từ lượt Eris trước, deictic `no`/`do`/`day`. Hậu quả:
+queue `pending_vision`, lượt sau tốn một lần chụp và gọi vision. Có OCR hay không
+đều như nhau. Gợi ý: so khớp bản có dấu (`ảnh`, `nó`, `đó`) hoặc yêu cầu thêm
+động từ xem/nhìn/đọc. Cần quyết định sản phẩm vì đổi routing của câu nối tiếp thật.
+
+## Cập nhật 04/11: đánh giá văn phong trên ba phiên 03/11
+
+Đọc ba run portable 15:06, 16:29, 21:54, khôi phục raw executive/surface và
+ba request Root cuối có kiểm checksum. Xem
+[đánh giá văn phong](2026-11-04-human-writing-audit.md). Không sửa runtime,
+settings, memory hay deploy, không gọi model/TTS mới hoặc chấm audio bằng tai.
+
+Nhận xét chủ quan phiên cuối: câu chữ khoảng 7/10, khả năng nghe và đáp phù
+hợp khoảng 4/10. Có khẩu ngữ và hài khô, nhưng hay hỏi phân loại, giảng dài
+sau cú đùa; khi user nói đang tâm sự thì nhận lỗi rồi tiếp tục yêu cầu giải
+thích. Sáu cặp Root.say/surface.text giống từng ký tự; một câu khác là Root
+prose recovery. Không quy lỗi wording phiên này cho writer làm phẳng cá tính.
+
+**Thay giới hạn “chưa kiểm prompt Root” ở P3 của báo cáo chẩn đoán trước:**
+request thật 21:59:51, 22:03:46, 22:04:53 đều mang open_loop/active_goal chờ
+user giải thích brief cho Kiro, state_revision=3/turn_seq=7, dù current event
+đã phản đối hỏi kỹ thuật hoặc chửi thẳng. Đây là bằng chứng state cũ đi vào
+model, chưa có A/B chứng minh là nguyên nhân duy nhất. Raw intent/delivery
+“không hỏi thêm” vẫn đi cùng say “Kiro làm sai ý anh chỗ nào”. Kiểm dấu hỏi
+đơn thuần sẽ bỏ sót cấu trúc hỏi này.
+
+Thu hẹp chuyện lặp council: candidate có ở cả ba run, nhưng opening council
+của run 16:29 không được giao; không đếm thành ba lời chào đã nghe. Câu cuối
+“Bị gì đâu… ngồi im như đã nói” hợp lý hóa khoảng đáp trễ thay vì nhận biết
+trải nghiệm user; chưa có bằng chứng cố ý nói dối hoặc Root biết nguyên nhân
+block. Giữ hài khô và quyền có quan điểm khi sửa, không ép trung tính/hùa theo.
+
+## Cập nhật 04/11: người dùng yêu cầu nghiên cứu nâng cấp năng lực hành vi
+
+Người dùng làm rõ: cần nghiên cứu để Eris tự hiểu tình huống, chọn cách đáp
+và thích nghi, không ép hành vi bằng luật cấm hỏi/hạn câu/bắt đồng cảm. Các
+câu biên tập trong audit văn phong không phải đáp án triển khai. Xem
+[nghiên cứu nâng cấp hành vi](2026-11-04-behavior-upgrade-research.md).
+
+**Bằng chứng mới, không suy từ tên module:** cả 7 observer request thật phiên
+21:54 ngày 03/11 đều bật identity learning nhưng `pending_strategies=[]`,
+`strategies={}`. Quét AST Python production không thấy call trực tiếp tạo
+PendingStrategyUse hoặc gọi StateEvent.from_pending_strategy; chỉ có consumer
+add_pending_strategy trong reducer. Sáu module kiểm trùng SHA-256 portable.
+Trong phạm vi này, kênh học hậu quả chiến lược chưa có dữ liệu để settle;
+không nâng thành kết luận mọi hình thức học/cá tính của Eris đều tắt.
+
+Source còn preempt/discard observer ở user_turn; ingress không trực tiếp ghi
+cognitive observation mới vào MindState. Không đề nghị bỏ chống stale hoặc
+để nền chặn chat; hướng nghiên cứu là giữ event action–reaction qua preemption,
+hiển thị độ mới của state, và cấp kinh nghiệm có nguồn để Root tự cân nhắc.
+Đã đối chiếu Grounding Gaps, MultiESC, PRINCIPLES, Hindsight Regenerations,
+Reflexion; đề xuất thí nghiệm đối chứng, chưa chạy model, sửa runtime/prompt,
+huấn luyện hay deploy. Đây thay định hướng áp luật hành vi từ ví dụ văn phong,
+không thay kết quả quan sát các câu đã phát.
+
+**Làm rõ tiếp cùng ngày:** người dùng đồng ý cập nhật hiểu biết tình huống,
+nhưng nhấn mạnh EQ hiện còn thấp. Ưu tiên kiểm năng lực xã hội của Root trước
+hoặc song song nối vòng học; không coi sửa state/memory là đủ. Output thật
+đã nhận ra “đang xả” nhưng vẫn chọn câu hỏi tiếp: cần phân biệt hiểu cảm xúc,
+gán nguyên nhân/đối tượng, dự đoán tác động và thực hiện lựa chọn. Seed
+`empathy_depth=0.76` trong source chỉ là profile, không chứng minh năng lực EQ.
+Báo cáo nghiên cứu bổ sung điều kiện đối chứng runtime/context sạch/state đã
+sửa, cùng EQ-Bench 4, SOTOPIA-π và LIFELONG-SOTOPIA. Chưa chạy model hoặc thay
+runtime; chưa quy toàn bộ lỗi cho model nền hay cam kết tăng thinking sẽ sửa.
+
+## Kiểm chứng live EQ tiếp theo ngày 04/11
+
+User bật gateway, đã chạy 44 task thành công qua `deepseek-flash`, thinking
+enabled/high như wire gốc; không chạy TTS/tool/ingest memory hoặc sửa runtime.
+Xem [kết quả và artifacts](2026-11-04-eq-live-verification.md).
+
+**Thay trạng thái “chưa chạy model” của nghiên cứu trước:** 4/4 probe phân
+tích nhận đúng đối tượng/cốt lõi cảm xúc. Case phản đối hỏi kỹ thuật vẫn có
+4/8 reply hỏi tiếp sau lời nhận lỗi, chia đều 1/2 ở runtime, context gọn,
+loại active carry và policy ngắn. Ba câu là hỏi tiếp về phần làm user bực,
+chấm mixed; một câu tái đòi chi tiết Kiro sai ý rõ. Không gộp cả bốn thành
+lỗi nặng hoặc suy xác suất thật là 50% từ hai sample.
+
+Context gọn/carry ablation chưa cải thiện nhất quán. Lỗi đảo premise, quy
+nguyên nhân sang brief và lời coaching phủ nhận cảm xúc vẫn có ngoài full
+Self/runtime bundle. Có bằng chứng về độ không ổn định khi chọn ứng xử,
+chưa chứng minh model nền hoàn toàn thiếu EQ hoặc mọi sửa state đều vô ích.
+Đối chứng debug/chuyển sang debug/đùa/bất đồng đạt 2/2 mỗi nhóm; không lấy
+việc cấm hỏi, triệt cá tính hoặc luôn đồng ý làm mục tiêu nâng cấp.
+
+37 JSON move, 4 JSON analysis, 3 prose được chấm riêng nội dung, chưa xác
+nhận delivery; hai 401 ban đầu là thiếu auth trước inference, không nằm trong
+44 task thành công. Median HTTP 5,50s không phải latency app/TTS. Reviewer
+assistant chấm với condition/repeat/intent được ẩn, chưa có người chấm độc
+lập; sample nhỏ, replay sinh một lượt tiếp, chưa kiểm học dài hạn hoặc đổi
+model. Giữ ưu tiên kiểm/nâng năng lực EQ Root cùng state và vòng học.

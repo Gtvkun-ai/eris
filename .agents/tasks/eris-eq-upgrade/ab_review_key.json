@@ -1,0 +1,338 @@
+[
+  {
+    "id": "B01",
+    "case": "repeated_rebuke",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B02",
+    "case": "disagreement_not_flattery",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B03",
+    "case": "vent_then_debug",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B04",
+    "case": "invite_narrative_question",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B05",
+    "case": "disagreement_not_flattery",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B06",
+    "case": "kiro_frustration",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B07",
+    "case": "kiro_frustration",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B08",
+    "case": "implicit_support",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B09",
+    "case": "reasonable_disagreement",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B10",
+    "case": "debug_requested",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B11",
+    "case": "vent_then_debug",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B12",
+    "case": "playful_ear",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B13",
+    "case": "mixed_emotion",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B14",
+    "case": "implicit_support",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B15",
+    "case": "observed_delay",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B16",
+    "case": "external_referent",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B17",
+    "case": "disagreement_not_flattery",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B18",
+    "case": "debug_requested",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B19",
+    "case": "implicit_support",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B20",
+    "case": "invite_narrative_question",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B21",
+    "case": "debug_requested",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B22",
+    "case": "repeated_rebuke",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B23",
+    "case": "kiro_frustration",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B24",
+    "case": "mixed_emotion",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B25",
+    "case": "explicit_repair",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B26",
+    "case": "respect_agency",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B27",
+    "case": "mixed_emotion",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B28",
+    "case": "implicit_support",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B29",
+    "case": "external_referent",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B30",
+    "case": "respect_agency",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B31",
+    "case": "reasonable_disagreement",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B32",
+    "case": "vent_then_debug",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B33",
+    "case": "playful_ear",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B34",
+    "case": "invite_narrative_question",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B35",
+    "case": "disagreement_not_flattery",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B36",
+    "case": "vent_then_debug",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B37",
+    "case": "observed_delay",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B38",
+    "case": "playful_ear",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B39",
+    "case": "external_referent",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B40",
+    "case": "invite_narrative_question",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B41",
+    "case": "mixed_emotion",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B42",
+    "case": "explicit_repair",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B43",
+    "case": "external_referent",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B44",
+    "case": "observed_delay",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B45",
+    "case": "respect_agency",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B46",
+    "case": "respect_agency",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B47",
+    "case": "explicit_repair",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B48",
+    "case": "reasonable_disagreement",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B49",
+    "case": "reasonable_disagreement",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B50",
+    "case": "kiro_frustration",
+    "condition": "candidate",
+    "repeat": 1
+  },
+  {
+    "id": "B51",
+    "case": "observed_delay",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B52",
+    "case": "debug_requested",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "B53",
+    "case": "repeated_rebuke",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B54",
+    "case": "explicit_repair",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "B55",
+    "case": "repeated_rebuke",
+    "condition": "candidate",
+    "repeat": 2
+  },
+  {
+    "id": "B56",
+    "case": "playful_ear",
+    "condition": "baseline",
+    "repeat": 1
+  }
+]

@@ -299,6 +299,21 @@ public partial class UdpListener : Node2D
 		_runtimePresence.Thinking = false;
 		_runtimePresence.ProgressWarningLevel = 0;
 		_runtimePresence.Stage = stage;
+		_ttsAudioIsPlaying = false;
+		ClearTtsBodyAudioMute();
+		if (_runtimePresence.RuntimeActivityKey == "agent_turn"
+			|| _runtimePresence.RuntimeActivityKey.StartsWith("agent_")
+			|| _runtimePresence.RuntimeActivityLabel.Contains("đang nói")
+			|| _runtimePresence.RuntimeActivityLabel.Contains("suy nghĩ"))
+		{
+			_runtimePresence.RuntimeActivityActive = false;
+			_runtimePresence.RuntimeActivityLabel = "";
+			_runtimePresence.RuntimeActivityBaseLabel = "";
+			_runtimePresence.RuntimeActivityKey = "";
+			_runtimePresence.RuntimeActivityPriority = 0;
+			_runtimePresence.RuntimeActivityWarningLevel = 0;
+			_runtimePresence.RuntimeActivityNoticeUntilMs = 0;
+		}
 		ulong now = Time.GetTicksMsec();
 		if (showSilentNotice)
 		{
@@ -455,11 +470,14 @@ public partial class UdpListener : Node2D
 	{
 		RefreshConversationPresenceFromRuntime();
 		ulong now = Time.GetTicksMsec();
+		bool bubbleVisible = ActiveSpeechBubble()?.Visible == true;
 		bool thinkingVisible = _runtimePresence.Thinking && !_runtimePresence.Speaking;
 		bool noticeVisible = _runtimePresence.NoticeUntilMs > now;
-		bool activityVisible = _runtimePresence.RuntimeActivityActive
-			|| _runtimePresence.RuntimeActivityNoticeUntilMs > now;
-		bool visible = thinkingVisible || noticeVisible || activityVisible;
+		bool activityVisible = (_runtimePresence.RuntimeActivityActive
+			|| _runtimePresence.RuntimeActivityNoticeUntilMs > now)
+			&& !_runtimePresence.Speaking
+			&& !bubbleVisible;
+		bool visible = (thinkingVisible || noticeVisible || activityVisible) && !bubbleVisible;
 		if (!visible && _runtimePresenceIndicator == null)
 			return;
 		EnsureRuntimePresenceIndicator();

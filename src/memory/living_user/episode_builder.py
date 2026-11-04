@@ -3,6 +3,7 @@
 from __future__ import annotations
 from core.di import resolve_dependency
 
+import inspect
 import re
 import time
 from collections import Counter
@@ -22,6 +23,14 @@ class EpisodeBuilderConfig:
     max_evidence_ids: int = 96
 
 
+class EpisodeModelError(RuntimeError):
+    """Model không trả được tóm tắt hợp lệ và caller cấm dùng bản heuristic."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = str(reason or "empty_summary")
+        super().__init__(f"episode_model_{self.reason}")
+
+
 class UserEpisodeBuilder:
     def __init__(self, *, model_adapter: UserProfileModelAdapter | None = None, config: EpisodeBuilderConfig | None = None) -> None:
         self.model_adapter = model_adapter
@@ -34,7 +43,11 @@ class UserEpisodeBuilder:
         session_id: str,
         scope: UserMemoryScope | None = None,
         metadata: Mapping[str, Any] | None = None,
+        allow_fallback: bool = True,
+        timeout: float | None = None,
     ) -> UserEpisode | None:
+        """Dựng episode. ``allow_fallback=False`` làm lỗi model nổi lên thay vì
+        âm thầm thay bằng bản tóm tắt heuristic thô (caller giữ turn và retry)."""
         rows = [dict(x) for x in turns if isinstance(x, Mapping)][-self.config.max_turns :]
         rows = [x for x in rows if str(x.get("text") or x.get("content") or "").strip()]
         if len(rows) < self.config.min_turns:
@@ -64,7 +77,9 @@ class UserEpisodeBuilder:
         # Retain one bounded source window in the episode, not a transcript
         # duplicated into every profile record. Old episodes remain readable.
         source_metadata = {**dict(metadata or {}), "source_turns": payload["turns"]}
-        model = self._from_model(payload)
+        model, error = self._from_model(payload, timeout)
+        if model is None and not allow_fallback:
+            raise EpisodeModelError(error or "empty_summary")
         if model is not None:
             return UserEpisode(
                 id="",
@@ -87,14 +102,21 @@ class UserEpisodeBuilder:
             )
         return self._fallback(rows, session_id=session_id, scope=scope or UserMemoryScope(), evidence_ids=evidence_ids, started=started, ended=ended, metadata=source_metadata)
 
-    def _from_model(self, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    def _from_model(self, payload: Mapping[str, Any], timeout: float | None = None) -> tuple[Mapping[str, Any] | None, str]:
+        """Trả ``(kết quả, tên lỗi)``; lỗi rỗng khi model trả tóm tắt hợp lệ."""
         if self.model_adapter is None:
-            return None
+            return None, "no_adapter"
+        summarize = self.model_adapter.summarize_episode
+        kwargs: dict[str, Any] = {}
+        if timeout is not None and _accepts_timeout(summarize):
+            kwargs["timeout"] = float(timeout)
         try:
-            result = self.model_adapter.summarize_episode(payload)
-        except Exception:
-            return None
-        return result if isinstance(result, Mapping) and str(result.get("summary") or "").strip() else None
+            result = summarize(payload, **kwargs)
+        except Exception as exc:
+            return None, str(getattr(exc, "status", "") or type(exc).__name__)
+        if isinstance(result, Mapping) and str(result.get("summary") or "").strip():
+            return result, ""
+        return None, "empty_summary"
 
     def _fallback(
         self,
@@ -140,6 +162,15 @@ class UserEpisodeBuilder:
         )
 
 
+def _accepts_timeout(func: Any) -> bool:
+    """Fake/adapter cũ có ``summarize_episode(payload)`` vẫn chạy được."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    return "timeout" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 def _top_terms(text: str, *, limit: int) -> tuple[str, ...]:
     stop = {"toi", "tui", "minh", "ban", "cai", "nay", "do", "la", "va", "cho", "voi", "khong", "lam", "gi", "roi", "mot", "nhung", "duoc", "nua"}
     tokens = [t for t in normalize_text(text).split() if len(t) >= 3 and t not in stop]
@@ -163,4 +194,4 @@ def _derive_user_signals(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(signals))
 
 
-__all__ = ["EpisodeBuilderConfig", "UserEpisodeBuilder"]
+__all__ = ["EpisodeBuilderConfig", "EpisodeModelError", "UserEpisodeBuilder"]

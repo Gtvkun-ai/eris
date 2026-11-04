@@ -1508,6 +1508,8 @@ public partial class UdpListener : Node2D
 		if (_chatPanel == null)
 			return;
 		CloseCharacterContextMenu();
+		HideAllSpeechBubbles();
+		_bubbleHideAtMs = 0;
 		_chatPanel.Visible = true;
 		_chatPanel.ZIndex = 1005;
 		_chatPanel.MoveToFront();
@@ -4949,14 +4951,14 @@ public partial class UdpListener : Node2D
 				return true;
 			}
 
-			if (eventType == "audio_done")
+			if (eventType is "audio_done" or "audio_playback_done")
 			{
 				if (string.IsNullOrWhiteSpace(_ttsBodyAudioTurnId)
 					|| string.IsNullOrWhiteSpace(turnId)
 					|| string.Equals(turnId, _ttsBodyAudioTurnId, StringComparison.Ordinal))
 				{
 					int totalSegments = Math.Max(_ttsBodyAudioSegmentCount, segmentCount);
-					if (segmentId >= totalSegments - 1)
+					if (segmentId >= totalSegments - 1 || eventType == "audio_playback_done")
 					{
 						_ttsAudioIsPlaying = false;
 						ClearTtsBodyAudioMute();

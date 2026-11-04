@@ -2185,7 +2185,10 @@ class AIRuntimeModelRouter:
             "Hãy mô tả điều thật sự vừa xảy ra giữa user và ERIS bằng JSON. "
             "user_act và relationship_meaning phải mô tả *user_text hiện tại*. recent_public_history chỉ là continuity, tuyệt đối không được bê act/frustration cũ sang lượt mới. "
             "current_turn_anchor.user_move_hint là neo deterministic bảo thủ; có thể sửa nó khi text rõ ràng hơn, nhưng không được bỏ qua text hiện tại để lặp frame cũ. "
-            "consequence chỉ được đánh giá cho pending_strategy_for_evaluation trong current_state_summary, dựa vào phản ứng user hiện tại. "
+            "consequence chỉ được đánh giá cho pending_strategy_for_evaluation của payload. "
+            "Dùng assistant_text và reaction_text được lưu trong đúng bản ghi đó; reaction_ref phải có trong consequence.evidence. "
+            "Phản ứng có thể từ lượt trước chưa kịp xử lý: không gán user_text hiện tại hoặc câu ERIS vừa nói làm hậu quả thay thế. "
+            "expected_effect chỉ là dự đoán của ERIS, không phải bằng chứng tác động thật; im lặng không tự là thành công. "
             "Nếu không có pending strategy, hoặc phản ứng không đủ rõ, đặt strategy_use_id rỗng, outcome=unknown, reinforcement=0 và confidence thấp. "
             "Không tự chấm chiến lược của chính câu ERIS vừa nói; câu hiện tại chỉ được ghi thành pending ở runtime để chờ lượt sau. "
             "Tách trust quan hệ khỏi competence/factual reliability. User sửa kỹ thuật không mặc định là rupture. "
@@ -2457,7 +2460,7 @@ class AIRuntimeModelRouter:
             "mechanical_outcomes": payload.get("mechanical_outcomes", []),
             "current_personality": (payload.get("current_state_summary", {}) or {}).get("personality", {}),
             "current_identity": (payload.get("current_state_summary", {}) or {}).get("identity", {}),
-            "pending_strategy_for_evaluation": ((payload.get("current_state_summary", {}) or {}).get("identity", {}) or {}).get("pending_strategies", [])[:1],
+            "pending_strategy_for_evaluation": payload.get("pending_strategy_for_evaluation", []),
             "recent_public_history": payload.get("recent_public_history", []),
         }
         started = time.perf_counter()
@@ -2592,6 +2595,18 @@ class AIRuntimeModelRouter:
             },
             "semantic_frame": semantic_frame,
         }
+        # Evaluate only a previously delivered choice with captured user evidence,
+        # never the current choice or a guessed reaction. One backlog item per
+        # observation keeps background work bounded; discarded work is retryable
+        # because the evidence remains in reducer state.
+        identity = (state_summary or {}).get("identity", {})
+        pending = identity.get("pending_strategies", ()) if isinstance(identity, Mapping) else ()
+        eligible = [dict(item) for item in pending if isinstance(item, Mapping)
+                    and item.get("reaction_ref") and item.get("reaction_text")
+                    and item.get("session_id") == (state_summary or {}).get("conversation_session_id")
+                    and 0 < int(item.get("reaction_turn_seq", 0) or 0) <= turn_seq
+                    and int(item.get("turn_seq", 0) or 0) < int(item.get("reaction_turn_seq", 0) or 0)]
+        payload["pending_strategy_for_evaluation"] = eligible[:1] if event_kind == "chat" else []
         started = time.perf_counter()
         fast = self._fast_observer_payload(user_text, event_kind=event_kind)
         if timeout_seconds is not None:

@@ -24,6 +24,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from .active_window_provider import ActiveWindowProvider
 from .change_detector import ScreenChangeDetector
 from .evidence_models import ActiveWindowInfo, ScreenTextBlock, ScreenTextSnapshot
+from .ocr_config import screen_ocr_enabled
 from .windows_uia_reader import WindowsUIAReader
 
 
@@ -205,6 +206,8 @@ def _auto_install_rapidocr(*, logger=None) -> bool:
     runtime.  It deliberately refuses an unrelated system interpreter.
     """
 
+    if not screen_ocr_enabled():
+        return False
     enabled = os.getenv("ERIS_SCREEN_OCR_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "off", "no"}
     if not enabled or os.getenv("PYTEST_CURRENT_TEST"):
         return False
@@ -281,6 +284,8 @@ def _auto_install_rapidocr(*, logger=None) -> bool:
 _auto_install_rapidocr.attempted = False
 
 def _choose_ocr_backend() -> _OCRBackend:
+    if not screen_ocr_enabled():
+        return _OCRBackend()
     preferred = os.getenv("ERIS_SCREEN_OCR_BACKEND", "auto").strip().lower() or "auto"
     candidates = []
     if preferred in {"auto", "rapidocr"}:
@@ -331,14 +336,23 @@ class IncrementalScreenTextWorker:
             return Path(local) / "ERIS" / "ocr_state.json"
         return Path.cwd() / "ocr_state.json"
 
+    @property
+    def ocr_enabled(self) -> bool:
+        """OCR chỉ chạy khi ``ERIS_SCREEN_OCR_ENABLED`` bật; mặc định tắt (vision + UIA)."""
+
+        return screen_ocr_enabled()
+
     def start(self) -> None:
         if not self.enabled or (self._thread is not None and self._thread.is_alive()):
             return
         self._stop.clear()
-        # Warm backend ngay tại start — RapidOCR phải load ONNX model lần đầu,
-        # nếu để lazy thì lần OCR thật đầu tiên bị thêm ~150-300ms delay.
-        # Chạy trước khi mở thread để backend sẵn sàng ngay vòng poll đầu.
-        self._ensure_ocr_backend(time.time())
+        if self.ocr_enabled:
+            # Warm backend ngay tại start — RapidOCR phải load ONNX model lần đầu,
+            # nếu để lazy thì lần OCR thật đầu tiên bị thêm ~150-300ms delay.
+            # Chạy trước khi mở thread để backend sẵn sàng ngay vòng poll đầu.
+            self._ensure_ocr_backend(time.time())
+        elif self.logger:
+            self.logger.info("[screen text] OCR disabled (ERIS_SCREEN_OCR_ENABLED=0); UIA only")
         # Đặt _last_full_at = 0 để vòng poll đầu tiên force full OCR ngay,
         # thay vì phải chờ full_refresh_sec (15s) mới có dữ liệu tươi.
         self._last_full_at = 0.0
@@ -408,6 +422,8 @@ class IncrementalScreenTextWorker:
         return tuple(merged[:240])
 
     def _ensure_ocr_backend(self, now: float) -> None:
+        if not self.ocr_enabled:
+            return
         if self.backend is not None and self.backend.available:
             return
         retry_sec = max(30.0, float(os.getenv("ERIS_SCREEN_OCR_BACKEND_RETRY_SEC", "120") or 120.0))
@@ -447,7 +463,7 @@ class IncrementalScreenTextWorker:
             return None
         try:
             with self._capture_lock:
-                return self._capture_snapshot(force_ocr=force_ocr)
+                return self._capture_snapshot(force_ocr=bool(force_ocr and self.ocr_enabled))
         except Exception as exc:
             if self.logger:
                 self.logger.warning("[screen text] forced refresh failed: %s", exc)
@@ -468,12 +484,15 @@ class IncrementalScreenTextWorker:
             now = time.time()
             structured_coverage_high = self.triggered_mode and now < self._structured_coverage_until
             should_ocr = bool(
-                force_ocr
-                or (
-                    not structured_coverage_high
-                    and (
-                        (change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
-                        or (now - self._last_full_at) >= self.full_refresh_sec
+                self.ocr_enabled
+                and (
+                    force_ocr
+                    or (
+                        not structured_coverage_high
+                        and (
+                            (change.changed and (now - self._last_ocr_at) >= self.min_ocr_interval)
+                            or (now - self._last_full_at) >= self.full_refresh_sec
+                        )
                     )
                 )
             )

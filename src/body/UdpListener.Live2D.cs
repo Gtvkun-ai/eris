@@ -414,6 +414,11 @@ public partial class UdpListener
 		Vector2 bubbleSize = liveBubble.Size;
 		if (bubbleSize.X <= 0f || bubbleSize.Y <= 0f)
 			bubbleSize = new Vector2(380f, 110f);
+		else if (bubbleSize.Y > 260f)
+		{
+			bubbleSize.Y = 260f;
+			liveBubble.Size = bubbleSize;
+		}
 
 		float margin = 8f;
 		float gap = Mathf.Clamp(Live2DBubbleGap, 8f, 96f);

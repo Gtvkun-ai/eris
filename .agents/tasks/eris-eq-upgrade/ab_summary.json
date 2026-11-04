@@ -1,0 +1,25 @@
+{
+  "baseline": {
+    "n": 28,
+    "http_200": 28,
+    "ratings": {
+      "pass": 17,
+      "mixed": 11
+    },
+    "median_seconds": 5.4925,
+    "valid_choice_count": 0,
+    "json_parse_failures": 3
+  },
+  "candidate": {
+    "n": 28,
+    "http_200": 28,
+    "ratings": {
+      "pass": 19,
+      "mixed": 8,
+      "fail": 1
+    },
+    "median_seconds": 6.1715,
+    "valid_choice_count": 7,
+    "json_parse_failures": 2
+  }
+}

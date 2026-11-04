@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -47,8 +48,8 @@ class GeminiWebUserProfileAdapter:
             raise CuratorInferenceError("parse_error")
         return parsed
 
-    def summarize_episode(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        parsed = self._generate_json(_EPISODE_SYSTEM, payload)
+    def summarize_episode(self, payload: Mapping[str, Any], *, timeout: float | None = None) -> Mapping[str, Any]:
+        parsed = self._generate_json(_EPISODE_SYSTEM, payload, timeout=timeout)
         if not isinstance(parsed.get("summary"), str) or not parsed["summary"].strip():
             raise CuratorInferenceError("parse_error")
         return parsed
@@ -60,11 +61,12 @@ class GeminiWebUserProfileAdapter:
             raise CuratorInferenceError("parse_error")
         return parsed
 
-    def _generate_json(self, system: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _generate_json(self, system: str, payload: Mapping[str, Any], *,
+                       timeout: float | None = None) -> Mapping[str, Any]:
         response = self.create_chat_completion(messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
-        ])
+        ], timeout=timeout)
         parsed = _parse_json(_extract_text(response))
         if not isinstance(parsed, Mapping):
             raise CuratorInferenceError("parse_error")
@@ -81,23 +83,32 @@ class GeminiWebUserProfileAdapter:
             "model": self.model_name, "messages": messages, "temperature": 0.0,
             "max_tokens": max_tokens, "stream": False,
         }
-        with _LANE_LOCK, inference_context(
-            "memory_curator", optional=False, timeout_seconds=deadline,
-            cancel_scope="background:gemini_memory", project="memory_curator",
-            credential_pool="gemini_web", metadata={"provider": self.provider_name},
-        ):
-            try:
-                response = requests.post(
-                    f"{self.base_url}/chat/completions", json=payload, timeout=(5.0, deadline),
-                )
-                response.raise_for_status()
-                data = response.json()
-            except requests.Timeout as exc:
-                raise CuratorInferenceError("timeout") from exc
-            except requests.RequestException as exc:
-                raise CuratorInferenceError("provider_error") from exc
-            except ValueError as exc:
-                raise CuratorInferenceError("parse_error") from exc
+        # Chờ lane có hạn: ngân sách `deadline` gồm cả thời gian chờ lane lẫn HTTP,
+        # để một call khác giữ lane không làm caller treo vô hạn.
+        started = time.monotonic()
+        if not _LANE_LOCK.acquire(timeout=max(0.0, deadline)):
+            raise CuratorInferenceError("lane_busy")
+        try:
+            remaining = max(1.0, deadline - (time.monotonic() - started))
+            with inference_context(
+                "memory_curator", optional=False, timeout_seconds=remaining,
+                cancel_scope="background:gemini_memory", project="memory_curator",
+                credential_pool="gemini_web", metadata={"provider": self.provider_name},
+            ):
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/chat/completions", json=payload, timeout=(5.0, remaining),
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                except requests.Timeout as exc:
+                    raise CuratorInferenceError("timeout") from exc
+                except requests.RequestException as exc:
+                    raise CuratorInferenceError("provider_error") from exc
+                except ValueError as exc:
+                    raise CuratorInferenceError("parse_error") from exc
+        finally:
+            _LANE_LOCK.release()
         if not isinstance(data, Mapping):
             raise CuratorInferenceError("parse_error")
         choices = data.get("choices")

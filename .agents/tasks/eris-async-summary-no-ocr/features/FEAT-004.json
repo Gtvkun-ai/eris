@@ -1,0 +1,28 @@
+{
+    "id":  "FEAT-004",
+    "type":  "docs",
+    "description":  "AFTER-run of the verification script, full regression sweep, and the docs/knowledge update required by AGENTS.md. Depends on FEAT-001, FEAT-002 and FEAT-003.",
+    "status":  "completed",
+    "steps":  [
+                  "Read plan.md section 2 item 4 and the findings of FEAT-001..003 first.",
+                  "Run verify_async_summary_no_ocr.py --phase after; all checks 1-7 must PASS; save results_after.json. If any check fails, fix the cause in src/ (within FEAT-002/003 scope) and rerun.",
+                  "Run the combined pytest sets from FEAT-002 and FEAT-003 plus src/tests/test_root_prompt_cleanup.py and src/tests/conversation/test_p0_delivery_and_interrupt_regressions.py; compare failures against the known baseline list in context.json.",
+                  "Append a new numbered section to docs/knowledge/2026-10-14-eris-runtime-lessons.md (read the end of the file first to match numbering and style): \u0027Bang chung moi: phien 21:54-22:05 ngay 03/11/2026 (async summary, tat OCR)\u0027. Include the user decision, pre-fix repro numbers from results_before.json, the changes, which old conclusions are replaced (MemoryGC-\u003emaintain attribution corrected to BackgroundMemoryDigestKernelService; \u0027OCR only on chat\u0027; \u0027failure keeps turns\u0027), what remains unverified (live portable run, real Gemini latency/vision cost, ValueError root cause), and the accent-folding false-positive finding. Label evidence tiers: source read, fake-adapter tests, no live observation. Do not edit the other docs files.",
+                  "Write c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eris-async-summary-no-ocr\\report.md: what changed (files), before/after numbers, what chat uses when the summary is not ready, ValueError conclusion, false-positive evidence + suggestion, residual risks (digest worker busy during rollup/dream, portable build not synced, nothing committed).",
+                  "Confirm with git status --short that nothing was committed or staged by us and that the user\u0027s pre-existing uncommitted files are unchanged."
+              ],
+    "acceptance_criteria":  [
+                                "results_after.json shows every check PASS.",
+                                "Only the 5 known pre-existing test failures remain across the targeted suites.",
+                                "docs/knowledge/2026-10-14-eris-runtime-lessons.md has the new section stating which earlier conclusions it replaces.",
+                                "report.md exists and states exactly what chat uses when the new summary is not ready.",
+                                "No commit, no push, no changes under C:\\Users\\Gtvkun\\Documents\\eris."
+                            ],
+    "verification":  [
+                         "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.venv\\Scripts\\python.exe c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.agents\\tasks\\eris-async-summary-no-ocr\\verify_async_summary_no_ocr.py --phase after  (exit code 0)",
+                         "c:\\Users\\Gtvkun\\Documents\\GitHub\\eris\\.venv\\Scripts\\python.exe -m pytest src/tests/test_living_user_async_consolidation.py src/tests/test_screen_ocr_switch.py src/tests/test_living_user_memory.py src/tests/test_living_user_memory_v39.py src/tests/test_episode_fading.py src/tests/test_memory_interpretation_context.py src/tests/test_ai_action_memory.py src/tests/test_chat_evidence_ladder_v38.py src/tests/test_architecture_c_runtime_regressions.py src/tests/test_deep_environment_native_v2.py src/tests/test_root_prompt_cleanup.py -q -p no:cacheprovider *\u003e .agents\\tasks\\eris-async-summary-no-ocr\\_final_tests.txt  (read the file; only the 5 known failures allowed)",
+                         "git status --short  (no commits; only intended files changed)"
+                     ],
+    "blocked_reason":  null,
+    "findings":  "After-run: results_after.json checks 1,2,3,4,5,7 PASS, check 6 REPORT only (_final_verify.txt). Sweep (12 files incl. conversation/test_root_prompt_cleanup.py and test_p0_delivery_and_interrupt_regressions.py; the FEAT path src/tests/test_root_prompt_cleanup.py does not exist): 240 passed, 5 failed = exactly the 5 known baseline failures (_final_tests.txt). Docs section appended to docs/knowledge/2026-10-14-eris-runtime-lessons.md; report.md written. Nothing staged or committed; user pre-existing files untouched. Evidence tier: source read + fake-adapter tests, no live run."
+}

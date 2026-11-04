@@ -75,6 +75,7 @@ def test_ambient_ocr_is_injected_even_when_router_mode_is_none() -> None:
 
 def test_ambiguous_ocr_queues_vision_for_next_turn(monkeypatch) -> None:
     monkeypatch.setenv("ERIS_CHAT_MAIN_VISION", "0")
+    monkeypatch.setenv("ERIS_SCREEN_OCR_ENABLED", "1")
     store = _store_with_blocks()
     captures: list[str] = []
 

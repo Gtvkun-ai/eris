@@ -18,6 +18,7 @@ from typing import Any, Mapping
 
 from actions.contracts import VALID_SYSTEM_ACTION_LIST
 from actions.capability_registry import _OBSERVATIONAL_CAPABILITY_IDS
+from screen.ocr_config import screen_ocr_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,7 +344,8 @@ def runtime_sensor_health_snapshot(*, owner: Any | None = None) -> dict[str, str
             owner = _OWNER_REF() if _OWNER_REF is not None else None
     if owner is None:
         return {
-            "deep_environment": "unavailable", "uia": "unavailable", "ocr": "unavailable",
+            "deep_environment": "unavailable", "uia": "unavailable",
+            "ocr": "unavailable" if screen_ocr_enabled() else "disabled",
             "browser_bridge": "disabled", "vlm": "unavailable", "workspace": "unknown",
         }
 
@@ -360,7 +362,9 @@ def runtime_sensor_health_snapshot(*, owner: Any | None = None) -> dict[str, str
             backend = str(getattr(snapshot_fn(), "backend", "") or "").strip().lower()
         except Exception:
             backend = ""
-    if any(name in backend for name in ("rapidocr", "tesseract")):
+    if not screen_ocr_enabled():
+        ocr_status = "disabled"
+    elif any(name in backend for name in ("rapidocr", "tesseract")):
         ocr_status = "healthy"
     elif "uia_only" in backend or screen_worker is not None:
         ocr_status = "degraded"

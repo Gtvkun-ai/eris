@@ -416,7 +416,8 @@ class RuntimeConversationWriter:
 
         move_payload = turn.move.to_dict()
         # Writer cần biết ý định nói, KHÔNG đọc nguyên tài liệu thành lời thoại.
-        writer_brief = {k: v for k, v in move_payload.items() if k not in {"document_source", "presentation_blocks"}}
+        writer_brief = {k: v for k, v in move_payload.items()
+                        if k not in {"document_source", "presentation_blocks", "interaction_choice"}}
         root_context = (
             "ROOT_CONVERSATION_MOVE_V12: "
             + json.dumps(writer_brief, ensure_ascii=False, separators=(",", ":"))

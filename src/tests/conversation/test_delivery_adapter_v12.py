@@ -101,6 +101,50 @@ def test_delivery_adapter_commits_assistant_and_transport_once():
     assert channel == "chat"
 
 
+def test_interaction_choice_is_recorded_only_after_delivered_receipt():
+    from dataclasses import replace
+    from runtime.ai_orchestrated.state_reducer import StateReducer
+    from runtime.conversation.speech_outcome import note_public_delivery_outcome
+    host = _Host()
+    reducer = StateReducer()
+    host.ai_state_reducer = reducer
+    choice = {"situation": "conversation", "strategy": "dry_comment", "context": "banter",
+              "expected_effect": "Share a joke", "listener_action": ""}
+    turn = _turn()
+    turn = replace(turn, move=replace(turn.move, interaction_choice=choice))
+    adapter = RuntimeConversationDeliveryAdapter(host)
+    try:
+        adapter.deliver(turn=turn, rendered=_rendered(), delivery_id="delivery:choice")
+        assert reducer.wait_idle()
+        assert not reducer.snapshot().identity.pending_strategies
+        note_public_delivery_outcome(host, delivery_id="delivery:choice", status="delivered")
+        assert reducer.wait_idle()
+        assert reducer.snapshot().identity.pending_strategies[0].strategy == "dry_comment"
+        assert reducer.snapshot().identity.pending_strategies[0].assistant_text == "Public answer"
+    finally:
+        reducer.close()
+
+
+def test_cancelled_choice_never_becomes_learning_experience():
+    from dataclasses import replace
+    from runtime.ai_orchestrated.state_reducer import StateReducer
+    from runtime.conversation.speech_outcome import note_public_delivery_outcome
+    host = _Host()
+    reducer = StateReducer()
+    host.ai_state_reducer = reducer
+    turn = _turn()
+    turn = replace(turn, move=replace(turn.move, interaction_choice={
+        "situation": "conversation", "strategy": "dry_comment", "context": "banter",
+        "expected_effect": "Share a joke", "listener_action": ""}))
+    try:
+        RuntimeConversationDeliveryAdapter(host).deliver(turn=turn, rendered=_rendered(), delivery_id="delivery:cancelled-choice")
+        note_public_delivery_outcome(host, delivery_id="delivery:cancelled-choice", status="cancelled")
+        assert reducer.wait_idle()
+        assert not reducer.snapshot().identity.pending_strategies
+    finally:
+        reducer.close()
+
+
 def test_delivery_adapter_converts_typed_provider_payload_before_json_boundary():
     """Regression: typed semantic metadata không được làm chết delivery V12."""
 

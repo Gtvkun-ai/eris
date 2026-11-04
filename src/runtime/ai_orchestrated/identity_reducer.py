@@ -70,6 +70,10 @@ class IdentityKernelReducer:
 
         if not pending.strategy_use_id or not pending.strategy:
             return profile
+        if (any(item.strategy_use_id == pending.strategy_use_id for item in profile.pending_strategies)
+                or any(item.get("dimension") == "strategy_use" and
+                       item.get("strategy_use_id") == pending.strategy_use_id for item in profile.ledger)):
+            return profile
         current_time = float(now if now is not None else time.time())
         pending_list = [
             item
@@ -385,6 +389,15 @@ class IdentityKernelReducer:
         matched = next((item for item in pending if item.strategy_use_id == strategy_use_id), None)
         if matched is None:
             return strategies, pending, [], False
+        # New Root choices require actual, scoped next-user evidence. Inference
+        # confidence alone cannot turn the assistant's prediction into reward.
+        evidence = tuple(getattr(consequence, "evidence", ()) or ())
+        if matched.session_id and (
+            not matched.reaction_ref or not matched.reaction_text
+            or not matched.turn_seq < matched.reaction_turn_seq <= turn_seq
+            or matched.reaction_ref not in evidence
+        ):
+            return strategies, pending, [], False
 
         pending = [item for item in pending if item.strategy_use_id != strategy_use_id]
         strategy = matched.strategy
@@ -393,6 +406,8 @@ class IdentityKernelReducer:
         reinforcement = signed01(getattr(consequence, "reinforcement", 0.0))
         outcome = compact(getattr(consequence, "outcome", "unknown"), 120).lower() or "unknown"
         context = compact(getattr(consequence, "context", "general"), 80).lower() or "general"
+        if matched.session_id and matched.context:
+            context = matched.context[0]
 
         success = record.successes
         failure = record.failures
@@ -410,6 +425,15 @@ class IdentityKernelReducer:
         shift = reinforcement * confidence * 0.08
         contexts = dict(record.contexts)
         contexts[context] = signed01(float(contexts.get(context, 0.0) or 0.0) + shift)
+        experience = {
+            "assistant_ref": matched.strategy_use_id, "reaction_ref": matched.reaction_ref,
+            "session_id": matched.session_id, "situation": matched.situation,
+            "context": context, "expected_effect": matched.expected_effect,
+            "listener_action": matched.listener_action,
+            "assistant_text": matched.assistant_text, "reaction_text": matched.reaction_text,
+            "outcome": outcome, "reinforcement": reinforcement, "confidence": confidence,
+            "interpretation_source": "post_turn_observer", "evidence": list(evidence[:5]),
+        }
         strategies[strategy] = replace(
             record,
             successes=success,
@@ -418,6 +442,7 @@ class IdentityKernelReducer:
             utility=signed01(record.utility + shift),
             contexts=contexts,
             last_used_turn=max(record.last_used_turn, matched.turn_seq),
+            experiences=tuple([*record.experiences, experience][-2:]) if matched.session_id else record.experiences,
         )
         entry = {
             "timestamp": now,

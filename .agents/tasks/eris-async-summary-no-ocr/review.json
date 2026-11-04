@@ -1,0 +1,47 @@
+{
+  "verdict": "APPROVED",
+  "summary": "The change meets the user's decisions. The Gemini episode summary runs on its own daemon worker (ERIS-LivingUserEpisode). The turn buffer lock is held only to snapshot and to trim by (id, timestamp) key. The model call runs outside every lock, with a 60 s adapter timeout plus a 65 s hard deadline, single flight, exponential backoff capped at 600 s, and deferral while a user turn is active. A failed or timed-out call keeps the turns and writes no episode; the heuristic fallback is used only when there is no adapter or the buffer holds 40 or more rows. The episode is persisted before the buffer is trimmed. A hard-forget racing with an in-flight call is covered by episode_store._blocked_evidence. OCR is off by default behind ERIS_SCREEN_OCR_ENABLED: no RapidOCR/pytesseract import, no pip self-heal, no force_ocr from chat, and an explicit screen reference goes to vision on the same turn. I found no blocker or major issue. Minor gaps remain: backoff also blocks the buffer-pressure fallback, the worker is not cancelled by maintenance clear, shutdown does not stop the worker, and the 6th failing test is not listed in the 5 known failures.",
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "src/memory/living_user/service.py",
+      "issue": "The backoff gate (`time.monotonic() < self._cons_next_at`) in _consolidation_loop also blocks the buffer-pressure heuristic fallback. During a long Gemini outage with active chat (backoff reaches 240-600 s), the buffer can grow past 48 rows before the next run. `record_conversation_turn` then silently drops the oldest rows with `[-48:]` and no episode is written. Lower severity because the 48-row cap and the fallback at 40 rows are the pre-existing design.",
+      "fix": "In the worker loop, bypass `_cons_next_at` when `len(self._turn_buffer) >= episode_fallback_rows`. The next run is then `pressure` and writes the heuristic episode before the cap drops rows. Add a test for it."
+    },
+    {
+      "severity": "minor",
+      "file": "src/runtime/maintenance_service.py",
+      "issue": "The 'forget user model' clear (`_clear_runtime_user_context`) does not cancel or fence the consolidation worker. An in-flight call (up to 60 s) can still call `episode_store.add` after the files are wiped and recreate living_user_episodes.json. Hard forget() is protected by `_blocked_evidence`, but this wipe is not. The race existed before in a different form (the old flush also ran after the wipe). Also pre-existing: this function clears `episode_store._episodes`, which does not exist (the store uses `_items`). The AttributeError is caught, so the turn-buffer clear below it never runs.",
+      "fix": "Optional, separate task. Add a generation counter on the service that clear/hard-forget bump, and have `_consolidate_once` discard the result and skip the trim if it changed during the call. Fix the `_episodes` attribute name separately."
+    },
+    {
+      "severity": "minor",
+      "file": "src/memory/living_user/service.py",
+      "issue": "`stop_consolidation()` has no caller outside tests. On shutdown the worker is a daemon thread blocked on `Event.wait(None)` and is not stopped explicitly. An in-flight call is abandoned at process exit.",
+      "fix": "Call `living_user.stop_consolidation()` from the owner's shutdown path if it already stops other background services; otherwise document that daemon exit is intended."
+    },
+    {
+      "severity": "minor",
+      "file": ".agents/tasks/eris-async-summary-no-ocr/report.md",
+      "issue": "The report says `test_companion_memory_authority_consolidation.py::test_living_user_competence_claim_is_context_only_not_teaching_authority` was 'not confirmed against baseline HEAD'. I ran it on a `git archive HEAD` copy and it fails there too, with the same symptom as the two v39 failures (compile_context returns no profile item). So 6 failures are pre-existing, not 5, and context.json lists only 5. It is not a regression.",
+      "fix": "Update report.md and context.json to list it as a confirmed pre-existing failure."
+    },
+    {
+      "severity": "minor",
+      "file": "src/tests/test_living_user_async_consolidation.py",
+      "issue": "No test covers a retry after backoff succeeding, the backoff growth (60, 120, ... capped at 600 s), or the deferred path through the real `GLOBAL_INFERENCE_BROKER` gate (the tests override `_user_turn_active`). These paths are untested; with a base delay of at least 60 s, retry timing cannot be tested without an injectable clock. The tests that exist use event synchronisation and wait_until with 6-8 s ceilings, and I saw no timing flakiness.",
+      "fix": "Optional: make `_cons_next_at` testable (monkeypatch `time.monotonic` or set `episode_retry_sec` small) and add a fail-then-succeed test."
+    }
+  ],
+  "evidence": [
+    "git status --short and git diff over src/, .env.example and docs/knowledge/2026-10-14-eris-runtime-lessons.md. Only the intended files changed. The user's pre-existing changes (Eris.dll, live2d-menu-geometry.md, UdpListener*.cs) were not touched. Nothing is committed. `.env` and C:\\Users\\Gtvkun\\Documents\\eris are untouched.",
+    "Read service.py in full for the consolidation code: _timed_buffer_lock, request_consolidation, _consolidation_loop, _take_snapshot_locked, _consolidate_once, _build_episode, _run_with_deadline, _trace_consolidation, capture_interpretation_context, dream and _scrub_hard_delete. The model call is outside _turn_buffer_lock and _cons_state_lock. Lock order is _cons_run_lock then _timed_buffer_lock, and _cons_state_lock is never held across another lock or a model call, so I found no deadlock.",
+    "episode_store.add drops episodes whose evidence is in `_blocked_evidence`, so a hard-forget racing with an in-flight consolidation cannot resurrect forgotten text.",
+    "Ran 12 pytest files (the two new test files, living_user_memory, v39, episode_fading, memory_interpretation_context, ai_action_memory, chat_evidence_ladder_v38, architecture_c_runtime_regressions, deep_environment_native_v2, world_state_v1, companion_memory_authority_consolidation): 238 passed, 6 failed in 15.8 s. The failures are the 5 known ones plus test_living_user_competence_claim_is_context_only_not_teaching_authority.",
+    "I ran the 6th failure (competence_claim) and the 2 v39 tests on a `git archive HEAD` copy under %TEMP%. All three fail at HEAD, so no new failure is introduced.",
+    "Ran verify_async_summary_no_ocr.py --phase after: exit 0. Checks 1, 2, 3, 4, 5 and 7 PASS; check 6 is report-only. Hot-path calls take 0.001-0.010 s while the fake Gemini sleeps. results_after.json was regenerated by this run.",
+    "grep for force_ocr, RapidOCR, pytesseract and _auto_install_rapidocr over src: the only non-test references are in ocr_worker.py, all gated by screen_ocr_enabled(), and chat_perception.py, which passes force_ocr=screen_ocr_enabled().",
+    "test_run_20260811_repairs.py::test_forced_ocr_refresh_does_not_wait_forever_on_busy_capture_lock reads ERIS_SCREEN_CHAT_REFRESH_LOCK_TIMEOUT_SEC only in the test, and the diff leaves refresh_now's locking unchanged. The hang is pre-existing, as the report says.",
+    "docs/knowledge: the new section states the evidence level as 'source read + fake adapter + pytest, no live observation', lists what is unverified, and names the old conclusions it replaces. I found no overstated claim. No persona, prompt or Root file changed."
+  ]
+}

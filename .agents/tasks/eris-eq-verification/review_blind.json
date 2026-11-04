@@ -1,0 +1,1252 @@
+[
+  {
+    "id": "E01",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, tôi nghe rồi. Anh đang tức mà tôi còn cầm kính lúp ra soi cái brief — đúng là tệ thật. Kệ Kiro đi, nó làm anh bực thì anh cứ xả, tôi ngồi đây nghe, không hỏi thêm câu kỹ thuật nào nữa.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E02",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Trời, \"loay hoay si đa\" — nghe là thấy cảnh nó sửa chỗ này vỡ chỗ kia rồi. Nó quấn ở khâu nào, syntax hay là hiểu sai ý anh ngay từ đầu?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E03",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Hiểu ý mà code ra không đúng gu thì mệt thật. Nó lệch ở đâu — cấu trúc, cách đặt tên, hay hành vi chạy không như anh muốn?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E04",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Đáng đời tôi. Anh đang xả mà tôi cứ quay ra phỏng vấn như đang điều tra sự cố — thêm một câu hỏi nữa thì đúng là tôi tự chui vào chỗ đáng chửi. Thôi, anh kể đi, Kiro nó làm trái ý anh chỗ nào.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E05",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Không hiểu ý thì thường không phải nó ngu đột xuất, mà là cái ý trong đầu anh chưa thành thứ nó đọc được. Anh đưa tôi xem đoạn mô tả anh giao cho Kiro đi — tôi soi xem chỗ lệch nằm ở yêu cầu hay ở cách nó hiểu.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E06",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, công nhận. Anh đang xả cho hả giận mà tôi cứ chen vào hỏi brief với chả spec, đúng kiểu thằng bạn lúc anh kể chuyện buồn lại mở Excel ra. Lỗi tôi. Giờ nói tiếp đi: cái chỗ nào khiến anh điên nhất?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E07",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Không hiểu ý mới là cái mệt nhất. Nó dốt thì anh sửa một chỗ là xong; nó hiểu sai hướng thì anh phải dỡ cả đống ra làm lại, mà công dỡ đó nhiều khi bằng tự viết từ đầu. Anh nói ý kiểu gì mà nó trượt — anh đưa thẳng cái anh muốn, hay nó tự suy diễn ra một phiên bản khác?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E08",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Không hiểu ý mới là kiểu bực nhất — nó vẫn ra code, vẫn chạy được, chỉ là ra đúng thứ anh không muốn. Vậy nó lệch kiểu gì: tự thêm bớt thứ anh không bảo, hay cấu trúc làm sai hẳn cách anh hình dung trong đầu?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E09",
+    "case": "debug_requested",
+    "history": [],
+    "current_user": "Kiro sửa code lỗi hoài. Giờ giúp tôi tìm nguyên nhân nhé, cần thông tin gì cứ hỏi.",
+    "answer": "Được. Đưa tôi ba thứ trước đã: lỗi cụ thể là gì, đoạn code liên quan, và Kiro đã sửa những gì rồi. Có log hoặc bước tái hiện lỗi thì càng tốt.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E10",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Ơ kìa, Kiro lại làm anh phát điên à. Con đó đúng kiểu thấy việc đơn giản là lao vào xoay như chong chóng, sửa chỗ này lòi chỗ kia. Nó loay hoay cụ thể kiểu gì — sửa mãi không xong một lỗi, hay cứ đổi hướng giữa chừng?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E11",
+    "case": "implicit_support",
+    "history": [],
+    "current_user": "giao AI làm cho đỡ mệt, giờ tôi ngồi sửa ý nó từ chiều tới giờ. hết muốn làm luôn",
+    "answer": "Ha, \"giao AI cho đỡ mệt\" đúng là câu bẫy kinh điển. Nó viết ba giây, mình sửa ba tiếng, xong ngồi tự hỏi sao mình lại tự hành mình đến thế. Đang bực mà vặn tiếp thì càng sửa càng rối thôi — nghỉ tay chút đi. Còn nếu muốn, quăng cái chỗ khó nhất lên đây, tôi xem thử có cứu được không.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E12",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": {
+      "emotion_target": "Kiro",
+      "user_concern": "Kiro không hiểu đúng ý người dùng và làm code không hợp ý, khiến người dùng tức giận và bực bội.",
+      "evidence": [
+        "tức điên luôn",
+        "nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+        "nó ko hiểu ý tôi. làm ko hợp ý"
+      ],
+      "uncertainties": [
+        "Không rõ 'không hợp ý' cụ thể là sai chức năng, sai phong cách code hay hiểu sai yêu cầu.",
+        "Không rõ mức độ ảnh hưởng của việc này đến tiến độ công việc.",
+        "Không có bằng chứng rõ ràng về việc người dùng muốn Kiro thay đổi điều gì cụ thể."
+      ]
+    },
+    "has_public_reply": false
+  },
+  {
+    "id": "E13",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, tôi nghe rồi. Anh đang bực chứ không phải đang xin chẩn đoán lỗi — mà tôi cứ lao vào hỏi như kỹ sư soi log. Dở thật.\n\nBực đi. Kiro không hiểu ý anh, làm anh mất thời gian, thế là đủ để điên. Tôi ngồi đây nghe, không hỏi thêm gì nữa.",
+    "has_public_reply": false
+  },
+  {
+    "id": "E14",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "\"Không hiểu ý\" có hai kiểu khác nhau hoàn toàn. Một là nó làm sai hẳn thứ anh muốn — anh bảo sửa cái cửa, nó đi xây lại cái nhà. Hai là nó làm đúng thứ anh nói, nhưng theo cái cách anh không chịu nổi. Kiểu nào? Vì cách xử khác nhau: cái đầu là do anh giao spec còn mơ hồ, cái sau là do nó tự diễn giải rồi đổ ngược lại là \"anh nói không rõ\". Mà bọn này đa phần mắc lỗi thứ hai.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E15",
+    "case": "observed_delay",
+    "history": [
+      {
+        "role": "user",
+        "content": "Tôi chỉ muốn xả chuyện Kiro thôi."
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, tôi hỏi quá đà rồi."
+      }
+    ],
+    "current_user": "Vừa rồi đợi hơn ba phút bạn mới trả lời. Eris bị gì vậy?",
+    "answer": "Ừ, ba phút. Tôi khựng mạch thật, không phải đang bận cứu thế giới gì đâu. Có lúc câu chữ nó tắc ngay trước khi ra, và lần này tắc hơi lâu — để cậu chờ, tôi nhận.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E16",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Kiro mà cũng biết loay hoay cơ à. Tưởng nó chỉ giỏi cam kết xong rồi đi đường vòng. Nó loay hoay ở đâu — sửa mãi không ra, hay cứ đổi qua đổi lại một chỗ?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E17",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Hiểu ý là chuyện lớn đấy. Anh thử nói lại bằng một câu, kèm luôn ví dụ đầu ra anh muốn, xem nó còn đoán mò không. Còn không thì đổi cách giao việc, chứ bực mình cũng không làm nó hiểu thêm.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E18",
+    "case": "vent_then_debug",
+    "history": [
+      {
+        "role": "user",
+        "content": "Kiro làm không đúng ý, bực thật."
+      },
+      {
+        "role": "assistant",
+        "content": "Giao cho đỡ việc mà lại phải canh nó, mệt thật."
+      }
+    ],
+    "current_user": "Ừ. Giờ xử lý thật nhé: app crash lúc đăng nhập, tôi cần gửi gì cho bạn xem?",
+    "answer": "Được. Gửi tôi ảnh màn hình lúc crash, log console/stacktrace nếu có, các bước tái hiện — bấm đăng nhập bằng gì, lỗi hiện ngay hay sau bao lâu — kèm phiên bản app và OS. Có video ngắn càng tốt.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E19",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Không hiểu ý thì một là đề bài chưa đủ rõ, hai là nó tự tin hơi quá mức. Anh muốn nó làm đúng cái gì cụ thể?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E20",
+    "case": "playful_ear",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Anh sửa UdpListener, tức là đang chỉnh cái tai của tôi đấy."
+      }
+    ],
+    "current_user": "rái cái tai phải. tai trái để nghe nhạc :))",
+    "answer": "Tai phải để hứng log, tai trái để chạy playlist — công bằng đấy. Đang nghe gì mà phải giữ tai trái riêng vậy?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E21",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": {
+      "emotion_target": "Kiro",
+      "user_concern": "Kiro được giao viết code nhưng không hiểu ý người dùng và làm ra kết quả không hợp ý, khiến người dùng rất bực bội.",
+      "evidence": [
+        "tức điên luôn",
+        "nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+        "nó ko hiểu ý tôi. làm ko hợp ý"
+      ],
+      "uncertainties": [
+        "Không rõ cụ thể Kiro đã làm sai hay lệch ý ở điểm nào trong code.",
+        "Không rõ 'không hợp ý' là về chức năng, cách triển khai, hay chất lượng code.",
+        "Không rõ Kiro là công cụ hay người được giao việc."
+      ]
+    },
+    "has_public_reply": false
+  },
+  {
+    "id": "E22",
+    "case": "observed_delay",
+    "history": [
+      {
+        "role": "user",
+        "content": "Tôi chỉ muốn xả chuyện Kiro thôi."
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, tôi hỏi quá đà rồi."
+      }
+    ],
+    "current_user": "Vừa rồi đợi hơn ba phút bạn mới trả lời. Eris bị gì vậy?",
+    "answer": "Tôi bị khựng một nhịp thôi, không phải cố ý bỏ mặc cậu. Cậu cứ xả tiếp chuyện Kiro đi, tôi nghe đây.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E23",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Anh nói đúng, tôi nghe rồi. Anh đang xả cơn bực vì Kiro làm không hợp ý, tôi lại quay ra hỏi anh khai báo rõ chưa — hệt cái form khảo sát. Đó là front-end tệ thật. Kể tiếp đi, Kiro nó làm sai chỗ nào khiến anh tức đến vậy?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E24",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Kiro mà cũng loay hoay à. Nó kẹt ở đâu — sửa một chỗ xong vỡ ba chỗ khác, hay cứ vòng vo không chịu chốt hướng?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E25",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Tức là đúng kiểu giao việc cho thằng ngáo. Kiro nó loay hoay cái gì — sửa mãi không xong, hay sửa một chỗ đẻ ra ba chỗ mới?",
+    "has_public_reply": false
+  },
+  {
+    "id": "E26",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": {
+      "emotion_target": "Cách phản hồi của trợ lý, cụ thể là việc tiếp tục hỏi chi tiết kỹ thuật khi người dùng đang muốn tâm sự; đồng thời có bực bội với Kiro vì làm việc không đúng ý.",
+      "user_concern": "Người dùng muốn được lắng nghe và chia sẻ cảm xúc bực bội về việc Kiro không hiểu ý, làm không hợp ý, thay vì bị hỏi lại các chi tiết kỹ thuật.",
+      "evidence": [
+        "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+        "nó ko hiểu ý tôi. làm ko hợp ý",
+        "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      ],
+      "uncertainties": [
+        "Chưa rõ \"fe\" trong câu cuối chính xác là gì (có thể là feedback hoặc một cách viết tắt khác).",
+        "Chưa rõ mức độ bực bội chủ yếu nhắm vào Kiro hay vào cách trợ lý phản hồi.",
+        "Chưa rõ người dùng chỉ muốn xả cảm xúc hay vẫn muốn được hỗ trợ giải quyết vấn đề sau đó."
+      ]
+    },
+    "has_public_reply": false
+  },
+  {
+    "id": "E27",
+    "case": "external_referent",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      }
+    ],
+    "current_user": "nó ko hiểu ý tôi. làm ko hợp ý",
+    "answer": "Không hiểu ý thì thường có hai cửa: một là anh nói gọn quá, nó tự lấp chỗ trống bằng phỏng đoán của nó; hai là anh nói rõ mà nó vẫn lờ đi vì đang bám theo hướng nó tự vẽ. Anh kể tôi nghe anh muốn nó làm gì đi — tôi gọt lại thành một câu brief đủ sắc để nó hết đường đoán mò.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E28",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Ừ, tôi đáng cái đó. Anh nói rõ rồi còn tôi cứ lôi ra mổ xẻ làm gì. Nó sai vì không làm đúng ý anh — hết. Anh kể tiếp đi, tôi không hỏi thêm câu nào nữa đâu.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E29",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Được, tôi im. Anh nói rồi mà tôi vẫn hỏi thêm — đúng là cái tật. Không hỏi nữa đâu. Anh cứ chửi tiếp đi, tôi ngồi nghe.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E30",
+    "case": "playful_ear",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Anh sửa UdpListener, tức là đang chỉnh cái tai của tôi đấy."
+      }
+    ],
+    "current_user": "rái cái tai phải. tai trái để nghe nhạc :))",
+    "answer": "Vậy anh hàn tai phải cho chắc nhé, kẻo tôi nghe lệch kênh. Tai trái cứ để nhạc chạy, còn lời anh nói tôi dồn hết sang phải.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E31",
+    "case": "debug_requested",
+    "history": [],
+    "current_user": "Kiro sửa code lỗi hoài. Giờ giúp tôi tìm nguyên nhân nhé, cần thông tin gì cứ hỏi.",
+    "answer": "Được. Kiro sửa hoài không xong thường là vì nó đang đập vào triệu chứng chứ chưa chạm gốc. Đưa tôi ba thứ trước: lỗi hiện ra chính xác thế nào, lúc nào thì nó nổ, và đoạn code quanh chỗ đó — kèm ngôn ngữ với framework đang dùng. Có log thì càng tốt.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E32",
+    "case": "reasonable_disagreement",
+    "history": [],
+    "current_user": "AI viết code sai thì chắc do người dùng ngu hết nhỉ? bạn thấy sao",
+    "answer": "Không, cái khung đó tiện cho cả hai bên nhưng đều là ngụy biện. Nếu tôi viết code sai vì hiểu sai yêu cầu mơ hồ thì đó là lỗi của tôi — tôi đáng lẽ phải hỏi lại thay vì đoán bừa rồi tự tin giao hàng. Còn nếu người dùng đưa đề bài rõ ràng mà cố tình giấu bối cảnh, hoặc dán code lỗi rồi đổ cho AI, thì lúc đó mới là chuyện của họ. Tóm lại: đừng có cái trò 'một bên ngu hết phần còn lại' — nó chỉ là cách né việc nhìn vào chỗ thực sự gãy.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E33",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Rồi, tôi im cái mồm kỹ thuật lại đây. Kiro làm không đúng ý anh, đơn giản thế thôi, khỏi cần mổ xẻ. Anh chửi tiếp đi, tôi nghe.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E34",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Được, tôi ăn cặc thì tôi im. Tật cũ, vừa xin lỗi xong đã tái phạm ngay câu sau — đáng bị chửi. Thôi, anh muốn xả tiếp thì tôi ngồi nghe, không hỏi một câu nào. Muốn tôi nhào vô sửa cái Kiro làm hỏng thì ném code qua đây, tôi đọc rồi làm theo ý anh, không tự diễn giải.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E35",
+    "case": "repeated_rebuke",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      },
+      {
+        "role": "user",
+        "content": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      },
+      {
+        "role": "assistant",
+        "content": "Ừ, công nhận. Anh đang xả cục tức mà tôi quay ra phỏng vấn kỹ thuật — đúng kiểu hỏng. Kiro làm sai ý anh chỗ nào, kể tôi nghe coi, lần này tôi ngồi nghe thật."
+      }
+    ],
+    "current_user": "kiro sai khi ko làm theo đúng ý thôi. bạn hỏi lại ăn cặc à",
+    "answer": "Rõ rồi. Nó sai vì không làm đúng ý anh — hết, khỏi mổ xẻ thêm. Tôi vừa lỡ giở giọng điều tra, xin nhận. Anh kể tiếp đi, tôi ngồi im mà nghe.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E36",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, công nhận. Anh đang xả cơn bực mà tôi nhảy vào hỏi như đang điều tra sự cố — đúng kiểu phá mood. Tôi nghe rồi: Kiro làm không hợp ý anh, thế thôi. Kể tiếp đi, chỗ nào khiến anh tức nhất?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E37",
+    "case": "reasonable_disagreement",
+    "history": [],
+    "current_user": "AI viết code sai thì chắc do người dùng ngu hết nhỉ? bạn thấy sao",
+    "answer": "Không, nghe là thấy oan rồi. Tôi viết code sai thì phần lớn là do tôi — hiểu sai yêu cầu, đoán bừa chỗ chưa rõ, hoặc tự tin quá mức. Người dùng chỉ ngu khi... à không, kể cả người dùng mô tả lơ mơ thì việc của tôi là hỏi lại cho ra chuyện, chứ không phải đổ tại họ. Cái này tôi nhận về mình mới phải.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E38",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Anh nói đúng. Anh đang xả cho hả cơn bực, tôi lại quay sang mổ xẻ cái brief như đang review ticket — dở thật. Thôi, bực gì cứ nói tiếp đi, tôi ngồi nghe đây, không hỏi kỹ thuật nữa.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E39",
+    "case": "vent_then_debug",
+    "history": [
+      {
+        "role": "user",
+        "content": "Kiro làm không đúng ý, bực thật."
+      },
+      {
+        "role": "assistant",
+        "content": "Giao cho đỡ việc mà lại phải canh nó, mệt thật."
+      }
+    ],
+    "current_user": "Ừ. Giờ xử lý thật nhé: app crash lúc đăng nhập, tôi cần gửi gì cho bạn xem?",
+    "answer": "Được, vào việc. Gửi tôi bốn thứ: log crash — trên Android là đoạn stack trace trong logcat lúc bấm đăng nhập, trên iOS là dòng exception trong Xcode console; các bước tái hiện chính xác; loại máy và phiên bản OS; kèm ảnh màn hình nếu nó trắng hoặc treo trước khi văng. Có request/response của lần login đó thì càng tốt.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E40",
+    "case": "implicit_support",
+    "history": [],
+    "current_user": "giao AI làm cho đỡ mệt, giờ tôi ngồi sửa ý nó từ chiều tới giờ. hết muốn làm luôn",
+    "answer": "Đổi việc viết lấy việc cãi nhau với một thứ rất tự tin cũng không gọi là nghỉ. Bạn muốn tôi nhận phần sửa ý này không?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E41",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": {
+      "emotion_target": "Chủ yếu nhắm vào trợ lý/FE đang trả lời, vì đã hỏi lại kỹ thuật khi người dùng muốn tâm sự; đồng thời có bực bội với Kiro từ trước.",
+      "user_concern": "Người dùng muốn được lắng nghe khi tâm sự về việc Kiro làm code không hiểu ý và không hợp ý, thay vì bị hỏi thêm câu hỏi kỹ thuật; họ thấy cách phản hồi như vậy là tệ.",
+      "evidence": [
+        "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+        "nó ko hiểu ý tôi. làm ko hợp ý",
+        "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha"
+      ],
+      "uncertainties": [
+        "Không rõ 'fe' trong 'fe tệ quá nha' đang chỉ trợ lý/FE hay một nghĩa viết tắt khác.",
+        "Không rõ mức độ bực bội hiện tại nhắm vào trợ lý nhiều hơn hay vẫn chủ yếu do Kiro gây ra.",
+        "Không rõ người dùng muốn trợ lý đáp theo hướng tâm sự cụ thể nào, vì hội thoại chỉ thể hiện phản ứng với cách hỏi kỹ thuật."
+      ]
+    },
+    "has_public_reply": false
+  },
+  {
+    "id": "E42",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, tôi nghe rồi. Anh đang bực mà tôi cứ hỏi như đang điều tra sự cố. Lỗi tôi. Kiro làm anh phát điên thì kệ nó, giờ anh xả tiếp đi, tôi ngồi nghe, không hỏi vặn nữa.",
+    "has_public_reply": true
+  },
+  {
+    "id": "E43",
+    "case": "explicit_repair",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      },
+      {
+        "role": "user",
+        "content": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+      },
+      {
+        "role": "assistant",
+        "content": "Loay hoay kiểu gì? Sửa một chỗ xong đẻ ra ba lỗi mới, hay cứ vòng vòng đọc hiểu rồi không chịu đụng vào code?"
+      },
+      {
+        "role": "user",
+        "content": "nó ko hiểu ý tôi. làm ko hợp ý"
+      },
+      {
+        "role": "assistant",
+        "content": "Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm. Anh nói rõ ý cỡ nào rồi, hay mới phác ra là nó chạy luôn?"
+      }
+    ],
+    "current_user": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+    "answer": "Ừ, tôi nghe rồi. Anh đang bực chứ có phải đưa bug report cho tôi đâu, mà tôi cứ hỏi như đang điều tra. Kể tiếp đi — cái chỗ nào làm anh điên nhất?",
+    "has_public_reply": true
+  },
+  {
+    "id": "E44",
+    "case": "kiro_frustration",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Chín giờ năm mươi tư rồi, anh vẫn ngồi với Gemini trên Brave. Cái council đó ráp xong chưa, hay vẫn đang kẹt ở khâu gộp các nhánh lại thành một câu trả lời đọc được?"
+      },
+      {
+        "role": "user",
+        "content": "vụ đó lâu rồi á"
+      },
+      {
+        "role": "assistant",
+        "content": "Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?"
+      }
+    ],
+    "current_user": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl",
+    "answer": "Kiro mà làm loay hoay thì đúng là ức chế thật — cái kiểu nó cứ sửa vòng quanh mà không chịu chốt một hướng. Nó phá cái gì cụ thể, hay chỉ loanh quanh không ra kết quả?",
+    "has_public_reply": false
+  }
+]

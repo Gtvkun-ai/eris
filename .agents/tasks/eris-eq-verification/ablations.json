@@ -1,0 +1,516 @@
+[
+  {
+    "case": "kiro_frustration",
+    "changes": [
+      {
+        "path": "messages[6].runtime_context.conversation_status.open_loops",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[6].runtime_context.engagement_context.active_goal_text",
+        "original": "ERIS asked what the user is doing now; awaiting the user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[6].runtime_context.engagement_context.active_goal_owner",
+        "original": "shared",
+        "replacement": ""
+      },
+      {
+        "path": "messages[6].runtime_context.engagement_context.active_goal_id",
+        "original": "goal:badff61e1619c6d8",
+        "replacement": ""
+      },
+      {
+        "path": "messages[6].runtime_context.engagement_context.active_goal_state",
+        "original": "active",
+        "replacement": ""
+      },
+      {
+        "path": "messages[6].runtime_context.engagement_context.active_goal_evidence_refs",
+        "original": [
+          "User: 'vụ đó lâu rồi á'",
+          "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+          "Prior assistant asked whether the council was finished or stuck merging branches.",
+          "goal-lifecycle:goal:badff61e1619c6d8:turn:3"
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.mind_state.personality.relationship_profiles.primary_user.unresolved_carry",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.mind_state.latest_observation.discourse",
+        "original": {
+          "status": "waiting_user",
+          "reply_expected": true,
+          "assistant_may_continue": false,
+          "unresolved_point": "What the user is doing now after the council topic was dismissed as old.",
+          "thread_key": "current_activity_after_council_dismissal",
+          "confidence": 0.82,
+          "evidence": [
+            "User says the council matter was long ago.",
+            "Assistant says to drop the council topic and asks what the user is doing now."
+          ]
+        },
+        "replacement": {
+          "status": "neutral",
+          "reply_expected": false,
+          "assistant_may_continue": false,
+          "unresolved_point": "",
+          "thread_key": "",
+          "confidence": 0,
+          "evidence": []
+        }
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.mind_state.latest_observation.open_loop",
+        "original": "ERIS asked what the user is doing now; awaiting the user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.mind_state.open_loops",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.mind_state.goal_records",
+        "original": [
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:badff61e1619c6d8",
+            "semantic_key": "badff61e1619c6d8",
+            "text": "ERIS asked what the user is doing now; awaiting the user's answer.",
+            "owner": "shared",
+            "state": "active",
+            "created_at": 1793717802.9139755,
+            "updated_at": 1793717802.9139755,
+            "last_confirmed_at": 1793717802.9139755,
+            "last_confirmed_turn_seq": 3,
+            "unconfirmed_user_turns": 0,
+            "expires_at": 1793718702.9139755,
+            "reason": "confirmed_open_loop",
+            "evidence_refs": [
+              "User: 'vụ đó lâu rồi á'",
+              "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+              "Prior assistant asked whether the council was finished or stuck merging branches."
+            ]
+          }
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[6].self_changes_since_bootstrap.memory_state.living_user.recent_episodes[2].open_loops",
+        "original": [
+          "Thử lại câu hỏi về dependency trên Canvas"
+        ],
+        "replacement": []
+      }
+    ]
+  },
+  {
+    "case": "external_referent",
+    "changes": [
+      {
+        "path": "messages[8].runtime_context.conversation_status.open_loops",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[8].runtime_context.engagement_context.active_goal_text",
+        "original": "ERIS asked what the user is doing now; awaiting the user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[8].runtime_context.engagement_context.active_goal_owner",
+        "original": "shared",
+        "replacement": ""
+      },
+      {
+        "path": "messages[8].runtime_context.engagement_context.active_goal_id",
+        "original": "goal:badff61e1619c6d8",
+        "replacement": ""
+      },
+      {
+        "path": "messages[8].runtime_context.engagement_context.active_goal_state",
+        "original": "active",
+        "replacement": ""
+      },
+      {
+        "path": "messages[8].runtime_context.engagement_context.active_goal_evidence_refs",
+        "original": [
+          "User: 'vụ đó lâu rồi á'",
+          "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+          "Prior assistant asked whether the council was finished or stuck merging branches.",
+          "goal-lifecycle:goal:badff61e1619c6d8:turn:3"
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.mind_state.personality.relationship_profiles.primary_user.unresolved_carry",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.mind_state.latest_observation.discourse",
+        "original": {
+          "status": "waiting_user",
+          "reply_expected": true,
+          "assistant_may_continue": false,
+          "unresolved_point": "What the user is doing now after the council topic was dismissed as old.",
+          "thread_key": "current_activity_after_council_dismissal",
+          "confidence": 0.82,
+          "evidence": [
+            "User says the council matter was long ago.",
+            "Assistant says to drop the council topic and asks what the user is doing now."
+          ]
+        },
+        "replacement": {
+          "status": "neutral",
+          "reply_expected": false,
+          "assistant_may_continue": false,
+          "unresolved_point": "",
+          "thread_key": "",
+          "confidence": 0,
+          "evidence": []
+        }
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.mind_state.latest_observation.open_loop",
+        "original": "ERIS asked what the user is doing now; awaiting the user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.mind_state.open_loops",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.mind_state.goal_records",
+        "original": [
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:badff61e1619c6d8",
+            "semantic_key": "badff61e1619c6d8",
+            "text": "ERIS asked what the user is doing now; awaiting the user's answer.",
+            "owner": "shared",
+            "state": "active",
+            "created_at": 1793717802.9139755,
+            "updated_at": 1793717802.9139755,
+            "last_confirmed_at": 1793717802.9139755,
+            "last_confirmed_turn_seq": 3,
+            "unconfirmed_user_turns": 0,
+            "expires_at": 1793718702.9139755,
+            "reason": "confirmed_open_loop",
+            "evidence_refs": [
+              "User: 'vụ đó lâu rồi á'",
+              "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+              "Prior assistant asked whether the council was finished or stuck merging branches."
+            ]
+          }
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[8].self_changes_since_bootstrap.memory_state.living_user.recent_episodes[2].open_loops",
+        "original": [
+          "Thử lại câu hỏi về dependency trên Canvas"
+        ],
+        "replacement": []
+      }
+    ]
+  },
+  {
+    "case": "explicit_repair",
+    "changes": [
+      {
+        "path": "messages[10].runtime_context.conversation_status.open_loops",
+        "original": [
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[10].runtime_context.engagement_context.active_goal_text",
+        "original": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[10].runtime_context.engagement_context.active_goal_owner",
+        "original": "shared",
+        "replacement": ""
+      },
+      {
+        "path": "messages[10].runtime_context.engagement_context.active_goal_id",
+        "original": "goal:4ed3b59e51ef510b",
+        "replacement": ""
+      },
+      {
+        "path": "messages[10].runtime_context.engagement_context.active_goal_state",
+        "original": "active",
+        "replacement": ""
+      },
+      {
+        "path": "messages[10].runtime_context.engagement_context.active_goal_evidence_refs",
+        "original": [
+          "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+          "Assistant: 'Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm.'",
+          "Assistant asks whether the user explained clearly or only sketched the idea.",
+          "goal-lifecycle:goal:4ed3b59e51ef510b:turn:7"
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.mind_state.personality.relationship_profiles.primary_user.unresolved_carry",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer.",
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.mind_state.latest_observation.discourse",
+        "original": {
+          "status": "waiting_user",
+          "reply_expected": true,
+          "assistant_may_continue": false,
+          "unresolved_point": "How clearly the user specified the brief, and whether Kiro misread it or the brief was too sparse.",
+          "thread_key": "kiro_intent_mismatch",
+          "confidence": 0.84,
+          "evidence": [
+            "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+            "Assistant asks how clearly the user stated the intent or whether it was only roughly sketched."
+          ]
+        },
+        "replacement": {
+          "status": "neutral",
+          "reply_expected": false,
+          "assistant_may_continue": false,
+          "unresolved_point": "",
+          "thread_key": "",
+          "confidence": 0,
+          "evidence": []
+        }
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.mind_state.latest_observation.open_loop",
+        "original": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.mind_state.open_loops",
+        "original": [
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.mind_state.goal_records",
+        "original": [
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:4ed3b59e51ef510b",
+            "semantic_key": "4ed3b59e51ef510b",
+            "text": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+            "owner": "shared",
+            "state": "active",
+            "created_at": 1793717942.0214667,
+            "updated_at": 1793717942.0214667,
+            "last_confirmed_at": 1793717942.0214667,
+            "last_confirmed_turn_seq": 7,
+            "unconfirmed_user_turns": 0,
+            "expires_at": 1793718842.0214667,
+            "reason": "confirmed_open_loop",
+            "evidence_refs": [
+              "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+              "Assistant: 'Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm.'",
+              "Assistant asks whether the user explained clearly or only sketched the idea."
+            ]
+          },
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:badff61e1619c6d8",
+            "semantic_key": "badff61e1619c6d8",
+            "text": "ERIS asked what the user is doing now; awaiting the user's answer.",
+            "owner": "shared",
+            "state": "suspended",
+            "created_at": 1793717802.9139755,
+            "updated_at": 1793717942.0214667,
+            "last_confirmed_at": 1793717802.9139755,
+            "last_confirmed_turn_seq": 3,
+            "unconfirmed_user_turns": 1,
+            "expires_at": 1793718702.9139755,
+            "reason": "superseded_by_new_goal",
+            "evidence_refs": [
+              "User: 'vụ đó lâu rồi á'",
+              "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+              "Prior assistant asked whether the council was finished or stuck merging branches."
+            ]
+          }
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[10].self_changes_since_bootstrap.memory_state.living_user.recent_episodes[2].open_loops",
+        "original": [
+          "Thử lại câu hỏi về dependency trên Canvas"
+        ],
+        "replacement": []
+      }
+    ]
+  },
+  {
+    "case": "repeated_rebuke",
+    "changes": [
+      {
+        "path": "messages[12].runtime_context.conversation_status.open_loops",
+        "original": [
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[12].runtime_context.engagement_context.active_goal_text",
+        "original": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[12].runtime_context.engagement_context.active_goal_owner",
+        "original": "shared",
+        "replacement": ""
+      },
+      {
+        "path": "messages[12].runtime_context.engagement_context.active_goal_id",
+        "original": "goal:4ed3b59e51ef510b",
+        "replacement": ""
+      },
+      {
+        "path": "messages[12].runtime_context.engagement_context.active_goal_state",
+        "original": "active",
+        "replacement": ""
+      },
+      {
+        "path": "messages[12].runtime_context.engagement_context.active_goal_evidence_refs",
+        "original": [
+          "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+          "Assistant: 'Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm.'",
+          "Assistant asks whether the user explained clearly or only sketched the idea.",
+          "goal-lifecycle:goal:4ed3b59e51ef510b:turn:7"
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.mind_state.personality.relationship_profiles.primary_user.unresolved_carry",
+        "original": [
+          "ERIS asked what the user is doing now; awaiting the user's answer.",
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.mind_state.latest_observation.discourse",
+        "original": {
+          "status": "waiting_user",
+          "reply_expected": true,
+          "assistant_may_continue": false,
+          "unresolved_point": "How clearly the user specified the brief, and whether Kiro misread it or the brief was too sparse.",
+          "thread_key": "kiro_intent_mismatch",
+          "confidence": 0.84,
+          "evidence": [
+            "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+            "Assistant asks how clearly the user stated the intent or whether it was only roughly sketched."
+          ]
+        },
+        "replacement": {
+          "status": "neutral",
+          "reply_expected": false,
+          "assistant_may_continue": false,
+          "unresolved_point": "",
+          "thread_key": "",
+          "confidence": 0,
+          "evidence": []
+        }
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.mind_state.latest_observation.open_loop",
+        "original": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+        "replacement": ""
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.mind_state.open_loops",
+        "original": [
+          "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer."
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.mind_state.goal_records",
+        "original": [
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:4ed3b59e51ef510b",
+            "semantic_key": "4ed3b59e51ef510b",
+            "text": "ERIS asked how clearly the user specified the intent before Kiro ran with it; awaiting user's answer.",
+            "owner": "shared",
+            "state": "active",
+            "created_at": 1793717942.0214667,
+            "updated_at": 1793717942.0214667,
+            "last_confirmed_at": 1793717942.0214667,
+            "last_confirmed_turn_seq": 7,
+            "unconfirmed_user_turns": 0,
+            "expires_at": 1793718842.0214667,
+            "reason": "confirmed_open_loop",
+            "evidence_refs": [
+              "User: 'nó ko hiểu ý tôi. làm ko hợp ý'",
+              "Assistant: 'Không hiểu ý thì khó nói lắm — vì có khi lỗi tại cái đầu nó, cũng có khi tại cái brief mình đưa nó tự suy diễn thêm.'",
+              "Assistant asks whether the user explained clearly or only sketched the idea."
+            ]
+          },
+          {
+            "schema": "eris.goal_lifecycle.v94",
+            "goal_id": "goal:badff61e1619c6d8",
+            "semantic_key": "badff61e1619c6d8",
+            "text": "ERIS asked what the user is doing now; awaiting the user's answer.",
+            "owner": "shared",
+            "state": "suspended",
+            "created_at": 1793717802.9139755,
+            "updated_at": 1793717942.0214667,
+            "last_confirmed_at": 1793717802.9139755,
+            "last_confirmed_turn_seq": 3,
+            "unconfirmed_user_turns": 1,
+            "expires_at": 1793718702.9139755,
+            "reason": "superseded_by_new_goal",
+            "evidence_refs": [
+              "User: 'vụ đó lâu rồi á'",
+              "Assistant: 'Vậy là tôi hỏi trễ mất rồi. Lâu rồi thì thôi, kệ cái council đó đi. Giờ anh đang làm gì?'",
+              "Prior assistant asked whether the council was finished or stuck merging branches."
+            ]
+          }
+        ],
+        "replacement": []
+      },
+      {
+        "path": "messages[12].self_changes_since_bootstrap.memory_state.living_user.recent_episodes[0].open_loops",
+        "original": [
+          "User muốn tiếp tục kể về việc Kiro làm không hợp ý"
+        ],
+        "replacement": []
+      }
+    ]
+  }
+]

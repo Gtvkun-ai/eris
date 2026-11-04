@@ -1,0 +1,121 @@
+{
+  "source_index": "C:\\eris_debug\\deepseek_raw\\events_20261103T145411Z_pid5836.jsonl",
+  "observer_requests": [
+    {
+      "index_line": 7,
+      "at_utc": "2026-11-03T14:55:19.108076+00:00",
+      "request_id": "f3f817ec4175474585e8f37a2e3b3c85",
+      "event_kind": "opening_signal",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 16,
+      "at_utc": "2026-11-03T14:56:28.307937+00:00",
+      "request_id": "d187478da7a54d67bace0eef1c7a92d9",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 25,
+      "at_utc": "2026-11-03T14:57:34.645642+00:00",
+      "request_id": "036b8211b744405b999f54ca56116d07",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 36,
+      "at_utc": "2026-11-03T14:58:50.543879+00:00",
+      "request_id": "a8fd68c12a6143d0a22e9d830b914119",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 45,
+      "at_utc": "2026-11-03T15:00:31.688442+00:00",
+      "request_id": "91d2b0adb2fa44938fe83ba9657837cd",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 54,
+      "at_utc": "2026-11-03T15:04:20.212627+00:00",
+      "request_id": "4950eb80619f4d08bd45de563466933b",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    },
+    {
+      "index_line": 63,
+      "at_utc": "2026-11-03T15:05:39.212142+00:00",
+      "request_id": "24e7a010a44c4b468bb9c4e92da00751",
+      "event_kind": "chat",
+      "identity_learning_enabled": true,
+      "pending_strategies": [],
+      "strategies_count": 0,
+      "mechanical_outcomes_count": 0
+    }
+  ],
+  "production_calls": [
+    {
+      "file": "src\\runtime\\ai_orchestrated\\state_reducer.py",
+      "line": 765,
+      "symbol": "add_pending_strategy"
+    }
+  ],
+  "ast_parse_failures": [],
+  "hashes": [
+    {
+      "file": "src/runtime/conversation/observation_bridge.py",
+      "dev_sha256": "9e0678416c6b8fc7351919b0223bee3c1c11689c5bedd5bcfb42637f648c7942",
+      "portable_sha256": "9e0678416c6b8fc7351919b0223bee3c1c11689c5bedd5bcfb42637f648c7942",
+      "match": true
+    },
+    {
+      "file": "src/runtime/observer_private_runtime.py",
+      "dev_sha256": "8b72f9627a6068a0f0d9c40bbafd0945d62174fda05a4c087674333cf102a648",
+      "portable_sha256": "8b72f9627a6068a0f0d9c40bbafd0945d62174fda05a4c087674333cf102a648",
+      "match": true
+    },
+    {
+      "file": "src/runtime/ai_orchestrated/identity_reducer.py",
+      "dev_sha256": "d30f7e745ce92ed0d931cf020b279b90365c1d7f26bba57608b27d6282af72e5",
+      "portable_sha256": "d30f7e745ce92ed0d931cf020b279b90365c1d7f26bba57608b27d6282af72e5",
+      "match": true
+    },
+    {
+      "file": "src/runtime/ai_orchestrated/contracts.py",
+      "dev_sha256": "b3363c0dd080bc42f831e40d4e661d2c6ed7fc9dec62398c79bfef8fecb152c4",
+      "portable_sha256": "b3363c0dd080bc42f831e40d4e661d2c6ed7fc9dec62398c79bfef8fecb152c4",
+      "match": true
+    },
+    {
+      "file": "src/runtime/conversation/root_prompt_contract.py",
+      "dev_sha256": "882b929b497958cdcbbcbc2995a34fcef42e05216efbdd9a0491bd06f78a31fa",
+      "portable_sha256": "882b929b497958cdcbbcbc2995a34fcef42e05216efbdd9a0491bd06f78a31fa",
+      "match": true
+    },
+    {
+      "file": "src/runtime/ai_orchestrated/observer.py",
+      "dev_sha256": "12ace768b3cf751c7170b37f9ba1124651030b6bb16cee4a630a481fdfd91eff",
+      "portable_sha256": "12ace768b3cf751c7170b37f9ba1124651030b6bb16cee4a630a481fdfd91eff",
+      "match": true
+    }
+  ]
+}

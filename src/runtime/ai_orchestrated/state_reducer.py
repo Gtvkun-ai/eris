@@ -183,6 +183,8 @@ class StateReducer:
                 new_state = self._reduce_mechanical_outcome(state, event)
             elif event.kind == "pending_strategy":
                 new_state = self._reduce_pending_strategy(state, event)
+            elif event.kind == "strategy_reaction":
+                new_state = self._reduce_strategy_reaction(state, event)
             elif event.kind == "admin_control":
                 new_state = self._reduce_admin_control(state, event)
             else:
@@ -761,6 +763,8 @@ class StateReducer:
         return result
 
     def _reduce_pending_strategy(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
+        if not state.identity_learning_enabled:
+            return state
         pending = PendingStrategyUse.from_mapping(event.payload)
         identity = self._identity_reducer.add_pending_strategy(
             state.identity,
@@ -775,6 +779,29 @@ class StateReducer:
             identity=identity,
             updated_at=time.time(),
         )
+
+    def _reduce_strategy_reaction(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
+        if not state.identity_learning_enabled:
+            return state
+        data = event.payload
+        sid = str(data.get("session_id", "") or "")
+        ref = str(data.get("reaction_ref", "") or "")[:180]
+        text = str(data.get("reaction_text", "") or "")[:2000]
+        previous = int(data.get("previous_assistant_turn_seq", 0) or 0)
+        received = float(data.get("received_at", event.created_at))
+        if not sid or not ref or not text or previous <= 0:
+            return state
+        pending = list(state.identity.pending_strategies)
+        for index, item in enumerate(pending):
+            if (item.session_id != sid or item.turn_seq != previous or item.reaction_ref
+                    or event.turn_seq <= item.turn_seq or not 0 <= received - item.created_at <= 86400):
+                continue
+            pending[index] = replace(item, reaction_text=text, reaction_ref=ref,
+                                     reaction_turn_seq=event.turn_seq)
+            identity = replace(state.identity, version=state.identity.version + 1,
+                               pending_strategies=tuple(pending), last_updated_at=time.time())
+            return replace(state, version=state.version + 1, identity=identity, updated_at=time.time())
+        return state
 
     def _reduce_mechanical_outcome(self, state: RuntimeMindState, event: StateEvent) -> RuntimeMindState:
         payload = dict(event.payload)

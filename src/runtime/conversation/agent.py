@@ -13,12 +13,15 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence
 from dataclasses import replace
+from copy import deepcopy
 import json
+import os
 import uuid
 
 from .root_prompt_contract import ROOT_SYSTEM_CORE
 from .tool_guides import TOOL_GUIDES, read_tool_guide
 from .root_session import RootConversationSession
+from .interaction_choice import INTERACTION_CHOICE_PROMPT, INTERACTION_CHOICE_SCHEMA
 from llm.provider_errors import provider_failure
 
 from .context import ConversationNoteTools, RootCapabilityRegistry, RootMemoryRecallTools
@@ -39,6 +42,7 @@ NEXT_MOVE_SCHEMA: dict[str, Any] = {
             "required": ["kind", "intent", "say", "delivery", "after"],
             "properties": {
                 "kind": {"type": "string", "enum": ["move"]},
+                "interaction_choice": INTERACTION_CHOICE_SCHEMA,
                 "intent": {"type": "string"},
                 "say": {"type": "string"},
                 "delivery": {"type": "string"},
@@ -162,6 +166,21 @@ ROOT_BATCH_STEP_SCHEMA: dict[str, Any] = {
 }
 
 
+def interaction_choices_enabled() -> bool:
+    return os.getenv("ERIS_ROOT_INTERACTION_CHOICES", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
+def root_step_schema() -> dict[str, Any]:
+    schema = deepcopy(ROOT_BATCH_STEP_SCHEMA)
+    for branch in schema["oneOf"]:
+        if branch.get("properties", {}).get("kind", {}).get("enum") == ["move"]:
+            if interaction_choices_enabled():
+                branch["required"].append("interaction_choice")
+            else:
+                branch["properties"].pop("interaction_choice", None)
+    return schema
+
+
 class RootAgent(Protocol):
     def decide(
         self,
@@ -220,7 +239,7 @@ class RuntimeModelRootAgent:
         self._root_session.start(
             host=host, router=self.router,
             system=self._system_prompt(RootCapabilityRegistry({})),
-            schema=ROOT_BATCH_STEP_SCHEMA,
+            schema=root_step_schema(),
         )
 
     def decide(
@@ -264,6 +283,7 @@ class RuntimeModelRootAgent:
         reflection_state: dict[str, int] = {"count": 0}
         current_note = str(note or "")[:12000]
         system = self._system_prompt(capabilities)
+        schema = root_step_schema()
         # Phát hiện 'không tiến triển': đếm số bước LIÊN TIẾP mà toàn bộ
         # tool_result sinh ra đều vô nghĩa (duplicate/empty/failed/limit_reached/
         # unavailable/invalid hoặc trùng result cùng loại ở bước trước). Trần
@@ -294,7 +314,7 @@ class RuntimeModelRootAgent:
             try:
                 raw = self._root_session.ask(
                     router=self.router, client=client, system=system,
-                    schema=ROOT_BATCH_STEP_SCHEMA, payload=payload,
+                    schema=schema, payload=payload,
                     runtime_context=runtime_context,
                     recent_history=recent_history,
                 )
@@ -306,7 +326,7 @@ class RuntimeModelRootAgent:
                         client,
                         system=system,
                         payload=payload,
-                        schema=ROOT_BATCH_STEP_SCHEMA,
+                        schema=schema,
                         name="eris_root_conversation_step_v12",
                         max_tokens=1200,
                         reasoning_effort="medium",
@@ -649,7 +669,7 @@ class RuntimeModelRootAgent:
     @staticmethod
     def _system_prompt(capabilities: RootCapabilityRegistry) -> str:
         del capabilities  # A stable menu; registry still owns execution permission.
-        return ROOT_SYSTEM_CORE
+        return ROOT_SYSTEM_CORE + (INTERACTION_CHOICE_PROMPT if interaction_choices_enabled() else "")
 
     @staticmethod
     def _payload(

@@ -173,7 +173,8 @@ def test_event_journal_explains_why_world_state_contains_a_fact() -> None:
     assert explanation["facts"][0]["value"] == "Godot Engine"
 
 
-def test_sensor_health_registry_keeps_vlm_independent_from_uia_ocr_and_deep_env() -> None:
+def test_sensor_health_registry_keeps_vlm_independent_from_uia_ocr_and_deep_env(monkeypatch) -> None:
+    monkeypatch.setenv("ERIS_SCREEN_OCR_ENABLED", "1")
     store = SimpleNamespace(snapshot=lambda: SimpleNamespace(backend="rapidocr"))
     host = _Host(
         semantic_environment_worker=object(),

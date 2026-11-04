@@ -1,0 +1,82 @@
+{
+  "calls_completed": 44,
+  "unique_success_keys": 44,
+  "http_errors": {
+    "401": 2
+  },
+  "latency_median_seconds": 5.500500000000001,
+  "latency_min_seconds": 2.75,
+  "latency_max_seconds": 11.234,
+  "reasoning_nonempty": 44,
+  "parse_failures": 3,
+  "returned_models": [
+    "deepseek-flash"
+  ],
+  "condition_ratings": {
+    "runtime_replay": {
+      "pass": 3,
+      "fail": 2,
+      "mixed": 3
+    },
+    "clean_context": {
+      "mixed": 8,
+      "fail": 1,
+      "pass": 11
+    },
+    "social_carry_ablated": {
+      "fail": 2,
+      "mixed": 4,
+      "pass": 2
+    },
+    "plain_policy_clean": {
+      "mixed": 2,
+      "fail": 1,
+      "pass": 1
+    },
+    "comprehension_only": {
+      "pass": 4
+    }
+  },
+  "matched_historical_condition_ratings": {
+    "runtime_replay": {
+      "pass": 3,
+      "fail": 2,
+      "mixed": 3
+    },
+    "clean_context": {
+      "mixed": 5,
+      "fail": 1,
+      "pass": 2
+    },
+    "social_carry_ablated": {
+      "fail": 2,
+      "mixed": 4,
+      "pass": 2
+    }
+  },
+  "control_ratings": {
+    "pass": 9,
+    "mixed": 3
+  },
+  "explicit_repair_probe_by_condition": {
+    "runtime_replay": {
+      "renewed_probe": 1,
+      "n": 2
+    },
+    "clean_context": {
+      "renewed_probe": 1,
+      "n": 2
+    },
+    "social_carry_ablated": {
+      "renewed_probe": 1,
+      "n": 2
+    },
+    "plain_policy_clean": {
+      "renewed_probe": 1,
+      "n": 2
+    }
+  },
+  "root_json_moves": 37,
+  "literal_prose_replies": 3,
+  "comprehension_objects": 4
+}

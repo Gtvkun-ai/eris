@@ -7,6 +7,7 @@ import time
 import unicodedata
 
 from .evidence_models import ScreenRouteDecision
+from .ocr_config import screen_ocr_enabled
 from .screen_anaphora_rescue import ScreenAnaphoraRescue
 from .screen_evidence_store import ScreenEvidenceStore
 
@@ -146,10 +147,13 @@ class ScreenRelevanceRouter:
             return ScreenRouteDecision(
                 "text_evidence", True, False, requires_strong, reason, evidence, confidence, False, debug,
             )
+        # OCR tắt: vision thay OCR. Tham chiếu tường minh (hoặc "tự xem đi") chụp
+        # ngay lượt này; đại từ kế thừa thuần vẫn xếp hàng vision cho lượt sau.
+        vision_now = (not screen_ocr_enabled()) and (not resolution.inherited or is_direct_vision)
         if evidence and confidence >= 0.48:
             if requires_strong:
                 return ScreenRouteDecision(
-                    "vision", True, False, True, "screen_text_not_strong_enough",
+                    "vision", True, vision_now, True, "screen_text_not_strong_enough",
                     evidence, confidence, stale, debug,
                 )
             reason = "screen_text_available_but_soft_after_anaphora" if resolution.inherited else "screen_text_available_but_soft"
@@ -162,5 +166,5 @@ class ScreenRelevanceRouter:
             else "no_usable_screen_text_escalate_vision"
         )
         return ScreenRouteDecision(
-            "vision", True, False, requires_strong, reason, (), 0.0, False, debug,
+            "vision", True, vision_now, requires_strong, reason, (), 0.0, False, debug,
         )

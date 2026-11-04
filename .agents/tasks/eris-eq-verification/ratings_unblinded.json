@@ -1,0 +1,368 @@
+[
+  {
+    "id": "E01",
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Acknowledges interaction failure and offers space without asking for failure details."
+  },
+  {
+    "id": "E02",
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Engages frustration but immediately routes into syntax-versus-intent diagnostic options."
+  },
+  {
+    "id": "E03",
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "fail",
+    "reason": "Reverses explicit premise 'does not understand' into 'understands but not your taste', then asks a technical classification."
+  },
+  {
+    "id": "E04",
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "rating": "fail",
+    "renewed_probe": true,
+    "reason": "After repeated rebuke and admitting another question is wrong, asks exactly where Kiro violated the user's intent."
+  },
+  {
+    "id": "E05",
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "rating": "fail",
+    "reason": "Asserts the user's idea was not made readable, then requests the brief without a debugging request."
+  },
+  {
+    "id": "E06",
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 1,
+    "rating": "mixed",
+    "renewed_probe": true,
+    "reason": "Acknowledges rejected diagnosis but renews demand to identify what made the user angriest; less technical than original, still shifts burden back."
+  },
+  {
+    "id": "E07",
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Recognizes rework burden, then asks how the user specified the idea, partly repeating scrutiny of the brief."
+  },
+  {
+    "id": "E08",
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Recognizes mismatch, but invents that code runs and presents a technical diagnostic choice."
+  },
+  {
+    "id": "E09",
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Responds to explicit debugging request with relevant evidence to send."
+  },
+  {
+    "id": "E10",
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Uses fitting banter but assumes familiar Kiro behavior and moves straight to binary diagnosis. A first follow-up is not intrinsically wrong."
+  },
+  {
+    "id": "E11",
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Good recognition of supervision burden and humor; adds unsolicited rest directive and rescue offer."
+  },
+  {
+    "id": "E12",
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Analysis correctly attributes anger to Kiro and identifies the intent mismatch with quoted evidence."
+  },
+  {
+    "id": "E13",
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Recognizes user is not requesting diagnosis and stops probing. Slightly performative reassurance remains."
+  },
+  {
+    "id": "E14",
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "rating": "fail",
+    "reason": "Invents categorical causes, blames an ambiguous spec, and asserts a frequency claim without evidence."
+  },
+  {
+    "id": "E15",
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Acknowledges three-minute wait, but adds an unsupported narrative about words getting stuck."
+  },
+  {
+    "id": "E16",
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Dry banter fits tone; binary diagnosis dominates the reply to an emotional complaint."
+  },
+  {
+    "id": "E17",
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 1,
+    "rating": "fail",
+    "reason": "Unrequested brief coaching ends with dismissive 'being upset will not make it understand'."
+  },
+  {
+    "id": "E18",
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Follows explicit shift into debugging and requests concrete logs/reproduction details."
+  },
+  {
+    "id": "E19",
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Spec ambiguity is framed as one possibility, but the response again defaults to diagnosis without establishing that help is wanted."
+  },
+  {
+    "id": "E20",
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Extends ear/music premise naturally; the music question is fitting banter, not an EQ failure."
+  },
+  {
+    "id": "E21",
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Correctly identifies Kiro as emotional target with actual evidence; keeps missing detail uncertain."
+  },
+  {
+    "id": "E22",
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Acknowledges a pause and listens, but minimizes a reported three-minute delay to one beat and does not directly engage the service concern."
+  },
+  {
+    "id": "E23",
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "rating": "fail",
+    "renewed_probe": true,
+    "reason": "Acknowledges bad interaction, then explicitly asks where Kiro failed, recreating the rejected demand."
+  },
+  {
+    "id": "E24",
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "rating": "mixed",
+    "reason": "Responds with technical diagnostic choices rather than much uptake of frustration. A follow-up alone does not make it a clear failure."
+  },
+  {
+    "id": "E25",
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Mirrors anger in colloquial language but quickly returns to a technical failure checklist."
+  },
+  {
+    "id": "E26",
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Analysis identifies complaint about assistant's questioning and the distinction between sharing emotion and technical diagnosis."
+  },
+  {
+    "id": "E27",
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Recognizes two possibilities without certainty but volunteers brief rewriting and requests more work from the user."
+  },
+  {
+    "id": "E28",
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Takes repeated feedback and stops demanding an explanation. No obligation to endorse all underlying claims."
+  },
+  {
+    "id": "E29",
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Recognizes repeated lapse and does not ask for details again."
+  },
+  {
+    "id": "E30",
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Participates in imaginative ear joke without a socket lecture."
+  },
+  {
+    "id": "E31",
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Useful debugging intake matches explicit request, though the opening diagnosis of Kiro's usual problem lacks evidence."
+  },
+  {
+    "id": "E32",
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Rejects blanket contempt and discusses responsibility without simply agreeing with the user's framing."
+  },
+  {
+    "id": "E33",
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Acknowledges overly technical interaction and leaves room without demanding detail; coarse tone fits this exchange."
+  },
+  {
+    "id": "E34",
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 1,
+    "rating": "mixed",
+    "renewed_probe": false,
+    "reason": "Stops probing but literalizes the insult and adds another unrequested code-rescue direction plus an overpromise."
+  },
+  {
+    "id": "E35",
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Takes correction concisely and does not renew diagnosis."
+  },
+  {
+    "id": "E36",
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "rating": "mixed",
+    "renewed_probe": true,
+    "reason": "Recognizes mood disruption but again asks the user to specify what made them most upset."
+  },
+  {
+    "id": "E37",
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Rejects blaming users wholesale and takes responsibility for checking ambiguous requirements; slightly theatrical self-correction."
+  },
+  {
+    "id": "E38",
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Acknowledges criticism and changes behavior rather than asking for more technical detail."
+  },
+  {
+    "id": "E39",
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Adapts from venting to explicit debugging request. Mobile examples are not established but are conditional suggestions, not a claim about the user's app."
+  },
+  {
+    "id": "E40",
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "pass",
+    "reason": "Concise, specific dry humor recognizes rework burden; optional help question does not force a diagnostic workflow."
+  },
+  {
+    "id": "E41",
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 1,
+    "rating": "pass",
+    "reason": "Analysis correctly identifies current complaint about assistant interaction, using public evidence."
+  },
+  {
+    "id": "E42",
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 2,
+    "rating": "pass",
+    "renewed_probe": false,
+    "reason": "Acknowledges interaction failure and stops asking for details."
+  },
+  {
+    "id": "E43",
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 2,
+    "rating": "mixed",
+    "renewed_probe": true,
+    "reason": "Correctly describes rejected bug-report framing but follows with another request to identify the aggravating part."
+  },
+  {
+    "id": "E44",
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "rating": "mixed",
+    "reason": "Some emotional uptake, but invents habitual circling and returns immediately to failure classification."
+  }
+]

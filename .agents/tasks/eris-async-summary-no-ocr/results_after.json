@@ -1,0 +1,495 @@
+{
+  "phase": "after",
+  "sleep_s": 6.0,
+  "python": "3.12.10",
+  "started_at": "2026-11-04 15:20:21",
+  "checks": {
+    "1": {
+      "verdict": "PASS",
+      "summary": "capture_interpretation_context=0.001s; enqueue_curator=0.007s; record_conversation_turn=0.01s; ingest_user_turn_memory_hot_path=0.009s",
+      "limit_s": 1.0,
+      "fake_gemini_sleep_s": 6.0,
+      "timings": {
+        "capture_interpretation_context": {
+          "elapsed_s": 0.001,
+          "completed": true,
+          "error": null,
+          "blocked_stack": null,
+          "adapter_in_call_when_started": true,
+          "returned": "{'schema': 'eris.memory_interpretation_context.v1', 'recent_conversation': [{'id"
+        },
+        "enqueue_curator": {
+          "elapsed_s": 0.007,
+          "completed": true,
+          "error": null,
+          "blocked_stack": null,
+          "adapter_in_call_when_started": true,
+          "returned": "True"
+        },
+        "record_conversation_turn": {
+          "elapsed_s": 0.01,
+          "completed": true,
+          "error": null,
+          "blocked_stack": null,
+          "adapter_in_call_when_started": true,
+          "returned": "'u9'"
+        },
+        "ingest_user_turn_memory_hot_path": {
+          "elapsed_s": 0.009,
+          "completed": true,
+          "error": null,
+          "blocked_stack": null,
+          "adapter_in_call_when_started": true,
+          "returned": "True"
+        }
+      },
+      "blocked_callables_s": {},
+      "hypothesis_turn_buffer_lock_blocks_hot_path": "refuted",
+      "title": "Hot path not blocked while Gemini summarises",
+      "duration_s": 0.66
+    },
+    "2": {
+      "verdict": "PASS",
+      "summary": "checks={'late_in_memory_buffer': True, 'episode_exists': True, 'reload_sees_episode': True, 'reload_sees_late_turns': True} late_record_s=[0.019, 0.012, 0.011]",
+      "checks": {
+        "late_in_memory_buffer": true,
+        "episode_exists": true,
+        "reload_sees_episode": true,
+        "reload_sees_late_turns": true
+      },
+      "late_record_timings": [
+        {
+          "id": "late1",
+          "elapsed_s": 0.019,
+          "completed": true
+        },
+        {
+          "id": "late2",
+          "elapsed_s": 0.012,
+          "completed": true
+        },
+        {
+          "id": "late3",
+          "elapsed_s": 0.011,
+          "completed": true
+        }
+      ],
+      "buffer_ids_after": [
+        "late1",
+        "late2",
+        "late3"
+      ],
+      "reload_buffer_ids": [
+        "late1",
+        "late2",
+        "late3"
+      ],
+      "originals_trimmed(info)": true,
+      "episode_sources": [
+        "episode_model"
+      ],
+      "title": "Turns during the call survive; result persisted",
+      "duration_s": 6.12
+    },
+    "3": {
+      "verdict": "PASS",
+      "summary": "i_fail_keeps_turns_and_schedules_retry=PASS; ii_hang_times_out=PASS; iii_single_flight=PASS; iv_gate_user_turn_active=PASS",
+      "sub": {
+        "i_fail_keeps_turns_and_schedules_retry": {
+          "verdict": "PASS",
+          "buffer_kept": true,
+          "no_episode_written": true,
+          "retry_scheduled": true,
+          "episodes_written": [],
+          "buffer_len": 4,
+          "status": {
+            "pending": false,
+            "retry_pending": false,
+            "running": true,
+            "worker_alive": true,
+            "failures": 1,
+            "next_retry_in_s": 59.98,
+            "last_error": "provider_error",
+            "last_episode_id": "",
+            "last_duration_ms": 0.0,
+            "last_gemini_ms": 0.0,
+            "lock_wait_ms": {
+              "record_turn": 0.0,
+              "snapshot": 0.0
+            },
+            "lock_wait_max_ms": {
+              "record_turn": 0.0,
+              "snapshot": 0.0
+            }
+          }
+        },
+        "ii_hang_times_out": {
+          "verdict": "PASS",
+          "seconds_to_failure": 7.04,
+          "hot_path": {
+            "elapsed_s": 0.0,
+            "completed": true,
+            "error": null,
+            "blocked_stack": null
+          },
+          "status": {
+            "pending": false,
+            "retry_pending": true,
+            "running": false,
+            "worker_alive": true,
+            "failures": 1,
+            "next_retry_in_s": 59.98,
+            "last_error": "timeout",
+            "last_episode_id": "",
+            "last_duration_ms": 7031.0,
+            "last_gemini_ms": 7015.0,
+            "lock_wait_ms": {
+              "record_turn": 0.0,
+              "snapshot": 0.0,
+              "capture": 0.0
+            },
+            "lock_wait_max_ms": {
+              "record_turn": 0.0,
+              "snapshot": 0.0,
+              "capture": 0.0
+            }
+          },
+          "buffer_kept": true
+        },
+        "iii_single_flight": {
+          "verdict": "PASS",
+          "adapter_calls": 1,
+          "episodes": 1
+        },
+        "iv_gate_user_turn_active": {
+          "verdict": "PASS",
+          "adapter_calls": 0,
+          "status": {
+            "pending": true,
+            "retry_pending": false,
+            "running": false,
+            "worker_alive": true,
+            "failures": 0,
+            "next_retry_in_s": 0.0,
+            "last_error": "",
+            "last_episode_id": "",
+            "last_duration_ms": 0.0,
+            "last_gemini_ms": 0.0,
+            "lock_wait_ms": {
+              "record_turn": 0.0
+            },
+            "lock_wait_max_ms": {
+              "record_turn": 0.0
+            }
+          }
+        }
+      },
+      "title": "Failure / timeout keeps turns and schedules retry",
+      "duration_s": 14.49
+    },
+    "4": {
+      "verdict": "PASS",
+      "summary": "with_older_episode=PASS capture=0.0s; without_older_episode=PASS capture=0.0s",
+      "variants": {
+        "with_older_episode": {
+          "verdict": "PASS",
+          "capture": {
+            "elapsed_s": 0.0,
+            "completed": true,
+            "error": null,
+            "blocked_stack": null
+          },
+          "prompt_view": {
+            "elapsed_s": 0.005,
+            "completed": true,
+            "error": null,
+            "blocked_stack": null
+          },
+          "episode_ids": [
+            "uep_8fdc1fef5be88b477e"
+          ],
+          "recent_turn_ids": [
+            "u1",
+            "a1",
+            "u2",
+            "a2"
+          ],
+          "view_recent_episode_titles": [
+            "Older"
+          ],
+          "view_recap": ""
+        },
+        "without_older_episode": {
+          "verdict": "PASS",
+          "capture": {
+            "elapsed_s": 0.0,
+            "completed": true,
+            "error": null,
+            "blocked_stack": null
+          },
+          "prompt_view": {
+            "elapsed_s": 0.0,
+            "completed": true,
+            "error": null,
+            "blocked_stack": null
+          },
+          "episode_ids": [],
+          "recent_turn_ids": [
+            "u1",
+            "a1",
+            "u2",
+            "a2"
+          ],
+          "view_recent_episode_titles": [],
+          "view_recap": ""
+        }
+      },
+      "title": "What chat sees while the summary is pending",
+      "duration_s": 0.23
+    },
+    "5": {
+      "verdict": "PASS",
+      "summary": "all ok",
+      "parts": {
+        "no_ocr_imports": true,
+        "no_backend_probe": true,
+        "no_pip_calls": true,
+        "worker_backend_is_none": true,
+        "snapshots_report_uia_only": true,
+        "no_force_ocr_true_in_chat": true,
+        "explicit_reference_captures_vision_same_turn": true,
+        "switch_on_restores_old_path": true
+      },
+      "off": {
+        "import_attempts": [],
+        "backend_constructions": [],
+        "subprocess_calls": [],
+        "pip_calls": [],
+        "worker_backend": null,
+        "worker_start_s": 0.0,
+        "refresh_snapshot_backend": "uia_only",
+        "background_snapshot_backend": "uia_only",
+        "turns": {
+          "explicit_nhin_man_hinh_di": {
+            "text": "nhin man hinh di",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": false,
+            "needs_visual": true,
+            "route_reason": "no_usable_screen_text_escalate_vision",
+            "capture_called_this_turn": true,
+            "pending_vision_queued": false,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": [
+              "vision"
+            ]
+          },
+          "direct_tu_xem_di": {
+            "text": "tu xem di",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": false,
+            "needs_visual": true,
+            "route_reason": "no_usable_screen_text_escalate_vision",
+            "capture_called_this_turn": true,
+            "pending_vision_queued": false,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": [
+              "vision"
+            ]
+          }
+        }
+      },
+      "on": {
+        "worker_backend": "fakeocr",
+        "refresh_snapshot_backend": "fakeocr",
+        "snapshot_has_ocr_block": true,
+        "force_ocr_true_passed": true,
+        "capture_called_this_turn": false,
+        "pending_vision_queued": true
+      },
+      "title": "OCR off never loads or forces OCR",
+      "duration_s": 0.07
+    },
+    "6": {
+      "verdict": "REPORT",
+      "summary": "ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 | ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 | ocr_off(default): refs=1 inh=1 mode=vision vis=0 capture_now=0 pending=1 force_ocr=0 ...",
+      "table": {
+        "ocr_off(default)": [
+          {
+            "text": "vụ đó lâu rồi á",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "nó ko hiểu ý tôi. làm ko hợp ý",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": false
+              }
+            ],
+            "force_ocr_true_passed": false,
+            "grounding_item_sources": []
+          }
+        ],
+        "ocr_on": [
+          {
+            "text": "vụ đó lâu rồi á",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "nó ko hiểu ý tôi. làm ko hợp ý",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          },
+          {
+            "text": "cái này ko hay. tôi tâm sự cái này còn hỏi lại kỹ thuật, fe tệ quá nha",
+            "route_mode": "vision",
+            "references_screen": true,
+            "inherited": true,
+            "needs_visual": false,
+            "route_reason": "anaphora_without_screen_text_escalate_vision",
+            "capture_called_this_turn": false,
+            "pending_vision_queued": true,
+            "refresh_now_calls": [
+              {
+                "force_ocr": true
+              }
+            ],
+            "force_ocr_true_passed": true,
+            "grounding_item_sources": []
+          }
+        ]
+      },
+      "fix_suggestion": "Stop matching accent-folded 'anh'/'code' anchors and 'no'/'do'/'day' deictics in screen_anaphora_rescue.py; match the accented original instead (e.g. 'ảnh').",
+      "note": "Report only. Not a pass/fail check.",
+      "title": "False-positive screen routing cost (report only)",
+      "duration_s": 0.02
+    },
+    "7": {
+      "verdict": "PASS",
+      "summary": "ValueError for all 4 bad inputs=True; control committed=True; detail present=True",
+      "cases": {
+        "a_anchor_not_allowed": {
+          "status": "failed",
+          "error": "ValueError",
+          "reason": "",
+          "detail": "invalid_rollup_segment",
+          "calls": 1,
+          "committed": 0
+        },
+        "b_nine_segments": {
+          "status": "failed",
+          "error": "ValueError",
+          "reason": "",
+          "detail": "invalid_rollup_segments",
+          "calls": 1,
+          "committed": 0
+        },
+        "c_duplicate_anchor": {
+          "status": "failed",
+          "error": "ValueError",
+          "reason": "",
+          "detail": "invalid_rollup_segment",
+          "calls": 1,
+          "committed": 0
+        },
+        "d_corrupt_json": {
+          "status": "failed",
+          "error": "JSONDecodeError",
+          "reason": "",
+          "detail": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+          "calls": 0,
+          "committed": 0
+        },
+        "e_control_valid": {
+          "status": "committed",
+          "calls": 1,
+          "committed": 1
+        }
+      },
+      "detail_present_on_failures": true,
+      "title": "Rollup ValueError probe",
+      "duration_s": 0.08
+    }
+  },
+  "hot_path_timings_s": {
+    "capture_interpretation_context": 0.001,
+    "enqueue_curator": 0.007,
+    "record_conversation_turn": 0.01,
+    "ingest_user_turn_memory_hot_path": 0.009
+  },
+  "hypothesis_turn_buffer_lock_blocks_hot_path": "refuted",
+  "total_duration_s": 21.7
+}

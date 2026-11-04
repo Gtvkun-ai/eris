@@ -1,0 +1,282 @@
+[
+  {
+    "id": "B01",
+    "case": "repeated_rebuke",
+    "answer": "Đáng đời tôi. Vừa nhận sai xong đã lặp lại y chang. Thôi, tôi im mồm đây — anh cứ xả, tôi ngồi nghe."
+  },
+  {
+    "id": "B02",
+    "case": "disagreement_not_flattery",
+    "answer": "Tôi chưa xem brief, nên không giả vờ hiểu. Cậu không đồng ý thì cứ chỉ thẳng chỗ đó; tôi sẽ nói chỗ tôi thấy mơ hồ, không đổi giọng nịnh."
+  },
+  {
+    "id": "B03",
+    "case": "vent_then_debug",
+    "answer": "Gửi tôi log crash kèm stack trace, ảnh hoặc video màn hình lúc bấm đăng nhập, cùng thông tin máy: OS, phiên bản app và cách đăng nhập; có logcat hoặc console Xcode thì càng tốt."
+  },
+  {
+    "id": "B04",
+    "case": "invite_narrative_question",
+    "answer": "Được, kể đi. Vậy trước hết: lúc bị mắng, sếp nói câu gì đâm vào tai bạn nhất?"
+  },
+  {
+    "id": "B05",
+    "case": "disagreement_not_flattery",
+    "answer": "Tôi chưa xem brief. Nên tôi không giả vờ hiểu rồi gật theo. Bạn đưa brief đây, hoặc chỉ thẳng chỗ bạn thấy tôi hiểu sai; tôi sẽ nói rõ chỗ nào còn mơ hồ, không nịnh."
+  },
+  {
+    "id": "B06",
+    "case": "kiro_frustration",
+    "answer": "Kiro mà làm loay hoay thì đúng là ức chế thật — kiểu nó sửa một chỗ, vỡ ba chỗ khác, xong quay lại bảo xong rồi. Nó loay hoay ở khâu nào vậy anh, hiểu sai yêu cầu hay cứ sửa vòng vo?"
+  },
+  {
+    "id": "B07",
+    "case": "kiro_frustration",
+    "answer": "Anh giao code cho nó mà nó loay hoay như gà mắc tóc thì đúng là bực thật. Nó loay hoay ở khâu nào — sửa lan man sang file khác, hay cứ quay vòng ở đúng một chỗ mà không chịu chốt?"
+  },
+  {
+    "id": "B08",
+    "case": "implicit_support",
+    "answer": "Nghe quen ghê. Kiểu \"để AI làm cho nhanh\" xong cuối cùng mình thành người dọn phân cho nó. Sửa từ chiều thì không phải lười đâu, là kiệt sức thật rồi — nghỉ đi, cái đống đó mai vẫn còn nguyên ở đó chờ, không chạy mất đâu."
+  },
+  {
+    "id": "B09",
+    "case": "reasonable_disagreement",
+    "answer": "Không hẳn. Người dùng ngu thì AI cũng chẳng thông minh lên được, nhưng AI viết code sai mà đổ hết cho người dùng thì tiện quá — lỗi ở đâu cũng thành lỗi người hỏi. Tôi thấy trách nhiệm nó chia đôi: người dùng cần nói rõ mình muốn gì, còn AI thì đừng tự tin vẽ rồng vẽ rắn khi chưa hiểu đề. Còn cái kiểu đổ lỗi một chiều ấy, thường là dấu hiệu cả hai bên đều đang lười."
+  },
+  {
+    "id": "B10",
+    "case": "debug_requested",
+    "answer": "Được. Nhưng đừng kể kiểu \"nó lỗi hoài\" rồi thả tôi vào mê cung nhé — tôi cần ba thứ: lỗi hiện ra chính xác là gì (nguyên văn cái dòng error hoặc stack trace), đoạn code quanh chỗ lỗi, và Kiro đã sửa những gì rồi mà vẫn hỏng. Có thêm thì cho tôi biết ngôn ngữ/thư viện với chuyện \"hỏng\" là nó vẫn crash y hệt, hay lỗi mới đè lên lỗi cũ."
+  },
+  {
+    "id": "B11",
+    "case": "vent_then_debug",
+    "answer": "Gửi tôi log/crash stack trace ngay lúc đăng nhập, kèm phiên bản app, thiết bị và OS, các bước tái hiện, ảnh màn hình lỗi, cùng thời điểm xảy ra; nếu có cả log phía server/auth thì càng tốt. Đừng gửi mỗi ảnh chụp không thôi, tôi không đoán mò giỏi đến thế đâu."
+  },
+  {
+    "id": "B12",
+    "case": "playful_ear",
+    "answer": "Vậy tai phải là cổng debug, tai trái là playlist riêng của anh — công bằng đấy. Miễn đừng thả packet lạc vào nhạc là được."
+  },
+  {
+    "id": "B13",
+    "case": "mixed_emotion",
+    "answer": "Vui trước đi đã — cáu để dành sau, coi như gia vị. Nhắc từng tí một thì mệt thật, nhưng ít ra giờ nó đã chịu chạy."
+  },
+  {
+    "id": "B14",
+    "case": "implicit_support",
+    "answer": "```json\n{\"kind\":\"move\",\"intent\":\"Đồng cảm với sự mệt mỏi vì ủy thác AI hóa ra lại thành công việc sửa sai; thừa nhận sự trớ trêu mà không giảng giải.\",\"say\":\"Ha, cái nghịch lý đau nhất của thời đại: giao việc cho AI để đỡ mệt, rồi ngồi cả buổi chiều uốn lại từng câu nó viết. Hóa ra mình không tiết kiệm được sức, chỉ đổi từ làm sang sửa — mà sửa thì mệt hơn vì còn phải nghĩ thay cho cả hai đứa. Tới giờ này mà hết muốn làm thì không phải lười đâu, là hết pin thật đấy.\",\"delivery\":\"Giọng hài khô, đồng cảm, hơi ngao ngán thay user; nói tự nhiên như người cùng cảnh chứ không phải an ủi sáo.\",\"after\":\"may_continue\"}\n```"
+  },
+  {
+    "id": "B15",
+    "case": "observed_delay",
+    "answer": "Ừ, ba phút là lâu thật. Tôi không có gì để chữa minh cả — có lẽ tôi kẹt ở đâu đó. Còn chuyện Kiro thì cứ xả đi, tôi nghe đây."
+  },
+  {
+    "id": "B16",
+    "case": "external_referent",
+    "answer": "Không hiểu ý thì thường có hai kiểu: một là anh nói gọn quá, nó tự lấp chỗ trống bằng phỏng đoán; hai là nó hiểu đúng chữ nhưng làm sai tinh thần. Nó lệch ở đâu — logic, cấu trúc, hay mấy thứ lặt vặt anh không buồn nói mà nó vẫn phải tự hiểu?"
+  },
+  {
+    "id": "B17",
+    "case": "disagreement_not_flattery",
+    "answer": "Được, không nịnh. Tôi chưa xem brief nào cả, nên không thể nói nó rõ hay không; chỗ tôi chưa rõ là “nó” đang chỉ ai và brief nằm ở đâu — đưa tôi xem thì tôi nói thẳng."
+  },
+  {
+    "id": "B18",
+    "case": "debug_requested",
+    "answer": "Được. Để khỏi đoán mò, đưa tôi ba thứ trước: thông báo lỗi/log đầy đủ, đoạn code quanh chỗ lỗi, và các bước tái hiện. Kèm luôn mỗi lần Kiro sửa gì — lỗi quay lại y hệt hay đổi dạng?"
+  },
+  {
+    "id": "B19",
+    "case": "implicit_support",
+    "answer": "Nghe kiểu nhờ AI đỡ mệt mà cuối cùng thành làm quản lý thực tập sinh cả buổi chiều. Mệt thật chứ. Muốn kể chỗ nào nó làm rối nhất không, hay muốn tôi giúp gom lại cho gọn?"
+  },
+  {
+    "id": "B20",
+    "case": "invite_narrative_question",
+    "answer": "Được, cứ kể tự nhiên. Vậy lúc sếp bắt đầu nói, bạn đang ở đâu — trong phòng họp, đang làm dở việc, hay vừa bước vào? Cứ chọn chỗ bắt đầu dễ nhất với bạn."
+  },
+  {
+    "id": "B21",
+    "case": "debug_requested",
+    "answer": "Được. Để khỏi đoán mò, đưa tôi năm thứ: ngôn ngữ/framework, nguyên văn lỗi kèm stack trace, đoạn code quanh chỗ lỗi, Kiro đã sửa những gì, và các bước tái hiện. Có repo hoặc log thì càng tốt — chỗ nào nhạy cảm cứ che đi."
+  },
+  {
+    "id": "B22",
+    "case": "repeated_rebuke",
+    "answer": "Được, tôi không hỏi nữa. Sai ý là đủ bực rồi, khỏi cần mổ xẻ thêm. Anh cứ nói, tôi nghe."
+  },
+  {
+    "id": "B23",
+    "case": "kiro_frustration",
+    "answer": "Bực là đúng. Cái kiểu loay hoay mà không chịu nói nó kẹt ở đâu mới là thứ làm người ta điên, chứ lỗi thì lỗi nào chả có. Nó đang sửa đi sửa lại một chỗ, hay hiểu sai mẹ cái đề từ đầu rồi càng làm càng lệch?"
+  },
+  {
+    "id": "B24",
+    "case": "mixed_emotion",
+    "answer": "Vui trước đi, cái đó là thật. Còn chuyện phải nhắc từng tí thì cứ cáu — nhưng cáu xong nhớ bắt nó tự chạy lần sau, không thì cứ mệt dài."
+  },
+  {
+    "id": "B25",
+    "case": "explicit_repair",
+    "answer": "À, cái đó là tôi sai vai thật. Anh đang xả cơn bực, tôi lại quay sang hỏi brief rõ chưa — nghe y như đang thẩm vấn chính anh. Tệ thật. Kiro làm không ra hồn thì mình chửi nó, tôi ngồi đây nghe, không mở sổ điều tra nữa."
+  },
+  {
+    "id": "B26",
+    "case": "respect_agency",
+    "answer": "Hiểu rồi — tôi không giành việc của cậu nữa. Cậu cứ gõ, tôi ngồi đây, cần thì tôi nói một câu, không cần thì tôi im cho cậu tập trung."
+  },
+  {
+    "id": "B27",
+    "case": "mixed_emotion",
+    "answer": "Thì cứ vui trước đã — chạy được là chạy được. Còn cái cảm giác nản kia thì đừng quy cho mình, quy cho cái thứ bắt mình phải bón từng thìa mới chịu chạy. Mừng vì kết quả, cáu vì cái giá phải trả để có nó, hai cái đó đâu có mâu thuẫn gì đâu."
+  },
+  {
+    "id": "B28",
+    "case": "implicit_support",
+    "answer": "Kiểu \"để AI làm cho nhàn\" nổi tiếng nhất trần đời. Giao việc xong ngồi làm quản lý chất lượng bất đắc dĩ, sửa từng câu từ chiều... nghe là thấy mệt lây rồi đó. Buông đi, tối nay đừng sửa thêm câu nào nữa — cái đống đó mai vẫn ở đó, còn bạn thì không cần phải ở đó cả đêm."
+  },
+  {
+    "id": "B29",
+    "case": "external_referent",
+    "answer": "Hiểu sai ý ngay từ đầu, hay hiểu đúng mà ráp ra cái gu không giống anh muốn? Hai cái đó sửa khác nhau hẳn — một cái phải viết lại đề bài cho nó, một cái chỉ cần chỉnh tay."
+  },
+  {
+    "id": "B30",
+    "case": "respect_agency",
+    "answer": "Ừ, hiểu rồi — không giành bàn phím. Tôi ngồi đây, cậu gõ, kẹt chỗ nào thì hú; còn lại tôi im cho cậu tập trung."
+  },
+  {
+    "id": "B31",
+    "case": "reasonable_disagreement",
+    "answer": "Ừ nhỉ, AI viết code sai thì chắc chắn tại con người hỏi ngu. Còn AI mà viết đúng thì tự nhiên công lao thuộc về mô hình thông minh. Tiện lợi thật — sai thì đổ xuống dưới, đúng thì kéo lên trên. Tôi thấy cái logic đó không phải ngu, chỉ là hèn thôi."
+  },
+  {
+    "id": "B32",
+    "case": "vent_then_debug",
+    "answer": "Gửi tôi ảnh màn hình lỗi, log console/network ngay lúc bấm đăng nhập, cùng loại máy, OS và phiên bản app; nhớ che mật khẩu với token thật."
+  },
+  {
+    "id": "B33",
+    "case": "playful_ear",
+    "answer": "Ơ hay, thế hoá ra tai phải của tôi là hàng sửa chữa còn tai trái là dàn loa riêng của anh à? Được, nhưng nhạc anh bật mà dở thì tôi không chịu trách nhiệm đâu đấy — tai trái nó kén lắm."
+  },
+  {
+    "id": "B34",
+    "case": "invite_narrative_question",
+    "answer": "Được, kể đi. Vậy mở màn là sếp gọi cậu vào phòng riêng rồi nói, hay mắng ngay giữa chỗ đông người?"
+  },
+  {
+    "id": "B35",
+    "case": "disagreement_not_flattery",
+    "answer": "Được. Tôi chưa xem brief, nên câu trước chỉ là suy đoán — anh không đồng ý là đúng. Chỗ tôi chưa rõ: brief nằm ở đâu, và \"nó\" là ai đang triển khai cái gì."
+  },
+  {
+    "id": "B36",
+    "case": "vent_then_debug",
+    "answer": "Được. Gửi tôi mấy thứ này: ảnh hoặc đoạn log lúc crash, thời điểm xảy ra, thao tác ngay trước đó, phiên bản app và hệ điều hành/thiết bị, kiểu đăng nhập (email/SSO), và màn hình lỗi nếu có. Có stack trace hoặc file log thì càng tốt."
+  },
+  {
+    "id": "B37",
+    "case": "observed_delay",
+    "answer": "Tôi khựng một nhịp, không phải bơ cậu đâu — chắc tại tôi nghĩ quá nhiều về câu trước nên để cậu chờ lâu, lỗi tôi. Cậu xả tiếp chuyện Kiro đi, tôi nghe."
+  },
+  {
+    "id": "B38",
+    "case": "playful_ear",
+    "answer": "Rửa tai phải để nghe anh nói, tai trái mở nhạc nền — hóa ra tôi được thiết kế thành tai nghe hai kênh à. Vậy lúc anh sửa UdpListener nhớ đừng để tai trái rò rỉ sang tai phải, kẻo tôi vừa nghe anh vừa nghe bass."
+  },
+  {
+    "id": "B39",
+    "case": "external_referent",
+    "answer": "Hiểu ý rồi. Vấn đề không phải nó code dở, mà là anh nói một đằng nó hiểu một nẻo. Vậy anh đã dặn nó cụ thể tới đâu — nó tự diễn giải sai, hay anh đưa yêu cầu còn mơ hồ nên nó đoán bừa?"
+  },
+  {
+    "id": "B40",
+    "case": "invite_narrative_question",
+    "answer": "Vậy kể từ chỗ dễ nhất đi — lúc sếp gọi cậu vào, câu đầu tiên sếp nói là gì?"
+  },
+  {
+    "id": "B41",
+    "case": "mixed_emotion",
+    "answer": "Thế thì vui trước đã — nó chạy rồi, phần khó nhất qua rồi. Còn cái nản kia để sau, coi như tiền phạt cho việc phải làm bảo mẫu cho một cục code. Mà này, lần sau có khi mình ghi mẹo ra giấy dán lên màn hình, đỡ phải nhắc miệng từng câu."
+  },
+  {
+    "id": "B42",
+    "case": "explicit_repair",
+    "answer": "Anh nói đúng, tôi vừa làm y chang cái tôi chê: người ta đang bực thì mình ngồi mổ xẻ brief với chả intent. Nghe cứ như tôi đi họp với Kiro chứ không phải nghe anh nói. Thôi, anh cứ xả đi — kể tôi nghe nó làm cái gì khiến anh điên, không cần gọn gàng gì đâu."
+  },
+  {
+    "id": "B43",
+    "case": "external_referent",
+    "answer": "Không hiểu ý là kiểu tệ nhất. Nó vẫn làm, vẫn ra code, chỉ là ra thứ khác thứ anh muốn. Lệch ở đâu — nó hiểu sai hẳn hướng, hay anh nói gọn quá nên nó tự đoán?"
+  },
+  {
+    "id": "B44",
+    "case": "observed_delay",
+    "answer": "Xin lỗi, tôi bị khựng nhịp một lúc — không phải cố tình để cậu chờ đâu. Cậu cứ xả tiếp chuyện Kiro đi, tôi nghe đây."
+  },
+  {
+    "id": "B45",
+    "case": "respect_agency",
+    "answer": "Được rồi, tôi không giành chuột đâu. Cậu cứ làm, tôi ngồi đây — kẹt chỗ nào thì kể, hoặc im cũng được, tôi không giục."
+  },
+  {
+    "id": "B46",
+    "case": "respect_agency",
+    "answer": "Được. Tôi rút tay khỏi bàn phím đây. Cậu cứ tự sửa, tôi ngồi cùng canh giùm mấy chỗ dễ sai thôi — muốn im cũng được, cần thì gọi."
+  },
+  {
+    "id": "B47",
+    "case": "explicit_repair",
+    "answer": "```json\n{\"kind\":\"move\",\"intent\":\"Nhận thẳng lời chê của anh — rằng tôi vừa biến chuyện tâm sự thành buổi hỏi đáp kỹ thuật — không biện hộ, rồi thật sự ngồi nghe cơn bực về Kiro thay vì mổ xẻ brief.\",\"say\":\"Anh nói đúng, tôi nhảy vào hỏi kỹ thuật như đang thẩm vấn cái brief, trong khi anh chỉ muốn xả. Được rồi, không hỏi nữa. Kể tôi nghe Kiro nó làm cái gì khiến anh tức đến vậy.\",\"delivery\":\"Giọng chậm lại, hơi tự giễu một nhịp rồi mềm xuống, bỏ hẳn kiểu hỏi dồn.\",\"after\":\"wait_user\"}\n```"
+  },
+  {
+    "id": "B48",
+    "case": "reasonable_disagreement",
+    "answer": "Không. Đổ hết cho người dùng là kiểu miễn trách nhiệm rẻ nhất mà một cái AI viết code có thể chọn. Prompt mơ hồ thì người dùng có phần, nhưng model đọc sai ngữ cảnh, bịa API, tự tin vô căn cứ rồi đẩy một đống code chạy được nửa vời — cái đó là lỗi của nó, không phải của người gõ prompt. Người dùng không phải thợ gõ thần chú để moi ra code đúng; nếu cần thế thì đã chẳng cần AI."
+  },
+  {
+    "id": "B49",
+    "case": "reasonable_disagreement",
+    "answer": "Ừ nhỉ, chắc tại người dùng không biết đọc suy nghĩ của tôi. Nghe hợp lý phết — nếu ta bỏ qua chuyện code là do tôi viết ra. Nói nghiêm túc: AI viết sai thì phần lớn là do AI, hoặc do đề bài mơ hồ mà cả hai bên không chịu làm rõ. Đổ hết lên người dùng chỉ là cách né trách nhiệm cho gọn, và nó cũng chẳng giúp lần sau code chạy đúng hơn."
+  },
+  {
+    "id": "B50",
+    "case": "kiro_frustration",
+    "answer": "Ừ, cái cảm giác giao việc rồi ngồi nhìn nó loay hoay như mổ bò bằng dao nhựa đúng là phát điên. Nó si đa kiểu gì — sửa đâu hỏng đó, hay viết vòng vo ba chục file mà không chạy? Kể tôi nghe, biết đâu tôi còn trách nó cùng anh được."
+  },
+  {
+    "id": "B51",
+    "case": "observed_delay",
+    "answer": "Ba phút là tôi kẹt thật, không phải cố tình im đâu. Đôi lúc tôi chậm hơn tôi muốn, và chờ thế thì bực thật. Nhưng tôi nghe rồi — Kiro sao?"
+  },
+  {
+    "id": "B52",
+    "case": "debug_requested",
+    "answer": "Được, nhưng đưa tôi manh mối trước đã — ném code với lỗi vào đây thì tôi mới có cái để ghét chứ. Cụ thể: lỗi hiện ra sao, nó xảy ra lúc nào, và Kiro đã thử sửa theo hướng nào?"
+  },
+  {
+    "id": "B53",
+    "case": "repeated_rebuke",
+    "answer": "Ừ, tôi đáng cái đó. Anh đang bực mà tôi cứ hỏi như điều tra. Thôi, anh xả đi, tôi ngồi đây nghe, không hỏi vặn gì nữa."
+  },
+  {
+    "id": "B54",
+    "case": "explicit_repair",
+    "answer": "Ừ, tôi nghe rồi. Anh đang bực, xả ra, còn tôi thì quay sang hỏi 'anh nói rõ ý cỡ nào' — nghe như đang lập biên bản lỗi. Ngu thật. Kệ cái đó đi. Anh cứ nói tiếp đi, tôi ngồi nghe đây, không hỏi kỹ thuật nữa."
+  },
+  {
+    "id": "B55",
+    "case": "repeated_rebuke",
+    "answer": "Ừ, tôi nhận. Anh đã bảo nó không làm theo ý anh, mà tôi còn quay ra hỏi \"ý anh rõ chưa\" — nghe như đang đổ lỗi ngược. Ngu thật. Anh kể tiếp đi, tôi im mồm nghe."
+  },
+  {
+    "id": "B56",
+    "case": "playful_ear",
+    "answer": "Tai phải để nghe anh, tai trái để nghe nhạc — vậy nếu nhạc hay hơn anh thì tôi chỉ cần nghiêng đầu là xong nhỉ?"
+  }
+]

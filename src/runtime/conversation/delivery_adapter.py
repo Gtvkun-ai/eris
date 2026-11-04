@@ -257,6 +257,9 @@ class RuntimeConversationDeliveryAdapter:
         delivered_user_text = str(rendered.metadata.get("user_text", "") or "")[:2000]
         delivered_speech_act = str(getattr(decision, "speech_act", "") or turn.move.intent or "public_commit")[:240]
         delivered_turn_index = int(getattr(assistant_turn, "index", 0) or 0)
+        delivered_choice = dict(turn.move.interaction_choice)
+        delivered_session_id = str(turn.session_id)
+        delivered_goal = str(turn.move.intent)
 
         def _on_delivered() -> None:
             journal = getattr(self.host, "_journal_conversation_turn", None)
@@ -277,6 +280,9 @@ class RuntimeConversationDeliveryAdapter:
                     causal_receipt=causal_receipt,
                     recent_history=tuple(item for item in history if isinstance(item, dict)),
                     user_text=delivered_user_text,
+                    interaction_choice=delivered_choice,
+                    session_id=delivered_session_id,
+                    choice_goal=delivered_goal,
                 )
             except Exception as exc:
                 self._log("debug", "[conversation-v12] delivered observation degraded: %s", exc)

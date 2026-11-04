@@ -1,0 +1,7 @@
+{
+  "task_id": "eris-async-summary-no-ocr",
+  "task_description": "Eris 03/11/2026 run: (P1) make Gemini episode/summary consolidation an independent background task that never holds a lock the chat hot path needs, persists results durably, retries with backoff and never drops raw turns before the summary is persisted; (P2) turn OCR off entirely behind ERIS_SCREEN_OCR_ENABLED (default off) and keep vision as the screen path. P3 (persona/behavior) is out of scope. No commit/push, no worktree, do not touch C:\\Users\\Gtvkun\\Documents\\eris.",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

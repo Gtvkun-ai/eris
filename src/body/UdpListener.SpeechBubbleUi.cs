@@ -34,6 +34,11 @@ public partial class UdpListener
         {
             Name = "Live2DCompanionSpeechBubble",
             Visible = false,
+            AnchorLeft = 0f,
+            AnchorTop = 0f,
+            AnchorRight = 0f,
+            AnchorBottom = 0f,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkBegin,
             Size = new Vector2(width, 94f),
             CustomMinimumSize = new Vector2(width, 0f),
             MouseFilter = Control.MouseFilterEnum.Pass,
@@ -110,7 +115,7 @@ public partial class UdpListener
         _live2DSpeechLabel = new RichTextLabel
         {
             BbcodeEnabled = false,
-            FitContent = true,
+            FitContent = false,
             ScrollActive = false,
             ScrollFollowing = false,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
@@ -216,13 +221,15 @@ public partial class UdpListener
 
         float width = CompanionBubbleWidth();
         _live2DSpeechBubble.CustomMinimumSize = new Vector2(width, 0f);
-        _live2DSpeechBubble.Size = new Vector2(width, _live2DSpeechBubble.Size.Y);
+        float innerWidth = Mathf.Max(60f, width - 32f);
+        _live2DSpeechLabel.Size = new Vector2(innerWidth, _live2DSpeechLabel.Size.Y);
         // RichTextLabel provides its actual wrapped height after the container layout.
         float contentHeight = _live2DSpeechLabel.GetContentHeight();
-        float textHeight = Mathf.Clamp(contentHeight, 26f, 146f);
+        float textHeight = Mathf.Clamp(contentHeight, 26f, 160f);
         _live2DSpeechLabel.CustomMinimumSize = new Vector2(0f, textHeight);
         _live2DSpeechBubble.ResetSize();
-        _live2DSpeechBubble.Size = new Vector2(width, _live2DSpeechBubble.GetCombinedMinimumSize().Y);
+        float targetHeight = Mathf.Clamp(_live2DSpeechBubble.GetCombinedMinimumSize().Y, 50f, 260f);
+        _live2DSpeechBubble.Size = new Vector2(width, targetHeight);
         if (_isLive2DMode && _live2DSpeechBubble.Visible)
             ApplyLive2DBubbleVisualState();
         UpdateMousePassthrough();

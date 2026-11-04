@@ -7,6 +7,7 @@ to skip profile learning or semantic distillation.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,8 @@ from memory.json_store_io import atomic_write_json, lock_for_path
 
 from .episode_projection import anchor_label, content_hash, episode_hash, episode_view, time_anchor, token_cost
 from .models import UserEpisode, UserMemoryScope
+
+logger = logging.getLogger(__name__)
 
 ROLLUP_SYSTEM = """Bạn nén ký ức hội thoại thành một bản kể quá khứ ngắn, không học profile.
 Trả JSON duy nhất: {"segments":[{"anchor":"YYYY-MM-DD","text":"..."}]}.
@@ -145,8 +148,11 @@ class EpisodeRollupStore:
             return {"status": "committed" if committed else "unchanged", "calls": calls, "committed": committed}
         except Exception as exc:
             self._retry_at = current + self.config.retry_seconds
+            detail = str(exc)[:160]
+            logger.warning("[episode_rollup] failed error=%s reason=%s detail=%s retry_in=%.0fs",
+                           type(exc).__name__, getattr(exc, "status", ""), detail, self.config.retry_seconds)
             return {"status": "failed", "error": type(exc).__name__, "reason": getattr(exc, "status", ""),
-                    "calls": calls, "committed": committed}
+                    "detail": detail, "calls": calls, "committed": committed}
         finally:
             self._job.release()
 

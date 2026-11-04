@@ -25,6 +25,7 @@ from typing import Any, Callable
 from runtime.cognition.normalization import normalize_vi
 from runtime.structured_evidence import StructuredEvidenceContext, StructuredEvidenceProvider
 from screen.evidence_models import PendingVisionEscalation, ScreenRouteDecision
+from screen.ocr_config import screen_ocr_enabled
 from screen.screen_anaphora_rescue import ScreenAnaphoraRescue
 
 
@@ -281,13 +282,17 @@ class ChatPerceptionCoordinator:
             self._log("warning", "[screen text] lazy start error: %s", exc)
 
     def refresh_screen_text(self) -> bool:
-        """Cưỡng bức đúng một lượt OCR/UIA khi user thật sự hỏi màn hình."""
+        """Làm mới ngay một lượt UIA khi user thật sự hỏi màn hình.
+
+        Chỉ ép OCR khi ``ERIS_SCREEN_OCR_ENABLED`` bật; mặc định tắt thì chat
+        không bao giờ truyền ``force_ocr=True`` và vision lo phần nhìn.
+        """
 
         refresh = getattr(self.screen_text_worker, "refresh_now", None)
         if not callable(refresh):
             return False
         try:
-            snapshot = refresh(force_ocr=True)
+            snapshot = refresh(force_ocr=screen_ocr_enabled())
         except TypeError:
             snapshot = refresh()
         except Exception as exc:

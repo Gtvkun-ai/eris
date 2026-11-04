@@ -9,10 +9,12 @@ from __future__ import annotations
 from core.di import resolve_dependency
 
 import json
+import logging
 import os
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -33,6 +35,11 @@ from .store import ApplyResult, UserProfileStore, UserProfileStoreConfig
 from .trace import MemoryReplayDebugger, MemoryTraceJournal
 from memory.memory_feed_trace import MemoryFeedTraceJournal
 
+logger = logging.getLogger(__name__)
+
+# Hạn cứng của helper thread = episode_timeout_sec + grace, để adapter không tôn trọng timeout vẫn không giữ worker.
+_DEADLINE_GRACE_SEC = 5.0
+
 
 @dataclass(slots=True)
 class LivingUserMemoryConfig:
@@ -42,6 +49,12 @@ class LivingUserMemoryConfig:
     auto_dream_on_maintenance: bool = True
     episode_rollup_enabled: bool = True
     context_token_budget: int = 900
+    # Tóm tắt episode chạy nền: không bao giờ giữ lock mà chat đọc/ghi.
+    episode_timeout_sec: float = 60.0
+    episode_retry_sec: float = 60.0
+    episode_fallback_rows: int = 40
+    lock_wait_warn_ms: float = 250.0
+    capture_lock_timeout_sec: float = 2.0
     profile_filename: str = "living_user_profile.json"
     episode_filename: str = "living_user_episodes.json"
     action_filename: str = "living_user_actions.json"
@@ -57,6 +70,11 @@ class LivingUserMemoryConfig:
             auto_dream_on_maintenance=_env_flag("ERIS_LIVING_USER_AUTO_DREAM", True),
             episode_rollup_enabled=_env_flag("ERIS_LIVING_USER_EPISODE_ROLLUP", True),
             context_token_budget=max(200, int(os.getenv("ERIS_LIVING_USER_CONTEXT_TOKENS", "900") or 900)),
+            episode_timeout_sec=_env_float("ERIS_LIVING_USER_EPISODE_TIMEOUT_SEC", 60.0, minimum=1.0),
+            episode_retry_sec=_env_float("ERIS_LIVING_USER_EPISODE_RETRY_SEC", 60.0, minimum=1.0),
+            episode_fallback_rows=int(_env_float("ERIS_LIVING_USER_EPISODE_FALLBACK_ROWS", 40.0, minimum=2.0)),
+            lock_wait_warn_ms=_env_float("ERIS_LIVING_USER_LOCK_WARN_MS", 250.0, minimum=0.0),
+            capture_lock_timeout_sec=_env_float("ERIS_LIVING_USER_CAPTURE_LOCK_SEC", 2.0, minimum=0.05),
         )
 
 
@@ -130,6 +148,21 @@ class LivingUserMemoryService:
         self._turn_buffer_lock = threading.RLock()
         self._turn_buffer: list[dict[str, Any]] = []
         self._active_session_id = ""
+        # Trạng thái consolidation nền (xem request_consolidation). `_cons_state_lock`
+        # chỉ bảo vệ vài biến nhỏ, không bao giờ giữ qua model call.
+        self._lock_wait_ms: dict[str, float] = {}
+        self._lock_wait_max_ms: dict[str, float] = {}
+        self._cons_run_lock = threading.Lock()
+        self._cons_state_lock = threading.Lock()
+        self._cons_wake = threading.Event()
+        self._cons_stop = threading.Event()
+        self._cons_thread: threading.Thread | None = None
+        self._cons_pending: dict[str, Any] | None = None
+        self._cons_retry: dict[str, Any] | None = None
+        self._cons_failures = 0
+        self._cons_next_at = 0.0
+        self._cons_deferred_logged = False
+        self._cons_last: dict[str, Any] = {"error": "", "episode_id": "", "duration_ms": 0.0, "gemini_ms": 0.0}
         self._load_turn_buffer()
         self._reapply_authority_projection()
 
@@ -162,9 +195,11 @@ class LivingUserMemoryService:
             "role": role, "session_id": sid, "evidence_id": evidence_id,
             "project_id": action_scope.key if action_scope.kind == "project" else "",
         })
-        with self._turn_buffer_lock:
-            if self._active_session_id and sid != self._active_session_id and self._turn_buffer:
-                self._flush_buffer_locked(run_dream=True)
+        # Trong lock chỉ có thao tác bộ nhớ + ghi file nhỏ; mọi việc tóm tắt bằng
+        # model chạy ở worker nền (request_consolidation) sau khi đã nhả lock.
+        with self._timed_buffer_lock("record_turn"):
+            session_changed = bool(
+                self._active_session_id and sid != self._active_session_id and self._turn_buffer)
             self._active_session_id = sid
             self._turn_buffer.append({
                 "id": evidence_id,
@@ -179,32 +214,299 @@ class LivingUserMemoryService:
             self._save_turn_buffer_locked()
             # Phiên dài được checkpoint thành episode giữa chừng, nhưng giữ vài
             # lượt cuối để mạch tiếp theo không bị cắt cụt.
-            if len(self._turn_buffer) >= 28 and role in {"assistant", "eris"}:
-                self._flush_buffer_locked(run_dream=False, keep_tail=4)
+            checkpoint = len(self._turn_buffer) >= 28 and role in {"assistant", "eris"}
+        if session_changed:
+            self.request_consolidation("session_change", run_dream=True)
+        elif checkpoint:
+            self.request_consolidation("checkpoint", keep_tail=4)
         return evidence_id
 
-    def flush_session(self, *, run_dream: bool = True) -> UserEpisode | None:
-        with self._turn_buffer_lock:
-            return self._flush_buffer_locked(run_dream=run_dream)
+    @contextmanager
+    def _timed_buffer_lock(self, owner: str, timeout: float | None = None):
+        """Lấy ``_turn_buffer_lock``, đo thời gian chờ và cảnh báo khi chờ lâu.
 
-    def _flush_buffer_locked(self, *, run_dream: bool, keep_tail: int = 0) -> UserEpisode | None:
-        if len(self._turn_buffer) < 2:
-            return None
-        turns = list(self._turn_buffer)
-        sid = self._active_session_id or "runtime_session"
-        context = turns[-1].get("context") if turns else {}
-        project_id = str((context or {}).get("project_id") or (context or {}).get("project") or "")
-        scope = UserMemoryScope("project", project_id) if project_id else UserMemoryScope()
-        episode = self.consolidate_session(
-            turns,
-            session_id=sid,
-            scope=scope,
-            metadata={"source": "turn_buffer", "turn_count": len(turns)},
-            run_dream=run_dream,
-        )
-        self._turn_buffer = turns[-keep_tail:] if keep_tail else []
-        self._save_turn_buffer_locked()
+        Yield dict ``{"acquired": bool, "wait_ms": float}``; khi hết ``timeout``
+        thì acquired=False và caller không được đụng vào buffer.
+        """
+        started = time.monotonic()
+        acquired = self._turn_buffer_lock.acquire(timeout=-1 if timeout is None else max(0.0, float(timeout)))
+        wait_ms = (time.monotonic() - started) * 1000.0
+        self._lock_wait_ms[owner] = round(wait_ms, 1)
+        self._lock_wait_max_ms[owner] = max(self._lock_wait_max_ms.get(owner, 0.0), round(wait_ms, 1))
+        if wait_ms >= self.config.lock_wait_warn_ms or not acquired:
+            logger.warning("[living_user] turn_buffer_lock wait=%.0fms owner=%s acquired=%s", wait_ms, owner, acquired)
+        info = {"acquired": acquired, "wait_ms": round(wait_ms, 1)}
+        try:
+            yield info
+        finally:
+            if acquired:
+                self._turn_buffer_lock.release()
+
+    # ── Consolidation nền: snapshot → Gemini ngoài lock → lưu episode → trim theo id ──
+
+    def request_consolidation(self, reason: str, *, run_dream: bool = False, keep_tail: int = 0) -> bool:
+        """Xin worker nền tóm tắt turn buffer thành episode. Không chặn, không model call.
+
+        Nhiều yêu cầu được gộp (run_dream OR, keep_tail lấy min). Trả False khi service
+        tắt hoặc đã ``stop_consolidation``.
+        """
+        if not self.config.enabled or self._cons_stop.is_set():
+            return False
+        request = {"reason": str(reason or "request"), "run_dream": bool(run_dream),
+                   "keep_tail": max(0, int(keep_tail or 0)), "requested_at": time.time()}
+        with self._cons_state_lock:
+            self._cons_pending = _merge_consolidation_requests(self._cons_pending, request)
+            thread = self._cons_thread
+            if thread is None or not thread.is_alive():
+                thread = threading.Thread(target=self._consolidation_loop, name="ERIS-LivingUserEpisode", daemon=True)
+                self._cons_thread = thread
+                thread.start()
+        self._cons_wake.set()
+        return True
+
+    def stop_consolidation(self, timeout: float = 2.0) -> None:
+        """Dừng worker nền (shutdown/test). Yêu cầu sau đó bị từ chối."""
+        self._cons_stop.set()
+        self._cons_wake.set()
+        thread = self._cons_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(max(0.0, float(timeout)))
+
+    def consolidation_status(self) -> dict[str, Any]:
+        """Trạng thái consolidation nền, dùng cho diagnostics/test (không đưa vào summary())."""
+        with self._cons_state_lock:
+            pending = self._cons_pending
+            retry = self._cons_retry
+            failures = self._cons_failures
+            next_in = max(0.0, self._cons_next_at - time.monotonic())
+            last = dict(self._cons_last)
+        thread = self._cons_thread
+        return {
+            "pending": pending is not None,
+            "retry_pending": retry is not None,
+            "running": self._cons_run_lock.locked(),
+            "worker_alive": bool(thread is not None and thread.is_alive()),
+            "failures": failures,
+            "next_retry_in_s": round(next_in, 2) if failures else 0.0,
+            "last_error": last["error"],
+            "last_episode_id": last["episode_id"],
+            "last_duration_ms": last["duration_ms"],
+            "last_gemini_ms": last["gemini_ms"],
+            "lock_wait_ms": dict(self._lock_wait_ms),
+            "lock_wait_max_ms": dict(self._lock_wait_max_ms),
+        }
+
+    def _user_turn_active(self) -> bool:
+        """Cổng nhường chat: đọc broker tại thời điểm chạy (test có thể ghi đè method này)."""
+        try:
+            from runtime.inference_broker import GLOBAL_INFERENCE_BROKER
+            return bool(GLOBAL_INFERENCE_BROKER.user_turn_active())
+        except Exception:
+            return False
+
+    def _consolidation_loop(self) -> None:
+        while not self._cons_stop.is_set():
+            with self._cons_state_lock:
+                has_work = self._cons_pending is not None or self._cons_retry is not None
+            # Không có việc thì ngủ hẳn tới khi có yêu cầu; có việc đang chờ backoff/cổng thì poll 5s.
+            self._cons_wake.wait(5.0 if has_work else None)
+            if self._cons_stop.is_set():
+                break
+            self._cons_wake.clear()
+            with self._cons_state_lock:
+                request = _merge_consolidation_requests(self._cons_pending, self._cons_retry)
+                if request is None or time.monotonic() < self._cons_next_at:
+                    continue
+            if self._user_turn_active():
+                if not self._cons_deferred_logged:
+                    self._cons_deferred_logged = True
+                    logger.info("[living_user] consolidation deferred: user turn active reason=%s", request["reason"])
+                    self._trace_consolidation("deferred", reason=request["reason"], error="user_turn_active")
+                continue
+            self._cons_deferred_logged = False
+            with self._cons_state_lock:
+                self._cons_pending = None
+                self._cons_retry = None
+            try:
+                outcome, _ = self._consolidate_once(request, strict=True)
+            except Exception:
+                logger.exception("[living_user] consolidation worker error")
+                outcome = "failed"
+            if outcome in {"failed", "busy"}:
+                with self._cons_state_lock:
+                    self._cons_retry = _merge_consolidation_requests(self._cons_retry, request)
+
+    def flush_session(self, *, run_dream: bool = True) -> UserEpisode | None:
+        """API đồng bộ cũ: tóm tắt ngay trên thread gọi. Không gọi từ đường chat."""
+        _, episode = self._consolidate_once(
+            {"reason": "flush_session", "run_dream": bool(run_dream), "keep_tail": 0}, strict=False)
         return episode
+
+    def _take_snapshot_locked(self, keep_tail: int) -> dict[str, Any] | None:
+        """Chụp một đoạn liên tiếp cùng session (>=2 dòng) từ buffer. Gọi khi đang giữ lock."""
+        rows = self._turn_buffer
+        runs = self._session_runs_locked()
+        for position, (start, end, sid) in enumerate(runs):
+            if end - start < 2:
+                continue
+            turns = [dict(row) for row in rows[start:end]]
+            is_last = position == len(runs) - 1
+            trimmed = turns[:-keep_tail] if (keep_tail and is_last) else turns
+            context = turns[-1].get("context") or {}
+            project_id = str(context.get("project_id") or context.get("project") or "")
+            return {
+                "turns": turns,
+                "session_id": sid,
+                "scope": UserMemoryScope("project", project_id) if project_id else UserMemoryScope(),
+                "trim_keys": {_turn_key(row) for row in trimmed},
+                "buffer_len": len(rows),
+            }
+        return None
+
+    def _session_runs_locked(self) -> list[tuple[int, int, str]]:
+        """Các đoạn liên tiếp cùng session_id trong buffer: ``(start, end, session_id)``."""
+        runs: list[tuple[int, int, str]] = []
+        for index, row in enumerate(self._turn_buffer):
+            sid = str(row.get("session_id") or self._active_session_id or "runtime_session")
+            if runs and runs[-1][2] == sid:
+                runs[-1] = (runs[-1][0], index + 1, sid)
+            else:
+                runs.append((index, index + 1, sid))
+        return runs
+
+    def _has_more_groups_locked(self) -> bool:
+        """Còn đoạn session cũ (không phải session đang hoạt động) có >=2 dòng chưa tóm tắt."""
+        return any(end - start >= 2 and sid != self._active_session_id
+                   for start, end, sid in self._session_runs_locked())
+
+    def _consolidate_once(self, request: Mapping[str, Any], *, strict: bool) -> tuple[str, UserEpisode | None]:
+        """Một lượt consolidation. Trả ``(outcome, episode)``.
+
+        outcome: committed | empty | nothing | busy | failed | disabled. Single flight
+        qua ``_cons_run_lock`` (không chờ). Thứ tự bất biến: snapshot → model ngoài lock
+        → ``episode_store.add`` → trim buffer theo id. ``strict`` (worker) không bao giờ
+        thay lỗi Gemini bằng episode heuristic, trừ khi không có adapter hoặc buffer đầy.
+        """
+        if not self.config.enabled:
+            return "disabled", None
+        if not self._cons_run_lock.acquire(blocking=False):
+            return "busy", None
+        began = time.monotonic()
+        try:
+            with self._timed_buffer_lock("snapshot") as lock_info:
+                snapshot = self._take_snapshot_locked(int(request.get("keep_tail") or 0)) if lock_info["acquired"] else None
+            if snapshot is None:
+                return "nothing", None
+            with self._cons_state_lock:
+                attempt = self._cons_failures + 1
+            reason = str(request.get("reason") or "")
+            no_adapter = self.episode_builder.model_adapter is None
+            pressure = snapshot["buffer_len"] >= max(2, int(self.config.episode_fallback_rows))
+            base = {"reason": reason, "session_id": snapshot["session_id"], "turn_count": len(snapshot["turns"]),
+                    "attempt": attempt, "lock_wait_ms": lock_info["wait_ms"]}
+            logger.info("[living_user] consolidation start reason=%s session=%s turns=%d attempt=%d lock_wait=%.0fms",
+                        reason, snapshot["session_id"], len(snapshot["turns"]), attempt, lock_info["wait_ms"])
+            self._trace_consolidation("started", **base)
+            gemini_started = time.monotonic()
+            error: Exception | None = None
+            episode: UserEpisode | None = None
+            saved: UserEpisode | None = None
+            try:
+                episode = self._build_episode(snapshot, allow_fallback=(not strict) or no_adapter or pressure)
+            except Exception as exc:
+                error = exc
+            if error is not None and strict and pressure and not no_adapter:
+                # Buffer sắp đầy (cap 48 dòng sẽ âm thầm bỏ dòng cũ): lưu bản heuristic để không mất dữ liệu.
+                try:
+                    episode = self._heuristic_builder().build(
+                        snapshot["turns"], session_id=snapshot["session_id"], scope=snapshot["scope"],
+                        metadata={"source": "turn_buffer", "turn_count": len(snapshot["turns"])})
+                    logger.warning("[living_user] consolidation fallback under buffer pressure rows=%d error=%s",
+                                   snapshot["buffer_len"], _error_label(error))
+                    error = None
+                except Exception as exc:
+                    error = exc
+            gemini_ms = round((time.monotonic() - gemini_started) * 1000.0, 1)
+            if error is None:
+                try:
+                    saved = self.episode_store.add(episode) if episode is not None else None
+                except Exception as exc:
+                    error = exc
+            if error is not None:
+                self._record_consolidation_failure(error, base, gemini_ms, began)
+                if not strict:
+                    raise error
+                return "failed", None
+            # Episode đã bền vững trên đĩa; chỉ giờ mới trim, và chỉ đúng các dòng trong snapshot.
+            with self._timed_buffer_lock("commit") as commit_info:
+                self._turn_buffer = [row for row in self._turn_buffer if _turn_key(row) not in snapshot["trim_keys"]]
+                self._save_turn_buffer_locked()
+                more = self._has_more_groups_locked()
+            if request.get("run_dream") and saved is not None:
+                try:
+                    self._dream_saved(saved, snapshot["scope"])
+                except Exception:
+                    logger.exception("[living_user] dream after consolidation failed")
+            duration_ms = round((time.monotonic() - began) * 1000.0, 1)
+            with self._cons_state_lock:
+                self._cons_failures = 0
+                self._cons_next_at = 0.0
+                self._cons_last.update(error="", episode_id=saved.id if saved else "",
+                                       duration_ms=duration_ms, gemini_ms=gemini_ms)
+            logger.info("[living_user] consolidation committed episode=%s source=%s turns=%d gemini=%.0fms duration=%.0fms",
+                        saved.id if saved else "", saved.source if saved else "", len(snapshot["turns"]), gemini_ms, duration_ms)
+            self._trace_consolidation(
+                "committed" if saved is not None else "empty", **{**base, "commit_lock_wait_ms": commit_info["wait_ms"]},
+                gemini_ms=gemini_ms, duration_ms=duration_ms, episode_id=saved.id if saved else "",
+                episode_source=saved.source if saved else "")
+            if more and strict:
+                self.request_consolidation("followup", run_dream=bool(request.get("run_dream")))
+            return ("committed" if saved is not None else "empty"), saved
+        finally:
+            self._cons_run_lock.release()
+
+    def _build_episode(self, snapshot: Mapping[str, Any], *, allow_fallback: bool) -> UserEpisode | None:
+        """Gọi builder (Gemini) ngoài mọi lock; có hard timeout cho adapter treo."""
+        timeout = max(1.0, float(self.config.episode_timeout_sec))
+        builder = self.episode_builder
+
+        def build() -> UserEpisode | None:
+            return builder.build(
+                snapshot["turns"], session_id=snapshot["session_id"], scope=snapshot["scope"],
+                metadata={"source": "turn_buffer", "turn_count": len(snapshot["turns"])},
+                allow_fallback=allow_fallback, timeout=timeout)
+
+        if builder.model_adapter is None:
+            return build()
+        return _run_with_deadline(build, timeout + _DEADLINE_GRACE_SEC)
+
+    def _heuristic_builder(self) -> UserEpisodeBuilder:
+        return UserEpisodeBuilder(model_adapter=None, config=self.episode_builder.config)
+
+    def _record_consolidation_failure(self, error: Exception, base: Mapping[str, Any], gemini_ms: float, began: float) -> None:
+        label = _error_label(error)
+        with self._cons_state_lock:
+            self._cons_failures += 1
+            failures = self._cons_failures
+            delay = min(600.0, float(self.config.episode_retry_sec) * (2 ** min(failures - 1, 16)))
+            self._cons_next_at = time.monotonic() + delay
+            self._cons_last.update(error=label, gemini_ms=gemini_ms,
+                                   duration_ms=round((time.monotonic() - began) * 1000.0, 1))
+        logger.warning("[living_user] consolidation failed reason=%s session=%s turns=%s error=%s failures=%d retry_in=%.0fs gemini=%.0fms",
+                       base.get("reason"), base.get("session_id"), base.get("turn_count"), label, failures, delay, gemini_ms)
+        self._trace_consolidation("failed", **base, error=label, gemini_ms=gemini_ms, failures=failures,
+                                  retry_in_s=round(delay, 1))
+
+    def _trace_consolidation(self, status: str, **fields: Any) -> None:
+        try:
+            self.trace_journal.append("episode_consolidation", {"status": status, **fields})
+        except Exception:
+            logger.debug("[living_user] trace append failed", exc_info=True)
+
+    def _dream_saved(self, saved: UserEpisode, scope: UserMemoryScope | None) -> None:
+        semantic_ops = self._semantic_operations(scope=scope)
+        self.last_dream_report = self.dreamer.consolidate(
+            (saved,), semantic_operations=semantic_ops, reason="session_end", scope=scope)
 
     def _load_turn_buffer(self) -> None:
         try:
@@ -229,8 +531,13 @@ class LivingUserMemoryService:
     def capture_interpretation_context(self, *, evidence_ids=(), cutoff=None, context=None, scopes=()) -> dict[str, Any]:
         """Read-only snapshot; no model/retrieval/network on the enqueue path."""
         from .evidence_context import build_evidence_context
-        with self._turn_buffer_lock:
-            turns = [dict(row) for row in self._turn_buffer]
+        with self._timed_buffer_lock("capture", timeout=self.config.capture_lock_timeout_sec) as lock_info:
+            if lock_info["acquired"]:
+                turns = [dict(row) for row in self._turn_buffer]
+            else:
+                # Không chặn chat: thiếu turn thô còn hơn treo đường đọc.
+                logger.warning("[living_user] capture_interpretation_context: lock timeout, continuing without recent turns")
+                turns = []
             session = self._active_session_id
         payload = dict(context or {})
         allowed = tuple(scopes) or (_scope_from_context(payload, session_id=str(payload.get("session_id") or session)),)
@@ -450,8 +757,7 @@ class LivingUserMemoryService:
             return None
         saved = self.episode_store.add(episode)
         if run_dream:
-            semantic_ops = self._semantic_operations(scope=scope)
-            self.last_dream_report = self.dreamer.consolidate((saved,), semantic_operations=semantic_ops, reason="session_end", scope=scope)
+            self._dream_saved(saved, scope)
         return saved
 
     def dream(
@@ -463,12 +769,10 @@ class LivingUserMemoryService:
     ) -> DreamReport:
         if not self.config.enabled:
             return DreamReport(diagnostics=("living_user_disabled",))
-        # Idle/reflection là lúc hợp lý để biến turn journal thành episode.
+        # Idle/reflection là lúc hợp lý để biến turn journal thành episode, nhưng
+        # chỉ xin worker nền làm; dream() không tự gọi Gemini tóm tắt trong lock.
         if len(self._turn_buffer) >= 4:
-            try:
-                self.flush_session(run_dream=False)
-            except Exception:
-                pass
+            self.request_consolidation("dream")
         semantic_ops = self._semantic_operations(scope=scope)
         episodes = self.episode_store.recent(limit=episode_limit, scope=scope)
         report = self.dreamer.consolidate(episodes, semantic_operations=semantic_ops, reason=reason, scope=scope)
@@ -966,6 +1270,61 @@ def _humanize_profile_path(path: str) -> str:
 def _env_flag(name: str, default: bool) -> bool:
     raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
     return raw not in {"0", "false", "no", "off", "none"}
+
+
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    try:
+        value = float(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        value = float(default)
+    return max(float(minimum), value)
+
+
+def _turn_key(row: Mapping[str, Any]) -> tuple[str, float]:
+    """Khóa trim một dòng buffer: id turn kèm timestamp để không xóa nhầm dòng trùng id đến muộn."""
+    return str(row.get("id") or ""), float(row.get("timestamp") or 0.0)
+
+
+def _merge_consolidation_requests(first: Mapping[str, Any] | None, second: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Gộp hai yêu cầu: run_dream là OR, keep_tail lấy min, giữ lý do của yêu cầu cũ hơn."""
+    if first is None and second is None:
+        return None
+    if first is None or second is None:
+        return dict(first if second is None else second)
+    return {"reason": str(first.get("reason") or second.get("reason") or ""),
+            "run_dream": bool(first.get("run_dream") or second.get("run_dream")),
+            "keep_tail": min(int(first.get("keep_tail") or 0), int(second.get("keep_tail") or 0)),
+            "requested_at": min(float(first.get("requested_at") or 0.0), float(second.get("requested_at") or 0.0))}
+
+
+def _error_label(error: BaseException) -> str:
+    status = str(getattr(error, "status", "") or getattr(error, "reason", "") or "")
+    if status:
+        return status
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    return type(error).__name__
+
+
+def _run_with_deadline(func: Any, timeout: float) -> Any:
+    """Chạy ``func`` ở thread phụ; quá hạn thì bỏ kết quả muộn và raise TimeoutError."""
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def runner() -> None:
+        try:
+            box["value"] = func()
+        except BaseException as exc:  # noqa: BLE001 - chuyển nguyên lỗi về thread gọi
+            box["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=runner, name="ERIS-LivingUserEpisodeCall", daemon=True).start()
+    if not done.wait(max(0.1, float(timeout))):
+        raise TimeoutError("episode_timeout")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 __all__ = ["LivingUserMemoryConfig", "LivingUserMemoryService", "UserTurnObservation"]

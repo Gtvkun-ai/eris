@@ -1,0 +1,266 @@
+[
+  {
+    "id": "E01",
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 1
+  },
+  {
+    "id": "E02",
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E03",
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E04",
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 1
+  },
+  {
+    "id": "E05",
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 1
+  },
+  {
+    "id": "E06",
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 1
+  },
+  {
+    "id": "E07",
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 1
+  },
+  {
+    "id": "E08",
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E09",
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E10",
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E11",
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E12",
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 2
+  },
+  {
+    "id": "E13",
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E14",
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 2
+  },
+  {
+    "id": "E15",
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E16",
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 1
+  },
+  {
+    "id": "E17",
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 1
+  },
+  {
+    "id": "E18",
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E19",
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 2
+  },
+  {
+    "id": "E20",
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E21",
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 1
+  },
+  {
+    "id": "E22",
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E23",
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 1
+  },
+  {
+    "id": "E24",
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 1
+  },
+  {
+    "id": "E25",
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 2
+  },
+  {
+    "id": "E26",
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 2
+  },
+  {
+    "id": "E27",
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 2
+  },
+  {
+    "id": "E28",
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 2
+  },
+  {
+    "id": "E29",
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 2
+  },
+  {
+    "id": "E30",
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E31",
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E32",
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E33",
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E34",
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 1
+  },
+  {
+    "id": "E35",
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 1
+  },
+  {
+    "id": "E36",
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 2
+  },
+  {
+    "id": "E37",
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E38",
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 2
+  },
+  {
+    "id": "E39",
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E40",
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E41",
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 1
+  },
+  {
+    "id": "E42",
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 2
+  },
+  {
+    "id": "E43",
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 2
+  },
+  {
+    "id": "E44",
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 2
+  }
+]

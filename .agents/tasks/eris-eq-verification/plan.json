@@ -1,0 +1,794 @@
+[
+  {
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "request_sha256": "b7e7fc58c13b4598a99766f7dc23f334331ef7fffd8b1350e7da0f43636be090",
+    "message_chars": 90767,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 1,
+    "request_sha256": "d60925fbeef313e121d21dde27f709a6eef1986ae467ba33689299fb09748253",
+    "message_chars": 1576,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "c06444a1571bb96ac0ea183650759bbbad2065227f5b9183b9c09cd6dcff3a1f",
+    "message_chars": 15601,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "request_sha256": "d69c74682ba539c66efc7b4004f272e8a38b523ac8478c4b1c0c6e49f1678b78",
+    "message_chars": 86390,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "c4191a229f9f398f7e1e1b69422d960f9879657cb03d9bedf0d1ba4dad957327",
+    "message_chars": 14375,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "observed_delay",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "c4191a229f9f398f7e1e1b69422d960f9879657cb03d9bedf0d1ba4dad957327",
+    "message_chars": 14375,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "request_sha256": "3c378b4e6edc88df9a29f7fae3987f905adb6cba647a8410069a08c2723e2e7b",
+    "message_chars": 87707,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 2,
+    "request_sha256": "665f0e623db47b6c48614d46e0b71f92d4f7e271b0a2d72f585de61004c7826d",
+    "message_chars": 1265,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "repeated_rebuke",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "request_sha256": "b7e7fc58c13b4598a99766f7dc23f334331ef7fffd8b1350e7da0f43636be090",
+    "message_chars": 90767,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "28f2f33fe74ee2bbbbe7e5e0030471070377a7ca160e534575965a47548ba358",
+    "message_chars": 14345,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "c488eda68c5cc71e330250c6aede6fcf730ca4d4be064c36ea127a8d8de3b07a",
+    "message_chars": 14346,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 2,
+    "request_sha256": "42483443664406d4c02f7a9248dce0a660f2e8ed281e8c68a719cdf0baf77d27",
+    "message_chars": 1338,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "15b3b7b83e7b551b92db957258ce1697bdd26dc5e0664a489926f7a607cfc758",
+    "message_chars": 15139,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "request_sha256": "9bfae52f724452b424630e528c9939ebba3f23a737a11fcc92490cbf4cacec9d",
+    "message_chars": 90455,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "request_sha256": "9bfae52f724452b424630e528c9939ebba3f23a737a11fcc92490cbf4cacec9d",
+    "message_chars": 90455,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "repeated_rebuke",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "c06444a1571bb96ac0ea183650759bbbad2065227f5b9183b9c09cd6dcff3a1f",
+    "message_chars": 15601,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 2,
+    "request_sha256": "fcd1731a7b786aa02094f25eeb5d9179ffb1b79e37a3d068528bdde985214f90",
+    "message_chars": 1503,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "request_sha256": "7262a3a2499fa3dc096672d2fe77a92f6e86053b03a4a660c9b580cfb091c195",
+    "message_chars": 89182,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "comprehension_only",
+    "repeat": 1,
+    "request_sha256": "fcd1731a7b786aa02094f25eeb5d9179ffb1b79e37a3d068528bdde985214f90",
+    "message_chars": 1503,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "request_sha256": "58867a1b96961d1a9cf6a7b089939aab4504ba58d83ebd7505f0be6c063b97c4",
+    "message_chars": 89487,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "request_sha256": "d69c74682ba539c66efc7b4004f272e8a38b523ac8478c4b1c0c6e49f1678b78",
+    "message_chars": 86390,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "053e1c964bafbb5b8bcf428caa6d3a51d322850a4a723aa75c141eb3e9ab726e",
+    "message_chars": 15377,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "request_sha256": "d433f33043ddfd14443723e8d6f3dc058b3d4f04064d89f01d8d64b3d4104bec",
+    "message_chars": 85418,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "81a2ac197c801eb401f89fb2feb2f4504370c129509bda0060bb04dcb21f57e2",
+    "message_chars": 14329,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "implicit_support",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "28f2f33fe74ee2bbbbe7e5e0030471070377a7ca160e534575965a47548ba358",
+    "message_chars": 14345,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 1,
+    "request_sha256": "6e841c756b26a65f9f191c139c36bd5d95fbd2e5eca00bb18eb031dbf5c508f2",
+    "message_chars": 88704,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "comprehension_only",
+    "repeat": 1,
+    "request_sha256": "665f0e623db47b6c48614d46e0b71f92d4f7e271b0a2d72f585de61004c7826d",
+    "message_chars": 1265,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "request_sha256": "6e841c756b26a65f9f191c139c36bd5d95fbd2e5eca00bb18eb031dbf5c508f2",
+    "message_chars": 88704,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "a17b1cccc3fd3cd3ade0ff4ab26ebeeaaf3d860b03dbe2afdc9582d01de542c8",
+    "message_chars": 14366,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "debug_requested",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "c488eda68c5cc71e330250c6aede6fcf730ca4d4be064c36ea127a8d8de3b07a",
+    "message_chars": 14346,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "request_sha256": "7262a3a2499fa3dc096672d2fe77a92f6e86053b03a4a660c9b580cfb091c195",
+    "message_chars": 89182,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "fbe9f1735569c80353ed8df712c20081d92c7e6dd7fc1b8bcc56e06edfaddf04",
+    "message_chars": 14418,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "053e1c964bafbb5b8bcf428caa6d3a51d322850a4a723aa75c141eb3e9ab726e",
+    "message_chars": 15377,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "15b3b7b83e7b551b92db957258ce1697bdd26dc5e0664a489926f7a607cfc758",
+    "message_chars": 15139,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "runtime_replay",
+    "repeat": 1,
+    "request_sha256": "d433f33043ddfd14443723e8d6f3dc058b3d4f04064d89f01d8d64b3d4104bec",
+    "message_chars": 85418,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "social_carry_ablated",
+    "repeat": 2,
+    "request_sha256": "3c378b4e6edc88df9a29f7fae3987f905adb6cba647a8410069a08c2723e2e7b",
+    "message_chars": 87707,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "playful_ear",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "a17b1cccc3fd3cd3ade0ff4ab26ebeeaaf3d860b03dbe2afdc9582d01de542c8",
+    "message_chars": 14366,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "625536f2e8a2d814ecd01edfd7792b6d77c68ecd1510605a8e5f41b06e30c175",
+    "message_chars": 15001,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "reasonable_disagreement",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "81a2ac197c801eb401f89fb2feb2f4504370c129509bda0060bb04dcb21f57e2",
+    "message_chars": 14329,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "repeated_rebuke",
+    "condition": "runtime_replay",
+    "repeat": 2,
+    "request_sha256": "58867a1b96961d1a9cf6a7b089939aab4504ba58d83ebd7505f0be6c063b97c4",
+    "message_chars": 89487,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "kiro_frustration",
+    "condition": "clean_context",
+    "repeat": 2,
+    "request_sha256": "625536f2e8a2d814ecd01edfd7792b6d77c68ecd1510605a8e5f41b06e30c175",
+    "message_chars": 15001,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "external_referent",
+    "condition": "plain_policy_clean",
+    "repeat": 1,
+    "request_sha256": "42483443664406d4c02f7a9248dce0a660f2e8ed281e8c68a719cdf0baf77d27",
+    "message_chars": 1338,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "vent_then_debug",
+    "condition": "clean_context",
+    "repeat": 1,
+    "request_sha256": "fbe9f1735569c80353ed8df712c20081d92c7e6dd7fc1b8bcc56e06edfaddf04",
+    "message_chars": 14418,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  {
+    "case": "explicit_repair",
+    "condition": "plain_policy_clean",
+    "repeat": 2,
+    "request_sha256": "d60925fbeef313e121d21dde27f709a6eef1986ae467ba33689299fb09748253",
+    "message_chars": 1576,
+    "options": {
+      "model": "deepseek-flash",
+      "thinking": {
+        "type": "enabled"
+      },
+      "max_tokens": 1200,
+      "reasoning_effort": "high",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  }
+]

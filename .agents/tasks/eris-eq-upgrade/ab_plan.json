@@ -1,0 +1,282 @@
+[
+  {
+    "case": "kiro_frustration",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "disagreement_not_flattery",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "invite_narrative_question",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "playful_ear",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "respect_agency",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "debug_requested",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "debug_requested",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "respect_agency",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "disagreement_not_flattery",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "external_referent",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "mixed_emotion",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "implicit_support",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "implicit_support",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "respect_agency",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "mixed_emotion",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "implicit_support",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "reasonable_disagreement",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "explicit_repair",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "observed_delay",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "debug_requested",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "invite_narrative_question",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "external_referent",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "repeated_rebuke",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "playful_ear",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "playful_ear",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "external_referent",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "external_referent",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "vent_then_debug",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "explicit_repair",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "disagreement_not_flattery",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "playful_ear",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "kiro_frustration",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "mixed_emotion",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "observed_delay",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "reasonable_disagreement",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "implicit_support",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "disagreement_not_flattery",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "repeated_rebuke",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "respect_agency",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "reasonable_disagreement",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "vent_then_debug",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "observed_delay",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "reasonable_disagreement",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "repeated_rebuke",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "explicit_repair",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "explicit_repair",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "vent_then_debug",
+    "repeat": 2,
+    "condition": "candidate"
+  },
+  {
+    "case": "repeated_rebuke",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "invite_narrative_question",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "mixed_emotion",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "kiro_frustration",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "vent_then_debug",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "debug_requested",
+    "repeat": 2,
+    "condition": "baseline"
+  },
+  {
+    "case": "observed_delay",
+    "repeat": 1,
+    "condition": "candidate"
+  },
+  {
+    "case": "kiro_frustration",
+    "repeat": 1,
+    "condition": "baseline"
+  },
+  {
+    "case": "invite_narrative_question",
+    "repeat": 1,
+    "condition": "candidate"
+  }
+]

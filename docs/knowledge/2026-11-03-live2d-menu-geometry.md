@@ -68,3 +68,34 @@ và run_eris.bat mở ra UI 2D thay vì Live2D. Đối chiếu log bản export
 Chưa xác nhận trực quan trên máy hai màn hình/DPI của user; cần re-export Godot
 rồi thử bấm nút và chuột phải thật. Đây là đính chính source, không phải xác
 nhận live.
+
+## Bổ sung 03/11 (tối): bong bóng Live2D kéo dài hết màn hình & indicator đè lấp
+
+Ảnh user chụp lúc 21:57 cho thấy bong bóng Live2D chiếm trọn chiều cao màn hình
+kèm pill trạng thái `● Eris • đang nói…` nằm đè lên thanh tiêu đề bong bóng:
+
+1. **Bong bóng thoại kéo dài dọc hết màn hình (chiều cao ~3000px):**
+   - *Nguyên nhân:* `_live2DSpeechLabel` (RichTextLabel) bật `FitContent = true`.
+     Trong Godot, trước khi layout pass gán width thực tế, RichTextLabel có width = 1px.
+     Với câu thoại 160 ký tự, mỗi ký tự xuống 1 dòng tạo ra 160 dòng (~3013px).
+     Khi `FitContent = true`, RichTextLabel ghi đè minimum size dọc bằng content height
+     này, làm `_live2DSpeechBubble.GetCombinedMinimumSize().Y` vọt lên 3053px và ép
+     bong bóng tràn hết chiều cao màn hình.
+   - *Đã sửa:* Đặt `FitContent = false`, explicit anchor resets, gán inner width cho
+     label trước khi tính `GetContentHeight()`, và clamp chặt chiều cao bong bóng trong
+     khoảng 50px - 260px cả ở layout lẫn positioning.
+
+2. **Indicator `● Eris • đang nói…` đè lấp tiêu đề và kẹt trạng thái:**
+   - *Nguyên nhân:* Khi backend phát `runtime_status` với `activity="agent_turn"`,
+     `_runtimePresence.RuntimeActivityActive = true`. Khi âm thanh phát xong (`audio_playback_done`),
+     `SetRuntimePresenceTerminal()` không reset activity của turn này, khiến pill kẹt
+     vĩnh viễn ở trạng thái "đang nói…". Đồng thời `RefreshRuntimePresenceIndicator()`
+     không ẩn indicator khi bong bóng thoại đang hiển thị.
+   - *Đã sửa:* `SetRuntimePresenceTerminal()` reset triệt để `RuntimeActivityActive` và label
+     của agent turn, gọi `ClearTtsBodyAudioMute()`; `RefreshRuntimePresenceIndicator()`
+     ẩn indicator khi bong bóng thoại (`ActiveSpeechBubble()?.Visible == true`) hoặc đang nói.
+
+3. **Cập nhật build & test:**
+   - 44 test pytest (`test_live2d_body_switch.py`, `test_live2d_audio_lifecycle.py`) pass 100%.
+   - Fixture `live2d_geometry_preview.tscn` pass 6/6 kịch bản.
+   - Đã re-build và export Godot sang `C:\Users\Gtvkun\Documents\eris\` (`Eris.exe`, `Eris.pck`, `data_Eris_windows_x86_64\Eris.dll`).

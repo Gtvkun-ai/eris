@@ -37,6 +37,20 @@ class ConversationObservationBridge:
             return {}
         result: dict[str, Any] = {}
 
+        # Preserve the literal reaction before optional observer inference can be
+        # preempted. No classifier, model call or wait on the user ingress path.
+        try:
+            from .interaction_choice import record_user_reaction
+            sid = str(getattr(self.host, "conversation_id", "") or
+                      getattr(self.host, "thread_id", "") or "foreground:primary")
+            result["strategy_reaction"] = record_user_reaction(
+                self.host, session_id=sid, turn_seq=turn_index, turn_ref=turn_ref,
+                user_text=text, now=current,
+                previous_assistant_turn_seq=previous_assistant_turn_index,
+            )
+        except Exception as exc:
+            self._debug("strategy_reaction", exc)
+
         # Xưng hô explicit là shared state deterministic, không phải social planner.
         try:
             from runtime.user_addressing_state import observe_user_addressing
@@ -138,6 +152,9 @@ class ConversationObservationBridge:
         user_text: str = "",
         now: float | None = None,
         claim_provenance: Mapping[str, Any] | None = None,
+        interaction_choice: Mapping[str, Any] | None = None,
+        session_id: str = "",
+        choice_goal: str = "",
     ) -> dict[str, Any]:
         """Ghi hậu quả sau khi transport đã chấp nhận public commit."""
         current = float(now if now is not None else time.time())
@@ -214,11 +231,24 @@ class ConversationObservationBridge:
 
         # Completed-turn observer là lane inference nền. Nó cập nhật StateReducer
         # cho *lượt sau*; không được mutate câu vừa commit.
+        # Snapshot BEFORE enqueuing this choice: the current utterance cannot
+        # be the outcome of itself. Older reacted choices remain retryable.
+        state_summary = self._state_summary()
+        if session_id:
+            state_summary["conversation_session_id"] = session_id
+        try:
+            from .interaction_choice import record_delivered_choice
+            result["pending_strategy"] = record_delivered_choice(
+                self.host, choice=interaction_choice or {}, delivery_id=turn_ref,
+                session_id=session_id, turn_seq=turn_index, goal=choice_goal,
+                assistant_text=text,
+            )
+        except Exception as exc:
+            self._debug("pending_strategy", exc)
         observer = getattr(self.host, "ai_post_turn_observer", None)
         submit = getattr(observer, "submit", None)
         if callable(submit):
             try:
-                state_summary = self._state_summary()
                 from memory.claim_provenance import classify_ingress, provenance_of
                 assistant_source = provenance_of({"claim_provenance": claim_provenance}) if claim_provenance else classify_ingress(
                     "assistant_utterance", turn_id=turn_ref,
