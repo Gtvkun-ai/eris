@@ -32,6 +32,18 @@ def default_eris_home() -> Path:
     explicit = str(os.getenv("ERIS_HOME", "") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
+    settings_env = str(os.getenv("ERIS_RUNTIME_SETTINGS_PATH", "") or "").strip()
+    if settings_env:
+        candidate_parent = Path(settings_env).parent.parent
+        if candidate_parent.is_dir():
+            return candidate_parent.resolve()
+    for candidate in [
+        Path.home() / "OneDrive" / "Tài liệu" / "ErisLive",
+        Path.home() / "OneDrive" / "Documents" / "ErisLive",
+        Path.home() / "Documents" / "ErisLive",
+    ]:
+        if candidate.is_dir():
+            return candidate.resolve()
     return (Path.home() / "Documents" / "ErisLive").resolve()
 
 

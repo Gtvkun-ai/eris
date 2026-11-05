@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "item": {
+    "id": "chat_34dce3789e6e407f891e4cb9a110d64c",
+    "revision": 1793889543613269200,
+    "created_at": 1793889539222,
+    "updated_at": 1793889543613,
+    "completed_at": 1793889543613,
+    "status": "error",
+    "caller_id": "caller:4ba09d3854dbe1a8",
+    "account_id": "yenhoa306@gmail.com",
+    "surface": "openai.chat_completions",
+    "model": "deepseek-flash",
+    "stream": false,
+    "user_input": "Chào bạn, trả lời ngắn gọn: 1+1= mấy?",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Chào bạn, trả lời ngắn gọn: 1+1= mấy?"
+      }
+    ],
+    "final_prompt": "::user::Chào bạn, trả lời ngắn gọn: 1+1= mấy?::asst::",
+    "error": "Account token is invalid. Please re-login the account in pool UI.",
+    "status_code": 401,
+    "elapsed_ms": 4385,
+    "finish_reason": "error"
+  }
+}

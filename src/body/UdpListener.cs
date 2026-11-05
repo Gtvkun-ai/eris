@@ -80,9 +80,9 @@ public partial class UdpListener : Node2D
 	[Export] public bool AutoRestartVisionOnCrash = true;
 	[Export] public bool EnableRemoteCognitionApi = true;
 	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
-	[Export] public string RemoteApiProvider = "openai_compatible";
-	[Export] public string RemoteApiBaseUrl = "https://api-v2.shopaikey.com/v1";
-	[Export] public string RemoteApiModelName = "gpt-5.6-terra";
+	[Export] public string RemoteApiProvider = "deepseek_web";
+	[Export] public string RemoteApiBaseUrl = "http://127.0.0.1:5103/v1";
+	[Export] public string RemoteApiModelName = "deepseek-flash";
 	[Export] public bool TutorEnabled = true;
 	[Export] public bool TutorQuickSearchEnabled = true;
 	[Export] public bool TutorResearchEnabled = true;

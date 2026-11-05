@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "item": {
+    "id": "chat_bac3f139ffaf44188148edc2c4219f06",
+    "revision": 1793889570749362100,
+    "created_at": 1793889569489,
+    "updated_at": 1793889570749,
+    "completed_at": 1793889570749,
+    "status": "success",
+    "caller_id": "caller:4ba09d3854dbe1a8",
+    "account_id": "ftvhoa306@gmail.com",
+    "surface": "openai.chat_completions",
+    "model": "deepseek-flash",
+    "stream": false,
+    "user_input": "Chào bạn, trả lời ngắn gọn: 1+1= mấy?",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Chào bạn, trả lời ngắn gọn: 1+1= mấy?"
+      }
+    ],
+    "final_prompt": "::user::Chào bạn, trả lời ngắn gọn: 1+1= mấy?::asst::",
+    "reasoning_content": "We need answer Vietnamese short. 1+1=2. Need concise.",
+    "content": "2",
+    "status_code": 200,
+    "elapsed_ms": 1242,
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 17,
+      "completion_tokens_details": {
+        "reasoning_tokens": 16
+      },
+      "prompt_tokens": 30,
+      "total_tokens": 47
+    }
+  }
+}

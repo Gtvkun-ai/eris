@@ -71,7 +71,7 @@ def _get_api_key_lease(*, provider: str = "deepseek", exclude_indices: Iterable[
         "ERIS_TTS_LOCALIZER_API_KEY", "ERIS_DS_CRITIC_API_KEY", "ERIS_STYLE_API_KEY",
         "DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY",
     ):
-        key = os.environ.get(env_name, "").strip()
+        key = os.environ.get(env_name, "").strip() or get_secret(env_name).strip()
         if key and not key.startswith("PASTE_"):
             return key, None, None
     return "", None, None
@@ -622,9 +622,12 @@ def _translate_with_deepseek_api(
 ) -> dict[str, object]:
     import requests
 
-    base_url = os.environ.get("ERIS_TTS_LOCALIZER_BASE_URL", "").strip()
-    if not base_url:
-        base_url = os.environ.get("ERIS_REMOTE_BASE_URL", "https://api.deepseek.com").strip()
+    base_url = (
+        os.environ.get("ERIS_TTS_LOCALIZER_BASE_URL", "").strip()
+        or os.environ.get("ERIS_REMOTE_BASE_URL", "").strip()
+        or get_secret("ERIS_TTS_LOCALIZER_BASE_URL", "ERIS_REMOTE_BASE_URL").strip()
+        or "http://127.0.0.1:5103/v1"
+    )
     from llm.provider_policy import require_active_provider
     require_active_provider(base_url=base_url, model=model_name)
     url = f"{base_url.rstrip('/')}/chat/completions"
