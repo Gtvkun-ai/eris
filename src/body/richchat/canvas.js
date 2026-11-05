@@ -6,7 +6,7 @@
   const state = {
     snapshot: null, selected: '', mode: 'map', pending: null, desiredNode: '',
     details: new Map(), activities: new Map(), drafts: new Map(), answers: new Map(),
-    graphDrafts: new Map(),
+    graphDrafts: new Map(), showAllChildren: false,
     playback: null, playbackSeq: -1, playbackStream: '',
     lastVersion: -1, lastPoll: 0, lastExercisePoll: 0, lastCause: '',
     busy: false, bootstrapped: false, status: 'Đang kết nối với Eris...', offline: false,
@@ -23,17 +23,22 @@
   function graphMode() {return !!graph() && workspace()?.selected_group_id !== state.snapshot?.group_id;}
   function activeNodes() {
     if (!graphMode()) return state.snapshot?.nodes || [];
+    // P3.5: chỉ vẽ đường đã đi và tối đa 4 lựa chọn ngay trước mắt.
+    // Các tầng khác tồn tại trên backend, nhưng không phủ kín màn hình.
     const nodes = graph().nodes || [];
     const byKey = new Map(nodes.map(n => [n.id,n]));
-    const depths = new Map();
-    const level = id => {
-      if (depths.has(id)) return depths.get(id);
-      const node = byKey.get(id);
-      const depth = node?.parent_id && byKey.has(node.parent_id) ? level(node.parent_id) + 1 : 0;
-      depths.set(id,depth);return depth;
-    };
-    return nodes.map(n => ({...n, level:level(n.id), state:'exploring',
-      prerequisites:n.parent_id ? [n.parent_id] : []}));
+    const chosen = byKey.has(state.selected) ? state.selected : graph().selected_node_id;
+    const ancestors = [], visited = new Set();
+    let cursor = chosen;
+    while (byKey.has(cursor) && !visited.has(cursor)) {
+      visited.add(cursor);ancestors.unshift(byKey.get(cursor));
+      cursor = byKey.get(cursor).parent_id;
+    }
+    const children = nodes.filter(n => n.parent_id === chosen);
+    const visible = ancestors.concat(state.showAllChildren ? children : children.slice(0,4));
+    return visible.map((n,i) => ({...n, level:ancestors.includes(n)
+      ? ancestors.indexOf(n) : ancestors.length,
+      state:'exploring', prerequisites:n.parent_id ? [n.parent_id] : []}));
   }
   function nodeById(id) {return activeNodes().find(n => n.id === id);}
   function currentActivity() {return state.activities.get(state.selected);}
@@ -107,7 +112,10 @@
       snapshot.playback_stream_id !== state.playbackStream);
     if (snapshot?.schema === 'eris.learning.canvas.v1' && Array.isArray(snapshot.nodes) && snapshot.focus) {
       const previous = state.snapshot;
-      if (restarted || !previous || snapshot.focus.revision >= previous.focus.revision) {
+      const previousGraphRevision = previous?.graph_workspace?.revision ?? -1;
+      const nextGraphRevision = snapshot?.graph_workspace?.revision ?? -1;
+      if (restarted || !previous || snapshot.focus.revision > previous.focus.revision ||
+          (snapshot.focus.revision === previous.focus.revision && nextGraphRevision >= previousGraphRevision)) {
         if (restarted) {state.details.clear();state.activities.clear();state.lastCause = '';}
         state.snapshot = snapshot;
         if (snapshot.detail?.id) state.details.set(snapshot.detail.id, snapshot.detail);
@@ -203,6 +211,7 @@
     if (!nodeById(id)) return;
     state.selected = id;
     state.mode = 'detail';
+    state.showAllChildren = false;
     if (state.pending) {
       state.desiredNode = id;
       render();
@@ -238,13 +247,22 @@
         btn.append(el('span','node-top',n.title));
         const foot = el('div','node-foot');
         foot.append(el('span','node-state '+(graphMode() ? 'exploring' : (labels[n.state] ? n.state:'available')),
-          graphMode() ? (n.origin === 'eris_proposed' ? 'Eris đề xuất' : 'Đang khám phá') : (labels[n.state] || 'Có thể học')));
+          graphMode() ? (n.origin === 'gemini_draft' ? 'Gemini · nháp' : n.origin === 'eris_proposed' ? 'Eris đề xuất' : 'Đang khám phá') : (labels[n.state] || 'Có thể học')));
+        if (graphMode() && graph()?.prepared_counts?.[n.id]) foot.append(el('span','node-hint','Đã chuẩn bị tầng sau'));
         if (n.due) foot.append(el('span','node-hint','Đến hạn ôn'));
         else if (state.snapshot.focus?.suggested_node_id === n.id) foot.append(el('span','node-hint','Eris gợi ý ↗'));
         else if (n.result_count) foot.append(el('span','node-count',`${n.result_count} kết quả`));
         btn.append(foot);btn.addEventListener('click',() => chooseNode(n.id));row.append(btn);
       }
       group.append(row);map.append(group);
+    }
+    if (graphMode()) {
+      const count = (graph().nodes || []).filter(n => n.parent_id === state.selected).length;
+      if (count > 4 && !state.showAllChildren) {
+        const more = el('button','graph-more',`+ Xem thêm ${count - 4} nhánh`);
+        more.type = 'button';more.addEventListener('click',()=>{state.showAllChildren=true;render();});
+        map.append(more);
+      }
     }
     requestAnimationFrame(drawConnections);
   }
@@ -369,9 +387,10 @@
     addText(head,'span','eyebrow','KIẾN THỨC / '+(node.level + 1));
     addText(head,'h3','',node.title);
     if (graphMode()) {
-      addText(head,'p','summary',node.summary || 'Chủ đề này đang được mở rộng. Chưa có bài giảng đã kiểm chứng.');
-      addText(head,'p','draft-warning',node.origin === 'eris_proposed'
-        ? 'Nhánh do Eris đề xuất · cần kiểm chứng trước khi dùng để đánh giá trình độ.'
+      addText(head,'p','summary',node.summary || 'Chủ đề đang khám phá. Chưa có bài giảng đã kiểm chứng.');
+      addText(head,'p','draft-warning',node.origin === 'gemini_draft'
+        ? 'Nhánh nháp Gemini · chưa kiểm chứng, không tự động tính mastery.'
+        : node.origin === 'eris_proposed' ? 'Nhánh do Eris đề xuất · cần kiểm chứng trước khi đánh giá trình độ.'
         : 'Nhánh khám phá · không tự động tính mastery.');
       const parent = node.parent_id && nodeById(node.parent_id);
       if (parent) {
@@ -379,13 +398,25 @@
         back.addEventListener('click',()=>chooseNode(parent.id));
       }
       const children = activeNodes().filter(n=>n.parent_id===node.id);
+      const graphStatus = state.snapshot?.graph_prefetch;
+      if (graphStatus?.node_id === node.id && graphStatus.status === 'preparing')
+        addText(container,'p','graph-ai-status','✧ Gemini đang chuẩn bị một vài nhánh tiếp theo ở nền...');
+      else if (graphStatus?.node_id === node.id && graphStatus.status === 'unavailable')
+        addText(container,'p','graph-ai-status','Gemini chưa phản hồi. Bạn vẫn có thể tự mở nhánh hoặc hỏi Eris.');
+      const hidden = graph()?.prepared_counts?.[node.id] || 0;
+      if (hidden) addText(container,'p','graph-ai-status',`Có ${hidden} gợi ý ẩn đã chuẩn bị; mở nhánh để xem.`);
       if (children.length) {
-        addText(container,'h4','section-title','Nhánh liên quan');
+        addText(container,'h4','section-title','Có thể khám phá tiếp');
         const childRow = el('div','graph-children');container.append(childRow);
         for (const child of children) {
           const childButton = actionButton(childRow,child.title,'graph_select');
           childButton.addEventListener('click',()=>chooseNode(child.id));
         }
+      }
+      const allChildrenCount = (graph().nodes || []).filter(n=>n.parent_id===node.id).length;
+      if (allChildrenCount > children.length) {
+        const show = actionButton(container,`Xem thêm ${allChildrenCount - children.length} nhánh`,'show_more');
+        show.addEventListener('click',()=>{state.showAllChildren=true;render();});
       }
       const form = el('form','branch-form');
       form.append(addText(form,'label','section-title','Mở rộng kiến thức từ nút này'));
@@ -463,7 +494,7 @@
     }
     groupSelect.value=workspace()?.selected_group_id || snap?.group_id || 'java-di';
     byId('pin').textContent = graphMode() ? 'Chế độ khám phá' : (snap?.focus?.pinned ? 'Đã ghim' : 'Theo Eris');
-    byId('assessment').textContent = graphMode() ? 'Bản đồ mở · chưa chấm mastery' : 'Theo dõi từ bài làm thực tế';
+    byId('assessment').textContent = graphMode() ? 'Mở từng nhánh · chưa chấm mastery' : 'Theo dõi từ bài làm thực tế';
     const mobile=state.mode==='detail';
     byId('workspace').classList.toggle('detail-mode', mobile);
     byId('mapTab').classList.toggle('active',!mobile);

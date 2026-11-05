@@ -162,7 +162,21 @@ public partial class UdpListener
                     _webCanvasExercise = default;
                     _webCanvasPlayback = default;
                 }
-                if (revision >= _webCanvasRevision)
+                // P3.5: focus Java có thể đứng yên trong khi Gemini cập nhật graph.
+                // Không nhận ACK cũ có graph revision thấp hơn snapshot hiện tại.
+                long currentGraphRevision = -1;
+                long nextGraphRevision = -1;
+                if (_webCanvasSnapshot.ValueKind == JsonValueKind.Object &&
+                    _webCanvasSnapshot.TryGetProperty("graph_workspace", out var currentGraph) &&
+                    currentGraph.ValueKind == JsonValueKind.Object &&
+                    currentGraph.TryGetProperty("revision", out var currentGraphRev) &&
+                    currentGraphRev.TryGetInt64(out long cr)) currentGraphRevision = cr;
+                if (snapshot.TryGetProperty("graph_workspace", out var nextGraph) &&
+                    nextGraph.ValueKind == JsonValueKind.Object &&
+                    nextGraph.TryGetProperty("revision", out var nextGraphRev) &&
+                    nextGraphRev.TryGetInt64(out long nr)) nextGraphRevision = nr;
+                if (revision > _webCanvasRevision ||
+                    (revision == _webCanvasRevision && nextGraphRevision >= currentGraphRevision))
                 {
                     _webCanvasRevision = revision;
                     _webCanvasSnapshot = snapshot.Clone();

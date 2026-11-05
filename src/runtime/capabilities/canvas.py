@@ -22,7 +22,7 @@ class CanvasCapability:
                          "nodes": list(canvas.pack.path.kp_ids)}]
                         + graph_workspace["groups"][1:], "graph_revision": graph_workspace["revision"]}
                 graph_update = None
-                if operation in {"graph_create", "graph_expand", "graph_select"}:
+                if operation in {"graph_create", "graph_expand", "graph_select", "graph_prefetch"}:
                     current = canvas.graphs.snapshot()
                     base = arguments.get("base_graph_revision", current["revision"])
                     if operation == "graph_create":
@@ -33,6 +33,13 @@ class CanvasCapability:
                         additions = canvas.graphs.expand(arguments.get("group_id"), arguments.get("parent_id"),
                             arguments.get("nodes"), base_revision=base, origin="eris_proposed", follow=False)
                         graph_update = {"nodes": additions, "group_id": arguments.get("group_id")}
+                    elif operation == "graph_prefetch":
+                        # Root chỉ yêu cầu Gemini chuẩn bị; không thay focus/chấm bài.
+                        group_id, node_id = arguments.get("group_id"), arguments.get("node_id")
+                        canvas.graphs.inspect(group_id, node_id)
+                        accepted_prefetch = canvas.prefetch.request(group_id, node_id)
+                        graph_update = {"prefetch_queued": accepted_prefetch,
+                                        "group_id": group_id, "node_id": node_id}
                     elif operation == "graph_select":
                         # Chỉ nhảy sang bản đồ khi Root có lý do rõ ràng; không đổi focus Java.
                         canvas.graphs.select(arguments.get("group_id"), base_revision=base,
@@ -52,7 +59,7 @@ class CanvasCapability:
                 elif operation != "snapshot":
                     raise ValueError("unknown_canvas_operation")
                 packet = canvas.state_packet()
-                if operation in {"open_group", "focus", "accept_focus", "graph_create", "graph_expand", "graph_select"}:
+                if operation in {"open_group", "focus", "accept_focus", "graph_create", "graph_expand", "graph_select", "graph_prefetch"}:
                     packet["open_panel"] = operation in {"open_group", "graph_select"}
                     accepted = self.host._send_runtime_json(packet, channel="learning_canvas")
                     if accepted is False:

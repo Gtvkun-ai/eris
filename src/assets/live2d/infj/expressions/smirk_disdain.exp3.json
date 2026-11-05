@@ -5,13 +5,13 @@
   "Parameters": [
     {
       "Id": "ParamEyeLOpen",
-      "Value": 0.8,
-      "Blend": "Overwrite"
+      "Value": 0.56,
+      "Blend": "Multiply"
     },
     {
       "Id": "ParamEyeROpen",
-      "Value": 0.8,
-      "Blend": "Overwrite"
+      "Value": 0.78,
+      "Blend": "Multiply"
     },
     {
       "Id": "ParamMouthForm",

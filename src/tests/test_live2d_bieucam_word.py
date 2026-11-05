@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Khóa hợp đồng 9 biểu cảm theo từng trang bieucam.docx."""
+"""Word-based presets with the authorized 05/11 expression rescue overrides."""
 
 from pathlib import Path
 import json
@@ -14,26 +14,31 @@ from live2d_body.stage_state import Live2DStageState
 ASSETS = Path(__file__).resolve().parents[1] / "assets/live2d/infj"
 EXPECTED = {
     "smirk_minor": {"ParamMouthForm": -0.3, "ParamErisMouthCornerL": 1.0},
-    "smirk_disdain": {"ParamEyeLOpen": 0.8, "ParamEyeROpen": 0.8, "ParamMouthForm": -0.3, "ParamErisMouthCornerL": 1.0},
+    "smirk_disdain": {"ParamEyeLOpen": 0.56, "ParamEyeROpen": 0.78, "ParamMouthForm": -0.3, "ParamErisMouthCornerL": 1.0},
     "blush_affection": {"ParamCheek": 1.0},
     "cat_mouth": {"ParamMouthForm": -1.0},
     "sad_empathy": {"ParamMouthForm": -0.3, "ParamBrowLAngle": 1.0, "ParamBrowRAngle": 1.0},
     "wink_correct": {"ParamEyeLOpen": 0.0, "ParamEyeROpen": 1.0, "ParamMouthForm": 0.0, "ParamBrowLAngle": -1.0, "ParamBrowRAngle": -1.0},
     "teehee": {"ParamEyeLOpen": 0.0, "ParamEyeROpen": 1.0, "ParamMouthForm": 0.0, "ParamBrowLAngle": -1.0, "ParamBrowRAngle": -1.0, "ParamErisTongue": 0.6},
     "yan_warning": {"ParamMouthForm": -0.3, "ParamEyeHighlight": 0.0},
-    "lazy_deadpan": {"ParamMouthForm": -0.3, "ParamBrowLAngle": 1.0, "ParamBrowRAngle": 1.0},
+    "lazy_deadpan": {"ParamEyeLOpen": 0.48, "ParamEyeROpen": 0.52,
+                     "ParamMouthForm": -0.15, "ParamBrowLAngle": 0.0, "ParamBrowRAngle": 0.10},
     "wink_correct_right": {"ParamEyeLOpen": 1.0, "ParamEyeROpen": 0.0, "ParamMouthForm": 0.0, "ParamBrowLAngle": -1.0, "ParamBrowRAngle": -1.0},
     "teehee_right": {"ParamEyeLOpen": 1.0, "ParamEyeROpen": 0.0, "ParamMouthForm": 0.0, "ParamBrowLAngle": -1.0, "ParamBrowRAngle": -1.0, "ParamErisTongue": 0.6},
 }
 
 
 @pytest.mark.parametrize("name,expected", EXPECTED.items())
-def test_word_preset_parameter_fidelity_and_model_registration(name, expected):
+def test_rescued_preset_parameters_and_model_registration(name, expected):
     refs = json.loads((ASSETS / "infj.model3.json").read_text(encoding="utf-8"))["FileReferences"]["Expressions"]
     assert {item["Name"]: item["File"] for item in refs}[name] == f"expressions/{name}.exp3.json"
     asset = json.loads((ASSETS / "expressions" / f"{name}.exp3.json").read_text(encoding="utf-8"))
     assert {item["Id"]: item["Value"] for item in asset["Parameters"]} == expected
-    assert all(param["Blend"] == "Overwrite" for param in asset["Parameters"])
+    for param in asset["Parameters"]:
+        # Open eyelids must preserve the native blink; Overwrite is reserved
+        # for a deliberately closed wink eye and the authored non-eye channels.
+        blend = "Multiply" if param["Id"] in {"ParamEyeLOpen", "ParamEyeROpen"} and param["Value"] > 0 else "Overwrite"
+        assert param["Blend"] == blend
     assert "ParamMouthOpenY" not in expected  # TTS nắm quyền mouth-open khi nói.
     assert EXPRESSION_ALIASES[name] == name
 

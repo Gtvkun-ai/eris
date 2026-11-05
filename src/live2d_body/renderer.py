@@ -333,6 +333,19 @@ class Live2DRenderer:
         if "ParamMouthOpenY" in self.available_parameters:
             mouth = snapshot.parameters.get("ParamMouthOpenY", 0.0) if snapshot.speaking else 0.0
             model.SetParameterValue("ParamMouthOpenY", INFJ_PARAMETER_PROFILE.sanitize("ParamMouthOpenY", mouth))
+        # The tongue-out keyform is an independent overlay, not part of the
+        # two-axis speech mouth. Retract it as speech opens the mouth so it
+        # cannot float across the lips; never reduce the audio-owned opening.
+        if snapshot.speaking and "ParamErisTongue" in self.available_parameters:
+            index = self._parameter_indices.get("ParamErisTongue")
+            if index is not None:
+                tongue = float(model.GetParameterValue(index))
+                opening = INFJ_PARAMETER_PROFILE.clamp_mouth_open(
+                    snapshot.parameters.get("ParamMouthOpenY", 0.0)
+                )
+                progress = max(0.0, min(1.0, (opening - 0.12) / 0.24))
+                retract = progress * progress * (3.0 - 2.0 * progress)
+                model.SetParameterValue("ParamErisTongue", tongue * (1.0 - retract))
         if self._asset_playback.terminal:
             for parameter_id in ("ParamErisMouthCornerL", "ParamErisMouthCornerR", "ParamErisLipPress", "ParamErisTongue"):
                 if parameter_id in self.available_parameters:
@@ -407,7 +420,11 @@ class Live2DRenderer:
         self._scale_eye_parameter(model, "ParamEyeROpen", right_scale)
 
     def _scale_eye_parameter(self, model: Any, parameter_id: str, scale: float) -> None:
-        """Nhân mood/speech scale với giá trị mí *của frame hiện tại*.
+        """Cap native eyelids at the stage's absolute opening for this frame.
+
+        Native expressions and the stage both describe the mood's opening.
+        Multiplying them squares that mood (e.g. teasing .72 becomes .5184).
+        A cap keeps the smaller blink value without applying the same mood twice.
 
         ``GetParameter()`` có thể trả một object snapshot. Cache object đó từ lúc
         load model rồi đọc ``.value`` ở các frame sau sẽ ghi đè auto-blink bằng
@@ -425,11 +442,11 @@ class Live2DRenderer:
             # Fallback cho build live2d-py cũ: lấy object mới ở chính frame này,
             # tuyệt đối không dùng object đã cache từ lúc load model.
             try:
-                current = float(getattr(model.GetParameter(index), "value"))
+                current = float(model.GetParameter(index).value)
             except (AttributeError, TypeError, ValueError, RuntimeError):
                 return
         normalized_scale = max(0.0, min(1.0, float(scale)))
-        target = INFJ_PARAMETER_PROFILE.clamp_eye_open(current * normalized_scale)
+        target = INFJ_PARAMETER_PROFILE.clamp_eye_open(min(current, normalized_scale))
         model.SetParameterValue(parameter_id, target)
 
     def _report_geometry(self, glfw: Any, window: Any, *, force: bool = False) -> None:

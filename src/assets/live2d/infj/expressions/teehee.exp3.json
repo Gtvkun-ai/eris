@@ -11,7 +11,7 @@
     {
       "Id": "ParamEyeROpen",
       "Value": 1,
-      "Blend": "Overwrite"
+      "Blend": "Multiply"
     },
     {
       "Id": "ParamMouthForm",

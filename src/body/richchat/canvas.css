@@ -27,3 +27,7 @@
 @media(max-width:710px){.graph-controls{padding:10px 14px}.graph-controls .topic-switch{gap:7px}.graph-controls .label{width:100%}.graph-controls select{width:100%}.graph-controls .topic-form{min-width:0;max-width:none;width:100%}.graph-controls .topic-form .button{padding:9px 11px}}
 
 .legend.hidden-by-mode{display:none}
+
+/* P3.5: chỉ hé lộ các nhánh gần, có thể mở thêm khi người học muốn. */
+.graph-more{border:1px dashed var(--line,#d9d0df);border-radius:12px;background:transparent;color:inherit;padding:10px 16px;margin:10px auto;cursor:pointer;display:block;}
+.graph-ai-status{font-size:13px;line-height:1.5;opacity:.8;margin:10px 0;}

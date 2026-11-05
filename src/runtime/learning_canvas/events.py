@@ -61,9 +61,10 @@ def enqueue_canvas_event(host, payload: dict) -> None:
         if pending is None:
             pending = host._pending_conversation_capability_events = deque(maxlen=128)
         # Navigation has no obligation to explain every intermediate click.
-        if payload.get("action") == "navigate":
+        if payload.get("action") in {"navigate", "graph_select"}:
+            # Nhiều click liên tiếp chỉ để lại hướng khám phá mới nhất.
             for item in tuple(pending):
-                if item.get("metadata", {}).get("canvas_action") == "navigate":
+                if item.get("metadata", {}).get("canvas_action") == payload.get("action"):
                     try:
                         pending.remove(item)
                     except ValueError:

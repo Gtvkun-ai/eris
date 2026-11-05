@@ -5,12 +5,12 @@
   "Parameters": [
     {
       "Id": "ParamEyeLOpen",
-      "Value": 0.72,
+      "Value": 0.62,
       "Blend": "Multiply"
     },
     {
       "Id": "ParamEyeROpen",
-      "Value": 0.72,
+      "Value": 0.86,
       "Blend": "Multiply"
     },
     {

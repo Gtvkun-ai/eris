@@ -10,6 +10,7 @@ import time
 from runtime.learning_core.records import digest
 
 from .graph import GraphWorkspace
+from .prefetch import ProgressiveGraphPrefetch
 from .focus import CanvasFocusStore
 from .pack import load_pack, register_pack
 from .snapshot import build_snapshot
@@ -25,6 +26,7 @@ class LearningCanvasService:
         self.focus = CanvasFocusStore(store, self.pack)
         # P3 là đồ thị khám phá độc lập; không gán mastery cho nút do người/AI thêm.
         self.graphs = GraphWorkspace(store, legacy_group_id=self.pack.group_id)
+        self.prefetch = ProgressiveGraphPrefetch(self.graphs, on_change=self._prefetch_changed)
         self._lock = threading.RLock()
         self._requests: OrderedDict[str, tuple[str, dict]] = OrderedDict()
         self.on_event = None
@@ -37,13 +39,28 @@ class LearningCanvasService:
 
     def close(self):
         self._closed = True
+        self.prefetch.close()
         self.exercises.close()
+
+    def _prefetch_changed(self):
+        # Worker chỉ phát trạng thái; Root vẫn giữ toàn bộ quyền hội thoại.
+        if not self._closed and callable(self.on_state):
+            self.on_state(self.state_packet(include_detail=False))
+
+    def _schedule_prefetch(self, group_id: str, node_id: str):
+        if group_id != self.pack.group_id and node_id and not self._closed:
+            self.prefetch.request(group_id, node_id)
 
     def _snapshot(self, *, detail_node_id="", include_activity=True):
         focus = self.focus.snapshot()
         result = build_snapshot(self.learning, self.pack, focus, detail_node_id=detail_node_id)
         result["playback_stream_id"] = self.playback.stream_id
         result["graph_workspace"] = self.graphs.snapshot()
+        visible = result["graph_workspace"].get("graph")
+        if visible:
+            result["graph_prefetch"] = {"status": self.prefetch.state(visible["group_id"],
+                                                                         visible["selected_node_id"]),
+                                        "node_id": visible["selected_node_id"]}
         playback = self.playback.snapshot()
         if playback:
             result["playback"] = playback
@@ -128,20 +145,26 @@ class LearningCanvasService:
                 graph_actions = {"graph_create", "graph_select", "graph_expand"}
                 if action not in graph_actions and request.get("group_id", self.pack.group_id) != self.pack.group_id:
                     raise ValueError("unknown_canvas_group")
+                prefetch_target = None
                 if action == "graph_create":
                     graph = self.graphs.create(request.get("title"),
                         base_revision=request.get("base_graph_revision"))
                     envelope["graph_update"] = {"group_id": graph["group_id"],
                         "node_id": graph["selected_node_id"]}
+                    prefetch_target = (graph["group_id"], graph["selected_node_id"])
                 elif action == "graph_select":
                     self.graphs.select(request.get("group_id"), node_id=request.get("node_id", ""),
                         base_revision=request.get("base_graph_revision"))
+                    viewed = self.graphs.snapshot().get("graph")
+                    if viewed:
+                        prefetch_target = (viewed["group_id"], viewed["selected_node_id"])
                 elif action == "graph_expand":
                     children = self.graphs.expand(request.get("group_id"), request.get("parent_id"),
                         [{"title": request.get("title"), "summary": request.get("summary", "")}],
                         base_revision=request.get("base_graph_revision"))
                     envelope["graph_update"] = {"group_id": request.get("group_id"),
                         "node_id": children[0]["id"]}
+                    prefetch_target = (request.get("group_id"), children[0]["id"])
                 elif action == "navigate":
                     with self.navigation_guard() if callable(self.navigation_guard) else nullcontext():
                         self.focus.navigate(request.get("node_id"), base_revision=request.get("base_revision"))
@@ -169,17 +192,24 @@ class LearningCanvasService:
                 if len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")) > 60000:
                     raise ValueError("canvas_response_too_large")
                 self._requests[request_id] = (fingerprint, copy.deepcopy(envelope))
+                if prefetch_target is not None:
+                    # Sau khi commit thành công, không chặn ACK/UI vì Gemini.
+                    self._schedule_prefetch(*prefetch_target)
                 while len(self._requests) > 128:
                     self._requests.popitem(last=False)
                 if action in {"graph_create", "graph_expand", "graph_select"} and callable(self.on_event):
                     # Root có thể đề xuất bài giảng / mở rộng thêm, không có quyền tự chấm mastery.
                     graph_state = envelope["learning_canvas"]["graph_workspace"]
                     current = graph_state.get("graph") or {}
+                    selected_node = next((n for n in current.get("nodes", [])
+                                          if n["id"] == current.get("selected_node_id")), {})
                     self.on_event({"action": action, "node_id": focus["node_id"],
                         "focus_revision": focus["focus_revision"],
                         "graph_group_id": graph_state["selected_group_id"],
                         "graph_node_id": current.get("selected_node_id", ""),
-                        "graph_title": current.get("title", "")})
+                        "graph_title": current.get("title", ""),
+                        "graph_node_title": selected_node.get("title", ""),
+                        "graph_node_summary": selected_node.get("summary", "")})
                 if action == "navigate" and callable(self.on_event):
                     self.on_event({"action": "navigate", "node_id": focus["node_id"],
                                    "focus_revision": focus["focus_revision"], "learning_canvas": envelope["learning_canvas"]})

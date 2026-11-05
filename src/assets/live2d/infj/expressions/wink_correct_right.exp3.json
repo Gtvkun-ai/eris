@@ -6,7 +6,7 @@
     {
       "Id": "ParamEyeLOpen",
       "Value": 1,
-      "Blend": "Overwrite"
+      "Blend": "Multiply"
     },
     {
       "Id": "ParamEyeROpen",

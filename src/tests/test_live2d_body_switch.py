@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import socket
 from pathlib import Path
+from typing import Any
 
 from live2d_body.parameter_profile import INFJ_PARAMETER_PROFILE
 from live2d_body.stage_state import Live2DStageState
@@ -225,7 +226,9 @@ def test_eyelid_scaling_reads_current_frame_value_not_cached_snapshot() -> None:
 
     renderer._scale_eye_parameter(model, "ParamEyeLOpen", 0.5)
 
-    assert model.writes == [("ParamEyeLOpen", 0.10)]
+    # Mood is an absolute opening cap. The current native blink (.20) must
+    # remain smaller than the .50 mood cap without being multiplied twice.
+    assert model.writes == [("ParamEyeLOpen", 0.20)]
 
 
 def test_stage_state_deduplicates_direct_and_godot_mirrors() -> None:

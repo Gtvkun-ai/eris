@@ -1,5 +1,21 @@
 # Tri thức Eris: bài học từ điều tra runtime và gói rescue
 
+Cập nhật Live2D ngày 05/11: [kiểm biểu cảm và chuyển đổi PSD2Live](2026-11-05-live2d-expression-audit.md).
+Kiểm offline gói 23 biểu cảm tìm được lỗi mí/lưỡi và hai preset trùng; theo yêu cầu
+cứu hộ sau đó đã sửa source, sync 8 file sang Documents/eris và kiểm native bằng
+Python portable. Lượt vẽ anime tiếp theo đã thay đúng năm đảo texture miệng,
+phối lại sáu preset mí và sync tám file; MOC3/UV/alpha giữ nguyên. Giá trị mí mới
+thay giá trị cứu hộ ban đầu; xem phần cập nhật mới nhất trong báo cáo.
+Bản PSD2Live xuất lại vẫn có sai khác rõ.
+Lượt tiếp theo làm sạch nét/halo môi (111 pixel RGB, giữ alpha và keyform),
+đã tự xem 16 native render và sync texture. Đây là chỉnh nét nhẹ; dáng môi vẫn
+cần author keyform nếu muốn cải thiện rõ. Xem cập nhật đầu báo cáo.
+Thay nhận định chỉ dựa trên cảnh báo compiler: chưa coi pipeline PSD2Live bảo toàn rig.
+Đã tự xem cửa sổ renderer portable khoảng 60 FPS ở toàn thân và cận mặt, gửi
+stage/audio_start qua UDP riêng với envelope tổng hợp; mắt/lưỡi và chuyển
+sad/lazy đúng trong các trạng thái đã xem. Chưa kiểm hội thoại/TTS có âm thanh;
+xem báo cáo để phân biệt kết quả trước và sau sửa.
+
 Cập nhật Live2D ngày 03/11: [menu và hệ tọa độ overlay](2026-11-03-live2d-menu-geometry.md).
 Ảnh user cho thấy clamp overlay/DPI riêng chưa đủ xác nhận menu bám model;
 đã sửa đổi desktop/viewport và kiểm fixture, chưa xác nhận trực quan hai màn hình.

@@ -120,6 +120,14 @@ def frames(native, pose, count=1, gaze=None):
     return {p: model.GetParameterValue(i) for p, i in renderer._parameter_indices.items()}
 
 
+def test_rebuilt_mouth_bundle_passes_native_consistency(native_model):
+    refs = read_json(ASSETS / "infj.model3.json")["FileReferences"]
+    assert "infj.1024/mouth-anime.png" in refs["Textures"]
+    assert all((ASSETS / texture).is_file() for texture in refs["Textures"])
+    # The SDK resolves this name relative to the loaded model's directory.
+    assert native_model[1].HasMocConsistencyFromFile(refs["Moc"])
+
+
 def test_native_expression_survives_frame_composition_without_accumulating(native_model):
     pose = snapshot(emotion="warm_soft")
     values = frames(native_model, pose, 90)
@@ -146,7 +154,7 @@ def test_native_motion_takes_temporary_gaze_ownership_and_finishes_once(native_m
 def test_terminal_cancels_asset_expression_and_custom_mouth_but_not_audio_ownership(native_model):
     pose = snapshot(emotion="teasing", motion="tilt_head", speaking=True, last_event_type="audio_start", parameters={"ParamMouthOpenY": .57})
     values = frames(native_model, pose, 90)
-    assert values["ParamErisTongue"] > .9
+    assert values["ParamErisTongue"] == pytest.approx(0)
     assert values["ParamMouthOpenY"] == pytest.approx(.57)
     terminal = snapshot(emotion="teasing", motion="tilt_head", last_event_type="audio_done", parameters={"ParamMouthOpenY": .7, "ParamErisTongue": 1, "ParamErisLipPress": .8})
     values = frames(native_model, terminal, 1)
@@ -174,7 +182,8 @@ def test_ignored_terminal_mirror_does_not_cancel_owned_audio_expression(native_m
     frames(native_model, pose, 60)
     ignored = replace(pose, last_event_type="audio_done", last_event_at=2)
     values = frames(native_model, ignored, 1)
-    assert values["ParamErisTongue"] > .9
+    assert values["ParamErisTongue"] == pytest.approx(0)
+    assert values["ParamEyeLOpen"] < .74  # The expression was not cancelled.
     assert values["ParamMouthOpenY"] == pytest.approx(.57)
 
 
@@ -201,3 +210,39 @@ def test_native_auto_blink_survives_baseline_and_eyelid_factors(native_model):
         openings.append(frames(native_model, pose)["ParamEyeLOpen"])
     assert max(openings) <= .801
     assert min(openings) < .2
+
+
+@pytest.mark.parametrize("emotion,left,right", [
+    ("smirk_disdain", .56, .78), ("lazy_deadpan", .48, .52),
+    ("teasing", .62, .86), ("skeptical", .58, .90),
+    ("amused", .72, .76), ("warm", .86, .88),
+])
+def test_expression_lids_keep_their_opening_and_native_blink(native_model, emotion, left, right):
+    from live2d_body.stage_state import _EMOTION_TARGETS
+    model = native_model[1]
+    model.SetAutoBlinkEnable(True)
+    target = _EMOTION_TARGETS[emotion]
+    pose = snapshot(emotion=emotion, motion="still", parameters=target.parameters(),
+                    eye_open_left=target.eye_open_left, eye_open_right=target.eye_open_right)
+    values = []
+    for _ in range(1080):
+        result = frames(native_model, pose)
+        values.append((result["ParamEyeLOpen"], result["ParamEyeROpen"]))
+    for side, opening in enumerate((left, right)):
+        samples = [value[side] for value in values[60:]]
+        assert max(samples) == pytest.approx(opening, abs=.015)
+        assert min(samples) < .1
+
+
+@pytest.mark.parametrize("opening", [0.0, .2, .36, .8, 1.0])
+def test_speech_retracts_tongue_without_changing_audio_mouth(native_model, opening):
+    pose = snapshot(emotion="teasing", motion="still", speaking=True,
+                    parameters={"ParamMouthOpenY": opening})
+    values = frames(native_model, pose, 90)
+    assert values["ParamMouthOpenY"] == pytest.approx(opening)
+    if opening == 0:
+        assert values["ParamErisTongue"] > .99
+    elif opening >= .36:
+        assert values["ParamErisTongue"] == pytest.approx(0, abs=1e-6)
+    else:
+        assert 0 < values["ParamErisTongue"] < 1
