@@ -274,6 +274,16 @@ class ConversationHandoffRuntime:
             "nhàm", "chán", "nghe miết", "lặp lại", "đổi chủ đề", "chủ đề mới",
             "boring", "change topic", "same thing again",
         ))
+        # P0 — Chỉ nhận diện lời sửa *cách Eris tham gia cuộc nói chuyện*,
+        # không suy từ "bực" ra một hành động cố định. Đây là tín hiệu người
+        # dùng đang bình luận lời Eris, không phải phân loại nhu cầu/cảm xúc.
+        approach_feedback = bool(previous and _contains_any(user, (
+            "sao cứ hỏi", "sao lại hỏi", "sao bạn hỏi", "sao em hỏi",
+            "tại sao cứ hỏi", "đừng hỏi", "thôi hỏi", "hỏi kỹ thuật làm gì",
+            "chỉ muốn kể mà", "chỉ đang kể mà", "tôi chỉ kể mà",
+            "mình chỉ kể mà", "bạn cứ hỏi", "em cứ hỏi",
+            "why do you keep asking", "stop asking", "i'm just venting",
+        )))
         direct_assistant_reference = _contains_any(user, (
             "em nói", "bạn nói", "câu em", "câu bạn", "câu vừa", "lời em", "lời bạn",
             "you said", "what you said", "your question", "your sentence",
@@ -290,7 +300,7 @@ class ConversationHandoffRuntime:
             )
         )
 
-        reaction_signal = bool(confusion or self_deprecation or bored)
+        reaction_signal = bool(confusion or self_deprecation or bored or approach_feedback)
         complexity = _assistant_complexity(previous)
         has_previous = bool(previous)
         explicit_external_cause = bool(
@@ -331,7 +341,10 @@ class ConversationHandoffRuntime:
 
         hypotheses: list[CausalHypothesis] = []
         if self_cause > 0.0:
-            if confusion:
+            if approach_feedback:
+                kind = "reaction_to_eris_approach"
+                summary = "User đang nhận xét cách ERIS vừa tiếp cận; cần hiểu theo nguyên văn, không suy ra cách đáp bắt buộc."
+            elif confusion:
                 kind = "reaction_to_previous_eris_clarity"
                 summary = "Phản ứng hiện tại có khả năng liên quan đến độ rõ của câu ERIS vừa nói."
             elif self_deprecation:
@@ -354,11 +367,14 @@ class ConversationHandoffRuntime:
 
         repair_needed = bool(
             confusion
+            or approach_feedback
             or (self_deprecation and self_cause >= 0.72)
             or (bored and self_cause >= 0.70 and not topic_closure)
         )
         if confusion:
             stance = "confused"
+        elif approach_feedback:
+            stance = "approach_feedback"
         elif topic_closure:
             stance = "topic_closed"
         elif bored:

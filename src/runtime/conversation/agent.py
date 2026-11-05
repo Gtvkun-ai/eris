@@ -18,7 +18,7 @@ import json
 import os
 import uuid
 
-from .root_prompt_contract import ROOT_SYSTEM_CORE
+from .root_prompt_contract import ROOT_SYSTEM_CORE, SOCIAL_JUDGMENT_PROMPT
 from .tool_guides import TOOL_GUIDES, read_tool_guide
 from .root_session import RootConversationSession
 from .interaction_choice import INTERACTION_CHOICE_PROMPT, INTERACTION_CHOICE_SCHEMA
@@ -669,7 +669,7 @@ class RuntimeModelRootAgent:
     @staticmethod
     def _system_prompt(capabilities: RootCapabilityRegistry) -> str:
         del capabilities  # A stable menu; registry still owns execution permission.
-        return ROOT_SYSTEM_CORE + (INTERACTION_CHOICE_PROMPT if interaction_choices_enabled() else "")
+        return ROOT_SYSTEM_CORE + SOCIAL_JUDGMENT_PROMPT + (INTERACTION_CHOICE_PROMPT if interaction_choices_enabled() else "")
 
     @staticmethod
     def _payload(
@@ -781,6 +781,7 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "engagement_context",
         "learner_continuity",
         "confusion_signal",
+        "social_situation_evidence",
         "discourse_context",
         "personality_summary",
         "personality_context",

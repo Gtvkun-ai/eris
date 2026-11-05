@@ -233,20 +233,38 @@ class ConversationContextAssembler:
             try:
                 handoff = getattr(host, "conversation_handoff_runtime", None)
                 snapshot = getattr(handoff, "to_dict", None)
-                state = snapshot() if callable(snapshot) else {}
-                if isinstance(state, Mapping) and (
-                    state.get("repair_needed") or state.get("user_stance") == "confused"
+                handoff_state = snapshot() if callable(snapshot) else {}
+                if isinstance(handoff_state, Mapping) and (
+                    handoff_state.get("repair_needed") or handoff_state.get("user_stance") == "confused"
                 ):
-                    hypotheses = state.get("causal_hypotheses") or ()
+                    hypotheses = handoff_state.get("causal_hypotheses") or ()
                     primary = hypotheses[0] if hypotheses and isinstance(hypotheses[0], Mapping) else {}
                     context["confusion_signal"] = {
-                        "repair_needed": bool(state.get("repair_needed")),
-                        "stance": str(state.get("user_stance", ""))[:50],
-                        "self_caused_probability": float(state.get("self_caused_reaction_probability", 0.0) or 0.0),
+                        "repair_needed": bool(handoff_state.get("repair_needed")),
+                        "stance": str(handoff_state.get("user_stance", ""))[:50],
+                        "self_caused_probability": float(handoff_state.get("self_caused_reaction_probability", 0.0) or 0.0),
                         "primary_hypothesis": str(primary.get("kind", ""))[:80],
                     }
             except Exception as exc:
                 self._debug("context.confusion", exc)
+
+        # P0 + P2 — Chiếu ngữ cảnh xã hội từ lời đã nói và kinh nghiệm đã có
+        # phản ứng thật. KHÔNG suy đoán tâm trạng, KHÔNG chọn response tại đây.
+        # Tạo sau confusion_signal để vẫn giữ hợp đồng handoff V12 cũ.
+        if event is not None and getattr(event, "kind", "") == "user_turn":
+            try:
+                from .social_situation import project_social_situation
+                handoff_owner = getattr(host, "conversation_handoff_runtime", None)
+                handoff_snapshot = getattr(handoff_owner, "to_dict", None)
+                handoff_evidence = handoff_snapshot() if callable(handoff_snapshot) else {}
+                sid = str(getattr(host, "conversation_id", "") or
+                          getattr(host, "thread_id", "") or "foreground:primary")[:180]
+                context["social_situation_evidence"] = project_social_situation(
+                    event_kind="user_turn", user_text=user_text, session_id=sid,
+                    state=state, handoff=handoff_evidence, recent_history=recent_history,
+                )
+            except Exception as exc:
+                self._debug("context.social_situation", exc)
 
         # Chỉ đưa vào Root một ảnh chụp tiến độ học có giới hạn. Không tự kích hoạt
         # Tutor hay biến BKT shadow thành đánh giá năng lực chắc chắn.

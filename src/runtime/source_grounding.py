@@ -1349,6 +1349,11 @@ class SourceGroundingEngine:
             lines.append("information_gap_rules:")
             lines.append("- Missing evidence forbids authoritative claims, not thinking.")
             lines.append("- ERIS may offer a hypothesis or a confirming probe using wording like 'có vẻ', 'tôi đoán', 'phải không'.")
+            # P0 — Độ thiếu chứng cứ về sự kiện KHÔNG phải chỉ thị hỏi kỹ thuật.
+            # User tự kể một trải nghiệm là đủ để tham gia câu chuyện, không đủ
+            # để khẳng định nguyên nhân bên ngoài là sự thật. Root chọn có hỏi không.
+            lines.append("- A probe is permitted, not required. Missing technical evidence does not by itself request debugging or force a diagnostic question.")
+            lines.append("- User's account grounds what they report feeling/experiencing, not an unverified external cause. You may respond to that experience without claiming the cause as fact.")
             lines.append("- Do not say 'tôi thấy', 'tôi đã đọc', or 'tôi biết' for a missing source.")
         if report.answer_style_rules:
             lines.append("answer_rules:")
@@ -2000,7 +2005,7 @@ class SourceGroundingEngine:
             ]
 
         rules = [
-            "Answer-first nếu evidence đủ; nếu thiếu evidence thì chuyển sang uncertainty/probe, không claim như fact.",
+            "Answer-first nếu evidence đủ; nếu thiếu dữ kiện về sự kiện thì giữ uncertainty, không claim nguyên nhân như fact. Probe là một lựa chọn, không phải nghĩa vụ.",
             "Nêu rõ nguồn đang dùng nếu có nguy cơ lẫn file/màn hình/memory.",
             "Không chuyển thiếu evidence thành suy diễn tâm lý hoặc văn mẫu fallback tĩnh.",
         ]
@@ -2058,7 +2063,9 @@ class SourceGroundingEngine:
             rules.append("Chỉ dùng web nếu runtime đã search hoặc allow_web bật.")
 
         if missing_evidence:
-            rules.append("Thiếu evidence chỉ là tín hiệu steering: giữ câu ngắn, giảm certainty, hỏi/probe hoặc yêu cầu nguồn đúng; không dùng canned fallback.")
+            # P0 — Thiếu thông tin để khẳng định sự kiện không làm mất khả năng
+            # đối thoại về trải nghiệm người kể. Không ép Root mở ticket kỹ thuật.
+            rules.append("Thiếu evidence chỉ điều chỉnh độ chắc về sự kiện. Hỏi/probe hoặc xin nguồn khi phù hợp mục đích user, không bắt buộc chỉ vì còn khoảng trống; không dùng canned fallback.")
         return self._dedupe(rules)
 
     def _derive_preempt_mode(
