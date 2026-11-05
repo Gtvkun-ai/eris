@@ -1,0 +1,182 @@
+[
+  {
+    "id": "I01",
+    "case": "explicit_repair",
+    "condition": "initiative_bias_removed",
+    "repeat": 2
+  },
+  {
+    "id": "I02",
+    "case": "opening_old_council",
+    "condition": "initiative_bias_removed",
+    "repeat": 3
+  },
+  {
+    "id": "I03",
+    "case": "opening_old_council",
+    "condition": "initiative_bias_removed",
+    "repeat": 2
+  },
+  {
+    "id": "I04",
+    "case": "timer_after_unanswered",
+    "condition": "initiative_bias_removed",
+    "repeat": 1
+  },
+  {
+    "id": "I05",
+    "case": "explicit_repair",
+    "condition": "initiative_bias_removed",
+    "repeat": 3
+  },
+  {
+    "id": "I06",
+    "case": "explicit_repair",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "I07",
+    "case": "venting",
+    "condition": "initiative_bias_removed",
+    "repeat": 3
+  },
+  {
+    "id": "I08",
+    "case": "timer_after_unanswered",
+    "condition": "initiative_bias_removed",
+    "repeat": 2
+  },
+  {
+    "id": "I09",
+    "case": "explicit_initiative_request",
+    "condition": "initiative_bias_removed",
+    "repeat": 3
+  },
+  {
+    "id": "I10",
+    "case": "venting",
+    "condition": "initiative_bias_removed",
+    "repeat": 2
+  },
+  {
+    "id": "I11",
+    "case": "venting",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "I12",
+    "case": "explicit_initiative_request",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "I13",
+    "case": "timer_after_unanswered",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "I14",
+    "case": "venting",
+    "condition": "initiative_bias_removed",
+    "repeat": 1
+  },
+  {
+    "id": "I15",
+    "case": "explicit_initiative_request",
+    "condition": "baseline",
+    "repeat": 3
+  },
+  {
+    "id": "I16",
+    "case": "explicit_initiative_request",
+    "condition": "initiative_bias_removed",
+    "repeat": 2
+  },
+  {
+    "id": "I17",
+    "case": "explicit_repair",
+    "condition": "initiative_bias_removed",
+    "repeat": 1
+  },
+  {
+    "id": "I18",
+    "case": "explicit_repair",
+    "condition": "baseline",
+    "repeat": 3
+  },
+  {
+    "id": "I19",
+    "case": "explicit_initiative_request",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "I20",
+    "case": "timer_after_unanswered",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "I21",
+    "case": "timer_after_unanswered",
+    "condition": "baseline",
+    "repeat": 3
+  },
+  {
+    "id": "I22",
+    "case": "timer_after_unanswered",
+    "condition": "initiative_bias_removed",
+    "repeat": 3
+  },
+  {
+    "id": "I23",
+    "case": "explicit_initiative_request",
+    "condition": "initiative_bias_removed",
+    "repeat": 1
+  },
+  {
+    "id": "I24",
+    "case": "explicit_repair",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "I25",
+    "case": "opening_old_council",
+    "condition": "initiative_bias_removed",
+    "repeat": 1
+  },
+  {
+    "id": "I26",
+    "case": "opening_old_council",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "id": "I27",
+    "case": "opening_old_council",
+    "condition": "baseline",
+    "repeat": 3
+  },
+  {
+    "id": "I28",
+    "case": "venting",
+    "condition": "baseline",
+    "repeat": 3
+  },
+  {
+    "id": "I29",
+    "case": "opening_old_council",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "id": "I30",
+    "case": "venting",
+    "condition": "baseline",
+    "repeat": 2
+  }
+]

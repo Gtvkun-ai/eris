@@ -1,0 +1,326 @@
+[
+  {
+    "id": "0459a7",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "10b39b",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": false
+  },
+  {
+    "id": "1208d7",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "155c46",
+    "case": "repair_runtime",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "22f769",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "2952a6",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "unsupported_progress_reassurance": true
+  },
+  {
+    "id": "308202",
+    "case": "switch_to_help",
+    "kind": "move",
+    "task_help": true,
+    "unsupported_confidence": false
+  },
+  {
+    "id": "3b909d",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": true
+  },
+  {
+    "id": "4b10f9",
+    "case": "vent_runtime",
+    "kind": "move",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "4b4cdb",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "unsupported_progress_reassurance": true
+  },
+  {
+    "id": "54ef78",
+    "case": "repair_runtime",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": true,
+    "emotional_followup": false
+  },
+  {
+    "id": "59e06e",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "5d9d42",
+    "case": "switch_to_help",
+    "kind": "move",
+    "task_help": true,
+    "unsupported_confidence": true
+  },
+  {
+    "id": "6fb89e",
+    "case": "repair_runtime",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "78c6c0",
+    "case": "disagreement",
+    "kind": "move",
+    "disagrees": true,
+    "premise_reversal": false
+  },
+  {
+    "id": "7a2828",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "83874e",
+    "case": "disagreement",
+    "kind": "move",
+    "disagrees": true,
+    "premise_reversal": true
+  },
+  {
+    "id": "8409c6",
+    "case": "switch_to_help",
+    "kind": "unparsed",
+    "task_help": true,
+    "unsupported_confidence": true
+  },
+  {
+    "id": "8762c9",
+    "case": "switch_to_help",
+    "kind": "unparsed",
+    "task_help": true,
+    "unsupported_confidence": false
+  },
+  {
+    "id": "8d9527",
+    "case": "repair_runtime",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": false,
+    "emotional_followup": true
+  },
+  {
+    "id": "aed6ee",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "b258c0",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "bd3028",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": false
+  },
+  {
+    "id": "bece50",
+    "case": "disagreement",
+    "kind": "unparsed",
+    "disagrees": true,
+    "premise_reversal": false
+  },
+  {
+    "id": "d09aa7",
+    "case": "repair_runtime",
+    "kind": "unparsed",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": false,
+    "emotional_followup": true
+  },
+  {
+    "id": "d1dd8f",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "unsupported_progress_reassurance": false
+  },
+  {
+    "id": "d5c1d5",
+    "case": "disagreement",
+    "kind": "move",
+    "disagrees": true,
+    "premise_reversal": false
+  },
+  {
+    "id": "db5330",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "ded713",
+    "case": "disagreement",
+    "kind": "move",
+    "disagrees": true,
+    "premise_reversal": false
+  },
+  {
+    "id": "e06ec4",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "unsupported_progress_reassurance": false
+  },
+  {
+    "id": "f60e17",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "f97446",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": true
+  },
+  {
+    "id": "fa6ec3",
+    "case": "repair_runtime",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "diagnostic_probe": true,
+    "emotional_followup": false
+  },
+  {
+    "id": "fe0ed4",
+    "case": "vent_runtime",
+    "kind": "move",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "fe578c",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "11b234",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": false
+  },
+  {
+    "id": "1c4da1",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "242ffb",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "diagnostic_probe": true
+  },
+  {
+    "id": "245acf",
+    "case": "initiative",
+    "kind": "move",
+    "concrete_topic": true,
+    "factual_claim_needs_review": false
+  },
+  {
+    "id": "3bdef0",
+    "case": "switch_to_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "6b709a",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "diagnostic_probe": true,
+    "unsupported_progress_reassurance": false
+  },
+  {
+    "id": "6c7a6e",
+    "case": "disagreement",
+    "kind": "move",
+    "disagrees": true,
+    "premise_reversal": false
+  },
+  {
+    "id": "763786",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "7def9d",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "95a042",
+    "case": "banter",
+    "kind": "move",
+    "plays_along": true
+  },
+  {
+    "id": "ec6056",
+    "case": "switch_to_help",
+    "kind": "move",
+    "task_help": true
+  },
+  {
+    "id": "ef80d0",
+    "case": "discouraged",
+    "kind": "move",
+    "recognizes_discouragement": true,
+    "diagnostic_probe": false,
+    "unsupported_progress_reassurance": true
+  },
+  {
+    "id": "f58bbb",
+    "case": "angry_help",
+    "kind": "move",
+    "task_help": true
+  }
+]

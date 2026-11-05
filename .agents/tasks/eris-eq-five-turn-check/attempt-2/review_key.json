@@ -1,0 +1,27 @@
+[
+  {
+    "id": "F1",
+    "case": "vent",
+    "condition": "baseline"
+  },
+  {
+    "id": "F2",
+    "case": "repair",
+    "condition": "baseline"
+  },
+  {
+    "id": "F3",
+    "case": "debug_control",
+    "condition": "clean_explicit_help"
+  },
+  {
+    "id": "F4",
+    "case": "vent",
+    "condition": "remove_probe_rules"
+  },
+  {
+    "id": "F5",
+    "case": "repair",
+    "condition": "remove_probe_rules"
+  }
+]

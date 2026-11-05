@@ -1,0 +1,8 @@
+{
+  "http_status": 429,
+  "retry_after": null,
+  "upstream_empty_output": true,
+  "pool_unavailable": false,
+  "max_tokens": 2048,
+  "elapsed_seconds": 5.25
+}

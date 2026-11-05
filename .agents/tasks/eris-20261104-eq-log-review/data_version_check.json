@@ -1,0 +1,182 @@
+{
+ "revs": {
+  "pre": "38a87584",
+  "c5e": "c5e16c3b",
+  "head": "1ccab39b"
+ },
+ "summary": {
+  "n_portable_py": 1272,
+  "match": {
+   "pre": 1272,
+   "c5e": 1251,
+   "head": 1247
+  },
+  "match_any": 1272,
+  "match_none": 0,
+  "only_in_portable": 0
+ },
+ "changed_py_between_pre_and_head": 30,
+ "changed_py_new_in_head": [
+  "src/runtime/conversation/interaction_choice.py",
+  "src/screen/ocr_config.py",
+  "src/tests/conversation/test_interaction_learning.py",
+  "src/tests/test_living_user_async_consolidation.py",
+  "src/tests/test_screen_ocr_switch.py"
+ ],
+ "changed_status": [
+  {
+   "path": "src/actions/capability_runtime.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/memory/living_user/episode_builder.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-31 21:09"
+  },
+  {
+   "path": "src/memory/living_user/episode_rollup.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 16:54"
+  },
+  {
+   "path": "src/memory/living_user/gemini_adapter.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 16:24"
+  },
+  {
+   "path": "src/memory/living_user/service.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 16:54"
+  },
+  {
+   "path": "src/runtime/ai_orchestrated/identity.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/ai_orchestrated/identity_reducer.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/ai_orchestrated/model_router.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/ai_orchestrated/state_reducer.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/chat_perception.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/conversation/agent.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 13:14"
+  },
+  {
+   "path": "src/runtime/conversation/contracts.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 13:14"
+  },
+  {
+   "path": "src/runtime/conversation/delivery_adapter.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 13:14"
+  },
+  {
+   "path": "src/runtime/conversation/interaction_choice.py",
+   "portable": "missing"
+  },
+  {
+   "path": "src/runtime/conversation/observation_bridge.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/runtime/conversation/root_prompt_contract.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 13:14"
+  },
+  {
+   "path": "src/runtime/conversation/runtime_writer.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-02 13:14"
+  },
+  {
+   "path": "src/screen/ocr_config.py",
+   "portable": "missing"
+  },
+  {
+   "path": "src/screen/ocr_worker.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/screen/screen_relevance_router.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/tests/conversation/test_delivery_adapter_v12.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-01 10:59"
+  },
+  {
+   "path": "src/tests/conversation/test_eris02_root_agency.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-30 20:01"
+  },
+  {
+   "path": "src/tests/conversation/test_interaction_learning.py",
+   "portable": "missing"
+  },
+  {
+   "path": "src/tests/conversation/test_root_parallel_tools_v12.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-30 20:00"
+  },
+  {
+   "path": "src/tests/conversation/test_root_prompt_cleanup.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-11-03 15:59"
+  },
+  {
+   "path": "src/tests/test_architecture_c_runtime_regressions.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/tests/test_chat_evidence_ladder_v38.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  },
+  {
+   "path": "src/tests/test_living_user_async_consolidation.py",
+   "portable": "missing"
+  },
+  {
+   "path": "src/tests/test_screen_ocr_switch.py",
+   "portable": "missing"
+  },
+  {
+   "path": "src/tests/test_world_state_v1.py",
+   "portable": "= 38a87584 (chua nang cap)",
+   "mtime": "2026-10-29 22:34"
+  }
+ ],
+ "portable_files_matching_none": [],
+ "portable_mtime_histogram_by_day": {
+  "2026-10-29": 1120,
+  "2026-10-30": 26,
+  "2026-10-31": 25,
+  "2026-11-01": 32,
+  "2026-11-02": 60,
+  "2026-11-03": 9
+ }
+}

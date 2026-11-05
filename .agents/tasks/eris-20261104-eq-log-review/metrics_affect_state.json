@@ -1,0 +1,297 @@
+{
+ "summary": {
+  "n_sessions": 12,
+  "sessions_with_all_fields_constant": 12,
+  "sessions_with_event_age_min_gt_1day": 12
+ },
+ "sessions": {
+  "20261018_112456": {
+   "n_root_requests": 3,
+   "n_user_turns": 2,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 1614682.2159,
+   "event_age_seconds_max": 1615908.7898,
+   "event_age_days_min": 18.7,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261030_213212": {
+   "n_root_requests": 10,
+   "n_user_turns": 3,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2687930.5621,
+   "event_age_seconds_max": 2688351.3082,
+   "event_age_days_min": 31.1,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261030_215229": {
+   "n_root_requests": 14,
+   "n_user_turns": 6,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2689126.146,
+   "event_age_seconds_max": 2689756.5971,
+   "event_age_days_min": 31.1,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261031_214954": {
+   "n_root_requests": 11,
+   "n_user_turns": 4,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2775389.5738,
+   "event_age_seconds_max": 2776047.0724,
+   "event_age_days_min": 32.1,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261101_123415": {
+   "n_root_requests": 12,
+   "n_user_turns": 4,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2828457.1784,
+   "event_age_seconds_max": 2829161.4922,
+   "event_age_days_min": 32.7,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261101_134232": {
+   "n_root_requests": 3,
+   "n_user_turns": 1,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2832552.371,
+   "event_age_seconds_max": 2832735.4068,
+   "event_age_days_min": 32.8,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261101_160856": {
+   "n_root_requests": 17,
+   "n_user_turns": 5,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2841336.5058,
+   "event_age_seconds_max": 2842130.3707,
+   "event_age_days_min": 32.9,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261101_190008": {
+   "n_root_requests": 83,
+   "n_user_turns": 27,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2851600.1415,
+   "event_age_seconds_max": 2855176.524,
+   "event_age_days_min": 33.0,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261102_141706": {
+   "n_root_requests": 18,
+   "n_user_turns": 6,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 2921006.836,
+   "event_age_seconds_max": 2921629.167,
+   "event_age_days_min": 33.8,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261103_150642": {
+   "n_root_requests": 13,
+   "n_user_turns": 3,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 3010387.698,
+   "event_age_seconds_max": 3010859.3865,
+   "event_age_days_min": 34.8,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261103_162914": {
+   "n_root_requests": 9,
+   "n_user_turns": 2,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 3015350.8424,
+   "event_age_seconds_max": 3015755.6393,
+   "event_age_days_min": 34.9,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  },
+  "20261103_215411": {
+   "n_root_requests": 13,
+   "n_user_turns": 6,
+   "fields_parsed": 15,
+   "fields_with_any_change": 0,
+   "valence_distinct": 1,
+   "irritation_distinct": 1,
+   "sadness_distinct": 1,
+   "valence_range": [
+    0.018,
+    0.018
+   ],
+   "irritation_range": [
+    0.082,
+    0.082
+   ],
+   "event_age_seconds_min": 3034847.1201,
+   "event_age_seconds_max": 3035461.7238,
+   "event_age_days_min": 35.1,
+   "affect_event_kinds": [
+    "goal_appraisal"
+   ],
+   "impulse_strength_distinct": 1
+  }
+ }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "case": "vent",
+    "condition": "baseline",
+    "repeat": 1,
+    "request_sha256": "d603bcfc379065b1f77fb486d6a1a496a76b566c44c942ddfcd316f9b024daa2"
+  },
+  {
+    "case": "vent",
+    "condition": "remove_probe_rules",
+    "repeat": 1,
+    "request_sha256": "0b880ed21b132721ad757b4776363daf2f2986553d1e32b956ab224fd3f9ab0f"
+  },
+  {
+    "case": "repair",
+    "condition": "baseline",
+    "repeat": 1,
+    "request_sha256": "93c28371f58e5da997d72befeb1345035efea160a90414fcf3dfb611318b1ec8"
+  },
+  {
+    "case": "debug_control",
+    "condition": "clean_explicit_help",
+    "repeat": 1,
+    "request_sha256": "d8b1ffea830bae8237618112d0f1cd05c28f4d7b98e7e4dd1cb83da8d579cedf"
+  },
+  {
+    "case": "repair",
+    "condition": "remove_probe_rules",
+    "repeat": 1,
+    "request_sha256": "4793f5ca49f9016f1a43209291bb2510e1056362a7285ee78e5d8a34a2f15d7a"
+  }
+]

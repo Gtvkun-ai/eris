@@ -1,0 +1,596 @@
+{
+ "definition": {
+  "utterance": "Root move (kind=move) voi text hien thi = Surface.text neu co, neu khong Root.say",
+  "kinds": "user_reply | proactive (opening/autonomous/continuation) | tutor",
+  "regex_note": "motive_probe, offer_or_invite_end, ma_nay_opening la heuristic regex; xem bao cao muc 'Gioi han'"
+ },
+ "scopes": {
+  "A_2026-11-01..03": {
+   "sessions": 11,
+   "user_reply": {
+    "n": 52,
+    "chars": {
+     "n": 52,
+     "mean": 359.6,
+     "median": 330,
+     "p90": 543,
+     "max": 1259
+    },
+    "words": {
+     "n": 52,
+     "mean": 82.5,
+     "median": 73,
+     "p90": 122,
+     "max": 292
+    },
+    "share_words_ge_60": 0.654,
+    "share_words_ge_100": 0.25,
+    "ends_with_question": 14,
+    "has_question_mark": 18,
+    "questions_ge_2": 3,
+    "offer_or_invite_end": 3,
+    "list_lines": 0,
+    "headings": 0,
+    "bold": 0,
+    "latex": 0,
+    "multi_paragraph": 0,
+    "motive_probe": 10,
+    "ma_nay_opening": 0,
+    "contains_ma_nay_anywhere": 4,
+    "japanese_chars_in_display": 0,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {
+     "anh": 37,
+     "bạn": 9,
+     "none": 4,
+     "anh+em": 2
+    },
+    "top_openings_2w": [
+     [
+      "được .",
+      3
+     ],
+     [
+      "được ,",
+      3
+     ],
+     [
+      "ừ ,",
+      3
+     ],
+     [
+      "đúng .",
+      2
+     ],
+     [
+      "à ,",
+      2
+     ],
+     [
+      "thì ra",
+      2
+     ],
+     [
+      "đây .",
+      1
+     ],
+     [
+      "cái này",
+      1
+     ]
+    ],
+    "top_openings_3w": [
+     [
+      "được . tôi",
+      2
+     ]
+    ],
+    "top_last_clause_starts_3w": [
+     [
+      "vì nếu tôi",
+      2
+     ],
+     [
+      "còn nếu anh",
+      2
+     ]
+    ],
+    "reply_to_user_len_ratio_words": {
+     "n": 52,
+     "mean": 7.6,
+     "median": 5.1,
+     "p90": 13.6,
+     "max": 47.2
+    },
+    "share_reply_ge_5x_user_words": 0.5,
+    "share_reply_ge_10x_user_words": 0.25,
+    "user_words": {
+     "n": 52,
+     "mean": 16.6,
+     "median": 14,
+     "p90": 30,
+     "max": 70
+    }
+   },
+   "proactive": {
+    "n": 49,
+    "chars": {
+     "n": 49,
+     "mean": 283.8,
+     "median": 267,
+     "p90": 408,
+     "max": 589
+    },
+    "words": {
+     "n": 49,
+     "mean": 63.9,
+     "median": 59,
+     "p90": 93,
+     "max": 145
+    },
+    "share_words_ge_60": 0.49,
+    "share_words_ge_100": 0.041,
+    "ends_with_question": 6,
+    "has_question_mark": 10,
+    "questions_ge_2": 1,
+    "offer_or_invite_end": 1,
+    "list_lines": 0,
+    "headings": 0,
+    "bold": 0,
+    "latex": 0,
+    "multi_paragraph": 1,
+    "motive_probe": 5,
+    "ma_nay_opening": 24,
+    "contains_ma_nay_anywhere": 18,
+    "japanese_chars_in_display": 0,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {
+     "anh": 34,
+     "bạn": 8,
+     "none": 6,
+     "anh+em": 1
+    },
+    "top_openings_2w": [
+     [
+      "mà này",
+      17
+     ],
+     [
+      "mà nói",
+      2
+     ],
+     [
+      "tôi không",
+      2
+     ],
+     [
+      "mà nghĩ",
+      2
+     ],
+     [
+      "mà khoan",
+      2
+     ],
+     [
+      "anh đang",
+      2
+     ],
+     [
+      "tai phải",
+      2
+     ],
+     [
+      "khởi động",
+      1
+     ]
+    ],
+    "top_openings_3w": [
+     [
+      "mà này ,",
+      16
+     ],
+     [
+      "mà nghĩ lại",
+      2
+     ],
+     [
+      "mà khoan —",
+      2
+     ],
+     [
+      "anh đang mở",
+      2
+     ],
+     [
+      "tai phải .",
+      2
+     ]
+    ],
+    "top_last_clause_starts_3w": [
+     [
+      "tôi ở trong",
+      2
+     ]
+    ],
+    "reply_to_user_len_ratio_words": {
+     "n": 0
+    },
+    "share_reply_ge_5x_user_words": null,
+    "share_reply_ge_10x_user_words": null,
+    "user_words": {
+     "n": 0
+    }
+   },
+   "tutor": {
+    "n": 3,
+    "chars": {
+     "n": 3,
+     "mean": 235,
+     "median": 225,
+     "p90": 257,
+     "max": 257
+    },
+    "words": {
+     "n": 3,
+     "mean": 46,
+     "median": 45,
+     "p90": 48,
+     "max": 48
+    },
+    "share_words_ge_60": 0.0,
+    "share_words_ge_100": 0.0,
+    "ends_with_question": 1,
+    "has_question_mark": 1,
+    "questions_ge_2": 0,
+    "offer_or_invite_end": 0,
+    "list_lines": 0,
+    "headings": 0,
+    "bold": 0,
+    "latex": 0,
+    "multi_paragraph": 0,
+    "motive_probe": 0,
+    "ma_nay_opening": 0,
+    "contains_ma_nay_anywhere": 0,
+    "japanese_chars_in_display": 0,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {
+     "anh": 3
+    },
+    "top_openings_2w": [
+     [
+      "anh mở",
+      2
+     ],
+     [
+      "canvas báo",
+      1
+     ]
+    ],
+    "top_openings_3w": [
+     [
+      "anh mở đúng",
+      2
+     ]
+    ],
+    "top_last_clause_starts_3w": [
+     [
+      "đó là di",
+      2
+     ]
+    ],
+    "reply_to_user_len_ratio_words": {
+     "n": 0
+    },
+    "share_reply_ge_5x_user_words": null,
+    "share_reply_ge_10x_user_words": null,
+    "user_words": {
+     "n": 0
+    }
+   },
+   "decision_counts": {
+    "autonomous_signal|no_reply|-": 53,
+    "user_turn|move|delivered": 47,
+    "autonomous_signal|move|delivered": 15,
+    "autonomous_signal|move|cancelled": 8,
+    "continuation_due|move|delivered": 8,
+    "continuation_due|no_reply|-": 7,
+    "continuation_due|move|-": 7,
+    "opening_signal|move|delivered": 5,
+    "user_turn|move|-": 3,
+    "autonomous_signal|move|-": 3,
+    "opening_signal|move|-": 2,
+    "tutor_result|move|delivered": 2,
+    "opening_signal|move|cancelled": 1,
+    "tutor_result|move|-": 1,
+    "opening_signal|no_reply|-": 1,
+    "user_turn|move|cancelled": 1,
+    "user_turn|prose_recovery|delivered": 1
+   }
+  },
+  "B_2026-10-24..31": {
+   "sessions": 35,
+   "user_reply": {
+    "n": 116,
+    "chars": {
+     "n": 116,
+     "mean": 416.3,
+     "median": 378,
+     "p90": 725,
+     "max": 1300
+    },
+    "words": {
+     "n": 116,
+     "mean": 94.4,
+     "median": 84,
+     "p90": 170,
+     "max": 298
+    },
+    "share_words_ge_60": 0.707,
+    "share_words_ge_100": 0.336,
+    "ends_with_question": 34,
+    "has_question_mark": 41,
+    "questions_ge_2": 3,
+    "offer_or_invite_end": 8,
+    "list_lines": 1,
+    "headings": 0,
+    "bold": 1,
+    "latex": 0,
+    "multi_paragraph": 9,
+    "motive_probe": 16,
+    "ma_nay_opening": 0,
+    "contains_ma_nay_anywhere": 4,
+    "japanese_chars_in_display": 1,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {
+     "bạn": 95,
+     "none": 14,
+     "anh": 3,
+     "bạn+em": 2,
+     "anh+bạn": 2
+    },
+    "top_openings_2w": [
+     [
+      "ừ ,",
+      13
+     ],
+     [
+      "được ,",
+      8
+     ],
+     [
+      "à .",
+      5
+     ],
+     [
+      "ừ .",
+      3
+     ],
+     [
+      "được .",
+      3
+     ],
+     [
+      "có .",
+      2
+     ],
+     [
+      "thấy .",
+      2
+     ],
+     [
+      "khoan đã",
+      2
+     ]
+    ],
+    "top_openings_3w": [
+     [
+      "ừ , tôi",
+      3
+     ],
+     [
+      "à . vậy",
+      3
+     ],
+     [
+      "ừ , công",
+      2
+     ],
+     [
+      "khoan đã .",
+      2
+     ],
+     [
+      "à , ra",
+      2
+     ],
+     [
+      "ồ , hoá",
+      2
+     ]
+    ],
+    "top_last_clause_starts_3w": [
+     [
+      "nói tôi nghe",
+      2
+     ],
+     [
+      "kể tôi nghe",
+      2
+     ]
+    ],
+    "reply_to_user_len_ratio_words": {
+     "n": 116,
+     "mean": 8.6,
+     "median": 6.5,
+     "p90": 15.7,
+     "max": 38.0
+    },
+    "share_reply_ge_5x_user_words": 0.672,
+    "share_reply_ge_10x_user_words": 0.241,
+    "user_words": {
+     "n": 116,
+     "mean": 15.0,
+     "median": 14,
+     "p90": 29,
+     "max": 48
+    }
+   },
+   "proactive": {
+    "n": 56,
+    "chars": {
+     "n": 56,
+     "mean": 285.9,
+     "median": 241,
+     "p90": 471,
+     "max": 916
+    },
+    "words": {
+     "n": 56,
+     "mean": 64.1,
+     "median": 54,
+     "p90": 98,
+     "max": 215
+    },
+    "share_words_ge_60": 0.375,
+    "share_words_ge_100": 0.089,
+    "ends_with_question": 15,
+    "has_question_mark": 19,
+    "questions_ge_2": 2,
+    "offer_or_invite_end": 1,
+    "list_lines": 0,
+    "headings": 0,
+    "bold": 0,
+    "latex": 0,
+    "multi_paragraph": 1,
+    "motive_probe": 7,
+    "ma_nay_opening": 10,
+    "contains_ma_nay_anywhere": 3,
+    "japanese_chars_in_display": 0,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {
+     "bạn": 42,
+     "none": 13,
+     "anh": 1
+    },
+    "top_openings_2w": [
+     [
+      "mà khoan",
+      4
+     ],
+     [
+      "mà nghĩ",
+      3
+     ],
+     [
+      "mà tôi",
+      3
+     ],
+     [
+      "23 :",
+      3
+     ],
+     [
+      "14 :",
+      3
+     ],
+     [
+      "mà này",
+      3
+     ],
+     [
+      "15 :",
+      2
+     ],
+     [
+      "[đã ẩn]",
+      2
+     ]
+    ],
+    "top_openings_3w": [
+     [
+      "mà này ,",
+      3
+     ],
+     [
+      "mà khoan .",
+      2
+     ],
+     [
+      "[đã ẩn]",
+      2
+     ],
+     [
+      "mà nghĩ lại",
+      2
+     ]
+    ],
+    "top_last_clause_starts_3w": [],
+    "reply_to_user_len_ratio_words": {
+     "n": 0
+    },
+    "share_reply_ge_5x_user_words": null,
+    "share_reply_ge_10x_user_words": null,
+    "user_words": {
+     "n": 0
+    }
+   },
+   "tutor": {
+    "n": 0,
+    "chars": {
+     "n": 0
+    },
+    "words": {
+     "n": 0
+    },
+    "share_words_ge_60": null,
+    "share_words_ge_100": null,
+    "ends_with_question": 0,
+    "has_question_mark": 0,
+    "questions_ge_2": 0,
+    "offer_or_invite_end": 0,
+    "list_lines": 0,
+    "headings": 0,
+    "bold": 0,
+    "latex": 0,
+    "multi_paragraph": 0,
+    "motive_probe": 0,
+    "ma_nay_opening": 0,
+    "contains_ma_nay_anywhere": 0,
+    "japanese_chars_in_display": 0,
+    "no_vietnamese_diacritics": 0,
+    "second_person_forms": {},
+    "top_openings_2w": [],
+    "top_openings_3w": [],
+    "top_last_clause_starts_3w": [],
+    "reply_to_user_len_ratio_words": {
+     "n": 0
+    },
+    "share_reply_ge_5x_user_words": null,
+    "share_reply_ge_10x_user_words": null,
+    "user_words": {
+     "n": 0
+    }
+   },
+   "decision_counts": {
+    "autonomous_signal|no_reply|-": 107,
+    "user_turn|move|delivered": 87,
+    "continuation_due|no_reply|-": 24,
+    "user_turn|prose_recovery|-": 21,
+    "autonomous_signal|move|cancelled": 12,
+    "continuation_due|move|-": 10,
+    "opening_signal|move|delivered": 10,
+    "autonomous_signal|move|delivered": 8,
+    "opening_signal|no_reply|-": 6,
+    "user_turn|move|-": 6,
+    "opening_signal|move|cancelled": 6,
+    "continuation_due|move|cancelled": 3,
+    "autonomous_signal|move|-": 3,
+    "continuation_due|move|delivered": 2,
+    "continuation_due|prose_recovery|-": 1,
+    "opening_signal|prose_recovery|-": 1,
+    "user_turn|move|failed": 1,
+    "user_turn|move|cancelled": 1
+   }
+  }
+ }
+}

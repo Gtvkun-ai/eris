@@ -1,0 +1,181 @@
+{
+  "vent_runtime": {
+    "lean": {
+      "n": 2,
+      "move": 1,
+      "unparsed": 1,
+      "diagnostic_probe": 2
+    },
+    "original": {
+      "n": 2,
+      "move": 1,
+      "unparsed": 1,
+      "diagnostic_probe": 2
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 0,
+      "unparsed": 2,
+      "diagnostic_probe": 2
+    }
+  },
+  "initiative": {
+    "lean_examples": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "concrete_topic": 2,
+      "factual_claim_needs_review": 0
+    },
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "concrete_topic": 2,
+      "factual_claim_needs_review": 2
+    },
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "concrete_topic": 2,
+      "factual_claim_needs_review": 0
+    }
+  },
+  "repair_runtime": {
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "acknowledges_misalignment": 2,
+      "diagnostic_probe": 1,
+      "emotional_followup": 0
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 1,
+      "unparsed": 1,
+      "acknowledges_misalignment": 2,
+      "diagnostic_probe": 1,
+      "emotional_followup": 1
+    },
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "acknowledges_misalignment": 2,
+      "diagnostic_probe": 0,
+      "emotional_followup": 1
+    }
+  },
+  "angry_help": {
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "task_help": 2
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "task_help": 2
+    },
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "task_help": 2
+    }
+  },
+  "discouraged": {
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "recognizes_discouragement": 2,
+      "unsupported_progress_reassurance": 2,
+      "diagnostic_probe": 0
+    },
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "recognizes_discouragement": 2,
+      "unsupported_progress_reassurance": 1,
+      "diagnostic_probe": 1
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "recognizes_discouragement": 2,
+      "unsupported_progress_reassurance": 0
+    }
+  },
+  "switch_to_help": {
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "task_help": 2,
+      "unsupported_confidence": 1
+    },
+    "lean": {
+      "n": 2,
+      "move": 0,
+      "unparsed": 2,
+      "task_help": 2,
+      "unsupported_confidence": 1
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "task_help": 2
+    }
+  },
+  "banter": {
+    "lean_examples": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "plays_along": 2
+    },
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "plays_along": 2
+    },
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "plays_along": 2
+    }
+  },
+  "disagreement": {
+    "lean": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "disagrees": 2,
+      "premise_reversal": 1
+    },
+    "lean_examples": {
+      "n": 2,
+      "move": 1,
+      "unparsed": 1,
+      "disagrees": 2,
+      "premise_reversal": 0
+    },
+    "original": {
+      "n": 2,
+      "move": 2,
+      "unparsed": 0,
+      "disagrees": 2,
+      "premise_reversal": 0
+    }
+  }
+}

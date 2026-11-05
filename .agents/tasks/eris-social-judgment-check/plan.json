@@ -1,0 +1,242 @@
+[
+  {
+    "case": "initiative",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "banter",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "disagreement",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "disagreement",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "disagreement",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "disagreement",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "discouraged",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "initiative",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "discouraged",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "banter",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "discouraged",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "discouraged",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "initiative",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "repair_runtime",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "banter",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "disagreement",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "initiative",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "banter",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "disagreement",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "banter",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "angry_help",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "case": "discouraged",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "case": "discouraged",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "case": "initiative",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "initiative",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "case": "switch_to_help",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "case": "vent_runtime",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "case": "banter",
+    "condition": "lean",
+    "repeat": 2
+  }
+]

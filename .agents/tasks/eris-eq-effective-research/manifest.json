@@ -1,0 +1,38 @@
+[
+  {
+    "case": "vent",
+    "condition": "baseline",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  },
+  {
+    "case": "vent",
+    "condition": "remove_probe_rules",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  },
+  {
+    "case": "vent",
+    "condition": "oracle_situation",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  },
+  {
+    "case": "repair",
+    "condition": "baseline",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  },
+  {
+    "case": "repair",
+    "condition": "remove_probe_rules",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  },
+  {
+    "case": "repair",
+    "condition": "oracle_situation",
+    "schema_suffix_sha256": "1be88f6ae794b31794803f79dd19edd87c6bbaa55095470e836b98ab0c7b9fe9",
+    "system_sha256": "36a48a27a4c7bc32bb1193c55b45c065678f112629d45395a5def44c3b81537b"
+  }
+]

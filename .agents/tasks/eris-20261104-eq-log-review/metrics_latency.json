@@ -1,0 +1,238 @@
+{
+ "A_2026-11-01..03": {
+  "n_user_batches": 54,
+  "sessions": [
+   "20261101_123415",
+   "20261101_134232",
+   "20261101_160856",
+   "20261101_190008",
+   "20261102_141706",
+   "20261103_150642",
+   "20261103_162914",
+   "20261103_215411"
+  ],
+  "latency_to_visible_text_s": {
+   "n": 51,
+   "mean": 36.8,
+   "median": 32.1,
+   "p90": 47.8,
+   "min": 16.5,
+   "max": 193.5,
+   "share_gt_30s": 0.549,
+   "share_gt_60s": 0.078,
+   "n_gt_60s": 4,
+   "n_gt_120s": 1
+  },
+  "pre_root_wait_s": {
+   "n": 54,
+   "mean": 11.0,
+   "median": 3.7,
+   "p90": 23.8,
+   "min": 1.6,
+   "max": 172.0,
+   "share_gt_30s": 0.074,
+   "share_gt_60s": 0.037,
+   "n_gt_60s": 2,
+   "n_gt_120s": 1
+  },
+  "root_http_total_s": {
+   "n": 54,
+   "mean": 9.5,
+   "median": 8.5,
+   "p90": 13.1,
+   "min": 3.1,
+   "max": 18.9,
+   "share_gt_30s": 0.0,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "surface_http_s": {
+   "n": 43,
+   "mean": 6.2,
+   "median": 5.5,
+   "p90": 9.1,
+   "min": 3.7,
+   "max": 12.8,
+   "share_gt_30s": 0.0,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "micro_ack_s": {
+   "n": 44,
+   "mean": 0.0,
+   "median": 0.0,
+   "p90": 0.1,
+   "min": 0.0,
+   "max": 0.2,
+   "share_gt_30s": 0.0,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "n_with_micro_ack": 44,
+  "n_unanswered_no_delivery": 3,
+  "n_root_http_error_in_turn": 2,
+  "n_root_decided_no_reply": 0,
+  "n_multi_message_batches": 0,
+  "followup_messages_after_reply": {
+   "n_replies": 51,
+   "total_followups": 22,
+   "replies_with_>=1_followup": 15,
+   "replies_with_>=2_followups": 6,
+   "max_followups": 3
+  },
+  "slowest_5": [
+   {
+    "session": "20261103_215411",
+    "idx": 4,
+    "latency_s": 193.53,
+    "pre_root_s": 171.99
+   },
+   {
+    "session": "20261103_215411",
+    "idx": 3,
+    "latency_s": 69.53,
+    "pre_root_s": 43.24
+   },
+   {
+    "session": "20261103_162914",
+    "idx": 1,
+    "latency_s": 64.41,
+    "pre_root_s": 17.97
+   },
+   {
+    "session": "20261101_123415",
+    "idx": 3,
+    "latency_s": 62.67,
+    "pre_root_s": 6.99
+   },
+   {
+    "session": "20261101_123415",
+    "idx": 0,
+    "latency_s": 54.04,
+    "pre_root_s": 24.66
+   }
+  ]
+ },
+ "B_2026-10-27..31": {
+  "n_user_batches": 38,
+  "sessions": [
+   "20261027_152959",
+   "20261027_154325",
+   "20261028_134443",
+   "20261028_161602",
+   "20261029_140438",
+   "20261029_233911",
+   "20261030_135453",
+   "20261030_213212",
+   "20261030_215229",
+   "20261031_214954"
+  ],
+  "latency_to_visible_text_s": {
+   "n": 33,
+   "mean": 49.6,
+   "median": 49.6,
+   "p90": 66.8,
+   "min": 25.5,
+   "max": 88.3,
+   "share_gt_30s": 0.879,
+   "share_gt_60s": 0.182,
+   "n_gt_60s": 6,
+   "n_gt_120s": 0
+  },
+  "pre_root_wait_s": {
+   "n": 38,
+   "mean": 13.8,
+   "median": 7.1,
+   "p90": 31.6,
+   "min": 2.0,
+   "max": 45.1,
+   "share_gt_30s": 0.158,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "root_http_total_s": {
+   "n": 38,
+   "mean": 16.3,
+   "median": 16.0,
+   "p90": 24.8,
+   "min": 4.6,
+   "max": 37.6,
+   "share_gt_30s": 0.053,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "surface_http_s": {
+   "n": 28,
+   "mean": 5.5,
+   "median": 5.1,
+   "p90": 6.9,
+   "min": 3.4,
+   "max": 12.6,
+   "share_gt_30s": 0.0,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "micro_ack_s": {
+   "n": 23,
+   "mean": 0.3,
+   "median": 0.0,
+   "p90": 0.1,
+   "min": 0.0,
+   "max": 5.1,
+   "share_gt_30s": 0.0,
+   "share_gt_60s": 0.0,
+   "n_gt_60s": 0,
+   "n_gt_120s": 0
+  },
+  "n_with_micro_ack": 23,
+  "n_unanswered_no_delivery": 5,
+  "n_root_http_error_in_turn": 0,
+  "n_root_decided_no_reply": 0,
+  "n_multi_message_batches": 2,
+  "followup_messages_after_reply": {
+   "n_replies": 33,
+   "total_followups": 7,
+   "replies_with_>=1_followup": 5,
+   "replies_with_>=2_followups": 1,
+   "max_followups": 3
+  },
+  "slowest_5": [
+   {
+    "session": "20261027_152959",
+    "idx": 0,
+    "latency_s": 88.28,
+    "pre_root_s": 41.19
+   },
+   {
+    "session": "20261031_214954",
+    "idx": 0,
+    "latency_s": 83.53,
+    "pre_root_s": 45.06
+   },
+   {
+    "session": "20261030_135453",
+    "idx": 0,
+    "latency_s": 72.89,
+    "pre_root_s": 32.62
+   },
+   {
+    "session": "20261028_161602",
+    "idx": 0,
+    "latency_s": 66.83,
+    "pre_root_s": 30.16
+   },
+   {
+    "session": "20261029_140438",
+    "idx": 9,
+    "latency_s": 65.45,
+    "pre_root_s": 7.12
+   }
+  ]
+ }
+}

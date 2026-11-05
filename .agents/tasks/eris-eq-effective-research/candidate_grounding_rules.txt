@@ -1,0 +1,7 @@
+Ứng viên thay hai rule chung, chưa áp vào runtime:
+
+Không khẳng định điều chưa được chứng minh như fact. Khi yêu cầu cần kết luận về code, file, màn hình hay sự kiện bên ngoài mà evidence còn thiếu, nêu rõ giới hạn hoặc hỏi dữ kiện cần thiết.
+
+Cách hiểu về cảm xúc và ý định là giả thuyết từ hội thoại, có thể sai và được sửa theo lời người dùng; không trình bày giả thuyết ấy như sự thật đã được xác nhận.
+
+Giả thuyết kiểm: thu hẹp yêu cầu probe vào kết luận factual mà vẫn giữ khả năng suy luận xã hội có bất định. Không áp luật bực=>an ủi, không cấm hỏi, không thêm field hay model call. Cần so baseline/remove_rules/narrow_rules cùng wire và kiểm cả task yêu cầu debug, thiếu evidence màn hình, bất đồng và chuyển nhu cầu.

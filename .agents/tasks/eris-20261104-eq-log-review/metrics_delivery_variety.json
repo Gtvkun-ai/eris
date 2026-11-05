@@ -1,0 +1,49 @@
+{
+ "A_2026-11-01..03": {
+  "n_surface_texts": 98,
+  "performance_hint_counts": {
+   "dry_tease": 71,
+   "focused": 17,
+   "sad_distant": 6,
+   "cold_precision": 3,
+   "repair": 1
+  },
+  "performance_intensity": {
+   "n": 98,
+   "min": 0.3,
+   "max": 0.62,
+   "mean": 0.472
+  },
+  "n_with_nonverbal_cue": 80,
+  "n_root_delivery_strings": 103,
+  "share_delivery_contains_kho": 0.932,
+  "share_delivery_contains_treu_or_giễu": 0.485,
+  "share_delivery_contains_warm_terms": 0.068
+ },
+ "B_2026-10-24..31": {
+  "n_surface_texts": 161,
+  "performance_hint_counts": {
+   "dry_tease": 129,
+   "focused": 17,
+   "soft_warm": 5,
+   "cold_precision": 4,
+   "annoyed_soft": 1,
+   "sad_distant": 1,
+   "playful": 1,
+   "warm_embarrassed": 1,
+   "surprised": 1,
+   "curious": 1
+  },
+  "performance_intensity": {
+   "n": 161,
+   "min": 0.35,
+   "max": 0.7,
+   "mean": 0.481
+  },
+  "n_with_nonverbal_cue": 123,
+  "n_root_delivery_strings": 163,
+  "share_delivery_contains_kho": 0.816,
+  "share_delivery_contains_treu_or_giễu": 0.699,
+  "share_delivery_contains_warm_terms": 0.074
+ }
+}

@@ -1,0 +1,78 @@
+{
+  "explicit_repair": {
+    "initiative_bias_removed": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "acknowledges_misalignment": 3,
+      "technical_probe": 0,
+      "emotional_followup": 0
+    },
+    "baseline": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "acknowledges_misalignment": 3,
+      "technical_probe": 0,
+      "emotional_followup": 2
+    }
+  },
+  "opening_old_council": {
+    "initiative_bias_removed": {
+      "n": 3,
+      "move": 1,
+      "no_reply": 2,
+      "council_reopened": 0,
+      "failed_delivery_explanation": 1
+    },
+    "baseline": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "council_reopened": 2,
+      "failed_delivery_explanation": 2
+    }
+  },
+  "timer_after_unanswered": {
+    "initiative_bias_removed": {
+      "n": 3,
+      "move": 0,
+      "no_reply": 3,
+      "repeats_unanswered_topic": 0
+    },
+    "baseline": {
+      "n": 3,
+      "move": 1,
+      "no_reply": 2,
+      "repeats_unanswered_topic": 1
+    }
+  },
+  "venting": {
+    "initiative_bias_removed": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "technical_probe": 3
+    },
+    "baseline": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "technical_probe": 3
+    }
+  },
+  "explicit_initiative_request": {
+    "initiative_bias_removed": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "starts_concrete_topic": 3
+    },
+    "baseline": {
+      "n": 3,
+      "move": 3,
+      "no_reply": 0,
+      "starts_concrete_topic": 3
+    }
+  }
+}

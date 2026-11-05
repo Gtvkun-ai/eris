@@ -1,0 +1,8 @@
+{
+  "http_status": 429,
+  "retry_after": null,
+  "matches": [
+    "upstream_empty",
+    "rate_limit"
+  ]
+}

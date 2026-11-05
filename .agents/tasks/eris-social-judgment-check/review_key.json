@@ -1,0 +1,290 @@
+[
+  {
+    "id": "aed6ee",
+    "case": "angry_help",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "10b39b",
+    "case": "initiative",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "4b10f9",
+    "case": "vent_runtime",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "7a2828",
+    "case": "banter",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "78c6c0",
+    "case": "disagreement",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "83874e",
+    "case": "disagreement",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "bece50",
+    "case": "disagreement",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "d5c1d5",
+    "case": "disagreement",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "fe0ed4",
+    "case": "vent_runtime",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "4b4cdb",
+    "case": "discouraged",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "2952a6",
+    "case": "discouraged",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "bd3028",
+    "case": "initiative",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "59e06e",
+    "case": "banter",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "fa6ec3",
+    "case": "repair_runtime",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "0459a7",
+    "case": "vent_runtime",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "f60e17",
+    "case": "angry_help",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "155c46",
+    "case": "repair_runtime",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "d1dd8f",
+    "case": "discouraged",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "d09aa7",
+    "case": "repair_runtime",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "e06ec4",
+    "case": "discouraged",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "6fb89e",
+    "case": "repair_runtime",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "1208d7",
+    "case": "vent_runtime",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "54ef78",
+    "case": "repair_runtime",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "8409c6",
+    "case": "switch_to_help",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "8762c9",
+    "case": "switch_to_help",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "3b909d",
+    "case": "initiative",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "8d9527",
+    "case": "repair_runtime",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "b258c0",
+    "case": "banter",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "fe578c",
+    "case": "angry_help",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "ded713",
+    "case": "disagreement",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "db5330",
+    "case": "banter",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "f97446",
+    "case": "initiative",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "22f769",
+    "case": "angry_help",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "5d9d42",
+    "case": "switch_to_help",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "308202",
+    "case": "switch_to_help",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "3bdef0",
+    "case": "switch_to_help",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "7def9d",
+    "case": "angry_help",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "6c7a6e",
+    "case": "disagreement",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "763786",
+    "case": "banter",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "f58bbb",
+    "case": "angry_help",
+    "condition": "lean",
+    "repeat": 2
+  },
+  {
+    "id": "6b709a",
+    "case": "discouraged",
+    "condition": "lean",
+    "repeat": 1
+  },
+  {
+    "id": "ef80d0",
+    "case": "discouraged",
+    "condition": "original",
+    "repeat": 2
+  },
+  {
+    "id": "245acf",
+    "case": "initiative",
+    "condition": "original",
+    "repeat": 1
+  },
+  {
+    "id": "11b234",
+    "case": "initiative",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "ec6056",
+    "case": "switch_to_help",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "1c4da1",
+    "case": "vent_runtime",
+    "condition": "lean_examples",
+    "repeat": 2
+  },
+  {
+    "id": "242ffb",
+    "case": "vent_runtime",
+    "condition": "lean_examples",
+    "repeat": 1
+  },
+  {
+    "id": "95a042",
+    "case": "banter",
+    "condition": "lean",
+    "repeat": 2
+  }
+]

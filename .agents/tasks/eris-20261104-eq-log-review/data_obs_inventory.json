@@ -1,0 +1,668 @@
+{
+ "source": "C:\\Users\\Gtvkun\\Documents\\eris\\logs\\eris_observability.jsonl",
+ "total_lines": 529617,
+ "json_errors": 12,
+ "ts_min": "2026-08-22T20:35:28.959619+07:00",
+ "ts_max": "2026-11-03T22:05:39.211601+07:00",
+ "per_day": {
+  "2026-08-22": 21938,
+  "2026-08-23": 230415,
+  "2026-08-24": 11511,
+  "2026-08-26": 13857,
+  "2026-09-10": 1579,
+  "2026-09-12": 64384,
+  "2026-09-14": 4679,
+  "2026-09-15": 74889,
+  "2026-09-25": 40806,
+  "2026-09-28": 11046,
+  "2026-09-29": 6789,
+  "2026-10-05": 142,
+  "2026-10-06": 778,
+  "2026-10-07": 293,
+  "2026-10-09": 497,
+  "2026-10-10": 625,
+  "2026-10-11": 3169,
+  "2026-10-12": 1072,
+  "2026-10-13": 966,
+  "2026-10-14": 2410,
+  "2026-10-15": 4384,
+  "2026-10-16": 2124,
+  "2026-10-17": 2720,
+  "2026-10-18": 3291,
+  "2026-10-24": 7697,
+  "2026-10-25": 3409,
+  "2026-10-26": 406,
+  "2026-10-27": 1061,
+  "2026-10-28": 785,
+  "2026-10-29": 2628,
+  "2026-10-30": 1335,
+  "2026-10-31": 479,
+  "2026-11-01": 5095,
+  "2026-11-02": 822,
+  "2026-11-03": 1524
+ },
+ "distinct_trace_ids_per_day": {
+  "2026-08-22": 8,
+  "2026-08-23": 16,
+  "2026-08-24": 2,
+  "2026-08-26": 2,
+  "2026-09-10": 2,
+  "2026-09-12": 8,
+  "2026-09-14": 4,
+  "2026-09-15": 6,
+  "2026-09-25": 30,
+  "2026-09-28": 8,
+  "2026-09-29": 4,
+  "2026-10-05": 2,
+  "2026-10-06": 6,
+  "2026-10-07": 2,
+  "2026-10-09": 6,
+  "2026-10-10": 6,
+  "2026-10-11": 12,
+  "2026-10-12": 2,
+  "2026-10-13": 2,
+  "2026-10-14": 18,
+  "2026-10-15": 14,
+  "2026-10-16": 6,
+  "2026-10-17": 10,
+  "2026-10-18": 10,
+  "2026-10-24": 34,
+  "2026-10-25": 6,
+  "2026-10-26": 2,
+  "2026-10-27": 8,
+  "2026-10-28": 10,
+  "2026-10-29": 6,
+  "2026-10-30": 8,
+  "2026-10-31": 2,
+  "2026-11-01": 8,
+  "2026-11-02": 8,
+  "2026-11-03": 6
+ },
+ "per_name": {
+  "metric|environment_source_to_ingress_ms": 36311,
+  "metric|environment_event_total": 36310,
+  "metric|environment_bus_publish_duration_ms": 36308,
+  "metric|environment_event_to_bus_ms": 36308,
+  "metric|environment_callback_to_enqueue_ms": 36308,
+  "metric|environment_semantic_queue_depth": 36305,
+  "metric|environment_semantic_queue_wait_ms": 35100,
+  "metric|environment_semantic_processing_ms": 35099,
+  "metric|environment_ingress_to_semantic_ms": 35097,
+  "metric|environment_event_to_semantic_ms": 35097,
+  "metric|environment_source_to_semantic_ms": 35095,
+  "metric|user_situation_from_environment_total": 32893,
+  "metric|environment_source_callback_delay_ms": 30454,
+  "metric|environment_enrichment_ms": 10873,
+  "metric|rollout_decision_total": 6961,
+  "metric|output_tokens_by_lane": 6600,
+  "metric|prompt_tokens_before": 3436,
+  "metric|prompt_tokens_after": 3436,
+  "log|prompt_budget": 3436,
+  "metric|prompt_hard_cap": 3435,
+  "metric|avg_prompt_tokens_by_lane": 3316,
+  "metric|input_tokens_by_lane": 3284,
+  "gauge|token_pressure_ratio": 3284,
+  "gauge|broker_queue_depth": 2757,
+  "metric|broker_rollout_decision_total": 1566,
+  "metric|chat_orchestrator_span_ms": 1508,
+  "metric|broker_queue_wait_ms": 1362,
+  "metric|broker_admitted_total": 1361,
+  "metric|broker_request_duration_ms": 1325,
+  "metric|foreground_to_user_situation_ms": 1189,
+  "gauge|provider_ready": 923,
+  "metric|environment_semantic_wake_coalesced_total": 894,
+  "gauge|public_writer_usable_text": 529,
+  "metric|public_writer_provider_ms": 496,
+  "metric|public_writer_content_chars": 496,
+  "gauge|public_writer_text_salvaged": 496,
+  "gauge|public_writer_contract_valid": 496,
+  "metric|panel_state_sent_total": 479,
+  "metric|panel_state_ack_complete_total": 471,
+  "metric|panel_state_ack_latency_ms": 471,
+  "metric|panel_state_ack_total": 470,
+  "metric|environment_scheduler_coalesced_total": 469,
+  "log|character_writer_candidate": 459,
+  "log|public_turn_trace": 402,
+  "metric|broker_user_turn_begin": 397,
+  "metric|remote_calls_per_user_turn": 387,
+  "metric|user_turn_broker_scope_duration_ms": 387,
+  "metric|broker_user_turn_end": 386,
+  "metric|user_turn_latency_ms": 382,
+  "metric|broker_actual_input_tokens": 357,
+  "metric|broker_actual_output_tokens": 357,
+  "metric|observer_completed_total": 299,
+  "metric|observer_latency_ms": 299,
+  "log|provider_health_snapshot": 266,
+  "metric|retry_after_seconds": 244,
+  "metric|broker_rejected_total": 200,
+  "metric|broker_idempotency_duplicate_total": 173,
+  "log|hardening_release_guard": 140,
+  "metric|broker_rate_limit": 123,
+  "metric|429_per_provider_per_lane": 122,
+  "metric|rate_limit_429_total": 122,
+  "metric|self_turn_total": 114,
+  "metric|self_turn_importance": 114,
+  "metric|self_turn_intrusion_risk": 114,
+  "log|self_turn": 114,
+  "gauge|provider_key_dead_count": 107,
+  "gauge|provider_key_available_count": 107,
+  "log|provider_key_pool": 107,
+  "metric|eris_social_plan_appraisals_total": 64,
+  "log|social_agenda.user_outcome_observed": 53,
+  "metric|eris_social_agenda_events_total": 53,
+  "gauge|eris_social_agenda_active_goals": 53,
+  "metric|public_writer_commit_ms": 52,
+  "metric|ttft_ms": 51,
+  "metric|observer_discard_total": 50,
+  "metric|chat_orchestrator_latency_ms": 47,
+  "metric|lane_budget_plan_total": 47,
+  "log|lane_budget_plan": 47,
+  "log|semantic_frame_v1": 45,
+  "log|conversation_run_failed": 45,
+  "metric|lane_budget_clamp_total": 32,
+  "log|semantic_frame_invariant_rejected": 30,
+  "metric|observer_failure_total": 25,
+  "metric|chat_screen_latency_ms": 22,
+  "metric|vision_grounding_decision_total": 19,
+  "metric|vision_claim_grounded_rate": 19,
+  "metric|vision_evidence_strength": 19,
+  "metric|abstain_total": 19,
+  "metric|public_writer_fallback": 8,
+  "metric|public_writer_wording_retry": 5,
+  "metric|prompt_trim_total": 4,
+  "metric|broker_required_degraded_total": 4,
+  "metric|broker_degraded_input_tokens_saved": 4,
+  "metric|broker_degraded_output_tokens_saved": 4,
+  "metric|tts_fallback_total": 1
+ },
+ "field_keys": {
+  "gauge|provider_ready": [
+   "event",
+   "reason"
+  ],
+  "log|provider_health_snapshot": [
+   "providers"
+  ],
+  "log|hardening_release_guard": [
+   "findings",
+   "manifest_path",
+   "ready",
+   "release_id",
+   "status"
+  ],
+  "log|prompt_budget": [
+   "after_tokens",
+   "before_tokens",
+   "cap",
+   "prompt_blocks_retained",
+   "trimmed"
+  ],
+  "metric|user_situation_from_environment_total": [
+   "busy_score",
+   "event_count",
+   "event_types",
+   "interruption_cost",
+   "task_hint"
+  ],
+  "log|social_agenda.user_outcome_observed": [
+   "boundary",
+   "closed",
+   "low_engagement"
+  ],
+  "metric|eris_social_agenda_events_total": [
+   "boundary",
+   "closed",
+   "low_engagement"
+  ],
+  "metric|chat_screen_latency_ms": [
+   "bytes",
+   "spans"
+  ],
+  "log|provider_key_pool": [
+   "available",
+   "provider_key_dead_count",
+   "rotations"
+  ],
+  "log|semantic_frame_v1": [
+   "frame",
+   "turn_seq"
+  ],
+  "metric|rollout_decision_total": [
+   "bucket",
+   "reason"
+  ],
+  "metric|panel_state_sent_total": [
+   "packet_id"
+  ],
+  "metric|eris_social_plan_appraisals_total": [
+   "activated",
+   "proposed"
+  ],
+  "metric|chat_orchestrator_latency_ms": [
+   "e2e_ms",
+   "slow_spans",
+   "spans",
+   "turn_id"
+  ],
+  "metric|chat_orchestrator_span_ms": [
+   "turn_id"
+  ],
+  "metric|panel_state_ack_total": [
+   "has_depth",
+   "has_emotion",
+   "has_private_mind",
+   "packet_id"
+  ],
+  "metric|panel_state_ack_complete_total": [
+   "packet_id"
+  ],
+  "metric|panel_state_ack_latency_ms": [
+   "packet_id"
+  ],
+  "log|lane_budget_plan": [
+   "output_limit",
+   "prompt_limit",
+   "requested_output",
+   "requested_prompt"
+  ],
+  "log|self_turn": [
+   "gate_reason",
+   "semantic_signature"
+  ],
+  "log|public_turn_trace": [
+   "authority_action",
+   "authority_reason",
+   "channel",
+   "commit",
+   "field_snapshot",
+   "goal_state",
+   "motive",
+   "motor",
+   "motor_committed",
+   "motor_reason",
+   "nervous_mode",
+   "nervous_owner",
+   "nervous_scope",
+   "outcome",
+   "proposal_kind",
+   "proposal_source",
+   "public_committed",
+   "schema",
+   "semantic_owner",
+   "source_kind",
+   "speech_act",
+   "surface",
+   "top_inputs",
+   "trace_id",
+   "trigger_owner",
+   "tts_status",
+   "turn_id"
+  ],
+  "log|semantic_frame_invariant_rejected": [
+   "violations"
+  ],
+  "log|character_writer_candidate": [
+   "attempt",
+   "duration_ms",
+   "generation",
+   "run_id"
+  ],
+  "log|conversation_run_failed": [
+   "failure_reason",
+   "generation",
+   "run_id"
+  ]
+ },
+ "tag_keys": {
+  "gauge|provider_ready": [
+   "kind",
+   "provider"
+  ],
+  "log|provider_health_snapshot": [
+   "event"
+  ],
+  "log|hardening_release_guard": [
+   "release",
+   "status"
+  ],
+  "metric|broker_rollout_decision_total": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "gauge|broker_queue_depth": [
+   "lane",
+   "provider"
+  ],
+  "metric|broker_admitted_total": [
+   "lane",
+   "provider"
+  ],
+  "metric|broker_queue_wait_ms": [
+   "lane",
+   "provider"
+  ],
+  "metric|avg_prompt_tokens_by_lane": [
+   "lane",
+   "provider"
+  ],
+  "metric|output_tokens_by_lane": [
+   "lane",
+   "model",
+   "provider"
+  ],
+  "metric|input_tokens_by_lane": [
+   "lane",
+   "model",
+   "provider"
+  ],
+  "gauge|token_pressure_ratio": [
+   "provider"
+  ],
+  "metric|broker_request_duration_ms": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|environment_event_total": [
+   "attention",
+   "event_type",
+   "privacy",
+   "provider",
+   "semantic",
+   "source"
+  ],
+  "metric|environment_source_to_ingress_ms": [
+   "event_type",
+   "provider",
+   "source"
+  ],
+  "metric|environment_source_callback_delay_ms": [
+   "event_type",
+   "provider",
+   "source"
+  ],
+  "metric|environment_bus_publish_duration_ms": [
+   "event_type",
+   "provider",
+   "source"
+  ],
+  "metric|environment_event_to_bus_ms": [
+   "event_type",
+   "provider",
+   "source"
+  ],
+  "metric|environment_callback_to_enqueue_ms": [
+   "event_type",
+   "priority",
+   "source"
+  ],
+  "metric|environment_semantic_queue_wait_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|environment_semantic_queue_depth": [
+   "priority"
+  ],
+  "metric|environment_semantic_processing_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|environment_ingress_to_semantic_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|environment_source_to_semantic_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|environment_event_to_semantic_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|user_situation_from_environment_total": [
+   "attention_state",
+   "max_attention",
+   "phase",
+   "semantic_delta",
+   "wake"
+  ],
+  "metric|environment_enrichment_ms": [
+   "event_type",
+   "provider",
+   "source"
+  ],
+  "metric|foreground_to_user_situation_ms": [
+   "event_type",
+   "priority",
+   "provider",
+   "source"
+  ],
+  "metric|broker_user_turn_begin": [
+   "lane"
+  ],
+  "log|social_agenda.user_outcome_observed": [
+   "event",
+   "goal_type"
+  ],
+  "metric|eris_social_agenda_events_total": [
+   "event",
+   "goal_type"
+  ],
+  "metric|chat_screen_latency_ms": [
+   "outcome"
+  ],
+  "gauge|provider_key_dead_count": [
+   "provider"
+  ],
+  "gauge|provider_key_available_count": [
+   "provider"
+  ],
+  "log|provider_key_pool": [
+   "event",
+   "provider"
+  ],
+  "metric|broker_rejected_total": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|broker_actual_input_tokens": [
+   "provider"
+  ],
+  "metric|broker_actual_output_tokens": [
+   "provider"
+  ],
+  "metric|public_writer_provider_ms": [
+   "rewrite"
+  ],
+  "log|semantic_frame_v1": [
+   "relation",
+   "target",
+   "user_act"
+  ],
+  "metric|rollout_decision_total": [
+   "apply",
+   "feature",
+   "killed",
+   "mode",
+   "shadow"
+  ],
+  "metric|ttft_ms": [
+   "channel",
+   "turn_category"
+  ],
+  "metric|panel_state_sent_total": [
+   "channel"
+  ],
+  "metric|public_writer_commit_ms": [
+   "usable"
+  ],
+  "metric|eris_social_plan_appraisals_total": [
+   "execution",
+   "version"
+  ],
+  "metric|chat_orchestrator_latency_ms": [
+   "status"
+  ],
+  "metric|chat_orchestrator_span_ms": [
+   "span",
+   "status"
+  ],
+  "metric|broker_user_turn_end": [
+   "lane",
+   "reason"
+  ],
+  "metric|remote_calls_per_user_turn": [
+   "lane",
+   "reason"
+  ],
+  "metric|user_turn_broker_scope_duration_ms": [
+   "lane",
+   "reason"
+  ],
+  "metric|user_turn_latency_ms": [
+   "channel",
+   "turn_category"
+  ],
+  "metric|observer_completed_total": [
+   "event_kind",
+   "status"
+  ],
+  "metric|observer_latency_ms": [
+   "event_kind"
+  ],
+  "metric|panel_state_ack_total": [
+   "complete"
+  ],
+  "metric|public_writer_fallback": [
+   "kind"
+  ],
+  "metric|lane_budget_plan_total": [
+   "allowed",
+   "lane",
+   "optional",
+   "provider",
+   "reason"
+  ],
+  "log|lane_budget_plan": [
+   "allowed",
+   "lane",
+   "optional",
+   "provider",
+   "reason"
+  ],
+  "metric|self_turn_total": [
+   "result",
+   "speech_act",
+   "turn_kind"
+  ],
+  "metric|self_turn_importance": [
+   "turn_kind"
+  ],
+  "metric|self_turn_intrusion_risk": [
+   "turn_kind"
+  ],
+  "log|self_turn": [
+   "result",
+   "speech_act",
+   "turn_kind"
+  ],
+  "metric|observer_discard_total": [
+   "event_kind",
+   "reason",
+   "stage"
+  ],
+  "metric|lane_budget_clamp_total": [
+   "lane",
+   "provider"
+  ],
+  "metric|429_per_provider_per_lane": [
+   "lane",
+   "provider"
+  ],
+  "metric|retry_after_seconds": [
+   "lane",
+   "model",
+   "provider"
+  ],
+  "metric|broker_rate_limit": [
+   "provider"
+  ],
+  "metric|rate_limit_429_total": [
+   "lane",
+   "model",
+   "provider"
+  ],
+  "log|public_turn_trace": [
+   "channel",
+   "outcome"
+  ],
+  "log|semantic_frame_invariant_rejected": [
+   "count"
+  ],
+  "log|character_writer_candidate": [
+   "code",
+   "stage",
+   "status"
+  ],
+  "log|conversation_run_failed": [
+   "reason",
+   "status"
+  ],
+  "metric|broker_required_degraded_total": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|broker_degraded_input_tokens_saved": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|broker_degraded_output_tokens_saved": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|observer_failure_total": [
+   "event_kind",
+   "status"
+  ],
+  "metric|broker_idempotency_duplicate_total": [
+   "lane",
+   "provider",
+   "reason"
+  ],
+  "metric|vision_grounding_decision_total": [
+   "channel",
+   "recommendation"
+  ],
+  "metric|vision_claim_grounded_rate": [
+   "channel"
+  ],
+  "metric|vision_evidence_strength": [
+   "channel"
+  ],
+  "metric|abstain_total": [
+   "channel",
+   "mode"
+  ],
+  "metric|tts_fallback_total": [
+   "provider",
+   "reason",
+   "same_language",
+   "success"
+  ]
+ }
+}

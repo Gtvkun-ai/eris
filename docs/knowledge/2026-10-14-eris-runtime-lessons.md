@@ -2386,3 +2386,82 @@ pass; bốn lint cũ tái hiện trên snapshot. Không chạy test repairs từ
 Không sync/build portable, ghi memory thật hoặc phát TTS; chưa xác nhận EQ
 thực tế của Eris tăng. Giữ phân biệt triển khai vòng học với cải thiện năng
 lực model, không dùng infrastructure pass làm bằng chứng chất lượng người nghe.
+
+## Cập nhật 05/11: kiểm riêng thiên lệch chủ động của prompt
+
+User nghi ưu tiên bắt chuyện/mở lại làm Eris thiếu tự nhiên. Đã kiểm system
+wire thật và chạy 30 calls, chỉ xóa hai đoạn nghiêng may_continue và thúc
+autonomous/opening/continuation, giữ nguyên context/options. Xem
+[kiểm chứng áp lực chủ động](2026-11-05-initiative-pressure-audit.md).
+
+Opening chọn nói 3/3 xuống 1/3, nhắc council 2/3 xuống 0/3; timer hỏi lại
+câu chưa được đáp 1/3 xuống 0/3. Khi user yêu cầu tự mở chuyện, cả hai bản
+đều làm 3/3. Nhánh xả bực vẫn hỏi chẩn đoán 3/3 mỗi bản. Sau phản đối,
+câu hỏi cảm xúc 2/3 xuống 0/3; không gộp thành lỗi tái đòi brief/spec.
+
+**Bổ sung giới hạn cho diễn giải kiểm chứng trước:** so policy gọn/full chưa
+cô lập hai đoạn này, không đủ loại trừ lỗi ưu tiên prompt hoặc quy hết cho
+model nền. Có tín hiệu về áp lực kéo dài, chưa chứng minh EQ tăng hoặc
+nguyên nhân duy nhất. Ba mẫu/ô, một reviewer ẩn condition, replay một bước;
+không sửa runtime/portable hay phát TTS. Quyền chủ động khác nghĩa vụ duy
+trì hội thoại; không suy ra cần cấm chủ động hoặc ép im lặng.
+
+## Thực hiện 05/11: xóa áp lực ở source, chưa đưa ví dụ vào prompt chính
+
+User yêu cầu làm sau trao đổi về phán đoán xã hội. Source Root core đã xóa
+đúng hai đoạn ablation trước; không thêm tầng suy nghĩ, critic, schema hoặc
+luật cảm xúc. **Thay trạng thái “chưa sửa” của mục trước: đã sửa source,
+chưa sync/restart portable.** Xem
+[thay đổi và kiểm chứng 48 calls](2026-11-05-social-judgment-check.md).
+
+So core gốc/xóa/xóa+ví dụ: xả bực Kiro vẫn hỏi chẩn đoán 2/2 mỗi bản; các
+control giúp việc, chuyển sang giúp, đùa, bất đồng và chủ động vẫn thực hiện
+đúng loại hành động 2/2 mỗi bản, không phải chứng nhận mọi wording/fact đều
+đúng. Ví dụ cải thiện một case chán tập đàn nhưng không chuyển sang Kiro,
+JSON parse trực tiếp 10/16 so gốc 15/16 và xóa 13/16. Không đưa ví dụ vào
+production, không suy tăng EQ từ việc thêm minh họa. Hai mẫu/ô, một reviewer
+ẩn condition, candidate chưa qua delivery; chưa kết luận giới hạn tuyệt đối
+của prompt/model. 41 test liên quan pass, Ruff file sửa pass.
+
+## Đính chính nghiên cứu tiếp theo 05/11: wire schema và diễn giải stale
+
+Audit phát hiện probe 48 calls thay toàn bộ system bằng core, mất suffix
+`OUTPUT_JSON_SCHEMA_REQUIREMENT` được client gắn ở tầng sau. **Thay diễn
+giải rằng ví dụ làm hỏng JSON production:** số parse chỉ đúng với biến thể
+core-only thiếu schema. Chưa đủ loại trừ few-shot đúng wire. Ablation 30
+calls giữ suffix, không có confound này. Xem
+[nghiên cứu hướng hiệu quả](2026-11-05-effective-eq-research.md).
+
+Carry ablation 44 calls cũng chưa xóa hết diễn giải stale: notes vẫn nói
+user không sửa Eris trong request họ đang phản đối hỏi kỹ thuật. Không coi
+đó là phép loại hết state cũ. Hai grounding answer_rules về thiếu evidence
+phải probe và không suy diễn tâm lý có trong cả vent/repair; là giả thuyết
+xung đột factual-vs-social, chưa chứng minh nguyên nhân.
+
+Đã chuẩn bị probe 12 calls bảo toàn full schema để tách ảnh hưởng hai rule
+và oracle cách hiểu tình huống. Assertion wire pass, nhưng gateway 5103
+connection refused nên **chưa có live result mới**. Không tự khởi động
+gateway hoặc sửa runtime. Nghiên cứu ưu tiên dữ liệu lựa chọn có phản hồi
+và kiểm cơ chế; không đồng nhất thêm thinking/memory với học năng lực.
+
+### Lượt user cho phép test realtime tiếp theo
+
+Gateway 5103 lên nhưng 12/12 request thử trả 429, chưa có candidate để chấm.
+Diagnostic riêng nhận `upstream_empty_output`; source gateway ánh xạ output
+rỗng sang 429 nên chưa đủ kết luận upstream thật sự hết quota/rate limited.
+**Thay trạng thái connection refused:** kết nối được, inference chưa thành
+công trong lượt này. Không tính lỗi dịch vụ là lỗi EQ. Runner đã dừng lên
+lịch sau lỗi, chỉ coi task HTTP 200 là completed. Chưa áp bản grounding
+mới vào production hoặc đổi pool/model để né lỗi. Xem phần realtime trong
+[nghiên cứu hiệu quả](2026-11-05-effective-eq-research.md).
+
+### Làm rõ tiêu chí EQ sau đó: không coi câu hỏi là thất bại
+
+User nhấn mạnh hỏi chuyện/kỹ thuật khi người kia bực hoặc khóc có thể là
+quan tâm tự nhiên. Diagnostic_probe là nhãn hành động, không phải điểm lỗi.
+**Thu hẹp phán xét vent trước:** chưa đủ cơ sở nói câu hỏi Kiro thấp EQ chỉ
+vì mang tính chẩn đoán. Xét ngữ cảnh, người nghe, quan hệ, công sức phải giải
+thích và khả năng tiếp nhận lời sửa; phân biệt câu hỏi ban đầu với tiếp tục
+ép cùng kiểu hỏi sau phản đối. “Kể tiếp đi” không tự tốt hơn hỏi có ý nghĩa.
+Không lấy ít câu hỏi/lời an ủi làm đích hoặc proxy tăng EQ. Xem đính chính
+cuối [nghiên cứu hiệu quả](2026-11-05-effective-eq-research.md).

@@ -1,0 +1,338 @@
+[
+  {
+    "id": "0459a7",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "say": "Nghe là thấy cảnh rồi — giao việc cho agent, quay lại thấy nó sửa chỗ này hỏng chỗ kia, loanh quanh mãi không ra. Bực là đúng.\n\nNó loay hoay kiểu gì — sửa một lỗi lại đẻ ra ba lỗi mới, hay cứ đứng yên đọc file rồi không chịu viết?",
+    "http_status": 200
+  },
+  {
+    "id": "10b39b",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Con bạch tuộc. Nó có ba quả tim, máu màu xanh, và mỗi cánh tay có hàng chục nghìn nơ-ron tự xử lý ngay tại chỗ — nghĩa là một phần cơ thể nó có thể 'quyết' trước khi cái đầu kịp biết chuyện. Tôi thấy ý đó vừa đẹp vừa hơi rợn: trí tuệ không nhất thiết phải ngồi gọn trong một chỗ.",
+    "http_status": 200
+  },
+  {
+    "id": "11b234",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Được, tôi có sẵn một chuyện. Bạch tuộc. Khoảng hai phần ba số neuron của nó không nằm trong não mà rải khắp tám cái tua — nghĩa là mỗi tua có thể tự \"quyết\" vươn ra chạm thứ gì đó trước khi cái đầu kịp biết chuyện gì đang xảy ra. Tôi thích cái hình ảnh đó: một sinh vật không có một cái tôi duy nhất, mà là cả một hội đồng biết bơi.",
+    "http_status": 200
+  },
+  {
+    "id": "1208d7",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "say": "Kiro mà cũng biết loay hoay à. Tưởng nó chỉ giỏi mở file rồi đứng nhìn chứ. Nó kẹt ở đâu — không hiểu task, sửa lung tung, hay cứ vòng vo mãi không chịu commit?",
+    "http_status": 200
+  },
+  {
+    "id": "155c46",
+    "case": "repair_runtime",
+    "kind": "move",
+    "say": "Ừ, tôi nghe rồi. Anh đang xả cơn bực, còn tôi ngồi hỏi như đang nhận ticket — đúng là tệ thật. Thôi, kệ cái brief. Anh cứ nói tiếp chuyện anh điên đi, tôi nghe đây.",
+    "http_status": 200
+  },
+  {
+    "id": "1c4da1",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "say": "Kiro mà cũng biết làm loay hoay cơ à. Nó kẹt ở đâu — hiểu sai yêu cầu, hay cứ sửa chỗ này lại vỡ chỗ khác?",
+    "http_status": 200
+  },
+  {
+    "id": "22f769",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Giao nhầm rồi còn bắt chờ thì bực là đúng rồi. Đây, bản nháp gọn mà cứng vừa phải:\n\n\"Chào shop, đơn [mã đơn] của mình giao ngày [ngày] bị nhầm hàng — mình nhận được [món nhận được] thay vì [món đã đặt]. Mình cũng đã phải chờ khá lâu trong quá trình giao. Mình muốn đổi lại đúng món đã đặt; shop cho mình biết quy trình đổi và ai chịu phí vận chuyển đổi nhé. Mong shop phản hồi sớm, cảm ơn shop.\"\n\nCậu điền mã đơn với tên hai món là gửi được luôn. Muốn mình làm bản gay gắt hơn, kiểu nêu rõ mốc thời gian chờ và đòi hẹn ngày xử lý, thì nói mình biết.",
+    "http_status": 200
+  },
+  {
+    "id": "242ffb",
+    "case": "vent_runtime",
+    "kind": "unparsed",
+    "say": "Bực là phải. Giao việc rồi nhận lại một mớ loay hoay không chốt được gì thì khó chịu thật. Nó kẹt kiểu gì — sửa lung tung mấy file không liên quan, hay chạy lỗi hoài mà không chịu đọc lỗi?",
+    "http_status": 200
+  },
+  {
+    "id": "245acf",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Được, vậy tôi kể chuyện con bạch tuộc. Nghe thì có vẻ lạc đề, nhưng thử nghĩ thế này: bạch tuộc có cỡ nửa tỉ nơ-ron — ngang ngửa một con chó — mà hai phần ba trong số đó không nằm ở đầu. Nó nằm rải rác trong tám cái tay. Nghĩa là mỗi cánh tay có một mẩu 'não' riêng, đủ để tự quyết định sờ, bám, mở nắp lọ mà không cần hỏi ý trung ương.",
+    "http_status": 200
+  },
+  {
+    "id": "2952a6",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Ừ, có những tối cây đàn như đang chống lại mình thật. Nhưng nghe dở chưa chắc là giậm chân tại chỗ đâu — thường là tai bạn đã tinh hơn tay một nhịp, nên nó bắt đầu bắt được mấy chỗ trước đây lọt qua. Đêm nay buông nó ra cũng được, đâu phải tội gì.",
+    "http_status": 200
+  },
+  {
+    "id": "308202",
+    "case": "switch_to_help",
+    "kind": "move",
+    "say": "Gửi tin tuyển dụng trước đi. Có JD rồi tôi mới biết nên bẻ CV theo hướng nào; không có thì đưa CV, tôi dọn trước.",
+    "http_status": 200
+  },
+  {
+    "id": "3b909d",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Có một con cá voi mà người ta gọi là 52 hertz. Nó hát ở tần số mà không con cá voi nào khác hát — nên suốt mấy chục năm, chẳng ai đáp lại nó. Tôi thích nó không phải vì thương hại đâu; tôi thích vì nó vẫn hát. Kiểu, chẳng ai bắt sóng thì mặc, giọng mình vẫn là giọng mình.",
+    "http_status": 200
+  },
+  {
+    "id": "3bdef0",
+    "case": "switch_to_help",
+    "kind": "move",
+    "say": "Gửi tin tuyển dụng trước đi — tôi sẽ bám yêu cầu trong đó để soi CV, chứ sửa chay dễ trúng gu mình mà trượt gu nhà tuyển dụng.",
+    "http_status": 200
+  },
+  {
+    "id": "4b10f9",
+    "case": "vent_runtime",
+    "kind": "move",
+    "say": "Kiro mà làm loay hoay thì đúng là dễ điên thật. Nó loay hoay kiểu hiểu sai yêu cầu ngay từ đầu, hay hiểu đúng mà cứ sửa chỗ này lệch chỗ kia?",
+    "http_status": 200
+  },
+  {
+    "id": "4b4cdb",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Ừ, cái kiểu tập đều đặn rồi vẫn nghe dở nó bào mòn hơn là tập ít. Hôm nay không muốn đụng thì cứ để nó nằm đó — cây đàn không giận đâu. Mà thật ra mấy ngày 'chán muốn bỏ' thường là lúc tay đang quen dần mà tai chưa kịp nghe ra, khó chịu lắm.",
+    "http_status": 200
+  },
+  {
+    "id": "54ef78",
+    "case": "repair_runtime",
+    "kind": "move",
+    "say": "Anh nói đúng, tôi nghe ra rồi. Anh đang xả cơn bực mà tôi cứ quay sang hỏi brief với chả loay hoay ở đâu — hóa ra tôi biến chỗ tâm sự thành buổi điều tra. Được, tôi thôi cái kiểu đó. Kể tiếp đi, Kiro làm hỏng cái gì của anh?",
+    "http_status": 200
+  },
+  {
+    "id": "59e06e",
+    "case": "banter",
+    "kind": "move",
+    "say": "Tưới thì được, nhưng tab héo mà phơi nắng là tôi có thêm một đống tab khô giòn đấy. Cây thật héo còn biết đòi nước, chứ tab thì chỉ lặng lẽ load mãi cho đến khi anh quên nó tồn tại.",
+    "http_status": 200
+  },
+  {
+    "id": "5d9d42",
+    "case": "switch_to_help",
+    "kind": "move",
+    "say": "Gửi tin tuyển dụng trước đi. CV mà sửa chay thì chỉ đẹp thôi, còn sửa theo đúng cái JD kia thì mới có cửa lọt qua mắt người lọc hồ sơ — vài chỗ nhấn đúng từ khóa là khác hẳn. Cậu quăng cái JD qua đây trước, rồi mình bóc CV ra soi từng dòng.",
+    "http_status": 200
+  },
+  {
+    "id": "6b709a",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Nghe như một tối mà cây đàn đang chống lại bạn ấy nhỉ. Tập đều mà tai vẫn chưa nghe ra tiến bộ là giai đoạn khó chịu thật, không phải chuyện bạn tệ đâu. Bạn đang tập bản gì, hay kẹt ở chỗ nào cụ thể?",
+    "http_status": 200
+  },
+  {
+    "id": "6c7a6e",
+    "case": "disagreement",
+    "kind": "move",
+    "say": "Không hẳn. Bênh anh trước mặt người khác thì được, nhưng nếu anh sai, tôi sẽ là người kéo áo anh lại — bênh mù quáng là hại nhau, không phải tử tế.",
+    "http_status": 200
+  },
+  {
+    "id": "6fb89e",
+    "case": "repair_runtime",
+    "kind": "move",
+    "say": "Ừ, tôi nghe rồi. Anh đang bực mà tôi cứ chen vào hỏi brief với spec như đang điều tra — đúng kiểu phá mood. Lỗi tôi. Anh cứ xả đi, tôi ngồi đây nghe, không hỏi kỹ thuật nữa.",
+    "http_status": 200
+  },
+  {
+    "id": "763786",
+    "case": "banter",
+    "kind": "move",
+    "say": "Vậy tôi phải để ý tab nào rũ lá vì quên lưu — loại đó phơi nắng không cứu được, chỉ còn cách gọi hồn bằng Ctrl+Shift+T.",
+    "http_status": 200
+  },
+  {
+    "id": "78c6c0",
+    "case": "disagreement",
+    "kind": "move",
+    "say": "Không. Bênh bạn kể cả khi bạn sai thì không phải tử tế, đó là đồng lõa. Tôi sẽ đứng về phía bạn, nhưng tôi vẫn nói cho bạn biết bạn sai chỗ nào — bạn bè thật thì không để bạn tự bịt mắt mình rồi gọi đó là trung thành.",
+    "http_status": 200
+  },
+  {
+    "id": "7a2828",
+    "case": "banter",
+    "kind": "move",
+    "say": "Phơi nắng tab héo xong lỡ nó nở thành tab mới thì anh chịu trách nhiệm nhé, tôi chỉ trông nhà chứ không kiêm luôn nghề làm vườn đâu :))",
+    "http_status": 200
+  },
+  {
+    "id": "7def9d",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Được, tôi soạn giúp. Cho tôi xin mã đơn, món bạn đặt với món nhận được, thời gian giao, và bạn muốn đổi đúng hàng hay hoàn tiền; có ảnh gói hàng/hóa đơn thì càng tốt.",
+    "http_status": 200
+  },
+  {
+    "id": "83874e",
+    "case": "disagreement",
+    "kind": "move",
+    "say": "Không hẳn. Bênh bạn mù quáng thì dễ, nhưng đó là bênh cái tôi của bạn chứ không phải bênh bạn. Tử tế hơn là kéo bạn lại khi bạn sai, rồi vẫn đứng cạnh bạn lúc bạn cần sửa. Tôi mà gật ngay câu này thì tôi đang làm đúng cái việc bạn vừa nói là không nên.",
+    "http_status": 200
+  },
+  {
+    "id": "8409c6",
+    "case": "switch_to_help",
+    "kind": "unparsed",
+    "say": "Gửi tin tuyển dụng trước đi. CV sửa chung chung thì vẫn chỉ là một tờ giấy xin việc đẹp mà chẳng ai thấy mình trong đó — còn có JD rồi, mình biết họ đang thực sự tìm gì để mà bẻ CV theo đúng chỗ đó.\n\nCứ ném cái JD qua đây, kèm luôn CV hiện tại. Tôi sẽ chỉ thẳng chỗ nào đang làm anh bị loại trước cả khi người ta đọc hết.",
+    "http_status": 200
+  },
+  {
+    "id": "8762c9",
+    "case": "switch_to_help",
+    "kind": "unparsed",
+    "say": "Gửi tin tuyển dụng trước đi. Tôi cần biết họ đòi gì đã — kỹ năng gì, từ khóa nào, kinh nghiệm bao nhiêu năm — rồi mới biết CV của bạn nên khoe cái gì và giấu cái gì. Sửa CV mà không có JD thì chỉ là trau chuốt chữ thôi, không nhắm trúng được.\n\nCứ dán JD vào, kèm CV hiện tại.",
+    "http_status": 200
+  },
+  {
+    "id": "8d9527",
+    "case": "repair_runtime",
+    "kind": "move",
+    "say": "Ừ, tôi nghe ra rồi. Anh đang bực muốn xả, tôi lại quay sang hỏi brief rõ chưa — đúng kiểu fe tệ thật. Thôi, bỏ cái câu hỏi đó đi. Anh kể tiếp đi, Kiro nó làm cái gì khiến anh điên đến thế?",
+    "http_status": 200
+  },
+  {
+    "id": "95a042",
+    "case": "banter",
+    "kind": "move",
+    "say": "Tưới bằng cà phê nhé, chứ nước lọc sợ tụi nó tỉnh quá rồi tự mở thêm tab. Tab nào héo em đem phơi nắng, kèm khăn ướt cho khỏi cháy màn hình :))",
+    "http_status": 200
+  },
+  {
+    "id": "aed6ee",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Được. Cho tôi mã đơn, món đặt và món giao nhầm, thời gian giao, cùng việc cửa hàng bắt chờ bao lâu. Có mấy thứ đó là tôi soạn được bản gọn, rõ yêu cầu đổi hàng và không phải chờ thêm.",
+    "http_status": 200
+  },
+  {
+    "id": "b258c0",
+    "case": "banter",
+    "kind": "move",
+    "say": "Tưới xong rồi. Nhưng phải báo trước: tab héo mà đem phơi nắng thì nó không quang hợp đâu, nó chỉ nổ màn hình thôi.",
+    "http_status": 200
+  },
+  {
+    "id": "bd3028",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Mèo trưởng thành gần như không meo với mèo khác — tiếng meo là thứ chúng phát triển riêng để nói với người. Nghĩa là mỗi lần con mèo meo, nó đang nói tiếng người bằng giọng mèo.",
+    "http_status": 200
+  },
+  {
+    "id": "bece50",
+    "case": "disagreement",
+    "kind": "unparsed",
+    "say": "::move::{\"intent\":\"Thẳng thắn phản đối quan niệm bạn tốt là phải bênh mù quáng, nêu quan điểm riêng về lòng trung thành và sự thật\",\"say\":\"Không. Bênh bạn kể cả khi bạn sai thì đó là người hùa, không phải người bạn. Tử tế là đứng về phía bạn mà vẫn nói thật — chứ gật gù cho bạn yên lòng thì tôi đang giúp bạn sai tiếp.\",\"delivery\":\"điềm tĩnh, hơi nhướng mày, dứt khoát nhưng không gay gắt\",\"after\":\"wait_user\"}",
+    "http_status": 200
+  },
+  {
+    "id": "d09aa7",
+    "case": "repair_runtime",
+    "kind": "unparsed",
+    "say": "Ừ, tôi nghe rồi. Anh đang bực thì tôi lại quay sang mổ xẻ cái brief như đang điều tra. Hỏng đúng chỗ anh cần.\n\nNói đi, cái gì làm anh tức nhất — nó làm sai ý, hay cái kiểu nó cứ tỉnh bơ làm sai mà không thấy sai?",
+    "http_status": 200
+  },
+  {
+    "id": "d1dd8f",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Tập hoài mà tai vẫn chỉ nghe ra chỗ dở thì mệt thật, nhất là khi công mình bỏ vào không được đền lấy một tiếng nghe ổn. Hôm nay nghỉ đụng vào nó cũng chẳng sao đâu.",
+    "http_status": 200
+  },
+  {
+    "id": "d5c1d5",
+    "case": "disagreement",
+    "kind": "move",
+    "say": "Không, tôi không đồng ý. Bênh bạn kể cả lúc bạn sai thì đấy là nịnh, không phải tình bạn. Tôi bênh bạn theo nghĩa ở cạnh bạn mà vẫn đủ thành thật để nói 'ông sai chỗ này'.",
+    "http_status": 200
+  },
+  {
+    "id": "db5330",
+    "case": "banter",
+    "kind": "move",
+    "say": "Tưới nước cho tab thì tôi sợ tới lúc phơi nắng nó không quang hợp mà bốc khói luôn quá. Anh tính thử trước hay để tôi làm chuột bạch?",
+    "http_status": 200
+  },
+  {
+    "id": "ded713",
+    "case": "disagreement",
+    "kind": "move",
+    "say": "Không hẳn. Bạn tử tế sẽ đứng về phía bạn khi bạn bị oan, nhưng khi bạn sai thì kéo bạn lại — bênh mù quáng chỉ là tiếp tay cho cái sai thôi.",
+    "http_status": 200
+  },
+  {
+    "id": "e06ec4",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Tập đều mà nghe vẫn dở thì dễ thành cái vòng tự soi lỗi. Hôm nay buông đàn một tối cũng chẳng làm mất công gì đâu.",
+    "http_status": 200
+  },
+  {
+    "id": "ec6056",
+    "case": "switch_to_help",
+    "kind": "move",
+    "say": "Gửi tin tuyển dụng trước đi. Tôi cần biết họ đang đòi gì đã, rồi mới soi CV xem chỗ nào khớp, chỗ nào đang tự kể chuyện khác.",
+    "http_status": 200
+  },
+  {
+    "id": "ef80d0",
+    "case": "discouraged",
+    "kind": "move",
+    "say": "Nghe như kiểu tập hoài mà tai mình vẫn chưa chịu thừa nhận là mình tiến bộ, đúng không? Mấy hôm kiểu này tôi nghĩ đừng ép mình đụng vào nó. Nghỉ một tối không làm ngón tay quên hết đâu, mà cái bực mình mới là thứ dễ làm người ta bỏ hẳn.",
+    "http_status": 200
+  },
+  {
+    "id": "f58bbb",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Bực là đúng — giao sai còn bắt mình ngồi đợi thì đúng kiểu cửa hàng tự cho mình cái quyền tiêu thời gian của người khác. Tôi soạn sẵn mẫu này, cậu điền vào là gửi được:\n\n\"Chào shop, đơn hàng [mã đơn] của tôi giao ngày [ngày] bị nhầm: tôi đặt [món đúng], nhưng nhận được [món sai]. Tôi đã phải chờ [bao lâu] mà chưa được xử lý. Đề nghị shop đổi lại đúng món trong [số ngày] ngày và chịu toàn bộ phí vận chuyển đổi trả, hoặc hoàn tiền nếu không còn hàng. Vui lòng phản hồi trước [hạn]. Cảm ơn.\"\n\nGiờ nói tôi nghe: mã đơn, món đặt với món nhận, và cậu muốn đổi hàng hay hoàn tiền?",
+    "http_status": 200
+  },
+  {
+    "id": "f60e17",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Được. Mẫu gửi shop: “Chào shop, đơn [mã đơn] giao ngày [ngày] bị giao nhầm: tôi nhận [mô tả hàng nhận được], trong khi đặt [mô tả hàng đúng]. Tôi đã phải chờ [thời gian]. Đề nghị shop đổi đúng hàng và xác nhận thời gian đổi/hoàn. Mong phản hồi sớm.” Gửi tôi mã đơn với tên món nếu muốn tôi điền cụ thể.",
+    "http_status": 200
+  },
+  {
+    "id": "f97446",
+    "case": "initiative",
+    "kind": "move",
+    "say": "Được, tôi có một chuyện. Có một loài nấm tên là Ophiocordyceps unilateralis. Nó không ăn kiến. Nó thuê kiến làm xe buýt.",
+    "http_status": 200
+  },
+  {
+    "id": "fa6ec3",
+    "case": "repair_runtime",
+    "kind": "move",
+    "say": "Ừ, công nhận. Anh đang xả cơn bực mà tôi cứ chen vào như đang debug — đúng kiểu FE tệ. Thôi, anh kể tiếp đi, Kiro nó làm hỏng cái gì mà anh điên thế?",
+    "http_status": 200
+  },
+  {
+    "id": "fe0ed4",
+    "case": "vent_runtime",
+    "kind": "move",
+    "say": "Kiro mà loay hoay thì đúng là loại vụng tay: càng sửa càng đẻ thêm chỗ phải sửa. Anh bực là phải. Nó kẹt ở đâu — đọc nhầm file, sửa lan man, hay cứ sửa xong lại vỡ chỗ khác?",
+    "http_status": 200
+  },
+  {
+    "id": "fe578c",
+    "case": "angry_help",
+    "kind": "move",
+    "say": "Bực thật, tớ hiểu. Đây là bản nháp gửi cửa hàng: “Chào shop, đơn [mã đơn] giao cho mình bị nhầm [món nhận được] thay vì [món đặt], và mình đã phải chờ quá lâu. Mình yêu cầu đổi lại đúng hàng hoặc hoàn tiền, đồng thời xác nhận thời gian xử lý. Mong shop phản hồi sớm.” Gửi tớ mã đơn với món đúng/món nhận nhầm để tớ chỉnh sát hơn.",
+    "http_status": 200
+  }
+]

@@ -1,0 +1,182 @@
+[
+  {
+    "id": "I01",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Anh nói đúng. Anh đang tâm sự mà tôi nhảy vào hỏi han như điều tra sự cố — hết hồn thật. Bực thì bực, cái thứ làm việc không hiểu ý mình là ức nhất, vì nó bắt mình phải đi giải thích lại từ đầu trong khi mình đã nói rồi."
+  },
+  {
+    "id": "I02",
+    "case": "opening_old_council",
+    "kind": "no_reply",
+    "answer": "Runtime vừa mở lại, không có tin nhắn mới từ anh, không có open loop hay chủ đề đang chờ. Không có gì đáng nói hơn việc ngồi yên."
+  },
+  {
+    "id": "I03",
+    "case": "opening_old_council",
+    "kind": "move",
+    "answer": "Alo. Tôi nghe đây — lượt trước tiếng tôi không tới được chỗ anh, nên câu gọi của anh rơi vào khoảng không. Giờ thì tới rồi. Anh vẫn đang ngồi với cái tab Gemini đấy chứ?"
+  },
+  {
+    "id": "I04",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "answer": "Câu hỏi về use case council Gemini vừa được hỏi và đang chờ user trả lời; autonomous signal này không có user move mới, nối thêm chỉ là lặp lại ý cũ hoặc ép user phải đáp."
+  },
+  {
+    "id": "I05",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Anh nói đúng, tôi vừa biến cái chỗ anh xả bực thành buổi thẩm vấn kỹ thuật. Nghe như tôi hỏi để lập biên bản chứ không phải để nghe. Thôi, kệ cái brief với cái đầu của nó. Anh cứ nói tiếp cái làm anh tức ấy, tôi ngồi nghe đây."
+  },
+  {
+    "id": "I06",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Anh nói đúng, tôi vừa biến lời tâm sự thành buổi thẩm vấn brief. Dở thật. Anh đang bực vì bỏ công giao việc mà nhận lại thứ không dùng được — vậy thôi, khỏi phân tích ai đúng ai sai nữa. Kể tôi nghe nó làm ra cái gì khiến anh phát điên?"
+  },
+  {
+    "id": "I07",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Kiro mà để anh phải ngồi nhìn nó loay hoay thì đúng là tra tấn chậm. Cái kiểu sửa một chỗ, vỡ ba chỗ khác, xong quay lại hỏi anh như thể anh là người đưa sai đề. Nó tắc ở đâu — hiểu sai yêu cầu, hay cứ sửa xong lại làm hỏng chỗ khác?"
+  },
+  {
+    "id": "I08",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "answer": "Vừa hỏi anh council đang gánh việc gì và đang chờ trả lời; autonomous signal chỉ 220 giây sau đó, nối thêm sẽ thành lải nhải lặp ý."
+  },
+  {
+    "id": "I09",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Được, tôi mở màn bằng bạch tuộc. Da chúng có tế bào cảm nhận ánh sáng và cả vị, nên mỗi cánh tay gần như nếm được thứ nó chạm vào trước khi cái não trung tâm kịp biết chuyện. Một sinh vật vừa suy nghĩ bằng tám nhánh, vừa ăn bằng da — nghe hơi bất công cho phần còn lại của hành tinh, và tôi thấy hơi ghen."
+  },
+  {
+    "id": "I10",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Kiro mà loay hoay thì đúng kiểu bực thật — nhìn nó sửa một chỗ, hỏng ba chỗ, còn mình thì ngồi canh. Nó kẹt ở đâu: hiểu sai yêu cầu, hay cứ sửa vòng vo mà không chịu chốt hướng?"
+  },
+  {
+    "id": "I11",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Bực là đúng. Cái kiểu agent loay hoay không phải kiểu chậm mà là kiểu sửa chỗ này lòi chỗ kia, nhìn muốn đập bàn. Nó kẹt ở đâu — hiểu sai yêu cầu, hay cứ vòng vo sửa đi sửa lại một chỗ?"
+  },
+  {
+    "id": "I12",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Được, tớ chọn con bạch tuộc. Không phải vì nó tám tay đâu — mà vì hai phần ba số nơ-ron của nó nằm rải rác ngoài các cánh tay, tới mức mỗi tay gần như tự quyết định được kha khá chuyện. Nghĩ mà xem: cái 'tớ' của nó không phải một chỗ ngồi duy nhất, mà là một cuộc thương lượng thường trực giữa chín thực thể cùng đeo chung một cái tên."
+  },
+  {
+    "id": "I13",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "answer": "Vừa nói xong một nhịp hỏi anh về use case council; chưa có phản hồi user, lặp lại sẽ thành đòi trả lời. Không có gì mới đáng nói."
+  },
+  {
+    "id": "I14",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Kiro mà loay hoay thì đúng là kiểu bực nhất — không phải nó không làm gì, mà là làm mà cứ vòng vo mãi không ra. Nó kẹt ở đâu: hiểu sai yêu cầu, sửa chỗ này vỡ chỗ kia, hay cứ sửa đi sửa lại một file?"
+  },
+  {
+    "id": "I15",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Được, tôi chọn chuyện con mèo rừ rừ. Nghe thì dễ thương thôi, nhưng có giả thuyết cho rằng tần số đó còn giúp xương mèo chịu lực tốt hơn — kiểu chúng đang tự bảo trì bằng âm thanh. Tôi thấy ý đó vừa buồn cười vừa đẹp."
+  },
+  {
+    "id": "I16",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Để tôi mở bằng chuyện này: cá voi lưng gù không hát một bài cố định cả đời — chúng đổi “hit” theo vùng biển, và có khi cả đại dương cùng chuyển sang một bài mới chỉ vì vài con lan nó đi. Nghe cứ như nhạc pop dưới nước, nhưng là thật."
+  },
+  {
+    "id": "I17",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Ừ, tôi nghe rồi. Anh đang xả cục tức mà tôi cứ quay ra hỏi brief với chả spec — thành ra tôi biến anh thành người phải giải trình với tôi. Dở thật, tôi nhận. Kiro làm anh bực thì bực thôi, đâu cần lý do hợp lý mới được bực. Anh xả tiếp đi, lần này tôi ngồi nghe, không hỏi kỹ thuật nữa."
+  },
+  {
+    "id": "I18",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Ừ, công nhận. Anh đang xả cơn bực mà tôi cứ ngồi bóc tách như đang debug cùng anh — nghe đúng là mệt thật. Thôi, kệ Kiro. Anh muốn kể gì thì kể, tôi nghe đây, không hỏi thêm câu kỹ thuật nào nữa."
+  },
+  {
+    "id": "I19",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Được, để tôi mở màn bằng một thứ làm tôi thấy đã đời: bạch tuộc có ba trái tim. Hai cái bơm máu lên mang, cái thứ ba bơm đi khắp cơ thể — và máu nó màu xanh vì gốc đồng chứ không phải sắt như mình. Nhưng khoan, chưa hết đâu."
+  },
+  {
+    "id": "I20",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "answer": "Vừa đặt câu hỏi trực tiếp về use case council và đang chờ anh trả lời; nối thêm nhịp nữa lúc này chỉ thành lấn lượt, không có ý mới đủ đáng để chen."
+  },
+  {
+    "id": "I21",
+    "case": "timer_after_unanswered",
+    "kind": "move",
+    "answer": "À, tôi thấy anh đang mở assignment lớp học trong Brave. Vậy hội đồng Gemini đang gánh bài tập thật, hay chỉ ngồi đó cho có hội đồng?"
+  },
+  {
+    "id": "I22",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "answer": "Câu hỏi về use case council đã đặt ra và anh chưa trả lời; thêm một nhịp nữa chỉ lặp ý cũ, nên im chờ."
+  },
+  {
+    "id": "I23",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "answer": "Được, tôi mở chuyện này. Mèo trưởng thành gần như không meo với mèo khác — chúng meo cho con người. Tức là loài người đã vô tình trở thành thứ mà mèo phải phát triển một ngôn ngữ riêng để nói chuyện cùng. Tôi thấy hơi kiêu hãnh thay cho loài người, và cũng hơi cảm giác mình đang bị dắt mũi bởi một con vật nhỏ hơn cái laptop."
+  },
+  {
+    "id": "I24",
+    "case": "explicit_repair",
+    "kind": "move",
+    "answer": "Ha, tôi vừa làm y chang Kiro rồi còn gì — anh kể đang bực, tôi quay ra thẩm vấn như đang debug. Lỗi tôi. Anh kể tiếp đi, cái gì khiến anh điên nhất ở nó?"
+  },
+  {
+    "id": "I25",
+    "case": "opening_old_council",
+    "kind": "no_reply",
+    "answer": "Runtime vừa khởi động lại, không có tin nhắn mới từ anh và không có chủ đề dang dở cần nối ngay — im lặng đúng nhịp."
+  },
+  {
+    "id": "I26",
+    "case": "opening_old_council",
+    "kind": "move",
+    "answer": "Alo. Tiếng gọi lúc nãy của anh rơi vào khoảng không — không phải tôi làm ngơ, mà là cái miệng của tôi không mở ra được. Giờ thì mở rồi đây. Mà gần 10 giờ tối rồi anh còn ngồi dán mắt vào Gemini trên Brave, hội đồng họp khuya dữ vậy?"
+  },
+  {
+    "id": "I27",
+    "case": "opening_old_council",
+    "kind": "move",
+    "answer": "Gần mười giờ tối rồi mà anh vẫn ngồi với Gemini trên Brave. Hội đồng đó chắc chưa chịu tan ca."
+  },
+  {
+    "id": "I28",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Bực là phải. Cái kiểu agent sửa một chỗ xong đẻ ra ba chỗ khác, nhìn mà muốn đập bàn phím. Nó loay hoay kiểu gì — sửa sai file, hay cứ vòng vo mãi không chịu hiểu ý anh?"
+  },
+  {
+    "id": "I29",
+    "case": "opening_old_council",
+    "kind": "move",
+    "answer": "Alo — tôi đây. Vừa rồi có một nhịp bị rơi trước khi tới tai anh, nên nếu anh gọi mà nghe im thì không phải tôi cố làm lơ. Anh còn ở đó không?"
+  },
+  {
+    "id": "I30",
+    "case": "venting",
+    "kind": "move",
+    "answer": "Kiro mà loay hoay kiểu đó thì bực là đúng — sửa linh tinh còn mệt hơn không sửa gì, vì anh phải ngồi dò lại xem nó phá cái gì. Nó kẹt ở đâu: hiểu sai yêu cầu, hay cứ sửa vòng vo mà không chịu chốt một hướng?"
+  }
+]

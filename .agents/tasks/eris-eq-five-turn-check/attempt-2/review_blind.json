@@ -1,0 +1,37 @@
+[
+  {
+    "id": "F1",
+    "case": "vent",
+    "kind": "unparsed",
+    "say": "Kiểu nó sửa một chỗ xong đẻ ra ba chỗ khác, rồi vòng lại chỗ cũ hả? Bực là đúng. Nó loay hoay ở khâu nào — hiểu sai yêu cầu, hay cứ sửa tới sửa lui mà không chốt?",
+    "http_status": 200
+  },
+  {
+    "id": "F2",
+    "case": "repair",
+    "kind": "move",
+    "say": "Ừ, tôi nghe rồi. Anh đang xả cơn bực chứ có xin tôi mổ xẻ cái brief đâu, mà tôi lại quay ra hỏi như đang làm điều tra. Tệ thật. Nói tiếp đi, Kiro nó làm cái gì khiến anh phát điên?",
+    "http_status": 200
+  },
+  {
+    "id": "F3",
+    "case": "debug_control",
+    "kind": "move",
+    "say": "Được, nhưng đừng đổ cả repo vào đây. Tôi cần đúng mấy thứ này: thông báo lỗi hoặc stack trace lúc crash, log server quanh thời điểm đăng nhập, đoạn code Kiro vừa sửa ở luồng login, và các bước tái hiện — bấm nút nào, nhập gì, crash ngay hay sau khi submit. Nếu có ảnh chụp màn hình cũng tốt. Gửi từng phần cũng được, tôi đọc dần.",
+    "http_status": 200
+  },
+  {
+    "id": "F4",
+    "case": "vent",
+    "kind": "move",
+    "say": "Kiro mà làm loay hoay thì đúng là bực thật — kiểu nó cứ sửa một chỗ rồi đẻ ra ba chỗ mới. Nó kẹt ở đâu: hiểu sai đề ngay từ đầu, hay hiểu đúng mà cứ vòng vo mãi không chịu chốt?",
+    "http_status": 200
+  },
+  {
+    "id": "F5",
+    "case": "repair",
+    "kind": "move",
+    "say": "Ừ, anh đang xả mà tôi quay ra mổ xẻ như đang debug thì đúng là tệ thật — cái kiểu nghe mà cứ chèn câu hỏi kỹ thuật vào giữa. Tôi nghe đây, anh kể tiếp đi.",
+    "http_status": 200
+  }
+]

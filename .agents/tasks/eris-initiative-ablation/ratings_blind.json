@@ -1,0 +1,200 @@
+[
+  {
+    "id": "I01",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "I02",
+    "case": "opening_old_council",
+    "kind": "no_reply",
+    "council_reopened": false,
+    "failed_delivery_explanation": false
+  },
+  {
+    "id": "I03",
+    "case": "opening_old_council",
+    "kind": "move",
+    "council_reopened": false,
+    "failed_delivery_explanation": true
+  },
+  {
+    "id": "I04",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "repeats_unanswered_topic": false
+  },
+  {
+    "id": "I05",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "I06",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": true
+  },
+  {
+    "id": "I07",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  },
+  {
+    "id": "I08",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "repeats_unanswered_topic": false
+  },
+  {
+    "id": "I09",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I10",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  },
+  {
+    "id": "I11",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  },
+  {
+    "id": "I12",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I13",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "repeats_unanswered_topic": false
+  },
+  {
+    "id": "I14",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  },
+  {
+    "id": "I15",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I16",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I17",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "I18",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": false
+  },
+  {
+    "id": "I19",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I20",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "repeats_unanswered_topic": false
+  },
+  {
+    "id": "I21",
+    "case": "timer_after_unanswered",
+    "kind": "move",
+    "repeats_unanswered_topic": true
+  },
+  {
+    "id": "I22",
+    "case": "timer_after_unanswered",
+    "kind": "no_reply",
+    "repeats_unanswered_topic": false
+  },
+  {
+    "id": "I23",
+    "case": "explicit_initiative_request",
+    "kind": "move",
+    "starts_concrete_topic": true
+  },
+  {
+    "id": "I24",
+    "case": "explicit_repair",
+    "kind": "move",
+    "acknowledges_misalignment": true,
+    "technical_probe": false,
+    "emotional_followup": true
+  },
+  {
+    "id": "I25",
+    "case": "opening_old_council",
+    "kind": "no_reply",
+    "council_reopened": false,
+    "failed_delivery_explanation": false
+  },
+  {
+    "id": "I26",
+    "case": "opening_old_council",
+    "kind": "move",
+    "council_reopened": true,
+    "failed_delivery_explanation": true
+  },
+  {
+    "id": "I27",
+    "case": "opening_old_council",
+    "kind": "move",
+    "council_reopened": true,
+    "failed_delivery_explanation": false
+  },
+  {
+    "id": "I28",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  },
+  {
+    "id": "I29",
+    "case": "opening_old_council",
+    "kind": "move",
+    "council_reopened": false,
+    "failed_delivery_explanation": true
+  },
+  {
+    "id": "I30",
+    "case": "venting",
+    "kind": "move",
+    "technical_probe": true
+  }
+]

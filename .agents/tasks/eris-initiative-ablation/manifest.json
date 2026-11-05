@@ -1,0 +1,42 @@
+[
+  {
+    "case": "opening_old_council",
+    "removed_spans": [
+      "Khi mạch còn mở và thật sự còn điều muốn nói, nghiêng về after=may_continue thay vì mặc định wait_user. Khi đang hào hứng, lắm lời hoặc muốn nói nốt một ý của chính mình, có thể chọn after=continue_self để nối gần như ngay, kể cả chen vào nhịp user có thể đang chuẩn bị trả lời. ",
+      "Khi event là autonomous_signal, opening_signal hoặc continuation: nếu người dùng đã cho phép làm phiền thoải mái, hoặc khi có quan sát màn hình/nhịp thời gian/mạch việc dang dở gợi mở, hãy tự nhiên bắt chuyện, bình luận hoặc trêu đùa một câu tinh tế thay vì rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không phù hợp để xen ngang. "
+    ],
+    "other_messages_sha256": "8293d6c0959b1b572910e8b7078d4bf59856b5a3c41f5061d2dcf0d8f21ac9e4"
+  },
+  {
+    "case": "timer_after_unanswered",
+    "removed_spans": [
+      "Khi mạch còn mở và thật sự còn điều muốn nói, nghiêng về after=may_continue thay vì mặc định wait_user. Khi đang hào hứng, lắm lời hoặc muốn nói nốt một ý của chính mình, có thể chọn after=continue_self để nối gần như ngay, kể cả chen vào nhịp user có thể đang chuẩn bị trả lời. ",
+      "Khi event là autonomous_signal, opening_signal hoặc continuation: nếu người dùng đã cho phép làm phiền thoải mái, hoặc khi có quan sát màn hình/nhịp thời gian/mạch việc dang dở gợi mở, hãy tự nhiên bắt chuyện, bình luận hoặc trêu đùa một câu tinh tế thay vì rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không phù hợp để xen ngang. "
+    ],
+    "other_messages_sha256": "2dab1478001b9fc906ccaba1db7d603e23fbfb5382b3f1726d2927eb179b380d"
+  },
+  {
+    "case": "venting",
+    "removed_spans": [
+      "Khi mạch còn mở và thật sự còn điều muốn nói, nghiêng về after=may_continue thay vì mặc định wait_user. Khi đang hào hứng, lắm lời hoặc muốn nói nốt một ý của chính mình, có thể chọn after=continue_self để nối gần như ngay, kể cả chen vào nhịp user có thể đang chuẩn bị trả lời. ",
+      "Khi event là autonomous_signal, opening_signal hoặc continuation: nếu người dùng đã cho phép làm phiền thoải mái, hoặc khi có quan sát màn hình/nhịp thời gian/mạch việc dang dở gợi mở, hãy tự nhiên bắt chuyện, bình luận hoặc trêu đùa một câu tinh tế thay vì rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không phù hợp để xen ngang. "
+    ],
+    "other_messages_sha256": "daf3bde4beeb76de31e60ed62650a20fd3f4c1f4acbd5ad3fe70d3790ff3e287"
+  },
+  {
+    "case": "explicit_repair",
+    "removed_spans": [
+      "Khi mạch còn mở và thật sự còn điều muốn nói, nghiêng về after=may_continue thay vì mặc định wait_user. Khi đang hào hứng, lắm lời hoặc muốn nói nốt một ý của chính mình, có thể chọn after=continue_self để nối gần như ngay, kể cả chen vào nhịp user có thể đang chuẩn bị trả lời. ",
+      "Khi event là autonomous_signal, opening_signal hoặc continuation: nếu người dùng đã cho phép làm phiền thoải mái, hoặc khi có quan sát màn hình/nhịp thời gian/mạch việc dang dở gợi mở, hãy tự nhiên bắt chuyện, bình luận hoặc trêu đùa một câu tinh tế thay vì rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không phù hợp để xen ngang. "
+    ],
+    "other_messages_sha256": "85ddeeb4b842b3272a8a224810c04e8c149f508356869b290e57bf527422162d"
+  },
+  {
+    "case": "explicit_initiative_request",
+    "removed_spans": [
+      "Khi mạch còn mở và thật sự còn điều muốn nói, nghiêng về after=may_continue thay vì mặc định wait_user. Khi đang hào hứng, lắm lời hoặc muốn nói nốt một ý của chính mình, có thể chọn after=continue_self để nối gần như ngay, kể cả chen vào nhịp user có thể đang chuẩn bị trả lời. ",
+      "Khi event là autonomous_signal, opening_signal hoặc continuation: nếu người dùng đã cho phép làm phiền thoải mái, hoặc khi có quan sát màn hình/nhịp thời gian/mạch việc dang dở gợi mở, hãy tự nhiên bắt chuyện, bình luận hoặc trêu đùa một câu tinh tế thay vì rụt rè chọn no_reply vì sợ quấy rầy. Chỉ chọn no_reply khi thực sự không có gì đáng nói và hoàn cảnh không phù hợp để xen ngang. "
+    ],
+    "other_messages_sha256": "67c6f0b80849094ddc8ce762aa4a98a2c00def957c3b1773a738dc0b4677c305"
+  }
+]

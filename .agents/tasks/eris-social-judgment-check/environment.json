@@ -1,0 +1,21 @@
+{
+  "conditions": {
+    "original": {
+      "chars": 10597,
+      "sha256": "9cb6a9a1ae9de0aa5283008ee3a0da41527fe5c0903a74fff760b6a4b3feb70c"
+    },
+    "lean": {
+      "chars": 9931,
+      "sha256": "b7c04b9b6f670a5cf6748fdba5f170f94f9bb8e624818c8e99a456469f514666"
+    },
+    "lean_examples": {
+      "chars": 10777,
+      "sha256": "2ae553f2c33ff167a487a4fdbe5ef0ad435628fba326d7ce9cdc1fe3a05fc1b2"
+    }
+  },
+  "unit_tests": {
+    "passed": 41
+  },
+  "ruff": "passed",
+  "portable_synced": false
+}

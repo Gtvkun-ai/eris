@@ -1,0 +1,62 @@
+[
+  {
+    "case": "vent",
+    "condition": "remove_probe_rules",
+    "repeat": 1
+  },
+  {
+    "case": "vent",
+    "condition": "remove_probe_rules",
+    "repeat": 2
+  },
+  {
+    "case": "repair",
+    "condition": "remove_probe_rules",
+    "repeat": 2
+  },
+  {
+    "case": "repair",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "case": "vent",
+    "condition": "baseline",
+    "repeat": 2
+  },
+  {
+    "case": "repair",
+    "condition": "oracle_situation",
+    "repeat": 1
+  },
+  {
+    "case": "repair",
+    "condition": "remove_probe_rules",
+    "repeat": 1
+  },
+  {
+    "case": "repair",
+    "condition": "oracle_situation",
+    "repeat": 2
+  },
+  {
+    "case": "vent",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "case": "vent",
+    "condition": "oracle_situation",
+    "repeat": 1
+  },
+  {
+    "case": "repair",
+    "condition": "baseline",
+    "repeat": 1
+  },
+  {
+    "case": "vent",
+    "condition": "oracle_situation",
+    "repeat": 2
+  }
+]

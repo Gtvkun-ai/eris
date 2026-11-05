@@ -1,0 +1,30 @@
+{
+ "B_2026-10-11..31": {
+  "n_user_turn_handoffs": 257,
+  "stance": {
+   "engaged": 240,
+   "topic_satiated": 6,
+   "topic_closed": 5,
+   "confused": 4,
+   "self_deprecating_reaction": 2
+  },
+  "repair_needed": {
+   "0": 245,
+   "1": 12
+  },
+  "self_cause_nonzero": 12
+ },
+ "A_2026-11-01..03": {
+  "n_user_turn_handoffs": 56,
+  "stance": {
+   "engaged": 53,
+   "topic_closed": 2,
+   "confused": 1
+  },
+  "repair_needed": {
+   "0": 55,
+   "1": 1
+  },
+  "self_cause_nonzero": 1
+ }
+}
