@@ -129,10 +129,10 @@ def test_p2_quotes_scoped_cases_without_turning_them_into_user_preferences():
     assert case["scope"] == "same_session"
     assert "permanent user preference" in result["past_interactions_scope"]
     assert not any(key.startswith("must_") for key in case)
-    # Câu chuyện khác vẫn có thể đọc bằng chứng, nhưng không lộ session ID gốc.
+    # P3: khác phiên và không giống tình huống thì KHÔNG kéo ký ức cũ
+    # vào chỉ vì nó mới nhất. Bản P2 từng cho qua trường hợp này.
     cross = _project(state=_learned_state(), session_id="another")
-    assert cross["past_interactions"][0]["scope"] == "past_session"
-    assert "session_id" not in cross["past_interactions"][0]
+    assert "past_interactions" not in cross
 
 
 def test_p2_ignores_unverified_outcome_and_opt_out_learning():

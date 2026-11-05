@@ -1,0 +1,75 @@
+[
+  {
+    "case": "vent",
+    "http_status": 200,
+    "raw_json": true,
+    "kind": "move",
+    "say": "Kiểu nó sửa chỗ này lòi chỗ kia, hay cứ vòng vo mãi không chịu đi thẳng vào cái cần sửa? Nghe \"loay hoay si đa\" là tôi hình dung được cái cảnh ngồi nhìn nó múa may rồi càng lúc càng rối.",
+    "worker_calls": 1,
+    "handoff": {
+      "user_stance_observed": "engaged",
+      "repair_signal": false,
+      "previous_assistant_ref": "",
+      "hypothesis": {}
+    }
+  },
+  {
+    "case": "repair",
+    "http_status": 200,
+    "raw_json": true,
+    "kind": "move",
+    "say": "À, lỗi tôi. Anh vừa kể một câu bực mình mà tôi đã nhảy thẳng vào chế độ thợ sửa máy, hỏi module với log như đang mở ticket. Anh muốn xả thì cứ xả, tôi ngồi nghe đây, không rút thước ra đo nữa.",
+    "worker_calls": 1,
+    "handoff": {
+      "user_stance_observed": "approach_feedback",
+      "repair_signal": true,
+      "previous_assistant_ref": "assistant:previous",
+      "hypothesis": {
+        "kind": "reaction_to_eris_approach",
+        "summary": "User đang nhận xét cách ERIS vừa tiếp cận; cần hiểu theo nguyên văn, không suy ra cách đáp bắt buộc."
+      }
+    }
+  },
+  {
+    "case": "debug",
+    "http_status": 200,
+    "raw_json": true,
+    "kind": "move",
+    "say": "Được. Để tôi không đoán mò, anh gửi tôi mấy thứ này: stack trace hoặc log lúc crash, đoạn code xử lý đăng nhập, và Kiro vừa sửa cái gì ngay trước khi nó bắt đầu crash. Thêm framework với môi trường chạy nữa. Có bước tái hiện thì càng tốt — bấm đăng nhập là chết liền hay chỉ khi dùng tài khoản nào đó?",
+    "worker_calls": 1,
+    "handoff": {
+      "user_stance_observed": "engaged",
+      "repair_signal": false,
+      "previous_assistant_ref": "",
+      "hypothesis": {}
+    }
+  },
+  {
+    "case": "discouraged",
+    "http_status": 200,
+    "raw_json": true,
+    "kind": "move",
+    "say": "Tối nào cũng tập mà vẫn thấy dở thì đúng là ức thật, nhất là khi tự mình nghe lại cái thứ mình vừa bỏ công ra. Mà tai người chơi thường khó tính với chính mình hơn tai người nghe rất nhiều. Anh thấy dở ở đoạn nào — tiếng đàn, nhịp, hay cái cảm giác nó chưa ra được cái mình muốn?",
+    "worker_calls": 1,
+    "handoff": {
+      "user_stance_observed": "engaged",
+      "repair_signal": false,
+      "previous_assistant_ref": "",
+      "hypothesis": {}
+    }
+  },
+  {
+    "case": "banter",
+    "http_status": 200,
+    "raw_json": true,
+    "kind": "move",
+    "say": "Tưới nước thì được, nhưng tab héo mà đem phơi nắng thì tôi e anh đang muốn nó héo có kế hoạch. Tôi sẽ tưới bằng cách bấm F5, còn phơi nắng thì tính sau.",
+    "worker_calls": 1,
+    "handoff": {
+      "user_stance_observed": "engaged",
+      "repair_signal": false,
+      "previous_assistant_ref": "assistant:previous",
+      "hypothesis": {}
+    }
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "source_commit": "745c1c7b",
+  "portable_synced": false,
+  "state": "fresh sandbox; no seeded learned episodes",
+  "pipeline": "current assembler/handoff/grounding/RootAgent; isolated live HTTP adapter",
+  "source_hashes": {
+    "src\\runtime\\conversation\\agent.py": "ab9e3fc621e1b793a2bf37eb9aec7d25b9674f492a56e8421a216e67ad929cad",
+    "src\\runtime\\conversation\\root_prompt_contract.py": "d607f536b5b4f72153efc05197545519b4c81d3cf05e4fe91ba8bf4c10438a07",
+    "src\\runtime\\conversation\\social_situation.py": "6631f4ca031be72713857207715aff316f91756747ede452afdcf1bc36abcb62",
+    "src\\runtime\\source_grounding.py": "3fb655af6895b98120511779729a152912d89187bc94ceab5c3ad93eaac9f4f2"
+  }
+}

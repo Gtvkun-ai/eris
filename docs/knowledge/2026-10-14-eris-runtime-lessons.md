@@ -2465,3 +2465,18 @@ thích và khả năng tiếp nhận lời sửa; phân biệt câu hỏi ban đ
 ép cùng kiểu hỏi sau phản đối. “Kể tiếp đi” không tự tốt hơn hỏi có ý nghĩa.
 Không lấy ít câu hỏi/lời an ủi làm đích hoặc proxy tăng EQ. Xem đính chính
 cuối [nghiên cứu hiệu quả](2026-11-05-effective-eq-research.md).
+
+### Kiểm bản user mới 745c1c7b
+
+User đã thêm social prompt/evidence projection và điều chỉnh grounding,
+handoff. Đã chạy năm inference bằng các lớp source hiện tại với sandbox
+state và adapter live: 5/5 JSON move, đúng một Root call/case; 33 test liên
+quan pass. Lời sửa được nhận thành approach_feedback và lời đáp thay cách
+tham gia, giữ hài. Xả bực đầu tiên vẫn mở bằng phân loại vấn đề Kiro; chưa
+chứng minh chú ý tới trải nghiệm trước hoặc EQ tăng ổn định. Không chấm
+câu hỏi tự nó là lỗi. Debug và đùa phù hợp mục đích ở các mẫu đã xem.
+
+Không phải full portable test hay A/B; không seed experience P2, không TTS,
+không sync/deploy, không đổi code production của user. Một lint B010 cũ
+tái hiện trên parent. Xem chi tiết và giới hạn trong
+[kiểm live source mới](2026-11-05-social-eq-root-p0-p2.md).

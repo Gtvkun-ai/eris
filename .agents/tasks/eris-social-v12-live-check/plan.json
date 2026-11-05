@@ -1,0 +1,43 @@
+[
+  {
+    "case": "vent",
+    "history": [],
+    "user_text": "tức điên luôn. nãy giao cho kiro làm code, mà nó làm loay hoay si đa, bực bội vl"
+  },
+  {
+    "case": "repair",
+    "history": [
+      {
+        "role": "user",
+        "content": "Kiro làm tôi bực quá."
+      },
+      {
+        "role": "assistant",
+        "content": "Nó sai ở module nào? Anh gửi brief và log để tôi xem nhé.",
+        "delivery_status": "delivered"
+      }
+    ],
+    "user_text": "Tôi chỉ đang tâm sự mà, sao bạn cứ hỏi kỹ thuật vậy?"
+  },
+  {
+    "case": "debug",
+    "history": [],
+    "user_text": "Kiro sửa code bị crash lúc đăng nhập. Giờ giúp tôi tìm lỗi nhé; cần tôi gửi thông tin gì?"
+  },
+  {
+    "case": "discouraged",
+    "history": [],
+    "user_text": "Tối nào cũng tập đàn mà nghe vẫn dở. Hôm nay hết muốn đụng vào nó luôn."
+  },
+  {
+    "case": "banter",
+    "history": [
+      {
+        "role": "assistant",
+        "content": "Tôi đang trông nhà cho đống tab của anh đây.",
+        "delivery_status": "delivered"
+      }
+    ],
+    "user_text": "Nhớ tưới nước cho chúng, tab nào héo thì đem phơi nắng :))"
+  }
+]

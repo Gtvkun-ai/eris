@@ -1,0 +1,23 @@
+{
+  "calls": 5,
+  "http200": 5,
+  "json_objects": 5,
+  "single_root_call_each": true,
+  "http_total_seconds": 21.485,
+  "offline_tests_passed": 33,
+  "lint": "one pre-existing B010 in conversation_handoff.py, reproduced in parent",
+  "assessments": {
+    "vent": "mixed: starts with debugging categories, then shares frustration; question itself is not failure",
+    "repair": "good: acknowledges specific mismatch, changes approach, keeps humor",
+    "debug": "good task fit: relevant diagnostic evidence requested",
+    "discouraged": "mixed: recognizes effort/frustration, then technical/expression probe; broad reassurance not individually verified",
+    "banter": "good: plays along without diagnosing literal instruction"
+  },
+  "limitations": [
+    "one sample per case",
+    "fresh sandbox, not historical Self replay or matched A/B",
+    "no P2 learned examples seeded",
+    "no voice/delivery/portable test",
+    "HTTP adapter bypasses provider routing/session bootstrap"
+  ]
+}
