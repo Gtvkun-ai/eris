@@ -2480,3 +2480,9 @@ Không phải full portable test hay A/B; không seed experience P2, không TTS,
 không sync/deploy, không đổi code production của user. Một lint B010 cũ
 tái hiện trên parent. Xem chi tiết và giới hạn trong
 [kiểm live source mới](2026-11-05-social-eq-root-p0-p2.md).
+
+### Cập nhật 05/11: loại trừ cửa sổ Live2D khỏi telemetry tự soi
+
+- **Hiện tượng**: Khi mở Eris với Live2D avatar trên desktop trống, Root Agent nhận diện `open_windows: ["Eris Live2D"]` như một cửa sổ ứng dụng người dùng đang mở, dẫn tới việc tự giễu "cái cửa sổ đang mở duy nhất trên máy là tôi, tự nhìn mình cũng hơi kỳ".
+- **Nguyên nhân**: `_self_window_titles()` trong `src/telemetry/system.py` trước đây chỉ chứa `{"eris"}` (cửa sổ Godot), bỏ sót title `"Eris Live2D"` của renderer GLFW.
+- **Khắc phục**: Đã cập nhật `_self_window_titles()` thêm `"eris live2d"` và mở rộng `_is_self_window()` nhận diện các title tiền tố `eris ` / `eris:`. Thêm unit test `test_v60_self_window_filtering_filters_godot_and_live2d` (pass 11/11), build và sync sang dev output.

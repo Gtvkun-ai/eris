@@ -296,3 +296,19 @@ def test_v60_high_actionability_meaning_can_wake_temporal_mind_without_raw_level
     )
     assert decision.wake is True
     assert decision.dominant_kind == "environment_meaning"
+
+
+def test_v60_self_window_filtering_filters_godot_and_live2d():
+    from telemetry.system import _is_self_window, _self_window_titles
+
+    titles = _self_window_titles()
+    assert "eris" in titles
+    assert "eris live2d" in titles
+
+    assert _is_self_window("Eris") is True
+    assert _is_self_window("Eris Live2D") is True
+    assert _is_self_window("eris live2d") is True
+    assert _is_self_window("Eris: Settings") is True
+    assert _is_self_window("Visual Studio Code") is False
+    assert _is_self_window("Google Chrome") is False
+    assert _is_self_window("Desktop") is False

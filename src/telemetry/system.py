@@ -28,7 +28,7 @@ def _self_window_titles() -> set[str]:
     override qua ERIS_SELF_WINDOW_TITLES (ngăn cách bằng dấu phẩy).
     """
     raw = os.environ.get("ERIS_SELF_WINDOW_TITLES", "").strip()
-    titles = {"eris"}
+    titles = {"eris", "eris live2d"}
     for part in raw.split(","):
         cleaned = part.strip().lower()
         if cleaned:
@@ -37,7 +37,14 @@ def _self_window_titles() -> set[str]:
 
 
 def _is_self_window(title: str) -> bool:
-    return title.strip().lower() in _self_window_titles()
+    cleaned = title.strip().lower()
+    if not cleaned:
+        return False
+    if cleaned in _self_window_titles():
+        return True
+    if cleaned.startswith("eris ") or cleaned.startswith("eris:"):
+        return True
+    return False
 
 
 def _ensure_com_initialized() -> None:

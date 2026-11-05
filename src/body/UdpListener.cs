@@ -1523,6 +1523,7 @@ public partial class UdpListener : Node2D
 	{
 		if (_chatPanel != null)
 			_chatPanel.Visible = false;
+		_chatInput?.ReleaseFocus();
 		UpdateMousePassthrough();
 	}
 
@@ -4091,7 +4092,7 @@ public partial class UdpListener : Node2D
 		if (string.IsNullOrEmpty(msg)) return;
 		_chatInput.Text = "";
 		SendUserChatMessage(msg);
-		_chatInput.GrabFocus();
+		CloseChatPanel();
 	}
 
 	private void SendUserChatMessage(string msg)
