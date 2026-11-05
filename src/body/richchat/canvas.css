@@ -6,3 +6,24 @@
 @media(max-width:970px){.rail{display:none}.workspace{grid-template-columns:minmax(260px,.88fr) minmax(330px,1.12fr)}}
 @media(max-width:710px){.shell{min-height:0}.toolbar{padding:15px}.toolbar h2{font-size:19px}.toolbar .eyebrow{font-size:9px}.chat-link{display:none}.tools .button{padding:9px 11px}.mobile-modes{display:flex;gap:7px;background:var(--paper);padding:10px 15px;border-bottom:1px solid var(--line)}.mobile-modes button{border:1px solid var(--line);border-radius:9px;padding:9px 15px;background:#fff;font-size:12px;color:var(--muted)}.mobile-modes button.active{background:var(--blush);color:var(--pink);border-color:#e3b4d1}.workspace{display:flex;padding:10px;gap:0}.map-column,.detail-column{flex:1;min-width:0}.workspace:not(.detail-mode) .detail-column{display:none}.workspace.detail-mode .map-column{display:none}.map-layers{gap:40px}.detail{padding:20px}.footer{padding:12px 14px}.footer span:last-child{display:none}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important}}
+
+/* P3 - thành phần khám phá kiến thức; không sử dụng cùng màu mastery. */
+.topic-switch{display:flex;flex-direction:column;gap:9px;margin-bottom:18px}
+.topic-switch select,.topic-switch input,.branch-input,.branch-summary{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:11px 12px;font-size:12px}
+.topic-form{display:flex;flex-direction:column;gap:7px}.topic-form .button{width:100%}
+.node-state.exploring{background:#dfeaff;color:#355c94}
+.draft-warning{font-size:12px;color:#5c6885;background:#edf3ff;padding:12px;border-radius:10px;line-height:1.6}
+.graph-children{display:flex;gap:9px;flex-wrap:wrap}.branch-form{display:flex;flex-direction:column;gap:11px;margin-top:26px;border-top:1px solid var(--line);padding-top:10px}
+.branch-form .section-title{margin:15px 0 3px}.branch-summary{resize:vertical;min-height:72px}.branch-form .button{align-self:flex-start}
+@media(max-width:970px){.topic-switch{margin:10px 0}}
+
+/* Bộ chuyển chủ đề luôn nằm ở main: mobile vẫn có thể mở bản đồ mới. */
+.graph-controls{background:var(--paper);border-bottom:1px solid var(--line);padding:10px clamp(20px,3vw,44px)}
+.graph-controls .topic-switch{margin:0;flex-direction:row;align-items:center;flex-wrap:wrap;gap:10px}
+.graph-controls .label{white-space:nowrap}
+.graph-controls select{width:min(275px,45vw)}
+.graph-controls .topic-form{flex-direction:row;flex:1;min-width:220px;max-width:450px}
+.graph-controls .topic-form .button{width:auto;flex:none}
+@media(max-width:710px){.graph-controls{padding:10px 14px}.graph-controls .topic-switch{gap:7px}.graph-controls .label{width:100%}.graph-controls select{width:100%}.graph-controls .topic-form{min-width:0;max-width:none;width:100%}.graph-controls .topic-form .button{padding:9px 11px}}
+
+.legend.hidden-by-mode{display:none}

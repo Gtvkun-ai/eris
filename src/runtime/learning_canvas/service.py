@@ -9,6 +9,7 @@ import threading
 import time
 from runtime.learning_core.records import digest
 
+from .graph import GraphWorkspace
 from .focus import CanvasFocusStore
 from .pack import load_pack, register_pack
 from .snapshot import build_snapshot
@@ -22,6 +23,8 @@ class LearningCanvasService:
         self.pack = pack or load_pack()
         register_pack(learning, self.pack)
         self.focus = CanvasFocusStore(store, self.pack)
+        # P3 là đồ thị khám phá độc lập; không gán mastery cho nút do người/AI thêm.
+        self.graphs = GraphWorkspace(store, legacy_group_id=self.pack.group_id)
         self._lock = threading.RLock()
         self._requests: OrderedDict[str, tuple[str, dict]] = OrderedDict()
         self.on_event = None
@@ -40,6 +43,7 @@ class LearningCanvasService:
         focus = self.focus.snapshot()
         result = build_snapshot(self.learning, self.pack, focus, detail_node_id=detail_node_id)
         result["playback_stream_id"] = self.playback.stream_id
+        result["graph_workspace"] = self.graphs.snapshot()
         playback = self.playback.snapshot()
         if playback:
             result["playback"] = playback
@@ -120,9 +124,25 @@ class LearningCanvasService:
                     if previous != fingerprint:
                         raise ValueError("canvas_request_id_reused")
                     return copy.deepcopy(response)
-                if request.get("group_id", self.pack.group_id) != self.pack.group_id:
+                # P3: graph actions có revision riêng để không đụng focus/điểm học Java.
+                graph_actions = {"graph_create", "graph_select", "graph_expand"}
+                if action not in graph_actions and request.get("group_id", self.pack.group_id) != self.pack.group_id:
                     raise ValueError("unknown_canvas_group")
-                if action == "navigate":
+                if action == "graph_create":
+                    graph = self.graphs.create(request.get("title"),
+                        base_revision=request.get("base_graph_revision"))
+                    envelope["graph_update"] = {"group_id": graph["group_id"],
+                        "node_id": graph["selected_node_id"]}
+                elif action == "graph_select":
+                    self.graphs.select(request.get("group_id"), node_id=request.get("node_id", ""),
+                        base_revision=request.get("base_graph_revision"))
+                elif action == "graph_expand":
+                    children = self.graphs.expand(request.get("group_id"), request.get("parent_id"),
+                        [{"title": request.get("title"), "summary": request.get("summary", "")}],
+                        base_revision=request.get("base_graph_revision"))
+                    envelope["graph_update"] = {"group_id": request.get("group_id"),
+                        "node_id": children[0]["id"]}
+                elif action == "navigate":
                     with self.navigation_guard() if callable(self.navigation_guard) else nullcontext():
                         self.focus.navigate(request.get("node_id"), base_revision=request.get("base_revision"))
                 elif action == "exercise":
@@ -151,11 +171,20 @@ class LearningCanvasService:
                 self._requests[request_id] = (fingerprint, copy.deepcopy(envelope))
                 while len(self._requests) > 128:
                     self._requests.popitem(last=False)
+                if action in {"graph_create", "graph_expand", "graph_select"} and callable(self.on_event):
+                    # Root có thể đề xuất bài giảng / mở rộng thêm, không có quyền tự chấm mastery.
+                    graph_state = envelope["learning_canvas"]["graph_workspace"]
+                    current = graph_state.get("graph") or {}
+                    self.on_event({"action": action, "node_id": focus["node_id"],
+                        "focus_revision": focus["focus_revision"],
+                        "graph_group_id": graph_state["selected_group_id"],
+                        "graph_node_id": current.get("selected_node_id", ""),
+                        "graph_title": current.get("title", "")})
                 if action == "navigate" and callable(self.on_event):
                     self.on_event({"action": "navigate", "node_id": focus["node_id"],
                                    "focus_revision": focus["focus_revision"], "learning_canvas": envelope["learning_canvas"]})
             except (ValueError, TypeError) as exc:
                 reason = str(exc) if isinstance(exc, ValueError) else "invalid_canvas_request"
-                envelope.update(status="conflict" if reason == "stale_canvas_revision" else "error", message=reason)
+                envelope.update(status="conflict" if reason in {"stale_canvas_revision", "stale_graph_revision"} else "error", message=reason)
                 envelope["learning_canvas"] = self._snapshot(detail_node_id=self.focus.snapshot()["node_id"])
             return envelope

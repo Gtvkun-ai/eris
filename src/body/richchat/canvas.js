@@ -6,6 +6,7 @@
   const state = {
     snapshot: null, selected: '', mode: 'map', pending: null, desiredNode: '',
     details: new Map(), activities: new Map(), drafts: new Map(), answers: new Map(),
+    graphDrafts: new Map(),
     playback: null, playbackSeq: -1, playbackStream: '',
     lastVersion: -1, lastPoll: 0, lastExercisePoll: 0, lastCause: '',
     busy: false, bootstrapped: false, status: 'Đang kết nối với Eris...', offline: false,
@@ -17,7 +18,24 @@
     if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
   }
-  function nodeById(id) {return (state.snapshot?.nodes || []).find(n => n.id === id);}
+  function workspace() {return state.snapshot?.graph_workspace;}
+  function graph() {return workspace()?.graph || null;}
+  function graphMode() {return !!graph() && workspace()?.selected_group_id !== state.snapshot?.group_id;}
+  function activeNodes() {
+    if (!graphMode()) return state.snapshot?.nodes || [];
+    const nodes = graph().nodes || [];
+    const byKey = new Map(nodes.map(n => [n.id,n]));
+    const depths = new Map();
+    const level = id => {
+      if (depths.has(id)) return depths.get(id);
+      const node = byKey.get(id);
+      const depth = node?.parent_id && byKey.has(node.parent_id) ? level(node.parent_id) + 1 : 0;
+      depths.set(id,depth);return depth;
+    };
+    return nodes.map(n => ({...n, level:level(n.id), state:'exploring',
+      prerequisites:n.parent_id ? [n.parent_id] : []}));
+  }
+  function nodeById(id) {return activeNodes().find(n => n.id === id);}
   function currentActivity() {return state.activities.get(state.selected);}
   function setStatus(value) {state.status = value; byId('status').textContent = value;}
   function errMessage(reason) {
@@ -25,7 +43,12 @@
       stale_canvas_revision:'Bản đồ đã được Eris cập nhật. Hãy chọn lại kiến thức.',
       canvas_focus_changed:'Eris vừa đổi trọng tâm học. Vui lòng thử lại.',
       canvas_exercise_running:'Bài Java vẫn đang chạy.',
-      canvas_submission_budget_exceeded:'Bạn đã dùng hết lượt nộp bài này.'
+      canvas_submission_budget_exceeded:'Bạn đã dùng hết lượt nộp bài này.',
+      stale_graph_revision:'Đồ thị đã đổi ở cửa sổ khác. Hãy thử thao tác lại.',
+      graph_group_limit:'Đã đạt giới hạn số bản đồ trong P3.',
+      graph_node_limit:'Nhánh này đã đạt giới hạn nút của bản P3.',
+      graph_payload_limit:'Nội dung bản đồ đã quá lớn cho một lượt đồng bộ.',
+      duplicate_graph_child:'Đã có nhánh trùng tên trong cùng một nút cha.'
     };
     return known[reason] || reason || 'Không thể đồng bộ. Hãy thử lại.';
   }
@@ -38,7 +61,8 @@
     const request_id = requestId();
     const packet = {request_id, action, ...fields};
     if (action !== 'open') packet.base_revision = state.snapshot.focus.revision;
-    state.pending = {request_id, action, started: Date.now()};
+    if (action.startsWith('graph_')) packet.base_graph_revision = workspace()?.revision ?? 0;
+    state.pending = {request_id, action, fields, started: Date.now()};
     setStatus('Đang đồng bộ với Eris...');
     renderButtons();
     try {
@@ -94,8 +118,11 @@
           state.playback = null;
         }
         observePlayback(snapshot.playback);
-        if (!state.pending || state.pending.action !== 'navigate')
+        if (graphMode()) {
+          state.selected = graph()?.selected_node_id || state.selected;
+        } else if (!state.pending || state.pending.action !== 'navigate') {
           state.selected = snapshot.focus.node_id || state.selected;
+        }
         if (previous?.focus.node_id !== snapshot.focus.node_id && !state.pending)
           state.mode = 'detail';
         const cause = snapshot.focus.cause_id;
@@ -111,10 +138,11 @@
     if (state.pending) {
       const ack = (payload.acks || []).find(a => a.request_id === state.pending.request_id);
       if (ack) {
-        const action = state.pending.action;
+        const {action,fields} = state.pending;
         state.pending = null;
         if (ack.status === 'ok') {
-          setStatus('Đã đồng bộ · Tiến độ được xác nhận từ bài làm');
+          if (action === 'graph_expand') state.graphDrafts.delete(fields.parent_id);
+          setStatus(action.startsWith('graph_') ? 'Đã lưu bản đồ khám phá · chưa chấm mastery' : 'Đã đồng bộ · Tiến độ được xác nhận từ bài làm');
         } else {
           setStatus(errMessage(ack.message || ack.status));
           if (action === 'navigate') state.selected = state.snapshot?.focus?.node_id || state.selected;
@@ -166,6 +194,9 @@
   }
   function renderButtons() {
     byId('refresh').disabled = !!state.pending;
+    byId('topicSelect').disabled = !!state.pending;
+    byId('newTopicTitle').disabled = !!state.pending;
+    byId('newTopicButton').disabled = !!state.pending;
     document.querySelectorAll('[data-action]').forEach(node => {node.disabled = !!state.pending || node.dataset.disabled === 'true';});
   }
   function chooseNode(id) {
@@ -179,6 +210,11 @@
     }
     state.desiredNode = '';
     render();
+    if (graphMode()) {
+      if (id !== graph()?.selected_node_id)
+        send('graph_select',{group_id:graph().group_id,node_id:id});
+      return;
+    }
     const focus = state.snapshot?.focus?.node_id;
     if (id !== focus) send('navigate', {node_id:id});
     else if (!state.details.has(id)) send('open', {node_id:id});
@@ -186,7 +222,7 @@
   function renderMap() {
     const map = byId('map');
     map.replaceChildren();
-    const nodes = state.snapshot?.nodes || [];
+    const nodes = activeNodes();
     byId('nodeCount').textContent = nodes.length ? `${nodes.length} kiến thức` : '—';
     if (!nodes.length) {map.append(el('div','placeholder','Chưa có bản đồ. Nhấn Làm mới để tải lại.')); return;}
     const levels = [...new Set(nodes.map(n => n.level || 0))].sort((a,b) => a-b);
@@ -201,7 +237,8 @@
         btn.type = 'button';btn.dataset.node = n.id;btn.setAttribute('aria-pressed',String(selected));
         btn.append(el('span','node-top',n.title));
         const foot = el('div','node-foot');
-        foot.append(el('span','node-state '+(labels[n.state] ? n.state:'available'),labels[n.state] || 'Có thể học'));
+        foot.append(el('span','node-state '+(graphMode() ? 'exploring' : (labels[n.state] ? n.state:'available')),
+          graphMode() ? (n.origin === 'eris_proposed' ? 'Eris đề xuất' : 'Đang khám phá') : (labels[n.state] || 'Có thể học')));
         if (n.due) foot.append(el('span','node-hint','Đến hạn ôn'));
         else if (state.snapshot.focus?.suggested_node_id === n.id) foot.append(el('span','node-hint','Eris gợi ý ↗'));
         else if (n.result_count) foot.append(el('span','node-count',`${n.result_count} kết quả`));
@@ -225,7 +262,7 @@
     const position = (rect, bottom) => ({x:rect.left - view.left + viewport.scrollLeft + rect.width/2,
       y:(bottom ? rect.bottom : rect.top) - view.top + viewport.scrollTop});
     const ns = 'http://www.w3.org/2000/svg';
-    for (const n of state.snapshot.nodes) {
+    for (const n of activeNodes()) {
       const dest = rects.get(n.id);if (!dest) continue;
       for (const id of n.prerequisites || []) {
         const source = rects.get(id);if (!source) continue;
@@ -318,14 +355,65 @@
     const oldEditor = byId('codeEditor');
     const focused = document.activeElement === oldEditor;
     const selection = focused ? [oldEditor.selectionStart,oldEditor.selectionEnd] : null;
+    // P3: nếu backend cập nhật giữa lúc người dùng đang gõ, giữ vị trí con trỏ.
+    const graphInput = document.activeElement?.matches?.('.branch-input,.branch-summary')
+      ? document.activeElement : null;
+    const graphField = graphInput?.classList.contains('branch-input') ? 'title' : 'summary';
+    const graphSelection = graphInput ? [graphInput.selectionStart,graphInput.selectionEnd] : null;
     if (oldEditor && currentActivity()) state.drafts.set(currentActivity().activity_id,oldEditor.value);
     container.replaceChildren();
     const node = nodeById(state.selected);
-    byId('focusState').textContent = node ? labels[node.state] || 'Có thể học' : '—';
+    byId('focusState').textContent = node ? (graphMode() ? 'Nhánh khám phá' : labels[node.state] || 'Có thể học') : '—';
     if (!node) {addText(container,'div','placeholder','Chọn một nút trên bản đồ để đọc nội dung và luyện tập.');return;}
     const head = el('div','detail-head');container.append(head);
     addText(head,'span','eyebrow','KIẾN THỨC / '+(node.level + 1));
     addText(head,'h3','',node.title);
+    if (graphMode()) {
+      addText(head,'p','summary',node.summary || 'Chủ đề này đang được mở rộng. Chưa có bài giảng đã kiểm chứng.');
+      addText(head,'p','draft-warning',node.origin === 'eris_proposed'
+        ? 'Nhánh do Eris đề xuất · cần kiểm chứng trước khi dùng để đánh giá trình độ.'
+        : 'Nhánh khám phá · không tự động tính mastery.');
+      const parent = node.parent_id && nodeById(node.parent_id);
+      if (parent) {
+        const back = actionButton(head,'← '+parent.title,'graph_select');
+        back.addEventListener('click',()=>chooseNode(parent.id));
+      }
+      const children = activeNodes().filter(n=>n.parent_id===node.id);
+      if (children.length) {
+        addText(container,'h4','section-title','Nhánh liên quan');
+        const childRow = el('div','graph-children');container.append(childRow);
+        for (const child of children) {
+          const childButton = actionButton(childRow,child.title,'graph_select');
+          childButton.addEventListener('click',()=>chooseNode(child.id));
+        }
+      }
+      const form = el('form','branch-form');
+      form.append(addText(form,'label','section-title','Mở rộng kiến thức từ nút này'));
+      const topicInput = el('input','branch-input');topicInput.maxLength=120;
+      topicInput.placeholder='Tên nhánh con...';topicInput.required=true;
+      topicInput.setAttribute('aria-label','Tên nhánh kiến thức');form.append(topicInput);
+      const saved = state.graphDrafts.get(node.id) || {title:'',summary:''};
+      topicInput.value = saved.title;
+      topicInput.addEventListener('input',()=>state.graphDrafts.set(node.id,
+        {title:topicInput.value,summary:summaryInput.value}));
+      const summaryInput = el('textarea','branch-summary');summaryInput.maxLength=240;summaryInput.rows=3;
+      summaryInput.placeholder='Ghi chú hoặc câu hỏi (không bắt buộc)...';
+      summaryInput.setAttribute('aria-label','Ghi chú nhánh kiến thức');form.append(summaryInput);
+      summaryInput.value = saved.summary;
+      summaryInput.addEventListener('input',()=>state.graphDrafts.set(node.id,
+        {title:topicInput.value,summary:summaryInput.value}));
+      const submit = actionButton(form,'+ Thêm nhánh','graph_expand',false,true);submit.type='submit';
+      form.addEventListener('submit',e=>{e.preventDefault();if (!topicInput.value.trim()) return;
+        send('graph_expand',{group_id:graph().group_id,parent_id:node.id,
+          title:topicInput.value.trim(),summary:summaryInput.value.trim()});
+      });
+      container.append(form);
+      if (graphInput) {
+        const target = graphField === 'title' ? topicInput : summaryInput;
+        target.focus();target.setSelectionRange(...graphSelection);
+      }
+      renderButtons();return;
+    }
     if (node.prerequisite_warnings?.length) {
       addText(head,'div','warning','Nên ôn trước: '+node.prerequisite_warnings.map(id=>nodeById(id)?.title||id).join(', ')+'. Bạn vẫn có thể học phần này.');
     }
@@ -363,9 +451,19 @@
   }
   function render() {
     const snap=state.snapshot;
-    byId('pathTitle').textContent = snap?.title || 'Dependency Injection · Java';
-    byId('pin').textContent = snap?.focus?.pinned ? 'Đã ghim' : 'Theo Eris';
-    byId('assessment').textContent = 'Theo dõi từ bài làm thực tế';
+    byId('pathTitle').textContent = graphMode() ? graph().title : (snap?.title || 'Dependency Injection · Java');
+    byId('workspaceType').textContent = graphMode() ? 'ERIS / TRI THỨC MỞ' : 'ERIS TUTOR / JAVA';
+    byId('learningLegend').classList.toggle('hidden-by-mode',graphMode());
+    const groupSelect = byId('topicSelect');
+    const items = workspace()?.groups || [{group_id:'java-di',title:'Java · Dependency Injection'}];
+    const signature = items.map(item => item.group_id+'|'+item.title).join(';');
+    if (groupSelect.dataset.signature !== signature) {
+      groupSelect.replaceChildren(...items.map(item=>{const opt=el('option','',item.title);opt.value=item.group_id;return opt;}));
+      groupSelect.dataset.signature=signature;
+    }
+    groupSelect.value=workspace()?.selected_group_id || snap?.group_id || 'java-di';
+    byId('pin').textContent = graphMode() ? 'Chế độ khám phá' : (snap?.focus?.pinned ? 'Đã ghim' : 'Theo Eris');
+    byId('assessment').textContent = graphMode() ? 'Bản đồ mở · chưa chấm mastery' : 'Theo dõi từ bài làm thực tế';
     const mobile=state.mode==='detail';
     byId('workspace').classList.toggle('detail-mode', mobile);
     byId('mapTab').classList.toggle('active',!mobile);
@@ -375,6 +473,17 @@
     renderMap();renderDetail();renderSpeaking();renderButtons();
   }
   byId('refresh').addEventListener('click',()=>send('open'));
+  byId('topicSelect').addEventListener('change',event=>{
+    if (!state.snapshot) return;
+    send('graph_select',{group_id:event.target.value});
+  });
+  byId('newTopicForm').addEventListener('submit',event=>{
+    event.preventDefault();
+    const input=byId('newTopicTitle');
+    if (!input.value.trim()) return;
+    send('graph_create',{title:input.value.trim()});
+    input.value='';
+  });
   byId('mapTab').addEventListener('click',()=>{state.mode='map';render();});
   byId('detailTab').addEventListener('click',()=>{state.mode='detail';render();});
   window.addEventListener('resize',()=>requestAnimationFrame(drawConnections));

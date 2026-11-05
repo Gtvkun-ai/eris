@@ -83,7 +83,14 @@ TOOL_GUIDES: dict[str, str] = {'rich_chat': 'Rich Chat P1 tự dựng document_s
 
 
 TOOL_GUIDES["canvas"] = (
-    "Capability canvas: operation=library liệt kê nhóm và ID thật; operation=open_group,group_id mở nhóm native Godot. "
+    "Capability canvas P3: operation=library liệt kê nhóm và ID thật; operation=open_group,group_id=java-di mở Learning Canvas. "
+    "operation=graph_create,title tạo bản đồ khám phá mới (không tự chuyển màn hình); "
+    "operation=graph_expand,group_id,parent_id,nodes=[{title,summary?},...] bổ sung tối đa 8 nhánh đề xuất; "
+    "operation=graph_select,group_id,node_id? chỉ đổi bản đồ hiển thị khi phù hợp yêu cầu hiện tại. "
+    "Lấy ID thật từ library/graph_workspace snapshot, không tự bịa ID. "
+    "Nếu event tutor_result có canvas_action=graph_create hoặc graph_expand, người học đang mở/đào sâu một chủ đề: "
+    "có thể đề xuất nhánh liên quan bằng graph_expand nhưng không ép học. Các nhánh eris_proposed là bản nháp, "
+    "không phải bằng chứng, không tự đăng ký lộ trình hoặc gán mastery. Tránh lặp nhánh hay bịa nguồn. "
     "operation=snapshot đọc focus, trạng thái và block Java/giải thích; operation=focus,node_id đề xuất focus. "
     "Tôn trọng lựa chọn ghim của user. focus trả applied=false,reason=user_pinned thì chỉ đánh dấu gợi ý, không tự kéo panel. "
     "User bấm nút được gợi ý sẽ chấp nhận/bỏ ghim. operation=accept_focus,node_id,base_revision chỉ dùng khi "

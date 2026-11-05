@@ -48,13 +48,25 @@ public partial class UdpListener
         string action = ReadJsonString(request, "action");
         string requestId = ReadJsonString(request, "request_id");
         if (requestId.Length < 8 || requestId.Length > 120 ||
-            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus" }.Contains(action))
+            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus", "graph_create", "graph_select", "graph_expand" }.Contains(action))
             return false;
         var packet = new Dictionary<string, object>
         {
-            ["type"] = "learning_canvas_request", ["group_id"] = "java-di",
+            ["type"] = "learning_canvas_request",
             ["action"] = action, ["request_id"] = requestId
         };
+        // Giữ Java DI làm nhóm mặc định cho giao thức P0-P2; graph actions dùng group_id từ UI.
+        string groupId = ReadJsonString(request, "group_id");
+        if (action.StartsWith("graph_", StringComparison.Ordinal))
+        {
+            if (action != "graph_create" && (groupId.Length < 1 || groupId.Length > 120)) return false;
+            if (groupId.Length > 0) packet["group_id"] = groupId;
+            if (!request.TryGetProperty("base_graph_revision", out var graphRev) ||
+                graphRev.ValueKind != JsonValueKind.Number || !graphRev.TryGetInt64(out long graphRevision) || graphRevision < 0)
+                return false;
+            packet["base_graph_revision"] = graphRevision;
+        }
+        else packet["group_id"] = "java-di";
         if (action != "open")
         {
             if (!request.TryGetProperty("base_revision", out var rev) ||
@@ -62,16 +74,18 @@ public partial class UdpListener
                 return false;
             packet["base_revision"] = revision;
         }
-        string[] stringFields = { "node_id", "exercise_id", "activity_id", "nonce", "answer", "code", "cause_id" };
+        string[] stringFields = { "node_id", "exercise_id", "activity_id", "nonce", "answer", "code", "cause_id", "parent_id", "title", "summary" };
         foreach (string field in stringFields)
         {
             if (!request.TryGetProperty(field, out var value)) continue;
             if (value.ValueKind != JsonValueKind.String) return false;
             string text = value.GetString() ?? "";
-            int maxBytes = field == "code" ? 12_000 : field == "answer" ? 800 : 200;
+            int maxBytes = field == "code" ? 12_000 : field == "answer" ? 800 : field == "summary" ? 800 : field == "title" ? 480 : 200;
             if (Encoding.UTF8.GetByteCount(text) > maxBytes) return false;
             packet[field] = text;
         }
+        if (action == "graph_create" && !packet.ContainsKey("title")) return false;
+        if (action == "graph_expand" && (!packet.ContainsKey("title") || !packet.ContainsKey("parent_id"))) return false;
         if ((action is "navigate" or "exercise") && !packet.ContainsKey("node_id")) return false;
         if (action == "exercise" && !packet.ContainsKey("exercise_id")) return false;
         if ((action is "submit" or "hint" or "reveal" or "exercise_status") &&

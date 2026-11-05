@@ -20,14 +20,24 @@
       <h1>Learning<br/><em>Canvas.</em></h1>
       <p class="intro">Một lộ trình rõ ràng, mỗi khái niệm là một bước tiến.</p>
       <div class="rail-card"><span class="label">CHỦ ĐỀ HIỆN TẠI</span><strong id="pathTitle">Dependency Injection</strong><span id="assessment">Theo dõi từ bài làm thực tế</span></div>
-      <div class="legend" aria-label="Chú thích tiến độ"><span><i class="state available"></i> Có thể học</span><span><i class="state learning"></i> Đang học</span><span><i class="state practicing"></i> Đang luyện</span><span><i class="state mastered"></i> Đã vững</span></div>
+      <div class="legend" id="learningLegend" aria-label="Chú thích tiến độ"><span><i class="state available"></i> Có thể học</span><span><i class="state learning"></i> Đang học</span><span><i class="state practicing"></i> Đang luyện</span><span><i class="state mastered"></i> Đã vững</span></div>
       <div class="rail-bottom"><a href="./">← Quay lại Rich Chat</a><p>Chỉ kết nối với ERIS trên thiết bị này.</p></div>
     </aside>
     <main class="main">
       <header class="toolbar">
-        <div><span class="eyebrow">ERIS TUTOR / JAVA</span><h2>Bản đồ kiến thức</h2></div>
+        <div><span class="eyebrow" id="workspaceType">ERIS TUTOR / JAVA</span><h2>Bản đồ kiến thức</h2></div>
         <div class="tools"><span class="pin" id="pin">Theo Eris</span><button id="refresh" class="button secondary" type="button" title="Tải lại Canvas">↻ Làm mới</button><a class="button secondary chat-link" href="./">Hội thoại ↗</a></div>
       </header>
+      <section class="graph-controls" aria-label="Không gian học mở">
+      <div class="topic-switch">
+        <label for="topicSelect" class="label">THƯ VIỆN CHỦ ĐỀ</label>
+        <select id="topicSelect" aria-label="Chuyển chủ đề kiến thức"><option value="java-di">Java · Dependency Injection</option></select>
+        <form id="newTopicForm" class="topic-form">
+          <input id="newTopicTitle" type="text" maxlength="120" placeholder="Mở chủ đề mới..." aria-label="Tên chủ đề mới" required />
+          <button type="submit" class="button" id="newTopicButton">+ Tạo bản đồ</button>
+        </form>
+      </div>
+      </section>
       <section class="speaking" id="speaking" aria-live="polite" hidden><span class="pulse"></span><span id="speakingText"></span><button id="speakingJump" class="text-button" type="button">Đến nội dung →</button></section>
       <div class="mobile-modes" role="tablist" aria-label="Chọn không gian hiển thị"><button type="button" id="mapTab" class="active" aria-selected="true">Bản đồ</button><button type="button" id="detailTab" aria-selected="false">Nội dung</button></div>
       <section class="workspace" id="workspace">
