@@ -198,6 +198,8 @@ class SpeechLocalizer:
     ) -> str:
         clean = _normalize_transcript(text)
         if not clean:
+            if str(text or "").strip():
+                return "コードを書いておいたよ。"
             return ""
 
         lang = str(language_hint or "auto").strip().lower()
@@ -581,6 +583,8 @@ def _normalize_transcript(text: str) -> str:
     """Giữ line break như nhịp thở, chỉ dọn khoảng trắng nội dòng."""
 
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = re.sub(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", "", raw, flags=re.S)
+    raw = re.sub(r"`[^`\n]*`", "", raw)
     lines = [" ".join(line.split()).strip() for line in raw.split("\n")]
     return "\n".join(line for line in lines if line).strip()
 

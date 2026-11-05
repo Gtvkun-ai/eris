@@ -69,6 +69,9 @@ class SanitizeResult:
     blocked_kinds: tuple[str, ...] = ()
 
 
+_CODE_FENCE_RE = re.compile(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", re.S)
+
+
 class FinalSurfaceSanitizer:
     def sanitize(self, text: str, *, surface: str = "display") -> SanitizeResult:
         raw = str(text or "")
@@ -76,7 +79,22 @@ class FinalSurfaceSanitizer:
             return SanitizeResult(raw)
 
         blocked: list[str] = []
-        secure = GLOBAL_SECURE_REDACTOR.text(raw)
+        code_blocks: list[str] = []
+        working = raw
+        if surface == "display" and ("```" in working or "~~~" in working):
+            def _save_code(m: re.Match[str]) -> str:
+                idx = len(code_blocks)
+                code_text = m.group(0)
+                # Vẫn ẩn secret nếu lộ trong code block
+                for pattern in _SECRET_PATTERNS:
+                    code_text, sec_cnt = pattern.subn("[đã ẩn bí mật]", code_text)
+                    if sec_cnt:
+                        blocked.append("secret")
+                code_blocks.append(code_text)
+                return f"\n__ERIS_SAN_CODE_{idx}__\n"
+            working = _CODE_FENCE_RE.sub(_save_code, working)
+
+        secure = GLOBAL_SECURE_REDACTOR.text(working)
         out = str(secure.value)
         blocked.extend(secure.blocked_kinds)
         if any(kind in {"google_api_key", "openai_api_key", "jwt", "bearer", "credential_assignment", "secret_query", "secret_field"} for kind in secure.blocked_kinds):
@@ -118,12 +136,25 @@ class FinalSurfaceSanitizer:
             return match.group(0)
 
         out = _STAGE_PAREN_RE.sub(stage_repl, out)
+
         blocked_kinds = tuple(dict.fromkeys(blocked))
         try:
             from runtime.hardening_metrics import record_surface_sanitizer
             record_surface_sanitizer(surface=surface, blocked_kinds=blocked_kinds)
         except Exception:
             pass
+
+        if surface == "display" and (code_blocks or "\n" in out):
+            clean_out = re.sub(r"[ \t\f\v]+", " ", out)
+            clean_out = re.sub(r" *\n *", "\n", clean_out)
+            clean_out = re.sub(r"\n{3,}", "\n\n", clean_out).strip()
+            for idx, cb in enumerate(code_blocks):
+                clean_out = clean_out.replace(f"__ERIS_SAN_CODE_{idx}__", cb.strip())
+            return SanitizeResult(clean_out, blocked_kinds)
+
+        if code_blocks:
+            for idx, cb in enumerate(code_blocks):
+                out = out.replace(f"__ERIS_SAN_CODE_{idx}__", cb.strip())
         return SanitizeResult(_squash(out), blocked_kinds)
 
 

@@ -123,6 +123,9 @@ def _final_safety_scrub(text: str) -> str:
     return text.strip()
 
 
+_CODE_BLOCK_RE = re.compile(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", re.S)
+
+
 def strip_math_for_speech(text: str) -> str:
     """Chuyển LaTeX/markdown trong ``text`` thành văn bản TTS đọc được.
 
@@ -131,7 +134,8 @@ def strip_math_for_speech(text: str) -> str:
     """
     if not text:
         return ""
-    out = _unwrap_math_delimiters(str(text))
+    cleaned = _CODE_BLOCK_RE.sub("", str(text))
+    out = _unwrap_math_delimiters(cleaned)
     out = _convert_math_commands(out)
     out = _strip_markdown(out)
     out = _final_safety_scrub(out)

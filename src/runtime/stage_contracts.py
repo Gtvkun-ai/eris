@@ -255,7 +255,7 @@ class StageFrameBuilder:
             # chuẩn hóa khoảng trắng hoặc lỗi schema, vẫn giữ bản JP gốc để
             # language guard kiểm tra độc lập ở public_output_artifact.
 
-        display_surfaces = self.transformers.transform(display_raw)
+        display_surfaces = self.transformers.transform(display_raw, language_hint=self.language_hint)
         user_text = str(payload.get("user_text", "") or "")
         delivery_hint = str(payload.get("delivery_hint", getattr(decision, "delivery_hint", "")) or "").strip()
         nonverbal_cue = str(
@@ -268,7 +268,7 @@ class StageFrameBuilder:
         if has_utterance_commit:
             # Canonical commit: sanitize each renderer surface independently.
             # Stage may remove markup/tags, but it may not translate or rewrite.
-            speech_surfaces = self.transformers.transform(speech_raw or display_raw)
+            speech_surfaces = self.transformers.transform(speech_raw or display_raw, language_hint=self.language_hint)
             merged_actions = tuple(dict.fromkeys(
                 tuple(display_surfaces.marks.actions)
                 + tuple(speech_surfaces.marks.actions)
