@@ -193,3 +193,20 @@ def test_bridge_and_web_rendering_are_whitelisted_and_text_only():
     assert "innerHTML" not in js
     assert "vendor/mathjax.js" in js
     assert "renderDynamicLesson(container,node)" in js
+
+
+def test_validate_lesson_accepts_options_and_explanation_in_check():
+    block = {
+        "kind": "check",
+        "title": "Trắc nghiệm nhanh",
+        "question": "Dependency là gì?",
+        "options": ["A. Đối tượng phụ thuộc", "B. Biến int", "C. Từ khóa return"],
+        "answer": "A",
+        "explanation": "Dependency là đối tượng mà đối tượng khác cần."
+    }
+    lesson = validate_lesson({"blocks": [block]}, group_id="topic-x", node_id="node-x", title="Demo")
+    res = lesson["blocks"][0]
+    assert res["kind"] == "check"
+    assert len(res["options"]) == 3
+    assert res["answer"] == "A"
+    assert res["explanation"] == "Dependency là đối tượng mà đối tượng khác cần."

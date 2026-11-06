@@ -446,14 +446,68 @@
         } else if (block.kind === 'check') {
           addText(card,'p','lesson-copy',block.question);
           const key=packet.content.group_id+'/'+packet.content.node_id+'/'+String((packet.content.blocks||[]).indexOf(block));
-          const revealed=state.lessonRevealed.has(key);
-          const show=actionButton(card,revealed?'Ẩn đáp án':'Xem lời giải','lesson_reveal');
-          show.addEventListener('click',()=>{
-            if (revealed) state.lessonRevealed.delete(key);else state.lessonRevealed.add(key);
-            renderDetail();
-          });
-          if (revealed) addText(card,'p','lesson-answer',block.answer);
-          addText(card,'p','lesson-caption','Tự kiểm tra · xem lời giải không được tính là đã thành thạo.');
+          let options = block.options;
+          if (!Array.isArray(options) || !options.length) {
+            const lines = (block.question || '').split('\n').map(l => l.trim()).filter(Boolean);
+            const optLines = lines.filter(l => /^[A-D][\.\:\)]\s+/i.test(l));
+            if (optLines.length >= 2) options = optLines;
+          }
+          const isRevealed = state.lessonRevealed.has(key);
+          if (Array.isArray(options) && options.length >= 2) {
+            const list = el('div','choice-list');card.append(list);
+            const userPick = state.answers.get(key) || '';
+            const checkAnswer = (pick) => {
+              const ans = (block.answer || '').trim().toLowerCase();
+              const p = String(pick || '').trim().toLowerCase();
+              const ansLetter = ans.match(/^([a-d])[\.\:\)]?/i)?.[1]?.toLowerCase() || ans;
+              const pickLetter = p.match(/^([a-d])[\.\:\)]?/i)?.[1]?.toLowerCase() || p;
+              if (ansLetter && pickLetter && ansLetter === pickLetter) return true;
+              return p === ans || (ans.length > 2 && p.includes(ans)) || (p.length > 2 && ans.includes(p));
+            };
+            for (const opt of options) {
+              const optId = typeof opt === 'object' ? opt.id : opt;
+              const optLabel = typeof opt === 'object' ? `${String(opt.id).toUpperCase()}. ${opt.text}` : opt;
+              const isSelected = userPick === optId;
+              let choiceClass = 'choice' + (isSelected ? ' selected' : '');
+              if (isSelected) {
+                choiceClass += checkAnswer(optId) ? ' correct' : ' incorrect';
+              }
+              const btn = el('button', choiceClass, optLabel);
+              btn.type = 'button';
+              btn.addEventListener('click', () => {
+                state.answers.set(key, optId);
+                renderDetail();
+              });
+              list.append(btn);
+            }
+            if (userPick) {
+              const isCorrect = checkAnswer(userPick);
+              const feedback = el('div', 'result ' + (isCorrect ? 'correct' : 'incorrect'));
+              feedback.textContent = isCorrect ? '✓ Chính xác!' : '✗ Chưa đúng rồi. Thử chọn lại nhé!';
+              if (isCorrect && block.explanation) {
+                const exp = el('p', 'lesson-caption', block.explanation);
+                feedback.append(exp);
+              }
+              card.append(feedback);
+            }
+            const actions = el('div','exercise-actions');card.append(actions);
+            const show = actionButton(actions, isRevealed ? 'Ẩn giải thích' : 'Xem giải thích', 'lesson_reveal');
+            show.addEventListener('click', () => {
+              if (isRevealed) state.lessonRevealed.delete(key); else state.lessonRevealed.add(key);
+              renderDetail();
+            });
+            if (isRevealed) {
+              addText(card, 'p', 'lesson-answer', 'Đáp án: ' + block.answer + (block.explanation ? (' — ' + block.explanation) : ''));
+            }
+          } else {
+            const show = actionButton(card, isRevealed ? 'Ẩn đáp án' : 'Xem lời giải', 'lesson_reveal');
+            show.addEventListener('click', () => {
+              if (isRevealed) state.lessonRevealed.delete(key); else state.lessonRevealed.add(key);
+              renderDetail();
+            });
+            if (isRevealed) addText(card, 'p', 'lesson-answer', block.answer + (block.explanation ? (' — ' + block.explanation) : ''));
+          }
+          addText(card,'p','lesson-caption','Tự kiểm tra · thực hành trực tiếp giúp ghi nhớ sâu.');
         }
       }
       if (hasMath) typesetLesson(section);

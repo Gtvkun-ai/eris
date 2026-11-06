@@ -26,7 +26,8 @@ SHORT_PROMPT = ("Soạn bài học ngắn, rõ, tiếng Việt. Chỉ JSON: "
     '{"kind":"steps","title":"...","items":["..."]},'
     '{"kind":"formula","title":"...","latex":"...","explanation":"..."},'
     '{"kind":"code","title":"...","language":"python","text":"..."},'
-    '{"kind":"check","title":"...","question":"...","answer":"..."}]}. '
+    '{"kind":"check","title":"Trắc nghiệm nhanh","question":"...","options":["A. ...","B. ...","C. ..."],"answer":"A","explanation":"..."}]}. '
+    "Ưu tiên có 1 block 'check' trắc nghiệm 3-4 phương án A/B/C/D để người học thực hành bấm chọn ngay. "
     "Chọn 2-5 block phù hợp chủ đề, không cần đủ loại; mỗi đoạn thật gọn. "
     "Không HTML, URL bịa, tài liệu giả, không tuyên bố người học đã hiểu. "
     "Mọi nội dung là bài học nháp, không phải kết quả chấm điểm.")
@@ -71,6 +72,12 @@ def validate_lesson(raw: dict, *, group_id: str, node_id: str, title: str) -> di
         elif kind == "check":
             block["question"] = _string(item.get("question"), 700)
             block["answer"] = _string(item.get("answer"), 900)
+            options = item.get("options")
+            if isinstance(options, list) and 2 <= len(options) <= 6:
+                block["options"] = [_string(v, 240) for v in options]
+            explanation = item.get("explanation")
+            if isinstance(explanation, str) and explanation.strip():
+                block["explanation"] = _string(explanation, 600, allow_empty=True)
         out.append(block)
     result = {"schema": "eris.learning.lesson.p4", "group_id": group_id,
               "node_id": node_id, "title": _string(title, 120), "blocks": out,
