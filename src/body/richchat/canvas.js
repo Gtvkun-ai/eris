@@ -226,6 +226,7 @@
     byId('newTopicButton').disabled = !!state.pending;
     document.querySelectorAll('[data-action]').forEach(node => {node.disabled = !!state.pending || node.dataset.disabled === 'true';});
   }
+  let navDebounce = null;
   function chooseNode(id) {
     if (!nodeById(id)) return;
     state.selected = id;
@@ -238,14 +239,18 @@
     }
     state.desiredNode = '';
     render();
-    if (graphMode()) {
-      if (id !== graph()?.selected_node_id)
-        send('graph_select',{group_id:graph().group_id,node_id:id});
-      return;
-    }
-    const focus = state.snapshot?.focus?.node_id;
-    if (id !== focus) send('navigate', {node_id:id});
-    else if (!state.details.has(id)) send('open', {node_id:id});
+    if (navDebounce) clearTimeout(navDebounce);
+    navDebounce = setTimeout(() => {
+      navDebounce = null;
+      if (graphMode()) {
+        if (id !== graph()?.selected_node_id)
+          send('graph_select',{group_id:graph().group_id,node_id:id});
+        return;
+      }
+      const focus = state.snapshot?.focus?.node_id;
+      if (id !== focus) send('navigate', {node_id:id});
+      else if (!state.details.has(id)) send('open', {node_id:id});
+    }, 120);
   }
   function renderMap() {
     const map = byId('map');
