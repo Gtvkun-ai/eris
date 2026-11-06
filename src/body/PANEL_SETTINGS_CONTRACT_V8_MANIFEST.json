@@ -3,7 +3,7 @@
   "runtime_schema": 14,
   "runtime_sections": 24,
   "runtime_fields": 196,
-  "credential_owners": ["main", "gemini", "groq", "elevenlabs"],
+  "credential_owners": ["main", "elevenlabs"],
   "surfaces": {
     "basic": "body_local",
     "voice": "brain_runtime:tts",

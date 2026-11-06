@@ -79,3 +79,64 @@ test('người dùng có thể xóa theo ngày mà không tác động Memory ha
   assert.doesNotMatch(fn,/(?:MemoryService|LearningService|mentor\/learning|_memoryPanel)/);
   assert.match(fn,/_conversationState is "thinking"/);
 });
+
+test('formatMarkdownTranscript tạo Markdown chuẩn có ngày giờ và nội dung',()=>{
+  const mdEmpty=U.formatMarkdownTranscript([]);
+  assert.match(mdEmpty,/# Eris — Hội thoại/);
+
+  const messages=[
+    {role:'user',date:'2026-11-06',time:'22:00',text:'Chào Eris!'},
+    {role:'assistant',date:'2026-11-06',time:'22:01',text:'Chào bạn, mình ở đây.'}
+  ];
+  const md=U.formatMarkdownTranscript(messages);
+  assert.match(md,/# Eris Conversation Transcript/);
+  assert.match(md,/### \[Bạn\] \(2026-11-06 22:00\)/);
+  assert.match(md,/Chào Eris!/);
+  assert.match(md,/### \[Eris\] \(2026-11-06 22:01\)/);
+  assert.match(md,/Chào bạn, mình ở đây\./);
+});
+
+test('Rich Chat Settings Modal có đầy đủ các tab, hook điều khiển và phím tắt',()=>{
+  const studio=fs.readFileSync(path.join(base,'studio.js'),'utf8');
+  const studioCss=fs.readFileSync(path.join(base,'studio.css'),'utf8');
+
+  // Nút mở settings trên topbar
+  assert.match(html,/id="settingsBtn"/);
+  assert.match(html,/id="settingsDialog"/);
+  assert.match(html,/id="settingsClose"/);
+  assert.match(html,/id="settingsDialogDone"/);
+
+  // 4 tabs
+  for(const tabId of ['tabBtnAppearance','tabBtnInteraction','tabBtnRuntime','tabBtnData']){
+    assert.match(html,new RegExp('id="'+tabId+'"'));
+  }
+  for(const panelId of ['tabContentAppearance','tabContentInteraction','tabContentRuntime','tabContentData']){
+    assert.match(html,new RegExp('id="'+panelId+'"'));
+  }
+
+  // Tùy chọn giao diện & phím tắt
+  for(const controlId of ['themeSegmented','fontSizeSegmented','sendKeySegmented','settingShowTime','settingAutoScroll','settingSpeechInput','settingAvatarRoom','settingNotify']){
+    assert.match(html,new RegExp('id="'+controlId+'"'));
+  }
+
+  // Thao tác dữ liệu: xuất Markdown & xóa dấu trang
+  assert.match(html,/id="exportMarkdownBtn"/);
+  assert.match(html,/id="clearBookmarksBtn"/);
+  assert.match(html,/id="openDeleteFromSettingsBtn"/);
+
+  // Phím tắt Ctrl+, và quản lý phím Enter gửi
+  assert.match(studio,/event\.key===','/);
+  assert.match(studio,/prefs\.sendKey==='ctrl_enter'/);
+  assert.match(studio,/openSettings/);
+  assert.match(studio,/closeSettings/);
+  assert.match(studio,/formatMarkdownTranscript/);
+
+  // CSS classes
+  assert.match(studioCss,/\.studio-settings-dialog/);
+  assert.match(studioCss,/\.settings-tab-btn/);
+  assert.match(studioCss,/\.segmented-control/);
+  assert.match(studioCss,/\.settings-switch/);
+  assert.match(studioCss,/body\.font-sm/);
+  assert.match(studioCss,/body\.font-lg/);
+  assert.match(studioCss,/body\.hide-time/);
+});

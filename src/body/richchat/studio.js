@@ -17,6 +17,16 @@ const ErisStudioUtils = Object.freeze({
   },
   sizeOkay(message) {
     return message.length>0 && message.length<=6000 && new TextEncoder().encode(JSON.stringify({message})).length<=11900;
+  },
+  formatMarkdownTranscript(messages) {
+    if(!Array.isArray(messages)||!messages.length)return '# Eris — Hội thoại\n\nChưa có tin nhắn nào trong transcript.\n';
+    const header=`# Eris Conversation Transcript\nXuất lúc: ${new Date().toLocaleString('vi-VN')}\nTổng số tin nhắn: ${messages.length}\n\n---\n\n`;
+    const body=messages.map(m=>{
+      const role=m.role==='user'?'Bạn':'Eris';
+      const time=[m.date,m.time].filter(Boolean).join(' ');
+      return `### [${role}] ${time?`(${time})`:''}\n\n${m.text||''}\n`;
+    }).join('\n---\n\n');
+    return header+body;
   }
 });
 if(typeof module!=='undefined'&&module.exports)module.exports=ErisStudioUtils;
@@ -32,15 +42,120 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
   let activeBefore=false, hadRuntimeActivity=false;
   const stageNames={idle:'Sẵn sàng',thinking:'Đang suy nghĩ',speaking:'Đang nói',planning:'Đang lên kế hoạch',staged:'Đang chuẩn bị',audio_buffering:'Đang chuẩn bị âm thanh',afterglow:'Đã hoàn tất'};
   const history=[];
+  const defaultPrefs={
+    theme:safeRead('eris.studio.theme','auto'),
+    fontSize:safeRead('eris.studio.fontSize','base'),
+    showTime:safeRead('eris.studio.showTime','1')==='1',
+    sendKey:safeRead('eris.studio.sendKey','enter'),
+    autoScroll:safeRead('eris.studio.autoScroll','1')==='1',
+    speechInput:safeRead('eris.studio.speechInput','1')==='1',
+    avatarRoom:safeRead('eris.studio.avatarRoom',innerWidth>=1570?'1':'0')==='1',
+    notify:safeRead('eris.studio.notify','0')==='1'&&typeof Notification!=='undefined'&&Notification.permission==='granted'
+  };
+  let prefs={...defaultPrefs};
   const notification=$('notifyFinished');
-  if(notification){notification.checked=safeRead('eris.studio.notify','0')==='1'&&typeof Notification!=='undefined'&&Notification.permission==='granted';
-    notification.addEventListener('change',async()=>{
-      if(!notification.checked){safeWrite('eris.studio.notify','0');return;}
-      if(typeof Notification==='undefined'){notification.checked=false;notify('Trình duyệt không hỗ trợ thông báo.');return;}
-      const permission=Notification.permission==='granted'?'granted':await Notification.requestPermission();
-      notification.checked=permission==='granted';safeWrite('eris.studio.notify',notification.checked?'1':'0');
-      if(!notification.checked)notify('Cần cấp quyền thông báo trong trình duyệt.');
-    });
+
+  function applySettings(){
+    if(prefs.theme==='dark'){document.body.classList.add('dark');}
+    else if(prefs.theme==='light'){document.body.classList.remove('dark');}
+    else{const prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;document.body.classList.toggle('dark',prefersDark);}
+    document.querySelectorAll('#themeSegmented .segmented-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.themeVal===prefs.theme));
+    document.body.classList.toggle('font-sm',prefs.fontSize==='sm');
+    document.body.classList.toggle('font-lg',prefs.fontSize==='lg');
+    document.querySelectorAll('#fontSizeSegmented .segmented-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.sizeVal===prefs.fontSize));
+    document.body.classList.toggle('hide-time',!prefs.showTime);
+    if($('settingShowTime'))$('settingShowTime').checked=prefs.showTime;
+    document.querySelectorAll('#sendKeySegmented .segmented-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.keyVal===prefs.sendKey));
+    const hintSpan=document.querySelector('.composer-hint span:first-child');
+    if(hintSpan){hintSpan.innerHTML=prefs.sendKey==='ctrl_enter'?'<kbd>Ctrl Enter</kbd> để gửi · <kbd>Enter</kbd> xuống dòng':'<kbd>Enter</kbd> để gửi · <kbd>Shift Enter</kbd> xuống dòng';}
+    if($('settingAutoScroll'))$('settingAutoScroll').checked=prefs.autoScroll;
+    if($('settingSpeechInput'))$('settingSpeechInput').checked=prefs.speechInput;
+    if($('micBtn'))$('micBtn').style.display=prefs.speechInput?'':'none';
+    if($('settingAvatarRoom'))$('settingAvatarRoom').checked=prefs.avatarRoom;
+    if($('avatarRoom'))$('avatarRoom').checked=prefs.avatarRoom;
+    document.body.classList.toggle('avatar-room',prefs.avatarRoom);
+    if($('settingNotify'))$('settingNotify').checked=prefs.notify;
+    if(notification)notification.checked=prefs.notify;
+    safeWrite('eris.studio.theme',prefs.theme);
+    safeWrite('eris.studio.fontSize',prefs.fontSize);
+    safeWrite('eris.studio.showTime',prefs.showTime?'1':'0');
+    safeWrite('eris.studio.sendKey',prefs.sendKey);
+    safeWrite('eris.studio.autoScroll',prefs.autoScroll?'1':'0');
+    safeWrite('eris.studio.speechInput',prefs.speechInput?'1':'0');
+    safeWrite('eris.studio.avatarRoom',prefs.avatarRoom?'1':'0');
+    safeWrite('eris.studio.notify',prefs.notify?'1':'0');
+  }
+  applySettings();
+  window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener('change',()=>{if(prefs.theme==='auto')applySettings();});
+
+  if(notification){notification.addEventListener('change',async()=>{
+    if(!notification.checked){prefs.notify=false;applySettings();return;}
+    if(typeof Notification==='undefined'){notification.checked=false;prefs.notify=false;applySettings();notify('Trình duyệt không hỗ trợ thông báo.');return;}
+    const perm=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+    prefs.notify=perm==='granted';applySettings();
+    if(!prefs.notify)notify('Cần cấp quyền thông báo trong trình duyệt.');
+  });}
+  $('avatarRoom')?.addEventListener('change',()=>{prefs.avatarRoom=$('avatarRoom').checked;applySettings();});
+  $('themeBtn')?.addEventListener('click',()=>{const isDark=document.body.classList.contains('dark');prefs.theme=isDark?'light':'dark';applySettings();});
+
+  const settingsDialog=$('settingsDialog');
+  function openSettings(tabId=null){if(!settingsDialog)return;if(tabId)switchSettingsTab(tabId);updateSettingsModal();if(!settingsDialog.open)settingsDialog.showModal();}
+  function closeSettings(){if(settingsDialog?.open)settingsDialog.close();}
+  $('settingsBtn')?.addEventListener('click',()=>openSettings());
+  $('settingsClose')?.addEventListener('click',closeSettings);
+  $('settingsDialogDone')?.addEventListener('click',closeSettings);
+  settingsDialog?.addEventListener('click',event=>{if(event.target===settingsDialog)closeSettings();});
+
+  const tabMap={tabBtnAppearance:'tabContentAppearance',tabBtnInteraction:'tabContentInteraction',tabBtnRuntime:'tabContentRuntime',tabBtnData:'tabContentData'};
+  function switchSettingsTab(btnId){
+    for(const [bId,pId] of Object.entries(tabMap)){
+      const b=$(bId),p=$(pId),on=bId===btnId;
+      b?.classList.toggle('active',on);b?.setAttribute('aria-selected',String(on));
+      if(p){p.hidden=!on;p.classList.toggle('active',on);}
+    }
+  }
+  for(const bId of Object.keys(tabMap)){$(bId)?.addEventListener('click',()=>switchSettingsTab(bId));}
+
+  $('themeSegmented')?.addEventListener('click',event=>{const b=event.target.closest('.segmented-btn');if(b?.dataset.themeVal){prefs.theme=b.dataset.themeVal;applySettings();}});
+  $('fontSizeSegmented')?.addEventListener('click',event=>{const b=event.target.closest('.segmented-btn');if(b?.dataset.sizeVal){prefs.fontSize=b.dataset.sizeVal;applySettings();}});
+  $('sendKeySegmented')?.addEventListener('click',event=>{const b=event.target.closest('.segmented-btn');if(b?.dataset.keyVal){prefs.sendKey=b.dataset.keyVal;applySettings();}});
+  $('settingShowTime')?.addEventListener('change',event=>{prefs.showTime=event.target.checked;applySettings();});
+  $('settingAutoScroll')?.addEventListener('change',event=>{prefs.autoScroll=event.target.checked;applySettings();});
+  $('settingSpeechInput')?.addEventListener('change',event=>{prefs.speechInput=event.target.checked;applySettings();});
+  $('settingAvatarRoom')?.addEventListener('change',event=>{prefs.avatarRoom=event.target.checked;applySettings();});
+  $('settingNotify')?.addEventListener('change',async event=>{
+    if(!event.target.checked){prefs.notify=false;applySettings();return;}
+    if(typeof Notification==='undefined'){event.target.checked=false;prefs.notify=false;applySettings();notify('Trình duyệt không hỗ trợ thông báo.');return;}
+    const perm=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+    prefs.notify=perm==='granted';applySettings();
+    if(!prefs.notify)notify('Cần cấp quyền thông báo trong trình duyệt.');
+  });
+
+  $('clearBookmarksBtn')?.addEventListener('click',()=>{
+    if(!saved.size){notify('Chưa có dấu trang nào.');return;}
+    if(!confirm(`Xóa toàn bộ ${saved.size} dấu trang đã lưu trên máy?`))return;
+    saved.clear();safeWrite('eris.studio.bookmarks.v1','[]');savedNav();updateSettingsModal();
+    for(const row of root.querySelectorAll('.entry')){const b=row.querySelector('[data-studio-action="bookmark"]');if(b){b.classList.remove('marked');b.textContent='✧ Lưu';}}
+    notify('Đã xóa tất cả dấu trang.');
+  });
+  function downloadMarkdown(){
+    const body=ErisStudioUtils.formatMarkdownTranscript(transcript);
+    const blob=new Blob([body],{type:'text/markdown;charset=utf-8'});
+    const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='eris-conversation-'+new Date().toISOString().slice(0,10)+'.md';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    notify('Đã xuất hội thoại sang Markdown.');
+  }
+  $('exportMarkdownBtn')?.addEventListener('click',downloadMarkdown);
+  $('openDeleteFromSettingsBtn')?.addEventListener('click',()=>{closeSettings();openDeletion('all');});
+
+  function updateSettingsModal(state=null){
+    if($('bookmarkSummary'))$('bookmarkSummary').textContent=`${saved.size} tin nhắn đã lưu trên trình duyệt này`;
+    if(!state&&window.__ERIS_LAST_STATE__)state=window.__ERIS_LAST_STATE__;
+    if(!state)return;
+    const runtime=state?.presence||{},speech=state?.speech||{};
+    const phase=String(speech.phase||'idle'),stage=String(runtime.stage||phase);
+    if($('metricStage'))$('metricStage').textContent=stageNames[stage]||stageNames[phase]||'Sẵn sàng';
+    if($('metricEmotion'))$('metricEmotion').textContent=runtime.emotion||'Bình thường';
+    if($('metricChannel'))$('metricChannel').textContent=stream?'SSE Live':'Polling HTTP';
   }
   const notify=text=>{const el=document.createElement('div');el.className='toast';el.textContent=text;document.body.appendChild(el);setTimeout(()=>el.remove(),2500);};
   function focusInput(value=null){if(value!==null)input.value=value;input.dispatchEvent(new Event('input'));input.focus();}
@@ -51,11 +166,6 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
   $('inspectorClose')?.addEventListener('click',()=>setView(false));
   $('sidebarCollapse')?.addEventListener('click',()=>{const on=document.body.classList.toggle('sidebar-collapsed');safeWrite('eris.studio.sidebar',on?'1':'0');});
   if(safeRead('eris.studio.sidebar','0')==='1')document.body.classList.add('sidebar-collapsed');
-  $('avatarRoom').checked=safeRead('eris.studio.avatarRoom',innerWidth>=1570?'1':'0')==='1';
-  document.body.classList.toggle('avatar-room',$('avatarRoom').checked);
-  $('avatarRoom').addEventListener('change',()=>{document.body.classList.toggle('avatar-room',$('avatarRoom').checked);safeWrite('eris.studio.avatarRoom',$('avatarRoom').checked?'1':'0');});
-  if(safeRead('eris.studio.theme','light')==='dark')document.body.classList.add('dark');
-  $('themeBtn')?.addEventListener('click',()=>safeWrite('eris.studio.theme',document.body.classList.contains('dark')?'dark':'light'));
   $('newTopicBtn')?.addEventListener('click',()=>{if(input.value.trim()&&!confirm('Thay nội dung nháp bằng chủ đề mới?'))return;
     focusInput('Chủ đề mới: ');$('sidebar')?.classList.remove('open');
     notify('Đây là chủ đề mới trong transcript hiện tại, không phải phiên chat tách biệt.');});
@@ -229,10 +339,19 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
     recognition.onend=()=>{recording=null;$('micBtn').classList.remove('recording');$('micBtn').setAttribute('aria-label','Nhập bằng giọng nói');};
     try{recognition.start();}catch{recognition.onend();notify('Không thể mở micro.');}
   });
+  input.addEventListener('keydown',event=>{
+    if(event.key==='Enter'&&!event.isComposing){
+      if(prefs.sendKey==='ctrl_enter'){
+        if(event.ctrlKey||event.metaKey){event.preventDefault();composer.requestSubmit();}
+        else{event.stopImmediatePropagation();}
+      }
+    }
+  },true);
   document.addEventListener('keydown',event=>{
+    if((event.ctrlKey||event.metaKey)&&event.key===','){event.preventDefault();openSettings();}
     if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('search').focus();$('sidebar').classList.add('open');}
     if(event.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)){event.preventDefault();$('search').focus();$('sidebar').classList.add('open');}
-    if(event.key==='Escape'){if(recording)recording.stop();setView(false);$('sidebar').classList.remove('open');}
+    if(event.key==='Escape'){if(recording)recording.stop();if(settingsDialog?.open){closeSettings();return;}setView(false);$('sidebar').classList.remove('open');}
   });
   function activityUpdate(state){
     const runtime=state?.presence||{},speech=state?.speech||{};
@@ -253,6 +372,7 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
     const key=[stage,label,runtime.activity||''].join('|');
     if(label && history[0]?.key!==key){history.unshift({key,label,stage,time:new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'})});history.splice(12);renderHistory();}
     const count=artifacts.length;$('artifactCount').textContent=count?`${count} artifact đã xuất hiện trong transcript.`:'Chưa có kết quả công cụ trong transcript.';
+    updateSettingsModal(state);
   }
   function renderHistory(){const box=$('activityTimeline');box.replaceChildren();for(const item of history){
     const div=document.createElement('div');div.className='timeline-item';const content=document.createElement('div');content.textContent=item.label;
@@ -260,10 +380,12 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
   }}
   window.addEventListener('eris:state',event=>{
     const state=event.detail;if(!state)return;
+    const prevCount=transcript.length;
     transcript=Array.isArray(state.messages)?state.messages:[];
     artifacts=Array.isArray(state.bundles)?state.bundles.flatMap(b=>b.artifacts||[]):[];
     $('messageCount').textContent=transcript.length+' tin nhắn';
     activityUpdate(state);topicNav();savedNav();jumpIndicator();
+    if(prefs.autoScroll&&transcript.length>prevCount)scrollDown();
     for(const row of root.querySelectorAll('.entry')){
       const btn=row.querySelector('[data-studio-action="bookmark"]');if(!btn)continue;
       const marked=saved.has(row.dataset.msgKey);btn.classList.toggle('marked',marked);btn.textContent=marked?'★ Đã lưu':'✧ Lưu';
@@ -278,15 +400,12 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
     stream.addEventListener('error',()=>{streamFailures++;if(streamFailures>3){stream.close();stream=null;}});
   }
   window.ErisStudio=Object.freeze({isStreaming:()=>!!stream&&stream.readyState===1&&Date.now()-streamSeen<4000,
-    saved:()=>saved,compose,updateCount});
+    saved:()=>saved,compose,updateCount,openSettings,closeSettings,getPrefs:()=>({...prefs}),applySettings,downloadMarkdown});
   startStream();
   // chat.js có thể nhận snapshot fixture ngay trước khi studio.js đăng ký listener.
   if(window.__ERIS_LAST_STATE__)window.dispatchEvent(new CustomEvent('eris:state',{detail:window.__ERIS_LAST_STATE__}));
   // Xuất transcript cục bộ khi người dùng tự chọn (không gửi lên dịch vụ ngoài).
   const exportBtn=document.createElement('button');exportBtn.type='button';exportBtn.className='saved-button';exportBtn.textContent='↓ Xuất hội thoại (.md)';
-  exportBtn.addEventListener('click',()=>{
-    const body=transcript.map(m=>`## ${m.role==='user'?'Bạn':'Eris'} · ${m.date||''} ${m.time||''}\n\n${m.text||''}\n`).join('\n---\n');
-    const blob=new Blob(['# Eris — Hội thoại\n\n',body],{type:'text/markdown;charset=utf-8'});
-    const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='eris-conversation-'+new Date().toISOString().slice(0,10)+'.md';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  });$('sidebar').querySelector('.sidebar-foot').prepend(exportBtn);
+  exportBtn.addEventListener('click',downloadMarkdown);
+  $('sidebar').querySelector('.sidebar-foot').prepend(exportBtn);
 });

@@ -57,6 +57,7 @@
         <button type="button" class="status-pill" id="statusDetails" aria-label="Mở trạng thái Eris" title="Trạng thái thực tế từ runtime"><span class="dot"></span><span class="status" id="status">Đang kết nối</span></button>
         <button type="button" class="icon" id="inspectorBtn" aria-label="Đóng mở bảng hoạt động" aria-pressed="false" title="Hoạt động của Eris">◫</button>
         <button type="button" class="icon" id="themeBtn" title="Đổi chế độ sáng/tối" aria-label="Đổi giao diện sáng tối">◐</button>
+        <button type="button" class="icon" id="settingsBtn" title="Cài đặt Studio (Ctrl+,)" aria-label="Mở cài đặt">⚙</button>
       </header>
       <div class="context-strip" id="contextStrip"><span class="context-dot">✦</span><span id="contextText">Eris đang lắng nghe.</span><button type="button" id="contextGo" title="Tới nội dung gần nhất" aria-label="Cuộn tới tin mới">↓ Tin mới nhất</button></div>
       <div class="scroll-region" id="scroll">
@@ -92,6 +93,206 @@
       <div class="inspector-foot">Thông tin hoạt động lấy từ runtime thật; không hiển thị suy luận nội bộ hoặc trạng thái tự dựng.</div>
     </aside>
   </div>
+  <dialog id="settingsDialog" class="studio-settings-dialog" aria-labelledby="settingsTitle">
+    <div class="settings-modal-header">
+      <div class="settings-modal-title-group">
+        <div class="settings-modal-mark" aria-hidden="true">⚙</div>
+        <div>
+          <h2 id="settingsTitle">Cài đặt Conversation Studio <span>✦</span></h2>
+          <p>Tùy chỉnh không gian hội thoại, hiển thị, tương tác và kết nối với runtime Eris.</p>
+        </div>
+      </div>
+      <button type="button" class="mini-icon" id="settingsClose" aria-label="Đóng cài đặt">×</button>
+    </div>
+    <div class="settings-tab-bar" role="tablist" aria-label="Danh mục cài đặt">
+      <button type="button" class="settings-tab-btn active" role="tab" id="tabBtnAppearance" aria-selected="true" aria-controls="tabContentAppearance">🎨 Giao diện & Hiển thị</button>
+      <button type="button" class="settings-tab-btn" role="tab" id="tabBtnInteraction" aria-selected="false" aria-controls="tabContentInteraction">⌨ Tương tác & Phím tắt</button>
+      <button type="button" class="settings-tab-btn" role="tab" id="tabBtnRuntime" aria-selected="false" aria-controls="tabContentRuntime">✦ Eris & Kết nối</button>
+      <button type="button" class="settings-tab-btn" role="tab" id="tabBtnData" aria-selected="false" aria-controls="tabContentData">▤ Dữ liệu & Xuất</button>
+    </div>
+    <div class="settings-dialog-body">
+      <!-- TAB 1: GIAO DIỆN & HIỂN THỊ -->
+      <section class="settings-tab-panel active" id="tabContentAppearance" role="tabpanel" aria-labelledby="tabBtnAppearance">
+        <div class="settings-group">
+          <div class="settings-group-title">GIAO DIỆN MÀU</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Chế độ màu</strong>
+                <small>Chọn tông màu sáng, tối hoặc tự động theo hệ thống</small>
+              </div>
+              <div class="segmented-control" id="themeSegmented">
+                <button type="button" data-theme-val="light" class="segmented-btn">Sáng</button>
+                <button type="button" data-theme-val="dark" class="segmented-btn">Tối</button>
+                <button type="button" data-theme-val="auto" class="segmented-btn active">Tự động</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">HIỂN THỊ VĂN BẢN & KHÔNG GIAN</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Cỡ chữ hội thoại</strong>
+                <small>Điều chỉnh kích thước chữ trong bong bóng chat</small>
+              </div>
+              <div class="segmented-control" id="fontSizeSegmented">
+                <button type="button" data-size-val="sm" class="segmented-btn">Nhỏ (13px)</button>
+                <button type="button" data-size-val="base" class="segmented-btn active">Chuẩn (14px)</button>
+                <button type="button" data-size-val="lg" class="segmented-btn">Lớn (16px)</button>
+              </div>
+            </div>
+            <div class="settings-divider"></div>
+            <label class="settings-row settings-toggle-row">
+              <div class="settings-row-label">
+                <strong>Hiện thời gian chi tiết</strong>
+                <small>Hiển thị nhãn giờ/phút bên dưới mỗi tin nhắn</small>
+              </div>
+              <input type="checkbox" id="settingShowTime" class="settings-switch" checked />
+            </label>
+            <div class="settings-divider"></div>
+            <label class="settings-row settings-toggle-row">
+              <div class="settings-row-label">
+                <strong>Chừa chỗ cho Live2D nổi trên desktop</strong>
+                <small>Tạo khoảng trống bên phải màn hình để Live2D không che tin nhắn</small>
+              </div>
+              <input type="checkbox" id="settingAvatarRoom" class="settings-switch" />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: TƯƠNG TÁC & PHÍM TẮT -->
+      <section class="settings-tab-panel" id="tabContentInteraction" role="tabpanel" aria-labelledby="tabBtnInteraction" hidden>
+        <div class="settings-group">
+          <div class="settings-group-title">SOẠN THẢO & GỬI TIN NHẮN</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Phím tắt gửi tin nhắn</strong>
+                <small>Chọn cách phản hồi khi gõ trong ô soạn thảo</small>
+              </div>
+              <div class="segmented-control" id="sendKeySegmented">
+                <button type="button" data-key-val="enter" class="segmented-btn active">Enter để gửi</button>
+                <button type="button" data-key-val="ctrl_enter" class="segmented-btn">Ctrl + Enter</button>
+              </div>
+            </div>
+            <div class="settings-divider"></div>
+            <label class="settings-row settings-toggle-row">
+              <div class="settings-row-label">
+                <strong>Tự động cuộn xuống tin mới</strong>
+                <small>Tự động cuộn khung nhìn khi Eris gửi tin nhắn mới</small>
+              </div>
+              <input type="checkbox" id="settingAutoScroll" class="settings-switch" checked />
+            </label>
+            <div class="settings-divider"></div>
+            <label class="settings-row settings-toggle-row">
+              <div class="settings-row-label">
+                <strong>Nhập giọng nói qua micro</strong>
+                <small>Hiển thị nút micro trong thanh công cụ nhập liệu</small>
+              </div>
+              <input type="checkbox" id="settingSpeechInput" class="settings-switch" checked />
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">THÔNG BÁO HỆ THỐNG</div>
+          <div class="settings-card">
+            <label class="settings-row settings-toggle-row">
+              <div class="settings-row-label">
+                <strong>Thông báo khi Eris hoàn tất</strong>
+                <small>Phát thông báo màn hình desktop khi Eris trả lời xong lúc tab đang ẩn</small>
+              </div>
+              <input type="checkbox" id="settingNotify" class="settings-switch" />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: ERIS & KẾT NỐI -->
+      <section class="settings-tab-panel" id="tabContentRuntime" role="tabpanel" aria-labelledby="tabBtnRuntime" hidden>
+        <div class="settings-group">
+          <div class="settings-group-title">TRẠNG THÁI RUNTIME ERIS</div>
+          <div class="settings-card">
+            <div class="runtime-status-banner">
+              <div class="runtime-status-dot-pulse"></div>
+              <div class="runtime-status-meta">
+                <div class="runtime-status-title" id="runtimeStatusTitle">Đang kết nối với Eris</div>
+                <div class="runtime-status-sub" id="runtimeStatusSub">Kết nối cục bộ qua loopback Godot SSE / REST</div>
+              </div>
+            </div>
+            <div class="runtime-metrics-grid">
+              <div class="metric-box">
+                <span class="metric-label">Giai đoạn (Stage)</span>
+                <strong class="metric-value" id="metricStage">Sẵn sàng</strong>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Cảm xúc</span>
+                <strong class="metric-value" id="metricEmotion">Bình thường</strong>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Kênh đồng bộ</span>
+                <strong class="metric-value" id="metricChannel">SSE Live</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">DẤU TRANG CỤC BỘ</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Tin nhắn đã lưu (Bookmarks)</strong>
+                <small id="bookmarkSummary">0 tin nhắn đã lưu trên trình duyệt này</small>
+              </div>
+              <button type="button" class="settings-danger-btn" id="clearBookmarksBtn">Xóa tất cả dấu trang</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: DỮ LIỆU & XUẤT -->
+      <section class="settings-tab-panel" id="tabContentData" role="tabpanel" aria-labelledby="tabBtnData" hidden>
+        <div class="settings-group">
+          <div class="settings-group-title">XUẤT LỊCH SỬ HỘI THOẠI</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Xuất sang Markdown (.md)</strong>
+                <small>Tải toàn bộ hội thoại hiện tại về máy dạng văn bản Markdown chuẩn</small>
+              </div>
+              <button type="button" class="settings-primary-btn" id="exportMarkdownBtn">
+                <span>↓</span> Xuất Markdown
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">XÓA LỊCH SỬ</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-label">
+                <strong>Xóa lịch sử hội thoại trên máy</strong>
+                <small>Xóa an toàn transcript lưu trong Godot. Bộ nhớ dài hạn không bị ảnh hưởng.</small>
+              </div>
+              <button type="button" class="settings-danger-btn" id="openDeleteFromSettingsBtn">
+                <span>⌫</span> Quản lý xóa...
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="settings-modal-footer">
+      <span class="settings-footer-note">✦ Eris Conversation Studio · Cài đặt lưu tức thì</span>
+      <button type="button" class="settings-close-btn" id="settingsDialogDone">Hoàn tất</button>
+    </div>
+  </dialog>
   <dialog id="deleteHistoryDialog" class="history-delete-dialog" aria-labelledby="deleteHistoryTitle" aria-describedby="deleteHistoryDescription">
     <div class="history-delete-mark" aria-hidden="true">⌫</div>
     <h2 id="deleteHistoryTitle">Xóa lịch sử hội thoại?</h2>

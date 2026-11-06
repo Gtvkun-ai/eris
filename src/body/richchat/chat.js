@@ -416,7 +416,9 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
       item.dataset.msgKey=key;
       item.dataset.renderKey='entry:'+String(msg.id)+':'+key+':'+artifacts.filter(a=>!a.provisional&&a.turn_id===msg.turnId&&msg.role==='assistant').map(a=>a.artifact.artifact_id+':'+a.artifact.revision).join('|');
       if(msg.role==='assistant' && msg.turnId)item.dataset.turnId=msg.turnId;
-      const meta=document.createElement('div');meta.className='meta';meta.textContent=`${msg.role==='user'?'Bạn':'Eris'} · ${msg.time||''}`;
+      const meta=document.createElement('div');meta.className='meta';
+      const authorSpan=document.createElement('span');authorSpan.textContent=msg.role==='user'?'Bạn':'Eris';meta.appendChild(authorSpan);
+      if(msg.time){const timeSpan=document.createElement('span');timeSpan.className='meta-timestamp';timeSpan.textContent=' · '+msg.time;meta.appendChild(timeSpan);}
       let displayedText=msg.text;
       const learningEvent=/^ERIS_LEARN (answer|hint|reveal) (activity:[a-f0-9]{32}) [a-f0-9]{32}(?: ([0-5]|t:[A-Za-z0-9_-]{1,4096}))?$/.exec(msg.text);
       if(msg.role==='user' && learningEvent){

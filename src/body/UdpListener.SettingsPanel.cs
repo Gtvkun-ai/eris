@@ -86,11 +86,11 @@ public partial class UdpListener : Node2D
 	private const string SettingsStatePath = "user://eris_settings.json";
 	private const string SettingsExportFileName = "eris_settings_export.json";
 
-	private static readonly Color SettingsInk = new(0.42f, 0.07f, 0.27f);
-	private static readonly Color SettingsInkSoft = new(0.63f, 0.32f, 0.48f);
-	private static readonly Color SettingsPink = new(0.96f, 0.34f, 0.62f);
-	private static readonly Color SettingsBorder = new(0.96f, 0.76f, 0.86f, 0.80f);
-	private static readonly Color SettingsCard = new(1.00f, 0.965f, 0.982f, 0.70f);
+	private static readonly Color SettingsInk = new("302c46");
+	private static readonly Color SettingsInkSoft = new("797288");
+	private static readonly Color SettingsPink = new("ed408e");
+	private static readonly Color SettingsBorder = new("eeeaf2");
+	private static readonly Color SettingsCard = new(1.00f, 1.00f, 1.00f, 0.985f);
 
 	private void OnContextSettingsPressed()
 	{
@@ -140,26 +140,22 @@ public partial class UdpListener : Node2D
 		else
 			CaptureCurrentSettingsKeyDraft();
 
-		var bgTex = ResourceLoader.Exists("res://asset/Resource/SettingPanel.png")
-			? GD.Load<Texture2D>("res://asset/Resource/SettingPanel.png")
-			: null;
-		if (bgTex != null)
+		_settingsPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
 		{
-			_settingsPanel.AddThemeStyleboxOverride("panel", new StyleBoxTexture
-			{
-				Texture = bgTex,
-				TextureMarginLeft = 0f,
-				TextureMarginTop = 0f,
-				TextureMarginRight = 0f,
-				TextureMarginBottom = 0f,
-				AxisStretchHorizontal = StyleBoxTexture.AxisStretchMode.Stretch,
-				AxisStretchVertical = StyleBoxTexture.AxisStretchMode.Stretch,
-			});
-		}
-		else
-		{
-			_settingsPanel.AddThemeStyleboxOverride("panel", new StyleBoxEmpty());
-		}
+			BgColor = new Color("faf8fc"),
+			BorderColor = new Color("e3dbe7"),
+			BorderWidthLeft = 1,
+			BorderWidthTop = 1,
+			BorderWidthRight = 1,
+			BorderWidthBottom = 1,
+			CornerRadiusTopLeft = 18,
+			CornerRadiusTopRight = 18,
+			CornerRadiusBottomLeft = 18,
+			CornerRadiusBottomRight = 18,
+			ShadowColor = new Color(0.18f, 0.15f, 0.24f, 0.16f),
+			ShadowSize = 24,
+			ShadowOffset = new Vector2(0, 8),
+		});
 		_settingsPanel.ClipContents = true;
 		foreach (Node child in _settingsPanel.GetChildren())
 		{
@@ -175,14 +171,14 @@ public partial class UdpListener : Node2D
 		root.SetAnchorsPreset(Control.LayoutPreset.FullRect);
 		_settingsPanel.AddChild(root);
 
-		var title = CreateUiLabel("Cài đặt", 34, SettingsInk);
-		title.Position = new Vector2(54f, 34f);
-		title.Size = new Vector2(260f, 52f);
+		var title = CreateUiLabel("Cài đặt Eris", 28, SettingsInk);
+		title.Position = new Vector2(48f, 32f);
+		title.Size = new Vector2(240f, 44f);
 		root.AddChild(title);
 
-		var heart = CreateUiLabel("♡", 26, SettingsPink);
-		heart.Position = new Vector2(222f, 42f);
-		heart.Size = new Vector2(42f, 36f);
+		var heart = CreateUiLabel("✦", 20, SettingsPink);
+		heart.Position = new Vector2(212f, 38f);
+		heart.Size = new Vector2(36f, 36f);
 		root.AddChild(heart);
 
 		var controls = CreateWindowControlCapsule(() => _settingsPanel.Visible = false, CloseSettingsPanel);
@@ -236,7 +232,7 @@ public partial class UdpListener : Node2D
 
 		AddSettingsPageFooter(
 			root,
-			"Basic chỉ giữ trạng thái, não chính và thao tác dùng hằng ngày. Key phụ đã chuyển sang Kết nối & dữ liệu.",
+			"✦ Cài đặt cơ bản: Trạng thái Brain, Não chính (LLM), Điều khiển giọng nói và Cửa sổ Live2D trên desktop.",
 			showBackupActions: false);
 
 		BuildSettingsConnectionOverlay(root);
@@ -259,13 +255,11 @@ public partial class UdpListener : Node2D
 
 	private void AddSettingsMainTabs(Control root)
 	{
-		// Một hàng điều hướng thật. Bản cũ có ba tab giả bên trên và ba tab thật
-		// bên dưới, một nghi lễ thừa khá công phu chỉ để đổi một dòng status.
-		AddSettingsTab(root, new Rect2(42f, 118f, 204f, 40f), "♡  Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
-		AddSettingsTab(root, new Rect2(258f, 118f, 204f, 40f), "♬  Giọng nói", _settingsModePage == SettingsModePage.Voice, () => SwitchSettingsMode(SettingsModePage.Voice));
-		AddSettingsTab(root, new Rect2(474f, 118f, 232f, 40f), "▤  Kết nối & dữ liệu", _settingsModePage == SettingsModePage.Data, () => SwitchSettingsMode(SettingsModePage.Data));
-		AddSettingsTab(root, new Rect2(718f, 118f, 188f, 40f), "Advanced", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
-		AddSettingsTab(root, new Rect2(918f, 118f, 220f, 40f), "△  Danger Zone", _settingsModePage == SettingsModePage.Danger, () => SwitchSettingsMode(SettingsModePage.Danger));
+		AddSettingsTab(root, new Rect2(42f, 116f, 204f, 40f), "✦  Cơ bản", _settingsModePage == SettingsModePage.Basic, () => SwitchSettingsMode(SettingsModePage.Basic));
+		AddSettingsTab(root, new Rect2(258f, 116f, 214f, 40f), "♫  Giọng nói & TTS", _settingsModePage == SettingsModePage.Voice, () => SwitchSettingsMode(SettingsModePage.Voice));
+		AddSettingsTab(root, new Rect2(484f, 116f, 224f, 40f), "▤  API & Dữ liệu", _settingsModePage == SettingsModePage.Data, () => SwitchSettingsMode(SettingsModePage.Data));
+		AddSettingsTab(root, new Rect2(720f, 116f, 196f, 40f), "⚙  Nâng cao", _settingsModePage == SettingsModePage.Advanced, () => SwitchSettingsMode(SettingsModePage.Advanced));
+		AddSettingsTab(root, new Rect2(928f, 116f, 210f, 40f), "△  Danger Zone", _settingsModePage == SettingsModePage.Danger, () => SwitchSettingsMode(SettingsModePage.Danger));
 	}
 
 	private Panel AddSettingsCard(Control parent, Rect2 rect, string title)
@@ -670,7 +664,7 @@ public partial class UdpListener : Node2D
 
 		AddSettingsPageFooter(
 			root,
-			"Main Brain và ElevenLabs TTS. Các ô Gemini/Groq được giữ trống.",
+			"Quản lý credentials cho Main Brain và ElevenLabs TTS. Lưu an toàn vào secrets.json.",
 			showBackupActions: true);
 	}
 
@@ -1054,48 +1048,28 @@ public partial class UdpListener : Node2D
 		int mainCount = _settingsKeyDrafts.TryGetValue("main", out List<string> mainRows)
 			? NormalizeSettingsKeyRows(mainRows).Count
 			: ReadEditableKeysForPool("main").Count;
-		int geminiCount = _settingsKeyDrafts.TryGetValue("gemini", out List<string> geminiRows)
-			? NormalizeSettingsKeyRows(geminiRows).Count
-			: ReadEditableKeysForPool("gemini").Count;
-		int groqCount = _settingsKeyDrafts.TryGetValue("groq", out List<string> groqRows)
-			? NormalizeSettingsKeyRows(groqRows).Count
-			: ReadEditableKeysForPool("groq").Count;
 		int elevenLabsCount = _settingsKeyDrafts.TryGetValue("elevenlabs", out List<string> elevenLabsRows)
 			? NormalizeSettingsKeyRows(elevenLabsRows).Count
 			: ReadEditableKeysForPool("elevenlabs").Count;
 
 		float innerWidth = parent.Size.X - 36f;
-		float tabGap = 6f;
-		float tabWidth = (innerWidth - tabGap * 3f) / 4f;
+		float tabGap = 10f;
+		float tabWidth = (innerWidth - tabGap) / 2f;
 
-		_settingsMainPoolStatusLabel = CreateSettingsButton($"Main · {mainCount}", () => SwitchSettingsKeyPool("main"), primary: _settingsKeyPoolKind == "main");
+		_settingsMainPoolStatusLabel = CreateSettingsButton($"✦ Main Brain (LLM) · {mainCount} key", () => SwitchSettingsKeyPool("main"), primary: _settingsKeyPoolKind == "main");
 		_settingsMainPoolStatusLabel.Position = new Vector2(18f, 46f);
-		_settingsMainPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsMainPoolStatusLabel.TooltipText = "Credential của Main Brain / remote_main";
+		_settingsMainPoolStatusLabel.Size = new Vector2(tabWidth, 32f);
+		_settingsMainPoolStatusLabel.TooltipText = "Credential của Main Brain / remote_main (DeepSeek / OpenAI compatible / local)";
 		parent.AddChild(_settingsMainPoolStatusLabel);
 
-		_settingsPoolStatusLabel = CreateSettingsButton($"Gemini · {geminiCount}", () => SwitchSettingsKeyPool("gemini"), primary: _settingsKeyPoolKind == "gemini");
-		_settingsPoolStatusLabel.Position = new Vector2(18f + tabWidth + tabGap, 46f);
-		_settingsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsPoolStatusLabel.TooltipText = "Ô key trống; provider đã ngừng sử dụng.";
-		_settingsPoolStatusLabel.Disabled = true;
-		parent.AddChild(_settingsPoolStatusLabel);
-
-		_settingsFallbackStatusLabel = CreateSettingsButton($"Groq · {groqCount}", () => SwitchSettingsKeyPool("groq"), primary: _settingsKeyPoolKind == "groq");
-		_settingsFallbackStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 2f, 46f);
-		_settingsFallbackStatusLabel.Size = new Vector2(tabWidth, 30f);
-		_settingsFallbackStatusLabel.TooltipText = "Ô key trống; provider đã ngừng sử dụng.";
-		_settingsFallbackStatusLabel.Disabled = true;
-		parent.AddChild(_settingsFallbackStatusLabel);
-
-		_settingsElevenLabsPoolStatusLabel = CreateSettingsButton($"11Labs · {elevenLabsCount}", () => SwitchSettingsKeyPool("elevenlabs"), primary: _settingsKeyPoolKind == "elevenlabs");
-		_settingsElevenLabsPoolStatusLabel.Position = new Vector2(18f + (tabWidth + tabGap) * 3f, 46f);
-		_settingsElevenLabsPoolStatusLabel.Size = new Vector2(tabWidth, 30f);
+		_settingsElevenLabsPoolStatusLabel = CreateSettingsButton($"♫ ElevenLabs TTS · {elevenLabsCount} key", () => SwitchSettingsKeyPool("elevenlabs"), primary: _settingsKeyPoolKind == "elevenlabs");
+		_settingsElevenLabsPoolStatusLabel.Position = new Vector2(18f + tabWidth + tabGap, 46f);
+		_settingsElevenLabsPoolStatusLabel.Size = new Vector2(tabWidth, 32f);
 		_settingsElevenLabsPoolStatusLabel.TooltipText = "Credential riêng của provider TTS ElevenLabs";
 		parent.AddChild(_settingsElevenLabsPoolStatusLabel);
 
 		_settingsPoolHealthLabel = CreateUiLabel("Chưa đọc trạng thái runtime", 10, SettingsInkSoft);
-		_settingsPoolHealthLabel.Position = new Vector2(20f, 80f);
+		_settingsPoolHealthLabel.Position = new Vector2(20f, 82f);
 		_settingsPoolHealthLabel.Size = new Vector2(innerWidth - 4f, 18f);
 		StyleSettingsSingleLineLabel(_settingsPoolHealthLabel);
 		parent.AddChild(_settingsPoolHealthLabel);
@@ -1237,21 +1211,19 @@ public partial class UdpListener : Node2D
 	private static string NormalizeSettingsPoolKind(string poolKind)
 	{
 		string kind = (poolKind ?? "").Trim().ToLowerInvariant();
-		if (kind is "main" or "main_brain" or "remote_main" or "remote")
+		if (kind is "main" or "main_brain" or "remote_main" or "remote" or "openai" or "openai_compatible" or "deepseek")
 			return "main";
-		if (kind is "elevenlabs" or "eleven" or "11labs" or "tts_elevenlabs")
+		if (kind is "elevenlabs" or "eleven" or "11labs" or "tts_elevenlabs" or "tts" or "voice")
 			return "elevenlabs";
-		return IsGroqPool(kind) ? "groq" : "gemini";
+		return "main";
 	}
 
 	private static string DisplaySettingsPoolName(string poolKind)
 	{
 		return NormalizeSettingsPoolKind(poolKind) switch
 		{
-			"main" => "Main Brain",
-			"groq" => "Groq phụ",
 			"elevenlabs" => "ElevenLabs TTS",
-			_ => "Gemini phụ",
+			_ => "Main Brain",
 		};
 	}
 
@@ -1315,10 +1287,8 @@ public partial class UdpListener : Node2D
 	{
 		string provider = NormalizeSettingsPoolKind(poolKind) switch
 		{
-			"main" => "Main Brain",
-			"groq" => "Groq",
 			"elevenlabs" => "ElevenLabs",
-			_ => "Gemini",
+			_ => "Main Brain",
 		};
 		return $"{provider} {Math.Max(1, rowNumber):00}";
 	}
@@ -1333,24 +1303,14 @@ public partial class UdpListener : Node2D
 		int main = _settingsKeyDrafts.TryGetValue("main", out List<string> mainRows)
 			? NormalizeSettingsKeyRows(mainRows).Count
 			: ReadEditableKeysForPool("main").Count;
-		int gemini = _settingsKeyDrafts.TryGetValue("gemini", out List<string> geminiRows)
-			? NormalizeSettingsKeyRows(geminiRows).Count
-			: ReadEditableKeysForPool("gemini").Count;
-		int groq = _settingsKeyDrafts.TryGetValue("groq", out List<string> groqRows)
-			? NormalizeSettingsKeyRows(groqRows).Count
-			: ReadEditableKeysForPool("groq").Count;
 		int elevenLabs = _settingsKeyDrafts.TryGetValue("elevenlabs", out List<string> elevenLabsRows)
 			? NormalizeSettingsKeyRows(elevenLabsRows).Count
 			: ReadEditableKeysForPool("elevenlabs").Count;
 
 		if (_settingsMainPoolStatusLabel != null)
-			_settingsMainPoolStatusLabel.Text = $"Main · {main}";
-		if (_settingsPoolStatusLabel != null)
-			_settingsPoolStatusLabel.Text = $"Gemini · {gemini}";
-		if (_settingsFallbackStatusLabel != null)
-			_settingsFallbackStatusLabel.Text = $"Groq · {groq}";
+			_settingsMainPoolStatusLabel.Text = $"✦ Main Brain (LLM) · {main} key";
 		if (_settingsElevenLabsPoolStatusLabel != null)
-			_settingsElevenLabsPoolStatusLabel.Text = $"11Labs · {elevenLabs}";
+			_settingsElevenLabsPoolStatusLabel.Text = $"♫ ElevenLabs TTS · {elevenLabs} key";
 	}
 
 
@@ -1831,25 +1791,28 @@ public partial class UdpListener : Node2D
 
 		var normal = new StyleBoxFlat
 		{
-			BgColor = primary ? new Color(0.96f, 0.34f, 0.62f, 0.82f) : new Color(1f, 0.97f, 0.985f, 0.76f),
-			BorderColor = primary ? new Color(1f, 0.66f, 0.80f, 0.95f) : SettingsBorder,
+			BgColor = primary ? SettingsPink : new Color(1f, 1f, 1f, 0.95f),
+			BorderColor = primary ? new Color(0.98f, 0.45f, 0.70f) : SettingsBorder,
 			BorderWidthLeft = 1,
 			BorderWidthTop = 1,
 			BorderWidthRight = 1,
 			BorderWidthBottom = 1,
-			CornerRadiusTopLeft = 13,
-			CornerRadiusTopRight = 13,
-			CornerRadiusBottomLeft = 13,
-			CornerRadiusBottomRight = 13,
-			ContentMarginLeft = 5f,
-			ContentMarginRight = 5f,
+			CornerRadiusTopLeft = 12,
+			CornerRadiusTopRight = 12,
+			CornerRadiusBottomLeft = 12,
+			CornerRadiusBottomRight = 12,
+			ContentMarginLeft = 8f,
+			ContentMarginRight = 8f,
 			ContentMarginTop = 4f,
 			ContentMarginBottom = 4f,
+			ShadowColor = primary ? new Color(0.93f, 0.25f, 0.56f, 0.20f) : new Color(0.2f, 0.15f, 0.25f, 0.04f),
+			ShadowSize = primary ? 6 : 2,
 		};
 		var hover = (StyleBoxFlat)normal.Duplicate();
-		hover.BgColor = primary ? new Color(0.98f, 0.42f, 0.68f, 0.92f) : new Color(1f, 0.92f, 0.96f, 0.86f);
+		hover.BgColor = primary ? new Color(0.98f, 0.38f, 0.66f) : new Color(0.99f, 0.94f, 0.97f);
+		hover.BorderColor = primary ? new Color(1f, 0.55f, 0.78f) : new Color(0.95f, 0.75f, 0.85f);
 		var pressed = (StyleBoxFlat)hover.Duplicate();
-		pressed.BgColor = primary ? new Color(0.92f, 0.26f, 0.55f, 0.92f) : new Color(0.99f, 0.86f, 0.92f, 0.90f);
+		pressed.BgColor = primary ? new Color(0.85f, 0.20f, 0.50f) : new Color(0.97f, 0.88f, 0.93f);
 
 		btn.AddThemeStyleboxOverride("normal", normal);
 		btn.AddThemeStyleboxOverride("hover", hover);
@@ -2538,13 +2501,12 @@ public partial class UdpListener : Node2D
 	{
 		SyncSettingsInputsToFields();
 		int main = CountConfiguredMainKeys();
-		int gemini = CountConfiguredGeminiKeys();
-		int groq = CountConfiguredGroqKeys();
+		int elevenLabs = CountConfiguredElevenLabsKeys();
 		string brain = _processes != null && _processes.IsVisionRunning
 			? $"brain chạy PID {_processes.VisionProcessId}"
 			: "brain dừng";
 		string secrets = File.Exists(GetSecretsPath()) ? "có secrets" : "thiếu secrets";
-		SetSettingsStatus($"OK: {brain}, main {FriendlyMainBrainModelName(RemoteApiModelName)} · {main} key, Gemini phụ {gemini}, Groq phụ {groq}, TTS {_settingsTtsEnabledText()}, {secrets}.");
+		SetSettingsStatus($"OK: {brain} · Main {FriendlyMainBrainModelName(RemoteApiModelName)} ({main} key) · TTS: ElevenLabs ({elevenLabs} key, {_settingsTtsEnabledText()}) · {secrets}.");
 	}
 
 	private void TestSettingsPool()
@@ -2552,9 +2514,8 @@ public partial class UdpListener : Node2D
 		if (_processes == null || !_processes.IsVisionRunning)
 		{
 			int main = CountConfiguredMainKeys();
-			int gemini = CountConfiguredGeminiKeys();
-			int groq = CountConfiguredGroqKeys();
-			SetSettingsStatus($"Brain đang dừng; local: Main Brain {main}, Gemini phụ {gemini}, Groq phụ {groq}.");
+			int elevenLabs = CountConfiguredElevenLabsKeys();
+			SetSettingsStatus($"Brain đang dừng; local: Main Brain {main} key, TTS {elevenLabs} key.");
 			return;
 		}
 		if (_chatSend == null)
@@ -3005,6 +2966,11 @@ public partial class UdpListener : Node2D
 	private int CountConfiguredGroqKeys()
 	{
 		return ReadConfiguredGroqKeys().Count;
+	}
+
+	private int CountConfiguredElevenLabsKeys()
+	{
+		return ReadConfiguredKeys("ELEVENLABS_API_KEY", "ERIS_ELEVENLABS_API_KEY").Count;
 	}
 
 	private List<string> ReadConfiguredMainKeys()
