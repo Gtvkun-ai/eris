@@ -65,6 +65,66 @@ if(typeof document!=='undefined')document.addEventListener('DOMContentLoaded',()
   const jumpIndicator=()=>{$('jumpBottom').hidden=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<220;};
   scroll.addEventListener('scroll',jumpIndicator,{passive:true});
   $('promptBtn')?.addEventListener('click',()=>focusInput('Eris, cùng tôi tìm hiểu sâu về '));
+  // Xóa lịch sử thật ở Godot, không chỉ ẩn tin nhắn khỏi giao diện web.
+  const deleteDialog=$('deleteHistoryDialog'),deleteWord=$('deleteHistoryWord'),deleteAccept=$('deleteHistoryConfirm');
+  let deletionTarget=null,deletionBusy=false;
+  function openDeletion(scope,date=''){
+    if(deletionBusy||!transcript.length){notify('Lịch sử đang trống hoặc đang được xử lý.');return;}
+    const selection=scope==='all'?transcript:transcript.filter(m=>m.date===date);
+    if(!selection.length){notify('Ngày này không có tin nhắn để xóa.');return;}
+    deletionTarget={scope,date,messages:selection.map(m=>ErisStudioUtils.fingerprint(m))};
+    $('deleteHistoryTitle').textContent=scope==='all'?'Xóa toàn bộ lịch sử?':'Xóa lịch sử ngày '+date+'?';
+    $('deleteHistoryDescription').textContent=`${selection.length} tin nhắn sẽ bị xóa khỏi lịch sử lưu trên máy. Không thể hoàn tác.`;
+    $('deleteHistoryVerification').hidden=scope!=='all';deleteWord.value='';
+    deleteAccept.disabled=scope==='all';deleteAccept.textContent=scope==='all'?'Xóa tất cả':'Xóa ngày này';
+    if(!deleteDialog.open)deleteDialog.showModal();
+    if(scope==='all')deleteWord.focus();
+  }
+  $('deleteAllHistoryBtn')?.addEventListener('click',()=>openDeletion('all'));
+  $('dates')?.addEventListener('click',event=>{
+    const btn=event.target.closest('[data-delete-day]');if(!btn)return;
+    event.preventDefault();event.stopPropagation();openDeletion('day',btn.dataset.deleteDay);
+  });
+  deleteWord.addEventListener('input',()=>{
+    if(deletionTarget?.scope==='all'&&!deletionBusy)deleteAccept.disabled=deleteWord.value.trim()!=='XÓA';
+  });
+  $('deleteHistoryCancel').addEventListener('click',()=>{if(!deletionBusy)deleteDialog.close();});
+  deleteDialog.addEventListener('cancel',event=>{if(deletionBusy)event.preventDefault();});
+  deleteDialog.addEventListener('close',()=>{if(!deletionBusy)deletionTarget=null;});
+  deleteAccept.addEventListener('click',async()=>{
+    if(!deletionTarget||deletionBusy||deletionTarget.scope==='all'&&deleteWord.value.trim()!=='XÓA')return;
+    const target=deletionTarget;deletionBusy=true;deleteAccept.disabled=true;
+    $('deleteHistoryCancel').disabled=true;deleteAccept.textContent='Đang xóa…';
+    let deleted=false;
+    try{
+      const response=await fetch(endpoint('api/history/delete'),{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({scope:target.scope,date:target.date,confirmation:'DELETE_ERIS_HISTORY'})});
+      const data=await response.json();
+      if(!response.ok||!data.ok){
+        if(data.reason==='busy')notify('Eris còn đang xử lý lượt. Hãy xóa khi Eris đã trả lời xong.');
+        else if(data.reason==='timeout')notify('Chưa nhận xác nhận xóa từ Eris. Kiểm tra lại lịch sử trước khi thử lần nữa.');
+        else notify('Không xóa được lịch sử. Nội dung cũ vẫn được giữ.');
+        return;
+      }
+      for(const key of target.messages)saved.delete(key);
+      safeWrite('eris.studio.bookmarks.v1',JSON.stringify(Array.from(saved).slice(-180)));
+      $('search').value='';$('search').dispatchEvent(new Event('input'));
+      $('dates')?.querySelector('.date-button')?.click();
+      deleted=true;deleteDialog.close();notify(`Đã xóa ${target.messages.length} tin nhắn khỏi lịch sử trên máy.`);
+      // SSE sẽ tự cập nhật; yêu cầu snapshot ngay để fallback polling không chậm.
+      try{
+        const latest=await fetch(endpoint('api/state'),{cache:'no-store'});
+        if(latest.ok)window.dispatchEvent(new CustomEvent('eris:stream-state',{detail:await latest.json()}));
+      }catch{/* SSE / polling sẽ cập nhật; không báo xóa thất bại sau khi đã xác nhận. */}
+    }catch{notify('Mất kết nối với Eris. Hãy kiểm tra lịch sử trước khi xóa lần nữa.');}
+    finally{
+      deletionBusy=false;
+      if(deleted)deletionTarget=null;
+      $('deleteHistoryCancel').disabled=false;
+      deleteAccept.disabled=deleted||target.scope==='all'&&deleteWord.value.trim()!=='XÓA';
+      if(!deleted)deleteAccept.textContent=target.scope==='all'?'Xóa tất cả':'Xóa ngày này';
+    }
+  });
   // Thêm chỉ mục lưu tin nhắn theo fingerprint, không sao chép transcript vào localStorage.
   function topicNav(){const box=$('topicList');if(!box)return;box.replaceChildren();
     const topics=transcript.filter(m=>m.role==='user'&&/^Chủ đề mới:\s*\S/i.test(m.text||'')).slice(-10).reverse();

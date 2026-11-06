@@ -50,3 +50,32 @@ test('keyed rendering tránh replaceChildren toàn bộ transcript khi polling',
   assert.match(script,/root\.insertBefore\(node/);
   assert.doesNotMatch(script,/root\.replaceChildren\(frag\)/);
 });
+
+test('xóa lịch sử thực sự qua cổng Godot, có bảo vệ cùng origin và main thread',()=>{
+  const historySource=fs.readFileSync(path.join(base,'..','UdpListener.ConversationUi.cs'),'utf8');
+  const studio=fs.readFileSync(path.join(base,'studio.js'),'utf8');
+  assert.match(portal,/relative == "api\/history\/delete"/);
+  assert.match(portal,/DELETE_ERIS_HISTORY/);
+  assert.match(portal,/DateTime\.TryParseExact\(date/);
+  assert.match(portal,/Interlocked\.CompareExchange\(ref deletion\.Lifecycle, 1, 0\)/);
+  assert.match(portal,/DeleteRichChatHistoryOnMainThread\(deletion\.Scope, deletion\.Date\)/);
+  assert.match(historySource,/RemoveAll\(e => string\.Equals\(e\.Date, date, StringComparison\.Ordinal\)\)/);
+  assert.match(historySource,/if \(!SaveConversationHistory\(\)\)/);
+  assert.match(historySource,/ClearConversationHistory\(\)/);
+  assert.match(studio,/deleteHistoryDialog/);
+  assert.match(studio,/deleteWord\.value\.trim\(\)!=='XÓA'/);
+  assert.match(studio,/api\/history\/delete/);
+  for(const id of ['deleteAllHistoryBtn','deleteHistoryDialog','deleteHistoryConfirm','deleteHistoryCancel','deleteHistoryVerification']){
+    assert.ok(html.includes('id="'+id+'"'));
+  }
+});
+
+test('người dùng có thể xóa theo ngày mà không tác động Memory hay Learning',()=>{
+  const studio=fs.readFileSync(path.join(base,'studio.js'),'utf8');
+  assert.match(script,/dataset\.deleteDay=date/);
+  assert.match(studio,/openDeletion\('day',btn\.dataset\.deleteDay\)/);
+  const native=fs.readFileSync(path.join(base,'..','UdpListener.ConversationUi.cs'),'utf8');
+  const fn=native.split('private string DeleteRichChatHistoryOnMainThread(')[1].split('private static void DeleteConversationStoreFile(')[0];
+  assert.doesNotMatch(fn,/(?:MemoryService|LearningService|mentor\/learning|_memoryPanel)/);
+  assert.match(fn,/_conversationState is "thinking"/);
+});

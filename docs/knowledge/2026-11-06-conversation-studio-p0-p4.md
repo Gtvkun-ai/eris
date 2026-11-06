@@ -60,3 +60,22 @@ Chép các file cùng đường dẫn dưới root `eris/` vào source, ghi đè
 ## Rollback
 
 Trả các file đã sửa `index.html`, `chat.js`, `UdpListener.RichChatPortal.cs` từ phiên bản cũ; xóa `studio.css`, `studio.js`, bài test `studio.test.cjs` và tài liệu này (có thể giữ file mới nếu không được nạp, nhưng tốt nhất xóa sạch). Không động vào CSDL/trí nhớ hoặc thư mục Learning Canvas.
+
+## Bản vá bổ sung: Xóa lịch sử hội thoại (6/11/2026)
+
+### Tính năng
+
+- Sidebar Rich Chat có nút **Xóa toàn bộ lịch sử** và nút **×** bên cạnh mỗi ngày để xóa riêng một ngày.
+- Hộp xác nhận có thống kê số tin nhắn; xóa tất cả cần nhập đúng **XÓA**. Không xóa chỉ bằng thao tác cuộn/lọc hay xóa DOM.
+- `POST api/history/delete`: nhận `{scope:"all"|"day",date:"yyyy-MM-dd"|"",confirmation:"DELETE_ERIS_HISTORY"}`; chỉ nhận cùng Origin, token route localhost, giới hạn body; không có API xóa qua GET.
+- Máy chủ queue yêu cầu sang **Godot main thread**; trả `200` **chỉ khi** main thread thực hiện xóa và lưu dữ liệu. Quá hạn khi chưa xử lý sẽ hủy yêu cầu; nếu Eris còn đang xử lý lượt thì trả `409 busy` để tránh hiển thị lại lời đáp từ lượt cũ.
+- `day`: `RemoveAll` trên `_conversationEntries` rồi `SaveConversationHistory()` vào `user://eris_conversation_history.json`; nếu lưu lỗi, khôi phục dữ liệu RAM. `all`: dùng `ClearConversationHistory()` hiện có để xóa bản cũ, file lịch sử mới và dữ liệu transcript trong RAM; kiểm tra file còn tồn tại trước khi báo thành công.
+- UI chỉ loại bỏ fingerprint bookmark của các tin nhắn bị xóa, không lưu bản sao hội thoại ở browser.
+- Xóa **chỉ lịch sử hiển thị/lưu trên máy**. Không phải xóa dữ liệu huấn luyện/memory dài hạn/Learning và không hủy các artifact độc lập hoặc lịch sử nội bộ ở nguồn khác nếu có.
+
+### Giới hạn và kiểm thử
+
+- Sidebar đang nhóm lịch sử **theo ngày**, chưa quản lý các thread/phiên tách biệt; do đó chưa có nút xóa riêng một cuộc hội thoại trong ngày.
+- Node tests: **23/23 đạt**. Chromium mock: 4 tin nhắn ở 2 ngày → xóa ngày 05/11 còn 2 → xóa tất cả còn 0; không lỗi JavaScript.
+- Chưa build Godot C# trên máy đích; cần build và chạy Eris thật để xác nhận HTTP endpoint và persistence end-to-end.
+- Sao lưu thư mục `user://` trước khi kiểm tra xóa dữ liệu thật. Không thể hoàn tác khi chưa có bản sao lưu.

@@ -21,6 +21,16 @@ public partial class UdpListener
     private TcpListener _richChatServer;
     private CancellationTokenSource _richChatCancellation;
     private readonly ConcurrentQueue<string> _richChatOutbox = new();
+    // Yêu cầu xóa transcript được xử lý trên Godot main thread, cùng nơi ghi lịch sử.
+    private sealed class RichChatDeleteRequest
+    {
+        public string Scope { get; init; } = "";
+        public string Date { get; init; } = "";
+        public TaskCompletionSource<string> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // 0 = queued, 1 = main thread xử lý, 2 = hủy vì quá hạn trước khi chạy.
+        public int Lifecycle;
+    }
+    private readonly ConcurrentQueue<RichChatDeleteRequest> _richChatDeleteOutbox = new();
     private readonly ConcurrentQueue<(string PathId, int Page)> _learnerPortraitOutbox = new();
     private string _learnerPortraitSnapshot = "{\"status\":\"loading\"}";
     private readonly Dictionary<string, (byte[] Bytes, string Mime)> _richChatAssets = new();
@@ -243,6 +253,64 @@ public partial class UdpListener
                     Reply(net, 202, "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}"));
                     return;
                 }
+                if (method == "POST" && relative == "api/history/delete")
+                {
+                    // Chỉ trang Rich Chat cùng origin được quyền yêu cầu hành động phá hủy.
+                    string expectedOrigin = "Origin: http://" + expectedHost;
+                    if (!lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)))
+                    { Reply(net, 403, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"origin\"}")); return; }
+                    int length = -1;
+                    foreach (string line in lines.Skip(1))
+                        if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
+                            int.TryParse(line.Substring(15).Trim(), out int size)) length = size;
+                    if (length < 2 || length > 384)
+                    { Reply(net, 413, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"payload\"}")); return; }
+                    int offset = headerEnd + 4;
+                    while (data.Length - offset < length && data.Length < 1024)
+                    {
+                        int read = net.Read(chunk, 0, Math.Min(chunk.Length, length - (int)data.Length + offset));
+                        if (read <= 0) return;
+                        data.Write(chunk, 0, read);
+                    }
+                    using JsonDocument deletionJson = JsonDocument.Parse(data.ToArray().AsMemory(offset, length));
+                    JsonElement deletion = deletionJson.RootElement;
+                    string scope = deletion.ValueKind == JsonValueKind.Object && deletion.TryGetProperty("scope", out var scopeElement) && scopeElement.ValueKind == JsonValueKind.String
+                        ? scopeElement.GetString() ?? "" : "";
+                    string date = deletion.ValueKind == JsonValueKind.Object && deletion.TryGetProperty("date", out var dateElement) && dateElement.ValueKind == JsonValueKind.String
+                        ? dateElement.GetString() ?? "" : "";
+                    string confirmation = deletion.ValueKind == JsonValueKind.Object && deletion.TryGetProperty("confirmation", out var confirmElement) && confirmElement.ValueKind == JsonValueKind.String
+                        ? confirmElement.GetString() ?? "" : "";
+                    bool valid = confirmation == "DELETE_ERIS_HISTORY" && (scope == "all" && date.Length == 0 ||
+                        scope == "day" && DateTime.TryParseExact(date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out _) && date.Length == 10);
+                    if (!valid)
+                    { Reply(net, 400, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"invalid_request\"}")); return; }
+                    if (_richChatDeleteOutbox.Count >= 2)
+                    { Reply(net, 409, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"queued\"}")); return; }
+                    var requestDelete = new RichChatDeleteRequest { Scope = scope, Date = date };
+                    _richChatDeleteOutbox.Enqueue(requestDelete);
+                    // Không báo xóa thành công khi main thread chưa xác nhận đã lưu.
+                    string outcome;
+                    try
+                    {
+                        if (!requestDelete.Completion.Task.Wait(TimeSpan.FromSeconds(3)))
+                        {
+                            // Không để yêu cầu hết hạn bất ngờ xóa lịch sử sau khi web báo lỗi.
+                            bool cancelled = Interlocked.CompareExchange(ref requestDelete.Lifecycle, 2, 0) == 0;
+                            Reply(net, 503, "application/json", Encoding.UTF8.GetBytes(cancelled
+                                ? "{\"ok\":false,\"reason\":\"timeout\"}"
+                                : "{\"ok\":false,\"reason\":\"timeout_processing\"}"));
+                            return;
+                        }
+                        outcome = requestDelete.Completion.Task.Result;
+                    }
+                    catch (Exception)
+                    { Reply(net, 503, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"error\"}")); return; }
+                    int status = outcome == "ok" ? 200 : outcome is "busy" or "empty" ? 409 : 500;
+                    Reply(net, status, "application/json; charset=utf-8",
+                        Encoding.UTF8.GetBytes("{\"ok\":" + (outcome == "ok" ? "true" : "false") + ",\"reason\":\"" + outcome + "\"}"));
+                    return;
+                }
                 if (method == "GET" && relative.StartsWith("api/image/", StringComparison.Ordinal))
                 {
                     if (TryReadRichChatArtifactImage(relative, out var png))
@@ -368,7 +436,7 @@ public partial class UdpListener
     {
         string label = status switch { 200 => "OK", 202 => "Accepted", 409 => "Conflict", 400 => "Bad Request",
             403 => "Forbidden", 404 => "Not Found", 405 => "Method Not Allowed", 413 => "Payload Too Large",
-            501 => "Not Implemented", _ => "Error" };
+            501 => "Not Implemented", 503 => "Service Unavailable", _ => "Error" };
         string headers = $"HTTP/1.1 {status} {label}\r\nContent-Type: {mime}\r\nContent-Length: {payload.Length}\r\n" +
             "Connection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n" +
             "Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n" +
@@ -404,7 +472,8 @@ public partial class UdpListener
             ? _runtimePresence.RuntimeActivityLabel : "";
         string stageLabel = !string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
             ? _runtimePresence.StatusLabel : _conversationStateLabel;
-        ulong snapshotRevision = Time.GetTicksMsec();
+        // Revision đơn điệu: snapshot xóa không thể bị polling/SSE cũ ghi đè trong cùng mili-giây.
+        ulong snapshotRevision = Math.Max(Time.GetTicksMsec(), _richChatLastSnapshotMs + 1);
         string next = JsonSerializer.Serialize(new {
             revision = snapshotRevision,
             messages = visible, bundles, status = _conversationStateLabel, online = true,
@@ -425,6 +494,23 @@ public partial class UdpListener
     private void TickRichChatPortal()
     {
         if (_richChatServer == null) return;
+        // Tác vụ xóa lịch sử đứng trước enqueue tin mới để tránh đua với transcript.
+        while (_richChatDeleteOutbox.TryDequeue(out RichChatDeleteRequest deletion))
+        {
+            if (Interlocked.CompareExchange(ref deletion.Lifecycle, 1, 0) != 0) continue;
+            string outcome;
+            try
+            {
+                outcome = DeleteRichChatHistoryOnMainThread(deletion.Scope, deletion.Date);
+                if (outcome == "ok") UpdateRichChatSnapshot();
+            }
+            catch (Exception exc)
+            {
+                GD.PrintErr("[RichChat] Delete transcript failed: " + exc.Message);
+                outcome = "error";
+            }
+            deletion.Completion.TrySetResult(outcome);
+        }
         int processed = 0;
         while (processed++ < 5 && _richChatOutbox.TryDequeue(out string message))
             SendUserChatMessage(message);
@@ -437,7 +523,7 @@ public partial class UdpListener
             Volatile.Write(ref _learnerPortraitSnapshot,
                 "{\"status\":\"error\",\"message\":\"Eris chưa phản hồi sau 20 giây. Hãy thử Làm mới.\"}");
         }
-        if (Time.GetTicksMsec() - _richChatLastSnapshotMs >= 500)
+        if (Time.GetTicksMsec() >= _richChatLastSnapshotMs + 500)
             UpdateRichChatSnapshot();
     }
 

@@ -308,7 +308,18 @@ if(typeof document!=='undefined') document.addEventListener('DOMContentLoaded',(
   const shown=()=>messages.filter(m=>(currentDay==='all'||m.date===currentDay)&&(!currentSearch||m.text.toLocaleLowerCase('vi').includes(currentSearch)));
   function renderDates(){const counts={};messages.forEach(m=>{const k=m.date||'Khác';counts[k]=(counts[k]||0)+1});
     dates.replaceChildren();const items=[['all','Tất cả hội thoại',messages.length],...Object.entries(counts).sort((a,b)=>b[0].localeCompare(a[0])).map(([d,n])=>[d,dateHeading(d),n])];
-    for(const [date,label,count] of items){const btn=document.createElement('button');btn.className='date-button'+(date===currentDay?' active':'');btn.innerHTML=`<span>${html(label)}</span><small>${count} tin nhắn</small>`;btn.addEventListener('click',()=>{currentDay=date;renderDates();renderMessages();document.getElementById('sidebar').classList.remove('open')});dates.appendChild(btn)}
+    for(const [date,label,count] of items){
+      const row=document.createElement('div');row.className='date-row';
+      const btn=document.createElement('button');btn.className='date-button'+(date===currentDay?' active':'');
+      btn.innerHTML=`<span>${html(label)}</span><small>${count} tin nhắn</small>`;
+      btn.addEventListener('click',()=>{currentDay=date;renderDates();renderMessages();document.getElementById('sidebar').classList.remove('open')});row.append(btn);
+      if(date!=='all'){
+        const del=document.createElement('button');del.type='button';del.className='date-delete';
+        del.dataset.deleteDay=date;del.setAttribute('aria-label','Xóa hội thoại '+label);
+        del.title='Xóa lịch sử ngày '+label;del.textContent='×';row.append(del);
+      }
+      dates.append(row);
+    }
   }
   // ACK means actual DOM render, not "JavaScript returned HTML".
   const imageSettled = img => new Promise(resolve => {

@@ -43,6 +43,7 @@
       <nav class="topic-list" id="topicList" aria-label="Chủ đề trong transcript hiện tại"></nav>
       <div class="sidebar-section sidebar-section--saved"><span>ĐÃ ĐÁNH DẤU</span><span id="savedCount">0</span></div>
       <nav class="saved-list" id="savedList" aria-label="Tin nhắn đã lưu"></nav>
+      <div class="history-danger-area"><button id="deleteAllHistoryBtn" type="button" class="history-danger" title="Xóa toàn bộ transcript đã lưu trên máy"><span aria-hidden="true">⌫</span> Xóa toàn bộ lịch sử</button></div>
       <div class="sidebar-foot"><span class="dot"></span><span>Đang kết nối với Eris cục bộ</span><small>Hội thoại và bộ nhớ vẫn thuộc runtime Eris</small></div>
     </aside>
     <main class="main">
@@ -91,6 +92,19 @@
       <div class="inspector-foot">Thông tin hoạt động lấy từ runtime thật; không hiển thị suy luận nội bộ hoặc trạng thái tự dựng.</div>
     </aside>
   </div>
+  <dialog id="deleteHistoryDialog" class="history-delete-dialog" aria-labelledby="deleteHistoryTitle" aria-describedby="deleteHistoryDescription">
+    <div class="history-delete-mark" aria-hidden="true">⌫</div>
+    <h2 id="deleteHistoryTitle">Xóa lịch sử hội thoại?</h2>
+    <p id="deleteHistoryDescription"></p>
+    <p class="delete-history-scope">Chỉ xóa transcript ở máy này. Trí nhớ dài hạn, dữ liệu Learning và các file khác của Eris không bị xóa.</p>
+    <label id="deleteHistoryVerification" class="delete-history-verification" hidden>Nhập <strong>XÓA</strong> để xác nhận xóa toàn bộ
+      <input id="deleteHistoryWord" type="text" autocomplete="off" spellcheck="false" placeholder="XÓA" aria-label="Nhập XÓA để xác nhận" />
+    </label>
+    <div class="history-delete-actions">
+      <button id="deleteHistoryCancel" type="button" class="history-cancel">Hủy</button>
+      <button id="deleteHistoryConfirm" type="button" class="history-confirm" disabled>Xóa lịch sử</button>
+    </div>
+  </dialog>
   <div id="toastHost" role="status" aria-live="polite"></div>
 </body>
 </html>

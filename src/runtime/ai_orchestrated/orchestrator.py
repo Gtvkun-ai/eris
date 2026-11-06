@@ -617,6 +617,54 @@ def _commit_pedagogical_receipt(
         return False
 
 
+def _ensure_root_capability_registry(host: Any) -> RootCapabilityRegistry:
+    from runtime.capabilities import ActionCapability, ResearchCapability, TutorCapability, WorkCapability
+    from runtime.conversation.context import RootCapabilityRegistry
+    from runtime.capabilities.canvas import canvas_capability_for_host
+
+    tutor_capability = getattr(host, "tutor_capability", None)
+    if not isinstance(tutor_capability, TutorCapability):
+        tutor_capability = TutorCapability(
+            getattr(host, "tutor_executive", None),
+            logger=getattr(host, "logger", None),
+        )
+        host.tutor_capability = tutor_capability
+
+    work_capability = getattr(host, "work_capability", None)
+    if not isinstance(work_capability, WorkCapability):
+        work_capability = WorkCapability(
+            getattr(host, "agent_harness", None),
+            logger=getattr(host, "logger", None),
+            host=host,
+        )
+        host.work_capability = work_capability
+    work_capability.host = host
+
+    research_capability = getattr(host, "research_capability", None)
+    if not isinstance(research_capability, ResearchCapability):
+        research_capability = ResearchCapability(host, logger=getattr(host, "logger", None))
+        host.research_capability = research_capability
+    else:
+        research_capability.host = host
+        research_capability.logger = getattr(host, "logger", None)
+
+    action_capability = getattr(host, "action_capability", None)
+    if not isinstance(action_capability, ActionCapability):
+        action_capability = ActionCapability(
+            getattr(host, "action_executor", None),
+            logger=getattr(host, "logger", None),
+        )
+        host.action_capability = action_capability
+
+    return RootCapabilityRegistry({
+        "tutor": tutor_capability,
+        "work": work_capability,
+        "research": research_capability,
+        "action": action_capability,
+        "canvas": canvas_capability_for_host(host),
+    })
+
+
 class AIChatOrchestrator:
     def __init__(self, host: Any) -> None:
         self.host = host
@@ -764,55 +812,11 @@ class AIChatOrchestrator:
             kind="user_turn",
             text=str(user_text or "")[:16000],
         )
-        from runtime.capabilities import ActionCapability, ResearchCapability, TutorCapability, WorkCapability
-        from runtime.conversation.context import RootCapabilityRegistry
-        from runtime.capabilities.canvas import canvas_capability_for_host
-
         # V12 hard cutover: foreground bootstrap chỉ *đăng ký* capability. Không
         # gọi tutor/work/research trước RootAgent vì làm vậy sẽ biến router thành
         # semantic authority thứ hai và khiến small-talk cũng phải chạy domain
         # planner không cần thiết. DeepSeek tự quyết định capability nào đáng gọi.
-        tutor_capability = getattr(host, "tutor_capability", None)
-        if not isinstance(tutor_capability, TutorCapability):
-            tutor_capability = TutorCapability(
-                getattr(host, "tutor_executive", None),
-                logger=getattr(host, "logger", None),
-            )
-            host.tutor_capability = tutor_capability
-
-        work_capability = getattr(host, "work_capability", None)
-        if not isinstance(work_capability, WorkCapability):
-            work_capability = WorkCapability(
-                getattr(host, "agent_harness", None),
-                logger=getattr(host, "logger", None),
-                host=host,
-            )
-            host.work_capability = work_capability
-        work_capability.host = host
-
-        research_capability = getattr(host, "research_capability", None)
-        if not isinstance(research_capability, ResearchCapability):
-            research_capability = ResearchCapability(host, logger=getattr(host, "logger", None))
-            host.research_capability = research_capability
-        else:
-            research_capability.host = host
-            research_capability.logger = getattr(host, "logger", None)
-
-        action_capability = getattr(host, "action_capability", None)
-        if not isinstance(action_capability, ActionCapability):
-            action_capability = ActionCapability(
-                getattr(host, "action_executor", None),
-                logger=getattr(host, "logger", None),
-            )
-            host.action_capability = action_capability
-
-        capability_registry = RootCapabilityRegistry({
-            "tutor": tutor_capability,
-            "work": work_capability,
-            "research": research_capability,
-            "action": action_capability,
-            "canvas": canvas_capability_for_host(host),
-        })
+        capability_registry: RootCapabilityRegistry = _ensure_root_capability_registry(host)
         # ContextAssembler chỉ projection state/evidence; nó không route intent và
         # không chọn nội dung nói. RootAgent vẫn là semantic/social authority duy
         # nhất. Đây là chỗ nối lại identity/relationship/memory/world/affect đã bị
@@ -1162,11 +1166,7 @@ class AIAutonomousOrchestrator:
         runtime_context["__source_grounding_engine"] = evidence_context.get("__source_grounding_engine")
         if scope:
             runtime_context["__canvas_scope"] = dict(scope)
-        from runtime.capabilities.canvas import canvas_capability_for_host
-        from runtime.conversation.context import RootCapabilityRegistry
-        runtime_context["__root_capabilities"] = RootCapabilityRegistry({
-            "canvas": canvas_capability_for_host(host),
-        })
+        runtime_context["__root_capabilities"] = _ensure_root_capability_registry(host)
         status = dict(runtime_context.get("conversation_status", {}) or {})
         status.update({
             "signal_kind": signal_kind,

@@ -19,3 +19,29 @@ body.inspector-closed .inspector{display:none}body.sidebar-collapsed .sidebar{wi
 
 .topic-list{max-height:120px;overflow-y:auto}.topic-list .activity-empty{padding:0 12px}.setting-line+.subtle-note{margin-top:3px}.setting-line{padding:3px 0}
 body.sidebar-collapsed .topic-list,body.sidebar-collapsed .topics-title{display:none}
+
+/* Lịch sử: xóa theo ngày và toàn bộ, tách rõ khỏi thao tác điều hướng. */
+.date-row{display:flex;align-items:stretch;gap:3px;min-width:0;border-radius:11px}
+.date-row .date-button{flex:1;min-width:0;max-width:none}
+.date-row .date-delete{flex:0 0 29px;align-self:center;height:30px;border:0;background:transparent;color:var(--muted);border-radius:8px;opacity:.5;font-size:19px;line-height:1}
+.date-row:hover .date-delete,.date-row:focus-within .date-delete{opacity:1}
+.date-row .date-delete:hover,.date-row .date-delete:focus-visible{color:#c74763;background:color-mix(in srgb,#d44b66 9%,var(--surface))}
+.history-danger-area{padding:10px 4px 7px;border-top:1px solid var(--border);margin-top:auto}
+.history-danger{display:flex;align-items:center;gap:8px;border:1px solid transparent;color:var(--muted);font-size:11px;border-radius:10px;padding:10px 12px;width:100%;background:transparent;text-align:left}
+.history-danger:hover,.history-danger:focus-visible{color:#c74763;background:color-mix(in srgb,#d44b66 7%,var(--surface));border-color:color-mix(in srgb,#d44b66 16%,var(--border))}
+.history-danger>span{font-size:16px}
+body.sidebar-collapsed .history-danger-area{padding:7px 0}body.sidebar-collapsed .history-danger{font-size:0;justify-content:center;padding:9px 0}body.sidebar-collapsed .history-danger>span{font-size:18px}
+.history-delete-dialog{max-width:min(440px,calc(100vw - 30px));width:100%;box-sizing:border-box;margin:auto;border:1px solid var(--border);border-radius:22px;box-shadow:0 24px 70px #200d2c48;background:var(--surface);color:var(--text);padding:29px}
+.history-delete-dialog::backdrop{background:#150c2280;backdrop-filter:blur(5px)}
+.history-delete-mark{width:47px;height:47px;display:grid;place-items:center;border-radius:14px;background:#fce7ea;color:#ae3a51;font-size:25px;margin-bottom:17px}
+.history-delete-dialog h2{font-size:20px;margin:0 0 9px;letter-spacing:-.5px}
+.history-delete-dialog p{font-size:12px;line-height:1.75;color:var(--muted);margin:0 0 10px}
+.history-delete-dialog .delete-history-scope{background:var(--side);border-radius:11px;padding:10px 12px;font-size:11px}
+.delete-history-verification{display:block;font-size:12px;line-height:1.7;margin:16px 0 4px}
+.delete-history-verification[hidden]{display:none}
+.delete-history-verification input{width:100%;margin-top:8px;padding:11px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box}
+.delete-history-verification input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.history-delete-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
+.history-delete-actions button{border:1px solid var(--border);border-radius:10px;padding:10px 16px;font-size:12px;font-weight:650;cursor:pointer}
+.history-cancel{background:var(--bg);color:var(--text)}.history-confirm{background:#b63b55;color:#fff;border-color:#b63b55!important}
+.history-confirm:hover:not(:disabled){background:#962d46}.history-confirm:disabled{opacity:.5;cursor:not-allowed}
