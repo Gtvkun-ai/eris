@@ -94,6 +94,7 @@ def test_p3_conflicts_and_invalid_inputs_are_atomic(service):
 
 
 def test_p3_root_can_propose_without_stealing_user_selection(service):
+    service._view_session("open", "test-p3-browser")  # Root test cũ cần panel đang xem.
     sent = []
     host = SimpleNamespace(learning_canvas_service=service,
                            _send_runtime_json=lambda packet, **_: sent.append(packet) or True)

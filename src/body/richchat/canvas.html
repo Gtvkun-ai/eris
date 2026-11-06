@@ -10,6 +10,14 @@
   <script src="vendor/prism.js" defer></script>
   <script src="vendor/prism-clike.js" defer></script>
   <script src="vendor/prism-java.js" defer></script>
+  <script src="vendor/prism-python.js" defer></script>
+  <script src="vendor/prism-c.js" defer></script>
+  <script src="vendor/prism-cpp.js" defer></script>
+  <script src="vendor/prism-javascript.js" defer></script>
+  <script src="vendor/prism-typescript.js" defer></script>
+  <script src="vendor/prism-csharp.js" defer></script>
+  <script src="vendor/prism-json.js" defer></script>
+  <script src="vendor/prism-bash.js" defer></script>
   <script src="canvas.js" defer></script>
 </head>
 <body>
@@ -36,6 +44,13 @@
           <input id="newTopicTitle" type="text" maxlength="120" placeholder="Mở chủ đề mới..." aria-label="Tên chủ đề mới" required />
           <button type="submit" class="button" id="newTopicButton">+ Tạo bản đồ</button>
         </form>
+      </div>
+      <div class="learning-dashboard" aria-label="Lịch sử và tiếp tục học">
+        <div class="recent-strip" id="recentSubjects"><span class="history-empty">Chưa có môn học gần đây.</span></div>
+        <details class="learning-history"><summary>◷ Lịch sử học & tác vụ Gemini</summary>
+          <div class="history-columns"><div><strong>Hoạt động gần đây</strong><div id="learningHistory">Chưa có hoạt động.</div></div>
+          <div><strong>Chuẩn bị bản đồ</strong><div id="learningJobs">Chưa có tác vụ.</div></div></div>
+        </details>
       </div>
       </section>
       <section class="speaking" id="speaking" aria-live="polite" hidden><span class="pulse"></span><span id="speakingText"></span><button id="speakingJump" class="text-button" type="button">Đến nội dung →</button></section>

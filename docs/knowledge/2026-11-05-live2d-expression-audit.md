@@ -1,5 +1,14 @@
 # Kiểm tra biểu cảm INFJ và xuất lại qua PSD2Live — 05/11/2026
 
+## Atlas 2048 từ file Cubism gốc — 06/11/2026
+
+Các thử nghiệm vẽ lại miệng ở dưới là lịch sử. Trước lượt làm sạch này, MOC3 và atlas chạy trên repo lẫn bản portable đã trùng lại bản xuất gốc. Lần này dùng bản sao CMO3 gốc, xếp lại texture ở 100% kích thước ảnh nguồn trên atlas 2048 × 2048 rồi xuất bằng Cubism Editor 4.2. Các lớp đo được có thêm khoảng 24% pixel theo mỗi chiều. [Hướng dẫn atlas Cubism 4.2](https://docs.live2d.com/4.2/en/cubism-editor-manual/texture-atlas-edit/)
+
+- MOC3 mới chỉ khác vùng tọa độ UV. Hình học, keyform và 27 tham số của rig được giữ nguyên. Gói chạy giữ 23 biểu cảm, 11 chuyển động, nhóm blink/lip sync và physics hiện có.
+- Đã render 15 tư thế mỗi bản bằng renderer portable. Ảnh đối chiếu cho thấy cải thiện nhẹ ở nét tóc và viền mắt khi nhìn cận, giữ dáng mặt ở các mẫu há miệng, quay đầu và chớp mắt. Đây là kiểm theo tư thế, chưa chạy hội thoại/TTS thật. [Ảnh đối chiếu trước và sau](../assets/live2d-clean-2048-20261106/texture-before-after.png)
+- Ba file atlas, MOC3 và model3 đã đồng bộ sang repo và `Documents/eris/src`, có xác nhận SHA-256. Kiểm native consistency đạt ở cả hai gói thử trước/sau. 93 test Live2D đạt, loại một ca physics đã tái hiện lỗi ở gói cũ. Ruff đạt.
+- Bản CMO3 chỉnh sửa, backup hai gói, kết quả render và `sync-receipt.json` nằm trong `C:/Users/Gtvkun/Documents/infj-PSD2Live-test-20261105-170430/texture-cleanup-2026-11-06/`.
+
 ## Cập nhật sau nhận xét môi còn cần nâng cấp
 
 User nhận xét cần nâng cấp môi. Đã xem lại hai lớp da/môi và native render; nét xám quanh môi còn dày, trong khi thay artwork bên trong chưa đổi dáng khép/há. Thử nét anime nâu dịu bằng ImageGen, chuyển sắc độ nét qua coverage của đường môi đang đăng ký trên mesh, bỏ bớt halo xám. Không dùng trực tiếp contour miếng da AI để tránh nét thừa đã thấy ở lượt thử trước.

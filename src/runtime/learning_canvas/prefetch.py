@@ -33,13 +33,15 @@ Chỉ dùng id nguyên xi được cung cấp, tối đa 4 targets, 1-3 next cho
 class ProgressiveGraphPrefetch:
     """Công việc ngắn, coalescing; không độc lập quyết định việc học/Writer."""
 
-    def __init__(self, graphs: GraphWorkspace, *, adapter: object | None = None, on_change=None):
+    def __init__(self, graphs: GraphWorkspace, *, adapter: object | None = None, on_change=None, on_result=None, may_run=None):
         self.graphs = graphs
         self._adapter = adapter
         self.on_change = on_change
+        self.on_result = on_result  # P3.6: kết thúc job -> host event queue, không trực tiếp nói.
+        self.may_run = may_run  # P3.7: worker không được gọi Gemini khi panel đóng.
         self._lock = threading.RLock()
-        self._pending: tuple[str, str, int] | None = None
-        self._active: tuple[str, str, int] | None = None
+        self._pending: tuple[str, str, int, str] | None = None
+        self._active: tuple[str, str, int, str] | None = None
         self._thread: threading.Thread | None = None
         self._generation = 0
         self._closed = False
@@ -54,18 +56,22 @@ class ProgressiveGraphPrefetch:
         # Tái sử dụng Gemini Web service/lane đang có, không mở cookie/client khác.
         return GeminiWebUserProfileAdapter.create_if_available(timeout=16.0)
 
-    def request(self, group_id: str, node_id: str) -> bool:
+    def request(self, group_id: str, node_id: str, *, job_id: str = "") -> bool:
         """Chỉ xếp một yêu cầu mới nhất; không khóa HTTP/UI."""
         key = (group_id, node_id)
         with self._lock:
-            if self._closed or self._cooldowns.get(key, 0) > time.monotonic():
+            if (self._closed or (callable(self.may_run) and not self.may_run())
+                    or self._cooldowns.get(key, 0) > time.monotonic()):
                 return False
             if self._pending and self._pending[:2] == key:
                 return False
             if self._active and self._active[:2] == key:
                 return False
             self._generation += 1
-            self._pending = (group_id, node_id, self._generation)
+            displaced = self._pending
+            self._pending = (group_id, node_id, self._generation, job_id)
+            if displaced and displaced[3]:
+                self._notify(displaced[0], displaced[1], displaced[3], "superseded")
             self._failed.pop(key, None)
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._drain, daemon=True,
@@ -83,6 +89,14 @@ class ProgressiveGraphPrefetch:
             if key in self._failed:
                 return "unavailable"
             return "idle"
+
+    def _notify(self, group_id: str, node_id: str, job_id: str, status: str):
+        if job_id and callable(self.on_result):
+            try:
+                self.on_result({"group_id": group_id, "node_id": node_id,
+                                "job_id": job_id, "status": status})
+            except Exception:
+                LOGGER.debug("Learning job event unavailable", exc_info=True)
 
     def _emit(self) -> None:
         if not self._closed and callable(self.on_change):
@@ -112,31 +126,40 @@ class ProgressiveGraphPrefetch:
                     self._active = None
                     self._thread = None
                     return
-                group_id, node_id, generation = self._pending
+                group_id, node_id, generation, job_id = self._pending
                 self._pending = None
-                self._active = (group_id, node_id, generation)
+                self._active = (group_id, node_id, generation, job_id)
             self._emit()
             key = (group_id, node_id)
+            outcome = "unchanged"
             try:
                 context = self.graphs.inspect(group_id, node_id)
                 if context["children"]:
                     targets = context["needs_prefetch"][:MAX_VISIBLE_SUGGESTIONS]
                     if not targets:
                         # Đã có cache/tầng tiếp theo: không sinh thừa.
+                        outcome = "ready"
                         continue
                     query = {"mode": "prepare", "topic": context["topic"],
                              "trail": context["trail"], "targets": targets}
                 else:
                     query = {"mode": "expand", "topic": context["topic"],
                              "trail": context["trail"]}
+                if callable(self.may_run) and not self.may_run():
+                    outcome = "superseded"
+                    continue
                 result = self._call(query)
                 with self._lock:
                     current = not self._closed and generation == self._generation
                 if current:
                     changed = self.graphs.apply_gemini(group_id, node_id, result)
+                    outcome = "ready" if changed or self.graphs.inspect(group_id, node_id)["children"] else "unchanged"
                     with self._lock:
                         self._cooldowns[key] = time.monotonic() + (45.0 if changed else 20.0)
+                else:
+                    outcome = "superseded"
             except Exception as exc:
+                outcome = "unavailable"
                 with self._lock:
                     if generation == self._generation and not self._closed:
                         self._failed[key] = time.monotonic()
@@ -144,8 +167,11 @@ class ProgressiveGraphPrefetch:
                 LOGGER.debug("[learning-prefetch] Gemini tạm không khả dụng: %s", type(exc).__name__)
             finally:
                 with self._lock:
+                    if self._closed or generation != self._generation:
+                        outcome = "superseded"
                     if self._active and self._active[2] == generation:
                         self._active = None
+                self._notify(group_id, node_id, job_id, outcome)
                 self._emit()
 
     def close(self) -> None:

@@ -174,6 +174,7 @@ def test_ack_is_not_a_new_focus_revision(host):
 
 
 def test_pin_suggestion_click_and_verbal_acceptance(host):
+    host.learning_canvas_service._view_session("open", "manual-browser-test")
     cap = CanvasCapability(host)
     auto = ConversationEvent(event_id="auto", session_id=SID, kind="tutor_result")
     result = cap.invoke_for_root(arguments={"operation": "focus", "node_id": B}, event=auto)

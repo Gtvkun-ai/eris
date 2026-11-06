@@ -152,6 +152,7 @@ def test_activities_and_attempts_survive_reopening_sqlite(canvas):
 
 
 def test_java_is_background_and_navigation_stays_responsive(canvas):
+    canvas._view_session("open", "java-active-test")  # P3.7: push UI chỉ khi panel đang mở.
     activity = begin(canvas, "code")
     workspace = canvas.exercises.workspace
     workspace.release.clear()

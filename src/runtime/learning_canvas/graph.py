@@ -132,6 +132,7 @@ class GraphWorkspace:
                       and not any(grandchild["parent_id"] == node["id"] for grandchild in group["nodes"])]
             return {"group_id": group_id, "node_id": node_id,
                     "topic": group["title"], "trail": list(reversed(trail)),
+                    "node_summary": by_id[node_id].get("summary", "")[:240],
                     "children": [{"id": n["id"], "title": n["title"]} for n in children],
                     "needs_prefetch": [{"id": n["id"], "title": n["title"]} for n in needed],
                     "has_prepared": bool(group.get("prepared", {}).get(node_id))}

@@ -83,24 +83,30 @@ TOOL_GUIDES: dict[str, str] = {'rich_chat': 'Rich Chat P1 tự dựng document_s
 
 
 TOOL_GUIDES["canvas"] = (
-    "Canvas P3.5: operation=library tra nhóm và ID thật; operation=open_group,group_id=java-di mở bài Java cũ. "
-    "operation=graph_create,title tạo chủ đề khám phá, không ép user chuyển màn hình; "
-    "operation=graph_select,group_id,node_id? chuyển focus bản đồ khi user yêu cầu; "
-    "operation=graph_expand,group_id,parent_id,nodes=[{title,summary?},...] thêm nhánh đã được Root nghiên cứu. "
-    "operation=graph_prefetch,group_id,node_id yêu cầu một lượt Gemini chuẩn bị nhánh, không tạo agent loop mới. "
-    "Gemini tự sinh 2–4 nhánh gần và ẩn trước một tầng; đừng yêu cầu lập 30 nhánh. "
-    "Lấy ID thật từ graph_workspace/snapshot, không bịa ID. "
-    "Khi có tutor_result canvas_action=graph_select, người học vừa mở một nhánh: "
-    "ưu tiên câu hỏi hiện tại, có thể giao research worker kiểm chứng kiến thức thiếu và dùng graph_expand bổ sung. "
-    "Không nghiên cứu sâu toàn cây, không spam nhiều graph_expand trong một lượt. "
-    "Writer có thể chỉ ra chỗ cần xác minh và trò chuyện nhưng KHÔNG tự duyệt nhánh Gemini thành sự thật. "
-    "Gợi ý Gemini và Eris đều là bản nháp, không tự đăng ký lộ trình, không gán mastery. "
-    "operation=snapshot đọc focus, graph và bài Java; operation=focus,node_id đề xuất focus. "
-    "Tôn trọng nút user đang chọn và ghim; kết quả cũ không được kéo UI trở lại. "
-    "User bấm nút được gợi ý sẽ chấp nhận/bỏ ghim. operation=accept_focus,node_id,base_revision "
-    "chỉ khi user_turn hiện tại bằng lời yêu cầu đổi; không dùng trên autonomous/tutor_result. "
-    "Canvas chỉ trả dữ liệu, Root sở hữu việc nói."
+    "Canvas P3.7 — Root chỉ nhận learning_brief: tối đa 4 tiêu đề môn và nhánh ngắn. Không gọi snapshot/full graph nếu không cần. Khi người dùng muốn tạo môn/bản đồ mới, "
+    "Root gọi operation=graph_create,title. Nếu Learning đang đóng, chỉ lưu môn và job deferred; Gemini CHƯA chạy. Khi người dùng mở và chọn môn, job mới chạy để dựng 2–4 nhánh "
+    "và trả learning_job={job_id,status=deferred|queued}; nếu deferred hãy nói 'Đã lưu môn, khi bạn mở Learning tôi sẽ tạo vài nhánh'. Nếu queued có thể nói 'Tôi đang dựng vài nhánh, "
+    "xong tôi báo' mà KHÔNG khẳng định đã xong khi Gemini chưa trả. "
+    "operation=learning_brief đọc tóm tắt ngắn; learning_history hoặc snapshot_full chỉ truy xuất khi người dùng thực sự hỏi chi tiết. "
+    "Nếu môn đã tồn tại, graph_create trả existing=true và KHÔNG tạo trùng; hãy dùng operation=library "
+    "hoặc operation=learning_history xem danh sách, các nút gần đây, trạng thái và lịch sử. "
+    "operation=graph_resume,group_id mở lại đúng nhánh đang học; operation=graph_select,group_id,node_id? "
+    "chỉ đổi màn hình khi user muốn. operation=graph_expand,group_id,parent_id,nodes=[{title,summary?},...] "
+    "bổ sung nhánh đã nghiên cứu; operation=graph_prefetch,group_id,node_id chỉ queue nếu panel mở; khi đóng lưu job deferred. "
+    "Gemini tạo nháp tối đa 4 nhánh trước mắt, một tầng ẩn; không tạo 30 nhánh. "
+    "Nhận tutor_result canvas_action=graph_ready/job_id khi Gemini hoàn tất thì Root QUYẾT ĐỊNH "
+    "có nên nói 'Tôi dựng xong phần đầu, mở Learning xem nhé' dựa vào lượt user mới/độ bận. "
+    "graph_failed nói thật chưa tạo được, không báo thành công; KHÔNG ép panel tự mở. "
+    "Nội dung graph là nháp, không phải mastery. Nhánh được mở mới chỉ là exploring, "
+    "đánh dấu đã xem chỉ khi user bấm; practiced chỉ từ bài tập được ghi nhận; "
+    "mastered chỉ từ LearningCore/evidence có thẩm quyền. Không gán mastery tùy tiện. "
+    "Khi có tutor_result canvas_action=graph_select, người học vừa chọn nhánh: "
+    "có thể nghiên cứu sâu đúng nhánh thay vì toàn cây; Writer trò chuyện không tự duyệt Gemini. "
+    "operation=snapshot đọc trạng thái, operation=open_group,group_id=java-di mở bài Java cũ; "
+    "operation=focus,node_id đề xuất focus Java; operation=accept_focus,node_id,base_revision "
+    "chỉ khi user_turn yêu cầu. Root giữ quyền nói và không phát lại kết quả đã lỗi thời."
 )
+
 
 
 def read_tool_guide(name: str) -> dict:

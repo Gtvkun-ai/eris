@@ -48,26 +48,41 @@ public partial class UdpListener
         string action = ReadJsonString(request, "action");
         string requestId = ReadJsonString(request, "request_id");
         if (requestId.Length < 8 || requestId.Length > 120 ||
-            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus", "graph_create", "graph_select", "graph_expand" }.Contains(action))
+            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus", "graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "session_ping", "session_close" }.Contains(action))
             return false;
+        bool sessionOnly = action is "session_ping" or "session_close";
         var packet = new Dictionary<string, object>
         {
             ["type"] = "learning_canvas_request",
             ["action"] = action, ["request_id"] = requestId
         };
         // Giữ Java DI làm nhóm mặc định cho giao thức P0-P2; graph actions dùng group_id từ UI.
-        string groupId = ReadJsonString(request, "group_id");
-        if (action.StartsWith("graph_", StringComparison.Ordinal))
+        // P3.7: một tab web có client_id riêng. Chỉ phiên thật mới bật Gemini;
+        // close/ping không đòi revision graph, không đổi focus.
+        string clientId = ReadJsonString(request, "client_id");
+        if (action == "open" || sessionOnly)
         {
+            if (clientId.Length > 0 && clientId.Length <= 100 &&
+                clientId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-' || c == '_' || c == ':'))
+                packet["client_id"] = clientId;
+            else if (sessionOnly) return false;
+        }
+        string groupId = ReadJsonString(request, "group_id");
+        if (action.StartsWith("graph_", StringComparison.Ordinal) || (action is "mark_viewed" or "study_heartbeat" or "lesson_request"))
+        {
+            // P3.6: mark_viewed là thao tác đánh dấu xem nhánh, không đổi revision graph.
             if (action != "graph_create" && (groupId.Length < 1 || groupId.Length > 120)) return false;
             if (groupId.Length > 0) packet["group_id"] = groupId;
-            if (!request.TryGetProperty("base_graph_revision", out var graphRev) ||
-                graphRev.ValueKind != JsonValueKind.Number || !graphRev.TryGetInt64(out long graphRevision) || graphRevision < 0)
-                return false;
-            packet["base_graph_revision"] = graphRevision;
+            if (action.StartsWith("graph_", StringComparison.Ordinal))
+            {
+                if (!request.TryGetProperty("base_graph_revision", out var graphRev) ||
+                    graphRev.ValueKind != JsonValueKind.Number || !graphRev.TryGetInt64(out long graphRevision) || graphRevision < 0)
+                    return false;
+                packet["base_graph_revision"] = graphRevision;
+            }
         }
         else packet["group_id"] = "java-di";
-        if (action != "open")
+        if (action != "open" && !sessionOnly)
         {
             if (!request.TryGetProperty("base_revision", out var rev) ||
                 rev.ValueKind != JsonValueKind.Number || !rev.TryGetInt64(out long revision) || revision < 0)
@@ -92,6 +107,7 @@ public partial class UdpListener
             (!packet.ContainsKey("activity_id") || !packet.ContainsKey("nonce"))) return false;
         if (action == "submit" && !packet.ContainsKey("code") && !packet.ContainsKey("answer")) return false;
         if (action == "ack_eris_focus" && !packet.ContainsKey("cause_id")) return false;
+        if ((action is "mark_viewed" or "study_heartbeat" or "lesson_request") && !packet.ContainsKey("node_id")) return false;
         _webCanvasOutbox.Enqueue(JsonSerializer.Serialize(packet));
         return true;
     }

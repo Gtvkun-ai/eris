@@ -7,9 +7,12 @@ from contextlib import nullcontext
 import json
 import threading
 import time
+import uuid
 from runtime.learning_core.records import digest
 
 from .graph import GraphWorkspace
+from .continuity import LearningContinuity
+from .lesson import LearningLessonStore, OnDemandLessonWorker
 from .prefetch import ProgressiveGraphPrefetch
 from .focus import CanvasFocusStore
 from .pack import load_pack, register_pack
@@ -26,7 +29,17 @@ class LearningCanvasService:
         self.focus = CanvasFocusStore(store, self.pack)
         # P3 là đồ thị khám phá độc lập; không gán mastery cho nút do người/AI thêm.
         self.graphs = GraphWorkspace(store, legacy_group_id=self.pack.group_id)
-        self.prefetch = ProgressiveGraphPrefetch(self.graphs, on_change=self._prefetch_changed)
+        self.continuity = LearningContinuity(store)
+        self.lessons = LearningLessonStore(store)
+        self.continuity.recover_interrupted_jobs()
+        self._heartbeat_at = {}  # mono rate-limit; không tin số giây từ trình duyệt.
+        # P3.7: không mở Gemini/lấy graph chi tiết khi panel chưa có session web.
+        self._viewers = {}  # id browser-tab -> hạn dùng monotonic; tab đóng hoặc mất mạng tự hết hạn.
+        self.prefetch = ProgressiveGraphPrefetch(self.graphs, on_change=self._prefetch_changed,
+                                                on_result=self._prefetch_result, may_run=self.is_active)
+        # P4: bài học dựng theo đúng nhánh đang xem; cache riêng, không cho Root nạp cả kho.
+        self.lesson_worker = OnDemandLessonWorker(self.lessons, self.graphs,
+                                                 may_run=self.is_active, on_change=self._lesson_changed)
         self._lock = threading.RLock()
         self._requests: OrderedDict[str, tuple[str, dict]] = OrderedDict()
         self.on_event = None
@@ -39,25 +52,107 @@ class LearningCanvasService:
 
     def close(self):
         self._closed = True
+        self._viewers.clear()
         self.prefetch.close()
+        self.lesson_worker.close()
         self.exercises.close()
+
+    def is_active(self) -> bool:
+        # Không kéo dài lease chỉ vì backend bận; mỗi tab nhìn thấy panel phải ping.
+        now = time.monotonic()
+        with self._lock:
+            self._viewers = {key: due for key, due in self._viewers.items() if due > now}
+            return not self._closed and bool(self._viewers)
+
+    def _view_session(self, action: str, client_id: str) -> None:
+        if not isinstance(client_id, str) or not 8 <= len(client_id) <= 100 or any(
+                not (c.isascii() and (c.isalnum() or c in '-_:')) for c in client_id):
+            raise ValueError("invalid_canvas_client_id")
+        if action == "session_close":
+            self._viewers.pop(client_id, None)
+        else:
+            self._viewers[client_id] = time.monotonic() + 40.0
+
+    def _activate_selected_graph(self) -> None:
+        graph = self.graphs.snapshot().get("graph")
+        if graph and self.is_active():
+            # Ưu tiên nội dung hiện tại trước việc chuẩn bị tầng ẩn.
+            self.lesson_worker.request(graph["group_id"], graph["selected_node_id"])
+            self._schedule_prefetch(graph["group_id"], graph["selected_node_id"])
+
+    def brief(self) -> dict:
+        return self.continuity.brief(max_subjects=4)
+
+    def _lesson_changed(self):
+        # Callback từ thread chỉ cập nhật panel hiện mở, không tự nói hay đổi focus.
+        if self.is_active() and callable(self.on_state):
+            self.on_state(self.state_packet(include_detail=False))
 
     def _prefetch_changed(self):
         # Worker chỉ phát trạng thái; Root vẫn giữ toàn bộ quyền hội thoại.
-        if not self._closed and callable(self.on_state):
+        if self.is_active() and callable(self.on_state):
             self.on_state(self.state_packet(include_detail=False))
 
+    def _prefetch_result(self, result: dict):
+        """Worker chỉ đưa sự kiện có dữ liệu vào queue Root; KHÔNG tự phát lời."""
+        job = self.continuity.finish_job(result["job_id"], result["status"])
+        if not job or result["status"] not in {"ready", "unavailable"} or self._closed:
+            return
+        if self.is_active() and callable(self.on_event):
+            focus = self.focus.snapshot()
+            self.on_event({"action": "graph_ready" if result["status"] == "ready" else "graph_failed",
+                "node_id": focus["node_id"], "focus_revision": focus["focus_revision"],
+                "graph_group_id": job["group_id"], "graph_node_id": job["node_id"],
+                "graph_title": job["title"], "job_id": job["job_id"],
+                "job_status": result["status"], "job_source": job["source"],
+                "notice": "Nhánh ban đầu đã sẵn sàng trong Learning" if result["status"] == "ready"
+                          else "Gemini hiện chưa tạo được nhánh; bản đồ vẫn được lưu"})
+
+    def queue_graph_job(self, group_id: str, node_id: str, title: str, *, source="root") -> dict:
+        """Tạo job trước khi giao Gemini để completion không vượt lên job queued."""
+        job_id = "lg:" + uuid.uuid4().hex
+        deferred = not self.is_active()
+        self.continuity.queue_job(job_id, group_id, node_id, title=title,
+                                  source=source, deferred=deferred)
+        accepted = False if deferred else self.prefetch.request(group_id, node_id, job_id=job_id)
+        if not deferred and not accepted:
+            self.continuity.finish_job(job_id, "unchanged")
+        return {"job_id": job_id, "status": "deferred" if deferred else "queued" if accepted else "unchanged",
+                "group_id": group_id, "node_id": node_id}
+
+    def record_graph_visit(self, group_id: str, node_id: str, *, action="selected", activate=True):
+        info = self.graphs.inspect(group_id, node_id)
+        self.continuity.visit(group_id, node_id, info["trail"][-1],
+                              subject_title=info["topic"], action=action, activate=activate)
+
     def _schedule_prefetch(self, group_id: str, node_id: str):
-        if group_id != self.pack.group_id and node_id and not self._closed:
-            self.prefetch.request(group_id, node_id)
+        if group_id == self.pack.group_id or not node_id or not self.is_active():
+            return
+        job = self.continuity.start_deferred_job(group_id, node_id)
+        accepted = self.prefetch.request(group_id, node_id,
+                                         job_id=job["job_id"] if job else "")
+        if job and not accepted:
+            self.continuity.finish_job(job["job_id"], "unchanged")
 
     def _snapshot(self, *, detail_node_id="", include_activity=True):
         focus = self.focus.snapshot()
         result = build_snapshot(self.learning, self.pack, focus, detail_node_id=detail_node_id)
         result["playback_stream_id"] = self.playback.stream_id
         result["graph_workspace"] = self.graphs.snapshot()
+        result["learning_continuity"] = self.continuity.snapshot(
+            group_id=result["graph_workspace"]["selected_group_id"])
+        # Trạng thái mastery của bài Java vẫn lấy từ LearningCore, không suy từ lượt xem.
+        for node in result["nodes"]:
+            if node.get("state") == "mastered":
+                result["learning_continuity"].setdefault("verified_mastery", []).append(node["id"])
         visible = result["graph_workspace"].get("graph")
         if visible:
+            group_id, node_id = visible["group_id"], visible["selected_node_id"]
+            lesson = self.lessons.get(group_id, node_id)
+            # Không bao giờ gửi các bài của những môn khác trong cùng một snapshot.
+            result["dynamic_lesson"] = {"status": "ready", "content": lesson} if lesson else {
+                "status": self.lesson_worker.state(group_id, node_id),
+                "group_id": group_id, "node_id": node_id}
             result["graph_prefetch"] = {"status": self.prefetch.state(visible["group_id"],
                                                                          visible["selected_node_id"]),
                                         "node_id": visible["selected_node_id"]}
@@ -90,7 +185,7 @@ class LearningCanvasService:
                          "focus_revision": scope.get("focus_revision"), "received_at": time.time()})
             late[node_id] = rows[-4:]
             self.focus.store.set_meta("learning_canvas_results_v1", late)
-            if callable(self.on_state):
+            if self.is_active() and callable(self.on_state):
                 self.on_state(self.state_packet(include_detail=False))
 
     def _assessment_event(self, activity_id):
@@ -107,8 +202,11 @@ class LearningCanvasService:
         if self._closed:
             return
         activity = self.exercises.fallback(activity)
+        if activity.get("status") == "completed":
+            self.continuity.status(self.pack.group_id, activity["node_id"], "practiced",
+                title=self.pack.node(activity["node_id"])["title"], subject_title=self.pack.path.title)
         self._assessment_event(activity["activity_id"])
-        if callable(self.on_state):
+        if self.is_active() and callable(self.on_state):
             packet = self.state_packet(include_detail=False)
             current = packet["learning_canvas"].get("activity", {})
             if current.get("activity_id") != activity["activity_id"]:
@@ -141,33 +239,103 @@ class LearningCanvasService:
                     if previous != fingerprint:
                         raise ValueError("canvas_request_id_reused")
                     return copy.deepcopy(response)
+                # P3.7: session chỉ kích hoạt Gemini khi tab Learning đang hiển thị.
+                # Không xem open không client_id (giao thức cũ/test) là phiên đang xem.
+                client_id = request.get("client_id")
+                if action in {"session_ping", "session_close"}:
+                    self._view_session(action, client_id)
+                    envelope["message"] = "Đã cập nhật phiên Learning."
+                    return envelope
+                if action == "open" and client_id is not None:
+                    self._view_session(action, client_id)
+                    self._activate_selected_graph()
                 # P3: graph actions có revision riêng để không đụng focus/điểm học Java.
-                graph_actions = {"graph_create", "graph_select", "graph_expand"}
+                graph_actions = {"graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "lesson_request"}
                 if action not in graph_actions and request.get("group_id", self.pack.group_id) != self.pack.group_id:
                     raise ValueError("unknown_canvas_group")
                 prefetch_target = None
                 if action == "graph_create":
-                    graph = self.graphs.create(request.get("title"),
-                        base_revision=request.get("base_graph_revision"))
-                    envelope["graph_update"] = {"group_id": graph["group_id"],
-                        "node_id": graph["selected_node_id"]}
-                    prefetch_target = (graph["group_id"], graph["selected_node_id"])
+                    title = request.get("title")
+                    from .graph import _title
+                    clean_title = _title(title)
+                    existing = next((item for item in self.graphs.snapshot()["groups"]
+                        if item["kind"] == "exploration" and item["title"].casefold() == clean_title.casefold()), None)
+                    if existing:
+                        self.graphs.select(existing["group_id"], base_revision=request.get("base_graph_revision"))
+                        graph = self.graphs.snapshot()["graph"]
+                        envelope["graph_update"] = {"group_id": graph["group_id"],
+                            "node_id": graph["selected_node_id"], "existing": True}
+                        self.record_graph_visit(graph["group_id"], graph["selected_node_id"], action="resumed")
+                        prefetch_target = (graph["group_id"], graph["selected_node_id"])
+                    else:
+                        graph = self.graphs.create(clean_title,
+                            base_revision=request.get("base_graph_revision"))
+                        envelope["graph_update"] = {"group_id": graph["group_id"],
+                            "node_id": graph["selected_node_id"], "existing": False}
+                        self.record_graph_visit(graph["group_id"], graph["selected_node_id"], action="created")
+                        envelope["learning_job"] = self.queue_graph_job(graph["group_id"], graph["selected_node_id"],
+                                                                            graph["title"], source="user_ui")
+                        prefetch_target = (graph["group_id"], graph["selected_node_id"])
                 elif action == "graph_select":
                     self.graphs.select(request.get("group_id"), node_id=request.get("node_id", ""),
                         base_revision=request.get("base_graph_revision"))
                     viewed = self.graphs.snapshot().get("graph")
                     if viewed:
+                        self.record_graph_visit(viewed["group_id"], viewed["selected_node_id"], action="selected")
                         prefetch_target = (viewed["group_id"], viewed["selected_node_id"])
+                    else:
+                        java = self.focus.snapshot()["node_id"]
+                        self.continuity.visit(self.pack.group_id, java, self.pack.node(java)["title"],
+                            subject_title=self.pack.path.title, action="resumed")
                 elif action == "graph_expand":
                     children = self.graphs.expand(request.get("group_id"), request.get("parent_id"),
                         [{"title": request.get("title"), "summary": request.get("summary", "")}],
                         base_revision=request.get("base_graph_revision"))
                     envelope["graph_update"] = {"group_id": request.get("group_id"),
                         "node_id": children[0]["id"]}
+                    self.record_graph_visit(request.get("group_id"), children[0]["id"], action="selected")
                     prefetch_target = (request.get("group_id"), children[0]["id"])
+                elif action == "lesson_request":
+                    # Web chỉ xin bài của đúng nhánh đang được nhìn; không có endpoint
+                    # để worker tạo hàng loạt bài học trong khi panel đóng.
+                    current = self.graphs.snapshot()
+                    group_id, node_id = request.get("group_id"), request.get("node_id")
+                    if (not self.is_active() or not current.get("graph") or
+                            current["selected_group_id"] != group_id or
+                            current["graph"]["selected_node_id"] != node_id):
+                        raise ValueError("canvas_focus_changed")
+                    envelope["lesson_queued"] = self.lesson_worker.request(group_id, node_id, retry=True)
+                elif action == "mark_viewed":
+                    group_id = request.get("group_id")
+                    node_id = request.get("node_id")
+                    visible = self.graphs.snapshot()
+                    if visible["selected_group_id"] != group_id or not visible["graph"] or \
+                            visible["graph"]["selected_node_id"] != node_id:
+                        raise ValueError("canvas_focus_changed")
+                    info = self.graphs.inspect(group_id, node_id)
+                    self.continuity.status(group_id, node_id, "viewed", title=info["trail"][-1],
+                                           subject_title=info["topic"])
+                elif action == "study_heartbeat":
+                    group_id, node_id = request.get("group_id"), request.get("node_id")
+                    selected = self.graphs.snapshot()
+                    if selected["selected_group_id"] != group_id:
+                        raise ValueError("canvas_focus_changed")
+                    if group_id == self.pack.group_id:
+                        if self.focus.snapshot()["node_id"] != node_id:
+                            raise ValueError("canvas_focus_changed")
+                    elif not selected["graph"] or selected["graph"]["selected_node_id"] != node_id:
+                        raise ValueError("canvas_focus_changed")
+                    key = (group_id, node_id)
+                    now = time.monotonic()
+                    if now - self._heartbeat_at.get(key, 0) >= 25:
+                        self._heartbeat_at[key] = now
+                        self.continuity.add_study_time(group_id, node_id)
                 elif action == "navigate":
                     with self.navigation_guard() if callable(self.navigation_guard) else nullcontext():
                         self.focus.navigate(request.get("node_id"), base_revision=request.get("base_revision"))
+                    node_id = self.focus.snapshot()["node_id"]
+                    self.continuity.visit(self.pack.group_id, node_id, self.pack.node(node_id)["title"],
+                                          subject_title=self.pack.path.title, action="navigated")
                 elif action == "exercise":
                     if request.get("node_id") != self.focus.snapshot()["node_id"]:
                         raise ValueError("canvas_focus_changed")
@@ -176,6 +344,8 @@ class LearningCanvasService:
                     activity = self.exercises.handle(action, request)
                     envelope["exercise_update"] = activity
                     if action in {"submit", "exercise_status"} and activity["status"] == "completed":
+                        self.continuity.status(self.pack.group_id, activity["node_id"], "practiced",
+                            title=self.pack.node(activity["node_id"])["title"], subject_title=self.pack.path.title)
                         self._assessment_event(activity["activity_id"])
                 elif action == "ack_eris_focus":
                     self.focus.acknowledge(base_revision=request.get("base_revision"), cause_id=request.get("cause_id"))
@@ -193,7 +363,8 @@ class LearningCanvasService:
                     raise ValueError("canvas_response_too_large")
                 self._requests[request_id] = (fingerprint, copy.deepcopy(envelope))
                 if prefetch_target is not None:
-                    # Sau khi commit thành công, không chặn ACK/UI vì Gemini.
+                    # Đáp ứng nhánh đang mở trước; prefetch tầng ẩn có ưu tiên thấp.
+                    self.lesson_worker.request(*prefetch_target)
                     self._schedule_prefetch(*prefetch_target)
                 while len(self._requests) > 128:
                     self._requests.popitem(last=False)

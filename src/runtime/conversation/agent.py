@@ -780,6 +780,7 @@ def _bounded_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "affective_voice_state",
         "engagement_context",
         "learner_continuity",
+        "learning_brief",
         "confusion_signal",
         "social_situation_evidence",
         "discourse_context",

@@ -70,12 +70,17 @@ def test_root_canvas_library_open_and_invalid_group(host):
     assert not host.sent
     result = invoke(host, operation="open_group", group_id="java-di")
     assert result["status"] == "completed"
-    assert host.sent[0]["open_panel"] and host.sent[0]["type"] == "learning_canvas_state"
+    # P3.7: Root không tự bật trang học khi panel chưa mở.
+    assert not host.sent and result["panel_active"] is False
+    host.learning_canvas_service._view_session("open", "manual-browser-test")
+    assert invoke(host, operation="open_group", group_id="java-di")["status"] == "completed"
+    assert host.sent[0]["open_panel"] is False and host.sent[0]["type"] == "learning_canvas_state"
     assert host.sent[0]["should_speak"] is False
     assert not getattr(host, "_pending_conversation_capability_events", None)
 
 
 def test_eris_focus_does_not_create_user_ui_event(host):
+    host.learning_canvas_service._view_session("open", "manual-browser-test")
     result = invoke(host, operation="focus", node_id="javadi:v1:constructor")
     focus = result["learning_canvas"]["focus"]
     assert focus["set_by"] == "eris" and focus["cause_id"] and not focus["pinned"]
@@ -181,9 +186,10 @@ def test_question_di_to_model_tool_open_then_click_to_root_delivery(host):
     host.conversation_kernel = kernel
     context = {"__root_capabilities": RootCapabilityRegistry({"canvas": CanvasCapability(host)})}
     first = kernel.handle_event(ConversationEvent.user_turn(session_id="foreground:primary", text="DI là gì?"), runtime_context=context)
-    assert first.status == "delivering" and host.sent[0]["open_panel"]
+    assert first.status == "delivering" and not host.sent  # Không auto-open panel.
     assert kernel.settle_delivery(first.turn, delivery_id=first.delivery_id, successful=True)
     canvas = host.learning_canvas_service
+    canvas.handle({"request_id": "manual-open", "action": "open", "client_id": "manual-browser-test"})
     canvas.handle({"request_id": "e2e-click", "action": "navigate", "node_id": "javadi:v1:constructor", "base_revision": 0})
     item = host._pending_conversation_capability_events[0]
     second = kernel.handle_event(ConversationEvent(event_id=item["event_id"], session_id="foreground:primary",

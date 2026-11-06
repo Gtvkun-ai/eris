@@ -6,12 +6,26 @@
   const state = {
     snapshot: null, selected: '', mode: 'map', pending: null, desiredNode: '',
     details: new Map(), activities: new Map(), drafts: new Map(), answers: new Map(),
-    graphDrafts: new Map(), showAllChildren: false,
+    graphDrafts: new Map(), showAllChildren: false, lessonRevealed: new Set(),
     playback: null, playbackSeq: -1, playbackStream: '',
     lastVersion: -1, lastPoll: 0, lastExercisePoll: 0, lastCause: '',
     busy: false, bootstrapped: false, status: 'Đang kết nối với Eris...', offline: false,
+    lastActivityAt: Date.now(), lastHeartbeatAt: Date.now(),
   };
+  // P3.7: định danh từng tab, không dùng cookie/localStorage để nhận diện user.
+  const clientId = 'tab-' + (globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  function sessionSignal(action) {
+    if (!state.bootstrapped) return;
+    // Độc lập với state.pending để có thể close ngay cả khi user đang submit.
+    fetch('api/canvas/request', {method:'POST', keepalive:true,
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action,client_id:clientId,request_id:requestId()}),
+      cache:'no-store'}).catch(()=>{});
+  }
   const labels = {available: 'Có thể học', learning: 'Đang học', practicing: 'Đang luyện', mastered: 'Đã vững'};
+  const continuityLabels = {exploring:'Đang tìm hiểu',viewed:'Đã xem',practiced:'Đã thực hành',mastered:'Đã chứng minh thành thạo'};
+  const jobLabels = {deferred:'Chờ bạn mở môn học',queued:'Gemini đang chuẩn bị',ready:'Bản đồ đã sẵn sàng',unavailable:'Gemini chưa khả dụng',superseded:'Đã bỏ yêu cầu cũ',unchanged:'Đã có nhánh',interrupted:'Gián đoạn khi khởi động lại'};
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -41,6 +55,9 @@
       state:'exploring', prerequisites:n.parent_id ? [n.parent_id] : []}));
   }
   function nodeById(id) {return activeNodes().find(n => n.id === id);}
+  function learningProgress(groupId,nodeId) {
+    return state.snapshot?.learning_continuity?.nodes?.[groupId+'/'+nodeId] || null;
+  }
   function currentActivity() {return state.activities.get(state.selected);}
   function setStatus(value) {state.status = value; byId('status').textContent = value;}
   function errMessage(reason) {
@@ -65,6 +82,7 @@
     if (state.pending || (!state.snapshot && action !== 'open')) return false;
     const request_id = requestId();
     const packet = {request_id, action, ...fields};
+    if (action === 'open') packet.client_id = clientId;
     if (action !== 'open') packet.base_revision = state.snapshot.focus.revision;
     if (action.startsWith('graph_')) packet.base_graph_revision = workspace()?.revision ?? 0;
     state.pending = {request_id, action, fields, started: Date.now()};
@@ -150,7 +168,8 @@
         state.pending = null;
         if (ack.status === 'ok') {
           if (action === 'graph_expand') state.graphDrafts.delete(fields.parent_id);
-          setStatus(action.startsWith('graph_') ? 'Đã lưu bản đồ khám phá · chưa chấm mastery' : 'Đã đồng bộ · Tiến độ được xác nhận từ bài làm');
+          setStatus(action === 'mark_viewed' ? 'Đã ghi lịch sử xem · không tính mastery' :
+            action.startsWith('graph_') ? 'Đã lưu bản đồ khám phá · chưa chấm mastery' : 'Đã đồng bộ với Eris');
         } else {
           setStatus(errMessage(ack.message || ack.status));
           if (action === 'navigate') state.selected = state.snapshot?.focus?.node_id || state.selected;
@@ -189,7 +208,7 @@
           queueMicrotask(() => chooseNode(desired));
         }
       }
-      if (!state.bootstrapped && !state.pending) {state.bootstrapped = true; send('open');}
+      if (!state.bootstrapped && !state.pending && !document.hidden) {state.bootstrapped = true; send('open');}
       const activity = currentActivity();
       if (!state.pending && activity?.status === 'running' && Date.now() - state.lastExercisePoll > 1600) {
         state.lastExercisePoll = Date.now();
@@ -246,8 +265,11 @@
         btn.type = 'button';btn.dataset.node = n.id;btn.setAttribute('aria-pressed',String(selected));
         btn.append(el('span','node-top',n.title));
         const foot = el('div','node-foot');
+        const progress = graphMode() && learningProgress(graph().group_id,n.id);
         foot.append(el('span','node-state '+(graphMode() ? 'exploring' : (labels[n.state] ? n.state:'available')),
-          graphMode() ? (n.origin === 'gemini_draft' ? 'Gemini · nháp' : n.origin === 'eris_proposed' ? 'Eris đề xuất' : 'Đang khám phá') : (labels[n.state] || 'Có thể học')));
+          graphMode() ? (progress?.status === 'viewed' ? '✓ Đã xem · chưa kiểm chứng' :
+            n.origin === 'gemini_draft' ? 'Gemini · nháp' : n.origin === 'eris_proposed' ? 'Eris đề xuất' : 'Đang khám phá')
+            : (labels[n.state] || 'Có thể học')));
         if (graphMode() && graph()?.prepared_counts?.[n.id]) foot.append(el('span','node-hint','Đã chuẩn bị tầng sau'));
         if (n.due) foot.append(el('span','node-hint','Đến hạn ôn'));
         else if (state.snapshot.focus?.suggested_node_id === n.id) foot.append(el('span','node-hint','Eris gợi ý ↗'));
@@ -367,6 +389,82 @@
     }
     if (activity.status === 'unavailable') addText(card,'p','warning','Không thể chạy Java. '+(activity.guidance || 'Kiểm tra Docker Desktop và môi trường JDK.'));
   }
+  // P4: MathJax tải từ bundle cục bộ và chỉ khi gặp block công thức.
+  // Không nhúng HTML từ Gemini; công thức cũng được đặt bằng textContent.
+  let mathLoading = null;
+  function typesetLesson(host) {
+    if (globalThis.MathJax?.typesetPromise) {
+      MathJax.typesetPromise([host]).catch(()=>{});
+      return;
+    }
+    if (!mathLoading) {
+      mathLoading = new Promise(resolve => {
+        globalThis.MathJax = {tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},svg:{fontCache:'global'}};
+        const script = document.createElement('script');
+        script.src = 'vendor/mathjax.js';
+        script.onload = () => Promise.resolve(globalThis.MathJax?.startup?.promise).then(resolve,resolve);
+        script.onerror = resolve;
+        document.head.append(script);
+      });
+    }
+    mathLoading.then(()=>{
+      if (host.isConnected && globalThis.MathJax?.typesetPromise)
+        MathJax.typesetPromise([host]).catch(()=>{});
+    });
+  }
+  function renderDynamicLesson(container, node) {
+    const packet = state.snapshot?.dynamic_lesson || {};
+    const status = packet.status || 'idle';
+    const section = el('section','dynamic-lesson');container.append(section);
+    const heading = el('div','dynamic-lesson-heading');section.append(heading);
+    addText(heading,'h4','','Bài học theo nhánh');
+    addText(heading,'span','lesson-draft-label','Bản nháp · không chấm mastery');
+    if (packet.content?.group_id === graph()?.group_id && packet.content?.node_id === node.id && status === 'ready') {
+      let hasMath = false;
+      for (const block of packet.content.blocks || []) {
+        const card = el('section','lesson-block lesson-'+block.kind);section.append(card);
+        addText(card,'h5','lesson-block-title',block.title);
+        if (block.kind === 'text') addText(card,'p','lesson-copy',block.text);
+        else if (block.kind === 'steps') {
+          const list=el('ol','lesson-steps');card.append(list);
+          for (const step of block.items || []) addText(list,'li','',step);
+        } else if (block.kind === 'formula') {
+          hasMath=true;
+          addText(card,'div','lesson-formula','\\['+block.latex+'\\]');
+          if (block.explanation) addText(card,'p','lesson-copy',block.explanation);
+        } else if (block.kind === 'code') {
+          const wrapper=el('div','code-wrap');
+          const pre=el('pre','language-'+block.language);
+          const code=el('code','language-'+block.language,block.text);
+          pre.append(code);wrapper.append(pre);card.append(wrapper);
+          if (globalThis.Prism?.highlightElement) globalThis.Prism.highlightElement(code);
+        } else if (block.kind === 'check') {
+          addText(card,'p','lesson-copy',block.question);
+          const key=packet.content.group_id+'/'+packet.content.node_id+'/'+String((packet.content.blocks||[]).indexOf(block));
+          const revealed=state.lessonRevealed.has(key);
+          const show=actionButton(card,revealed?'Ẩn đáp án':'Xem lời giải','lesson_reveal');
+          show.addEventListener('click',()=>{
+            if (revealed) state.lessonRevealed.delete(key);else state.lessonRevealed.add(key);
+            renderDetail();
+          });
+          if (revealed) addText(card,'p','lesson-answer',block.answer);
+          addText(card,'p','lesson-caption','Tự kiểm tra · xem lời giải không được tính là đã thành thạo.');
+        }
+      }
+      if (hasMath) typesetLesson(section);
+    } else if (packet.node_id === node.id && status === 'preparing') {
+      addText(section,'p','lesson-loading','✦ Gemini đang chuẩn bị nội dung ngắn cho đúng nhánh này...');
+    } else {
+      addText(section,'p','lesson-loading',status === 'unavailable' ?
+        'Chưa tạo được bài học. Bạn có thể xem nhánh hoặc thử lại.' :
+        'Chưa có bài học lưu sẵn. Khi mở nhánh, Eris sẽ thử tạo nội dung.');
+      const button=actionButton(section,status==='unavailable'?'Thử tạo lại':'Tạo bài học','lesson_request',
+        !!state.pending || node.id !== graph()?.selected_node_id);
+      button.addEventListener('click',()=>send('lesson_request',{
+        group_id:graph().group_id,node_id:node.id}));
+    }
+  }
+
   function renderDetail() {
     const container = byId('detail');
     // Preserve unsent Java drafts and cursor while new playback packets arrive.
@@ -388,10 +486,22 @@
     addText(head,'h3','',node.title);
     if (graphMode()) {
       addText(head,'p','summary',node.summary || 'Chủ đề đang khám phá. Chưa có bài giảng đã kiểm chứng.');
+      const progress = learningProgress(graph().group_id,node.id);
+      const minutes = Math.floor((progress?.estimated_seconds || 0) / 60);
+      addText(head,'p','graph-ai-status','Lịch sử: '+(continuityLabels[progress?.status] || 'Chưa ghi nhận')+
+        (minutes ? ` · khoảng ${minutes} phút tương tác` : '')+
+        ' · Mở xem không có nghĩa đã thành thạo.');
+      if (progress?.status !== 'viewed') {
+        const viewed = actionButton(head,'✓ Tôi đã xem phần này','mark_viewed',
+          node.id !== graph()?.selected_node_id);
+        viewed.addEventListener('click',()=>send('mark_viewed',{group_id:graph().group_id,node_id:node.id}));
+      }
       addText(head,'p','draft-warning',node.origin === 'gemini_draft'
         ? 'Nhánh nháp Gemini · chưa kiểm chứng, không tự động tính mastery.'
         : node.origin === 'eris_proposed' ? 'Nhánh do Eris đề xuất · cần kiểm chứng trước khi đánh giá trình độ.'
         : 'Nhánh khám phá · không tự động tính mastery.');
+      // P4: bài học chỉ thuộc nhánh người học đang chọn; không render cache ẩn.
+      renderDynamicLesson(container,node);
       const parent = node.parent_id && nodeById(node.parent_id);
       if (parent) {
         const back = actionButton(head,'← '+parent.title,'graph_select');
@@ -480,6 +590,29 @@
       (playback.event_type==='audio_start'?'Eris đang nói về ':'Eris chuẩn bị nói về ')+node.title;
     byId('speakingJump').onclick = () => chooseNode(playback.node_id);
   }
+  function renderContinuity() {
+    const c=state.snapshot?.learning_continuity || {};
+    const subjects=byId('recentSubjects'),history=byId('learningHistory'),jobs=byId('learningJobs');
+    subjects.replaceChildren();history.replaceChildren();jobs.replaceChildren();
+    for (const item of (c.recent_subjects || []).slice(0,4)) {
+      const btn=el('button','continue-card');btn.type='button';btn.disabled=!!state.pending;
+      btn.append(el('strong','',item.title||item.group_id));
+      btn.append(el('span','',`↳ ${item.last_node_title || 'Chủ đề chính'} · Tiếp tục học`));
+      btn.addEventListener('click',()=>send('graph_select',{group_id:item.group_id}));
+      subjects.append(btn);
+    }
+    if (!subjects.children.length) subjects.append(el('span','history-empty','Môn học đã mở sẽ xuất hiện ở đây.'));
+    for (const item of (c.events || []).slice(0,8)) {
+      const summary=item.action?.startsWith('status_')?'Đánh dấu '+(continuityLabels[item.action.slice(7)]||item.action):
+        item.action==='created'?'Tạo bản đồ':item.action==='resumed'?'Học tiếp':'Mở kiến thức';
+      history.append(el('p','history-entry',`${summary}: ${item.title||''} · ${new Date((item.at||0)*1000).toLocaleString('vi-VN')}`));
+    }
+    if (!history.children.length) history.append(el('p','history-empty','Chưa có hoạt động.'));
+    for (const job of (c.jobs || []).slice(0,5)) {
+      jobs.append(el('p','history-entry',`${job.title||'Bản đồ'} · ${jobLabels[job.status]||job.status}`));
+    }
+    if (!jobs.children.length) jobs.append(el('p','history-empty','Chưa có tác vụ.'));
+  }
   function render() {
     const snap=state.snapshot;
     byId('pathTitle').textContent = graphMode() ? graph().title : (snap?.title || 'Dependency Injection · Java');
@@ -501,7 +634,7 @@
     byId('detailTab').classList.toggle('active',mobile);
     byId('mapTab').setAttribute('aria-selected',String(!mobile));
     byId('detailTab').setAttribute('aria-selected',String(mobile));
-    renderMap();renderDetail();renderSpeaking();renderButtons();
+    renderMap();renderDetail();renderSpeaking();renderContinuity();renderButtons();
   }
   byId('refresh').addEventListener('click',()=>send('open'));
   byId('topicSelect').addEventListener('change',event=>{
@@ -519,7 +652,28 @@
   byId('detailTab').addEventListener('click',()=>{state.mode='detail';render();});
   window.addEventListener('resize',()=>requestAnimationFrame(drawConnections));
   byId('mapViewport').addEventListener('scroll',()=>requestAnimationFrame(drawConnections),{passive:true});
+  // Chỉ ước lượng thời gian học khi tab còn tương tác; không biến thành mastery.
+  ['pointerdown','keydown','wheel','touchstart'].forEach(type=>
+    document.addEventListener(type,()=>{state.lastActivityAt=Date.now();},{passive:true}));
+  setInterval(()=>{
+    const now=Date.now();
+    if (document.hidden || state.pending || !state.snapshot || state.offline ||
+        now-state.lastActivityAt>90000 || now-state.lastHeartbeatAt<30000) return;
+    const group_id=workspace()?.selected_group_id;
+    const node_id=graphMode()?graph()?.selected_node_id:state.snapshot?.focus?.node_id;
+    if (!group_id || !node_id) return;
+    state.lastHeartbeatAt=now;
+    send('study_heartbeat',{group_id,node_id});
+  },30000);
   render();
   poll();
-  setInterval(poll,850);
+  // Không polling cả graph khi tab đã bị ẩn. Khi trở lại, gia hạn phiên trước
+  // rồi mới đọc snapshot; panel đóng quá 40 giây sẽ tự hết lease ở backend.
+  document.addEventListener('visibilitychange',()=>{
+    if (document.hidden) sessionSignal('session_close');
+    else {sessionSignal('session_ping'); if (!state.pending && state.snapshot) send('open'); poll();}
+  });
+  window.addEventListener('pagehide',()=>sessionSignal('session_close'));
+  setInterval(()=>{if (!document.hidden && !state.offline) sessionSignal('session_ping');},12000);
+  setInterval(()=>{if (!document.hidden) poll();},850);
 })();

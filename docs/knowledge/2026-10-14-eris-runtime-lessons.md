@@ -1,5 +1,10 @@
 # Tri thức Eris: bài học từ điều tra runtime và gói rescue
 
+Cập nhật Live2D ngày 06/11: [atlas 2048 từ file Cubism gốc](2026-11-05-live2d-expression-audit.md#atlas-2048-từ-file-cubism-gốc--06112026).
+Gói hiện tại dùng hình vẽ gốc, xếp lại atlas ở kích thước ảnh nguồn. MOC3
+chỉ đổi UV để khớp atlas mới. Rig và các biểu cảm hiện có được giữ lại.
+Các ghi chú đổi màu và vẽ miệng ngày 05/11 bên dưới là lịch sử.
+
 Cập nhật Live2D ngày 05/11: [kiểm biểu cảm và chuyển đổi PSD2Live](2026-11-05-live2d-expression-audit.md).
 Kiểm offline gói 23 biểu cảm tìm được lỗi mí/lưỡi và hai preset trùng; theo yêu cầu
 cứu hộ sau đó đã sửa source, sync 8 file sang Documents/eris và kiểm native bằng

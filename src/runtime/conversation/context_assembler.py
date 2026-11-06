@@ -266,17 +266,25 @@ class ConversationContextAssembler:
             except Exception as exc:
                 self._debug("context.social_situation", exc)
 
-        # Chỉ đưa vào Root một ảnh chụp tiến độ học có giới hạn. Không tự kích hoạt
-        # Tutor hay biến BKT shadow thành đánh giá năng lực chắc chắn.
+        # P3.7: Root luôn chỉ biết vài tiêu đề môn gần đây. Không đọc full graph,
+        # lịch sử, BKT/FSRS và không gọi Gemini trên mỗi lượt trò chuyện.
+        canvas = getattr(host, "learning_canvas_service", None)
         try:
-            from runtime.tutor.learner_context import learner_continuity_snapshot
-            context["learner_continuity"] = learner_continuity_snapshot(
-                getattr(host, "learning_service", None),
-                source=lambda: getattr(getattr(host, "memory_kernel", None), "living_user", None),
-                max_kps=6,
-            )
+            context["learning_brief"] = canvas.brief() if canvas else {}
         except Exception:
-            context["learner_continuity"] = {}
+            context["learning_brief"] = {}
+        context["learner_continuity"] = {}
+        # Projection Tutor chi tiết chỉ khi người dùng thực sự đang mở Learning.
+        if canvas is not None and canvas.is_active():
+            try:
+                from runtime.tutor.learner_context import learner_continuity_snapshot
+                context["learner_continuity"] = learner_continuity_snapshot(
+                    getattr(host, "learning_service", None),
+                    source=lambda: getattr(getattr(host, "memory_kernel", None), "living_user", None),
+                    max_kps=6,
+                )
+            except Exception:
+                context["learner_continuity"] = {}
 
         # Projection + registry chỉ tồn tại trong runtime_context nội bộ.
         # Root và writer phải nhận chính cùng chuỗi compiled.personality.

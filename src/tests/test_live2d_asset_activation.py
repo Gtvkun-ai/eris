@@ -120,9 +120,9 @@ def frames(native, pose, count=1, gaze=None):
     return {p: model.GetParameterValue(i) for p, i in renderer._parameter_indices.items()}
 
 
-def test_rebuilt_mouth_bundle_passes_native_consistency(native_model):
+def test_model_bundle_passes_native_consistency(native_model):
     refs = read_json(ASSETS / "infj.model3.json")["FileReferences"]
-    assert "infj.1024/mouth-anime.png" in refs["Textures"]
+    assert refs["Textures"]
     assert all((ASSETS / texture).is_file() for texture in refs["Textures"])
     # The SDK resolves this name relative to the loaded model's directory.
     assert native_model[1].HasMocConsistencyFromFile(refs["Moc"])

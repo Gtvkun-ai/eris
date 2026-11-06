@@ -39,6 +39,7 @@ class FakeGemini:
 def system(tmp_path):
     store = LearningStore(tmp_path / "learning.sqlite3")
     canvas = LearningCanvasService(LearningService(store), store=store)
+    canvas._view_session("open", "test-p35-browser")  # Test P3.5 giả lập panel đang mở.
     canvas.prefetch.close()  # thay adapter thật bằng fake để test không dùng mạng
     fake = FakeGemini()
     canvas.prefetch = ProgressiveGraphPrefetch(canvas.graphs, adapter=fake)

@@ -57,7 +57,8 @@ def test_full_learning_loop_and_branch_after_sqlite_restart(tmp_path):
         return reply
 
     first = kernel.handle_event(ConversationEvent.user_turn(session_id="foreground:primary", text="DI là gì?"))
-    assert first.status == "delivering" and host.sent[-1]["open_panel"]
+    # P3.7: Root không tự mở Learning; người dùng mở panel khi muốn.
+    assert first.status == "delivering" and not host.sent
     kernel.settle_delivery_id(delivery_id=first.delivery_id, successful=True)
     request("navigate", node_id=a, base_revision=0)
     runtime = AIAutonomousOrchestrator.__new__(AIAutonomousOrchestrator)
