@@ -27,6 +27,7 @@ public partial class UdpListener
     private string _richChatToken = "";
     private string _richChatUrl = "";
     private string _richChatSnapshot = "{\"messages\":[],\"status\":\"Đang kết nối\"}";
+    private int _richChatEventClients;
     private ulong _richChatLastSnapshotMs;
     // The same loopback-only, token-protected browser server is shared by
     // Rich Chat and Learner Portrait. No second HTTP listener or public port.
@@ -90,7 +91,7 @@ public partial class UdpListener
         Assembly assembly = typeof(UdpListener).Assembly;
         var resources = assembly.GetManifestResourceNames();
         string[] files = {
-            "index.html", "chat.css", "chat.js", "artifacts.js", "canvas.html", "canvas.css", "canvas.js", "vendor/mathjax.js", "vendor/prism.css",
+            "index.html", "chat.css", "chat.js", "studio.css", "studio.js", "artifacts.js", "canvas.html", "canvas.css", "canvas.js", "vendor/mathjax.js", "vendor/prism.css",
             "vendor/prism.js", "vendor/prism-clike.js", "vendor/prism-python.js",
             "vendor/prism-javascript.js", "vendor/prism-typescript.js", "vendor/prism-csharp.js",
             "vendor/prism-c.js", "vendor/prism-cpp.js", "vendor/prism-java.js", "vendor/prism-css.js",
@@ -177,6 +178,21 @@ public partial class UdpListener
                 {
                     string snapshot = Volatile.Read(ref _richChatSnapshot);
                     Reply(net, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(snapshot));
+                    return;
+                }
+                if (method == "GET" && relative == "api/events")
+                {
+                    // SSE phản ánh snapshot đã được main thread xác nhận.
+                    // Không tự bịa token-stream hoặc tạo agent thứ hai.
+                    // Giới hạn kết nối để tab đóng/mở không giữ thread vô hạn.
+                    if (Interlocked.Increment(ref _richChatEventClients) > 8)
+                    {
+                        Interlocked.Decrement(ref _richChatEventClients);
+                        Reply(net, 409, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}"));
+                        return;
+                    }
+                    try { StreamRichChatEvents(net); }
+                    finally { Interlocked.Decrement(ref _richChatEventClients); }
                     return;
                 }
                 if (method == "GET" && relative == "api/portrait/state")
@@ -303,6 +319,43 @@ public partial class UdpListener
         }
     }
 
+    // Snapshot streaming qua HTTP trên localhost (text/event-stream).
+    // Trình duyệt có fallback GET /api/state nếu SSE không khả dụng.
+    private void StreamRichChatEvents(NetworkStream net)
+    {
+        byte[] header = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n" +
+            "Cache-Control: no-cache, no-store\r\nConnection: close\r\n" +
+            "X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n" +
+            "X-Frame-Options: DENY\r\n\r\n");
+        net.WriteTimeout = 4000;
+        net.Write(header, 0, header.Length);
+        string previous = null;
+        DateTime started = DateTime.UtcNow;
+        DateTime heartbeat = started;
+        while (_richChatServer != null && _richChatCancellation?.IsCancellationRequested == false
+               && (DateTime.UtcNow - started).TotalSeconds < 45)
+        {
+            string current = Volatile.Read(ref _richChatSnapshot);
+            if (!string.Equals(current, previous, StringComparison.Ordinal))
+            {
+                // JsonSerializer là một dòng; escape CR/LF dự phòng nếu format đổi.
+                string compact = current.Replace("\r", "").Replace("\n", "");
+                byte[] frame = Encoding.UTF8.GetBytes("event: state\ndata: " + compact + "\n\n");
+                net.Write(frame, 0, frame.Length);
+                previous = current;
+                heartbeat = DateTime.UtcNow;
+            }
+            else if ((DateTime.UtcNow - heartbeat).TotalSeconds > 11)
+            {
+                byte[] ping = Encoding.ASCII.GetBytes(": ping\n\n");
+                net.Write(ping, 0, ping.Length);
+                heartbeat = DateTime.UtcNow;
+            }
+            Thread.Sleep(250);
+        }
+    }
+
     private static int FindHttpSeparator(byte[] bytes, int length)
     {
         for (int i = 0; i < length - 3; i++)
@@ -346,12 +399,27 @@ public partial class UdpListener
         string speechTurnId = !string.IsNullOrWhiteSpace(_ttsBodyAudioTurnId)
             ? _ttsBodyAudioTurnId : _runtimePresence.TurnId;
         string phase = speaking ? "speaking" : thinking ? "thinking" : "idle";
+        // Chỉ công bố metadata quan sát được, không lộ chuỗi suy luận nội bộ.
+        string activity = _runtimePresence.RuntimeActivityActive
+            ? _runtimePresence.RuntimeActivityLabel : "";
+        string stageLabel = !string.IsNullOrWhiteSpace(_runtimePresence.StatusLabel)
+            ? _runtimePresence.StatusLabel : _conversationStateLabel;
+        ulong snapshotRevision = Time.GetTicksMsec();
         string next = JsonSerializer.Serialize(new {
+            revision = snapshotRevision,
             messages = visible, bundles, status = _conversationStateLabel, online = true,
             speech = new { phase, turnId = speaking ? speechTurnId : "" },
+            presence = new {
+                stage = _runtimePresence.Stage, label = stageLabel,
+                activity, emotion = _runtimePresence.Emotion,
+                motion = _runtimePresence.Motion,
+                isActive = _runtimePresence.RuntimeActivityActive,
+                warning = _runtimePresence.ProgressWarningLevel > 0,
+                turnId = _runtimePresence.TurnId,
+            },
         });
         Volatile.Write(ref _richChatSnapshot, next);
-        _richChatLastSnapshotMs = Time.GetTicksMsec();
+        _richChatLastSnapshotMs = snapshotRevision;
     }
 
     private void TickRichChatPortal()
