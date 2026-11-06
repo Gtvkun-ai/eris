@@ -133,7 +133,7 @@ def _sanitize_assistant_self_pronoun(text: str) -> tuple[str, tuple[str, ...]]:
     return _squash(out), tuple(dict.fromkeys(rules))
 
 
-def _sanitize_dynamic_user_vocative(text: str) -> tuple[str, tuple[str, ...]]:
+def _sanitize_dynamic_user_vocative(text: str, *, preserve_newlines: bool = False) -> tuple[str, tuple[str, ...]]:
     """Enforce explicit user addressing state on public text.
 
     Chỉ sửa các vị trí có hình dạng xưng hô trực tiếp/chủ ngữ/sở hữu. Không global
@@ -187,7 +187,16 @@ def _sanitize_dynamic_user_vocative(text: str) -> tuple[str, tuple[str, ...]]:
             out = out2
             rules.append("dynamic_subject")
 
+    if preserve_newlines:
+        cleaned = re.sub(r"[ \t\f\v]+", " ", out)
+        cleaned = re.sub(r" *\n *", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip(), tuple(dict.fromkeys(rules))
     return _squash(out), tuple(dict.fromkeys(rules))
+
+
+_CODE_BLOCK_RE = re.compile(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", re.S)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 
 def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> AddressingResult:
@@ -201,7 +210,20 @@ def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> Addres
     if not raw:
         return AddressingResult(raw)
 
-    out = raw
+    code_snippets: list[str] = []
+
+    def _save_fence(m: re.Match[str]) -> str:
+        idx = len(code_snippets)
+        code_snippets.append(m.group(0))
+        return f"\n__ERIS_CODE_RESERVED_{idx}__\n"
+
+    def _save_inline(m: re.Match[str]) -> str:
+        idx = len(code_snippets)
+        code_snippets.append(m.group(0))
+        return f"__ERIS_CODE_RESERVED_{idx}__"
+
+    out = _CODE_BLOCK_RE.sub(_save_fence, raw)
+    out = _INLINE_CODE_RE.sub(_save_inline, out)
     rules: list[str] = []
 
     out2, count = _VOCATIVE_START_RE.subn("", out)
@@ -261,12 +283,27 @@ def sanitize_legacy_addressing(text: str, *, surface: str = "display") -> Addres
         out = out2
         rules.append("legacy_failsafe")
 
-    out = _squash(out)
+    preserve_newlines = bool(code_snippets and surface == "display")
+    if preserve_newlines:
+        out = re.sub(r"[ \t\f\v]+", " ", out)
+        out = re.sub(r" *\n *", "\n", out)
+        out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    else:
+        out = _squash(out)
     out = re.sub(r"\b[Bb]\u1ea1n\s+[Bb]\u1ea1n\b", lambda m: "Bạn" if m.group(0)[:1].isupper() else "bạn", out)
     out, self_rules = _sanitize_assistant_self_pronoun(out)
     rules.extend(self_rules)
-    out, dynamic_rules = _sanitize_dynamic_user_vocative(out)
+    out, dynamic_rules = _sanitize_dynamic_user_vocative(out, preserve_newlines=preserve_newlines)
     rules.extend(dynamic_rules)
+
+    if code_snippets:
+        for idx, snippet in enumerate(code_snippets):
+            out = out.replace(f"__ERIS_CODE_RESERVED_{idx}__", snippet)
+        if preserve_newlines:
+            out = re.sub(r"[ \t\f\v]+", " ", out)
+            out = re.sub(r" *\n *", "\n", out)
+            out = re.sub(r"\n{3,}", "\n\n", out).strip()
+
     return AddressingResult(out, changed=out != raw, rules=tuple(dict.fromkeys(rules)))
 
 

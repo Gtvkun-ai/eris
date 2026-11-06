@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "item": {
+    "id": "chat_d60bb943654542a2a2064b22eb8a3d02",
+    "revision": 1793889643881981800,
+    "created_at": 1793889642006,
+    "updated_at": 1793889643881,
+    "completed_at": 1793889643881,
+    "status": "success",
+    "caller_id": "caller:957e93e9877adac8",
+    "account_id": "gaminghackker@gmail.com",
+    "surface": "openai.chat_completions",
+    "model": "deepseek-flash",
+    "stream": false,
+    "user_input": "Chào bạn, chúc một ngày tốt lành.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Chào bạn, chúc một ngày tốt lành."
+      }
+    ],
+    "final_prompt": "::user::Chào bạn, chúc một ngày tốt lành.::asst::",
+    "reasoning_content": "We need answer in Vietnamese. User says \"Chào bạn, chúc một ngày tốt lành.\" Need respond greeting. Keep concise friendly. Could say Cảm ơn bạn, chúc bạn ngày tốt lành. Maybe offer help. Need not overdo.",
+    "content": "Chào bạn! Cảm ơn bạn rất nhiều. Chúc bạn một ngày thật vui vẻ và tốt lành. Cần gì cứ nói mình nhé!",
+    "status_code": 200,
+    "elapsed_ms": 1870,
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 94,
+      "completion_tokens_details": {
+        "reasoning_tokens": 58
+      },
+      "prompt_tokens": 23,
+      "total_tokens": 117
+    }
+  }
+}

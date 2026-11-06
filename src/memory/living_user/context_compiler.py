@@ -303,7 +303,8 @@ class ProfileContextCompiler:
         dense: float,
         active_scope: UserMemoryScope,
     ) -> tuple[float, str]:
-        path_domain = record.path.split(".", 1)[0]
+        parts = record.path.split(".")
+        path_domain = parts[1] if parts[0] == "user" and len(parts) > 1 else parts[0]
         domain_score = 1.0 if path_domain == domain else _domain_affinity(domain, record.path)
         lexical = _lexical_similarity(query, f"{record.path} {record.value}")
         scope_score = 1.0 if record.scope.identity == active_scope.identity else (0.78 if record.scope.kind == "global" else 0.0)
@@ -407,7 +408,8 @@ def infer_domain(query: str) -> str:
 
 
 def _domain_affinity(domain: str, path: str) -> float:
-    root = path.split(".", 1)[0]
+    parts = path.split(".")
+    root = parts[1] if parts[0] == "user" and len(parts) > 1 else parts[0]
     affinities = {
         "technical": {"workflow": 0.55, "communication": 0.48, "projects": 0.72},
         "workflow": {"technical": 0.62, "communication": 0.48, "projects": 0.64},

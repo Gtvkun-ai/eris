@@ -75,7 +75,7 @@ public partial class UdpListener : Node2D
 	private bool _settingsTtsEnabled = true;
 	private string _settingsTtsProvider = "elevenlabs";
 	private string _settingsTtsVoice = "Aoede";
-	private string _settingsElevenLabsVoiceId = "";
+	private string _settingsElevenLabsVoiceId = "fUjY9K2nAIwlALOwSiwc";
 	private string _settingsElevenLabsModel = "eleven_v3";
 	private string _settingsTtsLanguage = "ja";
 	private int _settingsLoadedSchemaVersion = 0;
@@ -2051,6 +2051,7 @@ public partial class UdpListener : Node2D
 		bool retired = provider is "gemini" or "groq" or "gemma"
 			|| baseUrl.Contains("groq.com", StringComparison.OrdinalIgnoreCase)
 			|| baseUrl.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase)
+			|| baseUrl.Contains("shopaikey", StringComparison.OrdinalIgnoreCase)
 			|| model.Contains("gemini", StringComparison.OrdinalIgnoreCase)
 			|| model.Contains("gemma", StringComparison.OrdinalIgnoreCase);
 		if (retired)

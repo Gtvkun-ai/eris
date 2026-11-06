@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "item": {
+    "id": "chat_28d8e8124c1346b9b3f7ea9aa0f30191",
+    "revision": 1793889608839393000,
+    "created_at": 1793889604367,
+    "updated_at": 1793889608839,
+    "completed_at": 1793889608839,
+    "status": "error",
+    "caller_id": "caller:957e93e9877adac8",
+    "account_id": "azaikyousuke306@gmail.com",
+    "surface": "openai.chat_completions",
+    "model": "deepseek-flash",
+    "stream": false,
+    "user_input": "Chào bạn, chúc một ngày tốt lành.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Chào bạn, chúc một ngày tốt lành."
+      }
+    ],
+    "final_prompt": "::user::Chào bạn, chúc một ngày tốt lành.::asst::",
+    "error": "Account token is invalid. Please re-login the account in pool UI.",
+    "status_code": 401,
+    "elapsed_ms": 4467,
+    "finish_reason": "error"
+  }
+}

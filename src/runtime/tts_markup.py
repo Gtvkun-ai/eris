@@ -37,6 +37,8 @@ def _normalize_lines(text: str) -> list[str]:
     Mỗi dòng nên là một breath group ngắn, không phải đoạn văn dài.
     """
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = re.sub(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", "", raw, flags=re.S)
+    raw = re.sub(r"`[^`\n]*`", "", raw)
     out: list[str] = []
     for line in raw.split("\n"):
         clean = " ".join(line.split()).strip()

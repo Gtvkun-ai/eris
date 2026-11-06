@@ -43,7 +43,7 @@ class StageTextSurfaces:
     marks: StageMarks
 
 
-_FENCE_RE = re.compile(r"```.*?```", re.S)
+_FENCE_RE = re.compile(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", re.S)
 _INTERNAL_REASONING_RE = re.compile(
     r"<\s*(?:think|analysis|reasoning)\s*>.*?<\s*/\s*(?:think|analysis|reasoning)\s*>",
     re.I | re.S,
@@ -196,10 +196,25 @@ class ActionTagExtractor:
 
     Nếu model lỡ viết "(cười khẽ)" thì tag đó không bị đọc ra TTS và không đi vào
     memory.  Avatar vẫn nhận được ``laugh_soft`` để diễn nếu frontend hỗ trợ.
+    Các khối code và inline code được bảo toàn nguyên vẹn, không bóc tag giả bên trong code.
     """
 
     def extract(self, text: str) -> StageMarks:
-        working = str(text or "")
+        raw = str(text or "")
+        code_blocks: list[str] = []
+
+        def _save_fence(m: re.Match[str]) -> str:
+            idx = len(code_blocks)
+            code_blocks.append(m.group(0))
+            return f"\n__ERIS_ACTION_FENCE_{idx}__\n"
+
+        def _save_inline(m: re.Match[str]) -> str:
+            idx = len(code_blocks)
+            code_blocks.append(m.group(0))
+            return f"__ERIS_ACTION_INLINE_{idx}__"
+
+        working = _FENCE_RE.sub(_save_fence, raw)
+        working = _INLINE_CODE_RE.sub(_save_inline, working)
         actions: list[str] = []
         emotion_hint = ""
         motion_hint = ""
@@ -212,8 +227,6 @@ class ActionTagExtractor:
             value = tag.split(":", 1)[-1].strip() if ":" in tag else tag
             mapped = _ACTION_ALIASES.get(value) or _ACTION_ALIASES.get(value.replace("_", " "))
             if mapped:
-                # TTS không phải SVS. Khi singing capability tắt, tag hát bị bóc
-                # khỏi public text nhưng không phát action giả sang stage.
                 if mapped == "sing_tease" and not singing_capability_enabled():
                     return
                 actions.append(mapped)
@@ -250,8 +263,20 @@ class ActionTagExtractor:
             return " "
 
         working = _KV_TAG_RE.sub(kv_repl, working)
+
+        if code_blocks:
+            working = re.sub(r"[ \t\f\v]+", " ", working)
+            working = re.sub(r" *\n *", "\n", working)
+            working = re.sub(r"\n{3,}", "\n\n", working)
+            for idx, cb in enumerate(code_blocks):
+                working = working.replace(f"__ERIS_ACTION_FENCE_{idx}__", cb)
+                working = working.replace(f"__ERIS_ACTION_INLINE_{idx}__", cb)
+            cleaned_text = working.strip()
+        else:
+            cleaned_text = _squash(working)
+
         return StageMarks(
-            text=_squash(working),
+            text=cleaned_text,
             actions=_unique(actions),
             emotion_hint=emotion_hint,
             motion_hint=motion_hint,
@@ -262,11 +287,26 @@ _JAPANESE_BRACKET_CLEAN_RE = re.compile(r"\s*「[\u3040-\u30ff\u3400-\u9fff\s\S]
 
 
 class DisplayFilter:
-    """Text cho UI: đẹp, gọn, không chứa tag nội bộ hay câu tiếng Nhật đính kèm."""
+    """Text cho UI: đẹp, gọn, giữ nguyên code blocks cho UI render, không chứa tag nội bộ hay câu tiếng Nhật đính kèm."""
 
     def clean(self, text: str) -> str:
-        cleaned = clean_forbidden_honorifics(_strip_markdown(text, code_placeholder="[code]"))
+        raw = str(text or "")
+        code_blocks: list[str] = []
+        def _save_block(m: re.Match[str]) -> str:
+            idx = len(code_blocks)
+            code_blocks.append(m.group(0))
+            return f"\n__ERIS_DISPLAY_CODE_{idx}__\n"
+
+        protected = _FENCE_RE.sub(_save_block, raw)
+        cleaned = clean_forbidden_honorifics(protected)
         cleaned = _JAPANESE_BRACKET_CLEAN_RE.sub("", cleaned)
+        if code_blocks:
+            cleaned = re.sub(r"[ \t\f\v]+", " ", cleaned)
+            cleaned = re.sub(r" *\n *", "\n", cleaned)
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+            for idx, block in enumerate(code_blocks):
+                cleaned = cleaned.replace(f"__ERIS_DISPLAY_CODE_{idx}__", block.strip())
+            return cleaned.strip()
         return _squash(cleaned)
 
 
@@ -274,11 +314,15 @@ class DisplayFilter:
 class TTSFilter:
     """Text cho TTS: không markdown, URL, emoji, code, tag sân khấu."""
 
-    def clean(self, text: str) -> str:
+    def clean(self, text: str, *, language_hint: str = "vi") -> str:
         t = _strip_markdown(text, code_placeholder="", inline_code_placeholder="")
         t = _URL_RE.sub("", t)
         t = _EMOJI_RE.sub("", t)
-        return clean_forbidden_honorifics(_squash(t))
+        cleaned = clean_forbidden_honorifics(_squash(t))
+        if not cleaned and str(text or "").strip():
+            lang = str(language_hint or "vi").strip().lower()
+            return "コードを書いておいたよ。" if lang in ("ja", "jp", "japanese") else "Mình gửi code ở đây nhé."
+        return cleaned
 
 
 class MemorySurfaceFilter:
@@ -306,19 +350,25 @@ class StageTransformerChain:
         self.memory_filter = MemorySurfaceFilter()
         self.final_sanitizer = FinalSurfaceSanitizer()
 
-    def transform(self, raw_text: str) -> StageTextSurfaces:
+    def transform(self, raw_text: str, *, language_hint: str = "vi") -> StageTextSurfaces:
         raw = str(raw_text or "")
-        # Bóc reasoning trước ActionTagExtractor. Nếu làm ngược, regex angle tag
-        # sẽ nuốt riêng ``<think>`` rồi để phần suy nghĩ trơ trọi giữa sân khấu.
-        safe_raw = _INTERNAL_REASONING_RE.sub(" ", raw)
+        code_blocks: list[str] = []
+        def _save_raw_code(m: re.Match[str]) -> str:
+            idx = len(code_blocks)
+            code_blocks.append(m.group(0))
+            return f"\n__ERIS_RAW_CODE_{idx}__\n"
+
+        safe_raw = _FENCE_RE.sub(_save_raw_code, raw)
+        safe_raw = _INTERNAL_REASONING_RE.sub(" ", safe_raw)
+        for idx, cb in enumerate(code_blocks):
+            safe_raw = safe_raw.replace(f"__ERIS_RAW_CODE_{idx}__", cb)
+
         marks = self.action_extractor.extract(safe_raw)
-        # Một sanitizer dùng chung ở cửa ra. Các filter vẫn giữ chức năng riêng,
-        # nhưng không lane nào được lách qua và surface secret/stack/stage note.
         display_text = self.final_sanitizer.sanitize(
             self.display_filter.clean(marks.text), surface="display"
         ).text
         tts_text = self.final_sanitizer.sanitize(
-            self.tts_filter.clean(marks.text), surface="tts"
+            self.tts_filter.clean(marks.text, language_hint=language_hint), surface="tts"
         ).text
         memory_text = self.final_sanitizer.sanitize(
             self.memory_filter.clean(marks.text), surface="memory"

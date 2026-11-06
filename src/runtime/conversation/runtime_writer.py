@@ -80,6 +80,8 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
             candidate_speech = ''
         raw_vietnamese = candidate_speech or str(result.get('text', '') or '').strip()
         vietnamese = strip_math_for_speech(raw_vietnamese)
+        if not vietnamese and raw_vietnamese:
+            vietnamese = "Mình gửi code ở đây nhé."
         if vietnamese:
             result.update(speech_text=vietnamese, speech_language='vi', tts_language='vi')
             contract = result.get('speech_contract')
@@ -114,13 +116,14 @@ def _prelocalize_v03_speech(payload: Mapping[str, Any], *, host: Any,
     # Nguồn để dịch/đọc phải sạch LaTeX trước: localizer dịch `\frac{...}` như
     # văn bản nên ký hiệu sẽ lọt vào TTS Nhật. Bubble vẫn giữ LaTeX ở display.
     source = strip_math_for_speech(str(spec.speech.text or '').strip() or display_text)
+    if not source and (str(spec.speech.text or '').strip() or display_text):
+        source = "コードを書いておいたよ。"
     if not source:
         return result
     if _contains_japanese_script(source):
         # UtteranceSpec/Stage có thể ưu tiên speech nested so với field phẳng.
         # Giữ metadata cùng một transcript thật, không để hai bản lệch nhau.
-        result['speech_text'] = source
-        return result
+        return _apply_ja_speech(result, source)
 
     localizer = getattr(host, 'character_speech_localizer', None)
     if localizer is None:

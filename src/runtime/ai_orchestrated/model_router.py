@@ -1738,6 +1738,7 @@ class AIRuntimeModelRouter:
             # (2) Hai bề mặt + khoá ngôn ngữ, viết giọng thường.
             f"Trả đúng MỘT JSON với ba field bắt buộc: should_speak, text bằng {display_language}, và speech_text bằng {speech_language}. "
             "text là câu hiển thị cho người đọc; speech_text là câu ERIS thực sự cất tiếng, cùng nghĩa và cùng tông với text. "
+            "Khi câu trả lời có code hoặc giải thích lập trình, viết code trực tiếp trong text bằng khối mã Markdown (```ngôn_ngữ ... ```) hoặc inline code (`...`); phần code đó trong speech_text không cần đọc nguyên văn mã nguồn mà chỉ cần câu dẫn hoặc tóm tắt ngắn tự nhiên (ví dụ: 'Mình viết code mẫu ở đây nhé' hoặc 'Bạn xem đoạn code này nhé'), hệ thống cũng sẽ tự động lọc code khỏi giọng đọc. "
             "Nếu Root.say chỉ mời người dùng xem các bước trên Workspace/Panel sau khi tool đã hoàn tất, "
             "giữ lời thoại ngắn tự nhiên: KHÔNG tự viết lại toàn bộ lời giải hoặc đọc các công thức dài trong text/speech_text. "
             "Không tự nhận đã tạo artifact nếu Root.say và receipt chưa xác nhận. "
@@ -1920,9 +1921,9 @@ class AIRuntimeModelRouter:
                         "temperature": 0.56,
                         "frequency_penalty": 0.0,
                         "presence_penalty": 0.0,
-                        # Public writer chỉ hiện thực hóa câu trả lời; không cần ngân sách
-                        # gần 1k token cho một cây metadata như kiến trúc cũ.
-                        "max_tokens": (620 if locked_semantic_frame else 720),
+                        # Public writer hiện thực hóa câu trả lời và code nếu có;
+                        # ngân sách 1024 token cho phép sinh code hoàn chỉnh.
+                        "max_tokens": (720 if locked_semantic_frame else 1024),
                         "response_format": {
                             "type": "json_schema",
                             "json_schema": {

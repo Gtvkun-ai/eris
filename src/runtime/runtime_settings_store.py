@@ -169,7 +169,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "tts": {
         "enabled": True,
         "provider": "elevenlabs",
-        "elevenlabs_voice_id": "",
+        "elevenlabs_voice_id": "fUjY9K2nAIwlALOwSiwc",
         "elevenlabs_voice_id_vi": "aHC3XZOMg3HZuXVYK6hy",
         "elevenlabs_voice_id_ja": "fUjY9K2nAIwlALOwSiwc",
         "elevenlabs_model": "eleven_v3",

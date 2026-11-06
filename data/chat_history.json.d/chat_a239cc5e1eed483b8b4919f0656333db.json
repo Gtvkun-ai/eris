@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "item": {
+    "id": "chat_a239cc5e1eed483b8b4919f0656333db",
+    "revision": 1793889582684661600,
+    "created_at": 1793889580750,
+    "updated_at": 1793889582684,
+    "completed_at": 1793889582684,
+    "status": "success",
+    "caller_id": "caller:2f38df396036b95b",
+    "account_id": "hocnuahocmai689@gmail.com",
+    "surface": "openai.chat_completions",
+    "model": "deepseek-flash",
+    "stream": false,
+    "user_input": "Chào bạn, thủ đô của Việt Nam là gì? Trả lời 1 từ.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Chào bạn, thủ đô của Việt Nam là gì? Trả lời 1 từ."
+      }
+    ],
+    "final_prompt": "::user::Chào bạn, thủ đô của Việt Nam là gì? Trả lời 1 từ.::asst::",
+    "reasoning_content": "We need answer Vietnamese one word. Capital Vietnam is Hà Nội. Need one word. \"Hà Nội\" is two words? In Vietnamese one proper noun two syllables. They ask trả lời 1 từ. Could answer \"Hà Nội\" considered one word? One word maybe \"Hà Nội\". Need exactly. final only.",
+    "content": "Hà Nội",
+    "status_code": 200,
+    "elapsed_ms": 1929,
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 74,
+      "completion_tokens_details": {
+        "reasoning_tokens": 71
+      },
+      "prompt_tokens": 30,
+      "total_tokens": 104
+    }
+  }
+}

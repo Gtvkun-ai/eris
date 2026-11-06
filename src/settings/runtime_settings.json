@@ -63,7 +63,7 @@
   },
   "project_ops": {
     "enabled": true,
-    "eris_home": "/home/oai/Documents/ErisLive",
+    "eris_home": "c:\\Users\\ADMIN\\OneDrive\\Desktop\\eris\\.eris_home",
     "workspace_root": "",
     "allow_implicit_source_repo": false,
     "fallback_to_runtime_source": false,

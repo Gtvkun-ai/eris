@@ -2042,6 +2042,11 @@ class _TtsWorker:
                 raise SpeechLocalizationError('v03_verified_ja_transcript_invalid')
             # Không một localizer hay language repair nào được sửa bản đã pass.
             return text_to_speak, True, language_hint
+        cleaned_main = _clean_text(text_to_speak)
+        if not cleaned_main and text_to_speak:
+            text_to_speak = "Mình gửi code ở đây nhé." if language_hint in ("vi", "vi-vn") else "コードを書いておいたよ。"
+        elif cleaned_main:
+            text_to_speak = cleaned_main
         if language_hint != "ja" or not text_to_speak:
             return text_to_speak, bool(req.prelocalized), language_hint
         if _contains_japanese_chars(text_to_speak):
@@ -2610,6 +2615,9 @@ class TtsEngine:
                     logger.error("[TTS] Error in fallback on_start_play callback: %s", cb_exc)
             return
         clean = _clean_text(text)
+        if not clean and str(text or "").strip() and not verified_transcript_hash:
+            lang = str(language_hint or _language_hint()).strip().lower()
+            clean = "Mình gửi code ở đây nhé." if lang in ("vi", "vi-vn") else "コードを書いておいたよ。"
         if verified_transcript_hash:
             import hashlib
             if hashlib.sha256(clean.encode('utf-8')).hexdigest() != verified_transcript_hash:
@@ -2703,6 +2711,9 @@ class TtsEngine:
         if not _enabled() or not self._ok or self._worker is None:
             raise RuntimeError("tts_disabled")
         clean = _clean_text(text)
+        if not clean and str(text or "").strip() and not verified_transcript_hash:
+            lang = str(language_hint or getattr(self, "_language_hint", "") or _language_hint()).strip().lower()
+            clean = "Mình gửi code ở đây nhé." if lang in ("vi", "vi-vn") else "コードを書いておいたよ。"
         if verified_transcript_hash:
             import hashlib
             if hashlib.sha256(clean.encode('utf-8')).hexdigest() != verified_transcript_hash:
@@ -2777,7 +2788,7 @@ class TtsEngine:
 def _clean_text(text: str) -> str:
     """Bỏ markdown/code/URL trước khi đọc, nhưng giữ line break có chủ ý."""
     t = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    t = re.sub(r"```.*?```", "", t, flags=re.S)
+    t = re.sub(r"(?:```[\w.+-]*\n?[\s\S]*?(?:```|\Z)|~~~[\w.+-]*\n?[\s\S]*?(?:~~~|\Z))", "", t, flags=re.S)
     t = re.sub(r"\*{1,2}([^*]*)\*{1,2}", r"\1", t)
     t = re.sub(r"_{1,2}([^_]*)_{1,2}", r"\1", t)
     t = re.sub(r"`{1,3}[^`]*`{1,3}", "", t)
