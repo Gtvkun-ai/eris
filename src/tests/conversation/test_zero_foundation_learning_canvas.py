@@ -11,7 +11,7 @@ def test_root_prompt_contains_zero_foundation_and_canvas_mandate() -> None:
     assert "MẤT CĂN BẢN" in ROOT_SYSTEM_CORE
     assert "KHÔNG từ chối giáo trình dài hạn" in ROOT_SYSTEM_CORE
     assert "chẩn đoán (diagnostic probe) xem khả năng và nền tảng" in ROOT_SYSTEM_CORE
-    assert "KHÔNG hỏi dồn/đố mẹo kỹ thuật liên miên" in ROOT_SYSTEM_CORE
+    assert "PHẢI VỪA NÓI VỪA MỞ" in ROOT_SYSTEM_CORE
 
     # Eris must create a structured roadmap on Learning Canvas
     assert "Learning Canvas bằng capability canvas" in ROOT_SYSTEM_CORE
