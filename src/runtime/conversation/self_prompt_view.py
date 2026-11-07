@@ -200,9 +200,10 @@ def compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
 _BELIEF_AUDIT_FIELDS = (
     "created_at", "updated_at", "last_seen",
     "source_ids", "positive_evidence_count", "negative_evidence_count", "decay_rate",
+    "key",
 )
 _PREFERENCE_AUDIT_FIELDS = (
-    "created_at", "updated_at", "last_reinforced", "source",
+    "created_at", "updated_at", "last_reinforced", "source", "key", "tags",
 )
 
 
@@ -316,10 +317,19 @@ def compact_active_state(active_state: Mapping[str, Any]) -> dict[str, Any]:
 # and the light qualifiers fact_key/domain/importance) is kept.
 _SEMANTIC_TOP_AUDIT_FIELDS = (
     "evidence_ids", "first_seen_at", "updated_at",
+    "decay_policy", "observations",
 )
 _SEMANTIC_META_AUDIT_FIELDS = (
     "raw_content", "embedding_text_hash", "embedding_version",
     "access_count", "last_accessed_at", "fact_profile_evidence",
+    "semantic_claim", "claim_provenance", "memory_kernel_context",
+    "lineage_root_ids", "retention_class", "revisit_after_seconds",
+    "prune_after_seconds", "promote_if_observed", "demote_if_unaccessed_days",
+    "retention_reason", "retention_warnings", "memory_kind", "surface_mode",
+    "permission", "commit_kind", "memory_kernel_mode", "memory_kernel_source",
+    "predicate", "subject", "object_type", "assertion", "modality", "temporal",
+    "scope", "source_grounded", "semantic_source", "extraction", "raw_user_text",
+    "reason", "source", "query_examples", "aliases",
 )
 
 
