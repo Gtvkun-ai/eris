@@ -196,8 +196,7 @@ class RuntimeCoordinator(
                         break
                 self.agent_default_workspace = str(workspace_root)
                 native_tools = NativeCapabilityToolAdapter(action_executor)
-                from runtime.agent_service.ide_rpc import IdeRpcBroker
-                self.agent_ide_rpc = IdeRpcBroker(self.agent_event_bus, logger=logger)
+                self.agent_ide_rpc = None
 
                 coding_client = getattr(llm_service, "coding_client", None)
                 if coding_client is None:
@@ -240,32 +239,7 @@ class RuntimeCoordinator(
                         self.agent_capability_self_model.harness_ready,
                     )
 
-                # IDE gateway chạy cùng Eris Service nhưng hoàn toàn tách khỏi Webview.
-                # Extension chỉ đọc discovery file rồi handshake bằng token localhost.
-                ws_enabled = str(os.environ.get("ERIS_AGENT_WS_ENABLED", "0") or "0").strip().lower()
-                if ws_enabled not in {"0", "false", "no", "off"}:
-                    from runtime.agent_service import AgentWebSocketService
-
-                    service = AgentWebSocketService(
-                        store=self.agent_task_store,
-                        event_bus=self.agent_event_bus,
-                        start_task=self.start_agent_task_async,
-                        resume_task=self.resume_agent_task_async,
-                        control_task=self.control_agent_task,
-                        chat_message=self.start_vscode_user_turn,
-                        capability_catalog=self._agent_ws_capability_catalog,
-                        ide_rpc=self.agent_ide_rpc,
-                        logger=logger,
-                    )
-                    if service.start():
-                        self.agent_ws_service = service
-                    else:
-                        warn = getattr(logger, "warning", None)
-                        if callable(warn):
-                            warn(
-                                "[agent-ws] failed to start; VS Code extension will fall back to direct API. discovery=%s",
-                                getattr(service, "discovery_path", ""),
-                            )
+                self.agent_ws_service = None
             except Exception as exc:
                 self.agent_harness = None
                 self.agent_ide_rpc = None

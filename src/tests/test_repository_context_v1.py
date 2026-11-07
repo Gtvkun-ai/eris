@@ -2,7 +2,6 @@ from pathlib import Path
 
 from runtime.agent_harness.repository_context import RepositoryContextManager
 from runtime.agent_harness.context_policy import context_gate_reason, requires_verified_change
-from runtime.agent_service.protocol import project_agent_event
 
 
 def _demo_repo(root: Path) -> None:
@@ -99,17 +98,4 @@ def test_completion_gate_detects_mutation_intent_without_matching_plain_review()
     assert requires_verified_change("đánh giá repo eris và giải thích kiến trúc") is False
 
 
-def test_protocol_projects_repository_context_without_raw_tool_noise():
-    event = {
-        "type": "repository_context_ready",
-        "event_id": "ae_1",
-        "task_id": "task_1",
-        "thread_id": "thread_1",
-        "seq": 2,
-        "summary": "Đã lập bản đồ repository: 120 file, 900 symbol",
-        "data": {"files": 120, "symbols": 900, "confidence": 0.96},
-    }
-    rows = project_agent_event(event)
-    assert rows and rows[0]["type"] == "activity.update"
-    assert rows[0]["payload"]["label"] == "Đã hiểu cấu trúc repository"
-    assert rows[0]["payload"]["status"] == "completed"
+

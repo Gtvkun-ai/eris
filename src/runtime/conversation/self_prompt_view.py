@@ -50,8 +50,54 @@ _PROFILE_AUDIT_FIELDS = (
     "id", "value_type", "cardinality", "recurrence", "tier", "source",
 )
 
+_CORE_PROFILE_PREFIXES = (
+    "identity.", "communication.", "technical.profile", "technical.projects", "personality.", "preferences.", "relationship."
+)
 
-def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
+
+def _synthesize_narrative_summary(records: Sequence[Mapping[str, Any]]) -> str:
+    # 1. Try reading saved Gemini portrait from disk if available
+    candidates = []
+    import os
+    from pathlib import Path
+    eris_home = os.environ.get("ERIS_HOME", "").strip()
+    if eris_home:
+        candidates.append(Path(eris_home) / "memory" / "core" / "living_user_portrait.json")
+    candidates.append(Path.home() / "Documents" / "eris" / ".eris_home" / "memory" / "core" / "living_user_portrait.json")
+    for cand in candidates:
+        try:
+            if cand.is_file():
+                doc = json.loads(cand.read_text(encoding="utf-8"))
+                opening = str(doc.get("portrait", {}).get("opening") or "").strip()
+                if opening:
+                    return opening
+        except Exception:
+            pass
+
+    # 2. Fallback to deterministic synthesis from records
+    unique: dict[str, Any] = {}
+    for r in records:
+        p = r.get("path")
+        if p and (p not in unique or r.get("explicitness") == "explicit"
+                  or float(r.get("confidence", 0) or 0) > float(unique[p].get("confidence", 0) or 0)):
+            unique[p] = r
+    name = unique.get("identity.name", {}).get("value", "Hoà")
+    rel = unique.get("identity.relationship_to_eris", {}).get("value", "Người tạo ra ERIS")
+    mbti = unique.get("identity.personality_typology.mbti_self_identification", {}).get("value", "")
+    comm = unique.get("communication.interaction_preferences", {}).get("value", "")
+    style = unique.get("communication.desired_response_style", {}).get("value", "")
+
+    parts = [f"Người dùng là {name} ({rel})."]
+    if mbti:
+        parts.append(f"MBTI: {mbti}.")
+    if comm:
+        parts.append(f"Phong cách: {comm}.")
+    elif style:
+        parts.append(f"Kỳ vọng phản hồi: {style}.")
+    return " ".join(parts)
+
+
+def compact_profile(profile: Mapping[str, Any], max_records: int = 16) -> dict[str, Any]:
     """Transport projection for Root: drop audit/provenance, keep the telling.
 
     Keeps path/value and the telling qualifiers (explicitness, status,
@@ -62,6 +108,8 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     is untouched (store.save() uses ProfileRecord.to_dict(), not this).
     """
     result = deepcopy(dict(profile))
+    result.pop("history", None)
+    result.pop("audit", None)
     records = result.get("records")
     if not isinstance(records, list) or not records or not all(isinstance(row, dict) for row in records):
         return result
@@ -70,6 +118,29 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     for row in records:
         for field in _PROFILE_AUDIT_FIELDS:
             row.pop(field, None)
+    if "summary" not in result and records:
+        result["summary"] = _synthesize_narrative_summary(records)
+    if len(records) > max_records:
+        unique: dict[str, dict[str, Any]] = {}
+        for row in records:
+            p = str(row.get("path") or "")
+            if p:
+                if p not in unique:
+                    unique[p] = row
+                elif row.get("explicitness") == "explicit" or float(row.get("confidence", 0) or 0) > float(unique[p].get("confidence", 0) or 0):
+                    unique[p] = row
+
+        def rank(r: dict[str, Any]) -> tuple[int, int, float]:
+            p = str(r.get("path") or "")
+            is_core = any(p.startswith(pfx) for pfx in _CORE_PROFILE_PREFIXES)
+            is_explicit = r.get("explicitness") == "explicit"
+            conf = float(r.get("confidence", 0.0) or 0.0)
+            return (0 if is_core else 1, 0 if is_explicit else 1, -conf)
+
+        sorted_records = sorted(unique.values(), key=rank)
+        records = sorted_records[:max_records]
+        result["records"] = records
+        result["record_count"] = len(records)
     # cardinality/recurrence/tier/source/value_type are popped at the record
     # level above (audit qualifiers), so they are no longer candidates to
     # promote. Only the kept qualifiers factor into defaults.
@@ -375,6 +446,78 @@ def compact_mind_state(mind_state: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+_INTERNAL_RESIDUE_FIELDS = (
+    "recent_subconscious_seeds", "recent_thought_seeds", "recent_stances",
+    "recent_speech_acts", "recent_inner_intents", "recent_self_state_labels",
+    "recent_social_presence", "recent_notes", "recent_channels", "recent_focus_kinds",
+    "mental_processes", "desire_dynamics", "goal_persistence",
+    "cycle_count", "silence_ticks", "spoken_ticks", "chat_ticks", "force_speak_ticks",
+    "last_cognition_at", "last_elapsed_seconds", "last_session_ritual_at", "last_session_greeting_at",
+    "action_memory", "conversation_dynamics",
+)
+
+
+def compact_actions(actions: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for actions: keep active goals/workflows, drop audit."""
+    if not isinstance(actions, Mapping):
+        return {}
+    if actions.get("projection_schema") == "eris.root_actions.v1":
+        return dict(actions)
+    active_goals = [
+        {
+            "id": str(g.get("id") or "")[:64],
+            "goal": str(g.get("title") or g.get("goal") or g.get("description") or "")[:200],
+            "status": str(g.get("status") or "active")[:32],
+        }
+        for g in actions.get("goals", [])
+        if isinstance(g, Mapping) and str(g.get("status", "")).lower() in ("active", "in_progress", "pending")
+    ][:3]
+    active_workflows = [
+        {
+            "id": str(w.get("id") or "")[:64],
+            "title": str(w.get("title") or w.get("name") or "")[:200],
+            "status": str(w.get("status") or "active")[:32],
+        }
+        for w in actions.get("workflows", [])
+        if isinstance(w, Mapping) and str(w.get("status", "")).lower() in ("active", "in_progress")
+    ][:2]
+    out: dict[str, Any] = {"projection_schema": "eris.root_actions.v1"}
+    if active_goals:
+        out["goals"] = active_goals
+    if active_workflows:
+        out["workflows"] = active_workflows
+    return out
+
+
+def compact_internal_state(internal_state: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for internal_state: drop subconscious residue and ticks."""
+    if not isinstance(internal_state, Mapping):
+        return {}
+    if internal_state.get("projection_schema") == "eris.root_internal.v1":
+        return dict(internal_state)
+    out: dict[str, Any] = {}
+    for k, v in internal_state.items():
+        if k in _INTERNAL_RESIDUE_FIELDS:
+            continue
+        if v in ("", 0, 0.0, None, [], {}):
+            continue
+        if k == "affective_state" and isinstance(v, Mapping):
+            mood = {mk: mv for mk, mv in v.get("mood", {}).items() if mv}
+            impulse = {ik: iv for ik, iv in v.get("impulse", {}).items() if iv}
+            aff: dict[str, Any] = {"mood": mood}
+            if impulse:
+                aff["impulse"] = impulse
+            out[k] = aff
+        elif k == "relationship_dynamics" and isinstance(v, Mapping):
+            rd = {rk: rv for rk, rv in v.items() if rv not in ("", 0, 0.0, None, [], {}) and rk not in ("last_event", "last_update_turn")}
+            if rd:
+                out[k] = rd
+        else:
+            out[k] = v
+    out["projection_schema"] = "eris.root_internal.v1"
+    return out
+
+
 def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Remove diagnostic views and exact clones, preserving differing source data."""
     result = deepcopy(dict(snapshot))
@@ -388,6 +531,10 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             living.pop(key, None)
         if isinstance(living.get("profile"), Mapping):
             living["profile"] = compact_profile(living["profile"])
+            if "summary" in living["profile"] and "summary" not in living:
+                living["summary"] = living["profile"]["summary"]
+        if isinstance(living.get("actions"), Mapping):
+            living["actions"] = compact_actions(living["actions"])
         # Episodes carry audit refs (evidence_ids/source_turns), internal ids
         # and raw epochs that no Root-prompt consumer reads. Keep the telling
         # (title/summary/outcome/signal lists); drop the audit/provenance.
@@ -401,6 +548,8 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     metadata = active.get("metadata") if isinstance(active, dict) else None
     if isinstance(metadata, dict) and "internal_state" in memory and _same_json(metadata.get("internal_state"), memory["internal_state"]):
         metadata.pop("internal_state", None)
+    if isinstance(memory.get("internal_state"), Mapping):
+        memory["internal_state"] = compact_internal_state(memory["internal_state"])
     # agent_mind / active_state / semantic_memory are the next heavy Self
     # branches: cut per-record audit/provenance and empty/zero defaults, keep
     # the belief/preference/claim content (and conflicting beliefs). The

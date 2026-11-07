@@ -79,8 +79,7 @@ from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATU
 from screen import build_screen_text_runtime
 
 
-def _vscode_service_mode() -> bool:
-    return os.environ.get("ERIS_VSCODE_SERVICE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
 
 
 class AutonomousLoopRuntimeMixin:
