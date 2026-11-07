@@ -52,8 +52,11 @@ class LearningCanvasService:
                                         on_completed=self._exercise_completed)
 
     def close(self):
-        self._closed = True
-        self._viewers.clear()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._viewers.clear()
         self.prefetch.close()
         self.lesson_worker.close()
         self.exercises.close()
@@ -230,6 +233,8 @@ class LearningCanvasService:
                     "action": action if isinstance(action, str) else "", "status": "ok", "message": "Đã cập nhật."}
         with self._lock:
             try:
+                if self._closed:
+                    return {**envelope, "status": "error", "message": "canvas_closed"}
                 if not isinstance(request_id, str) or not 1 <= len(request_id) <= 120:
                     raise ValueError("invalid_canvas_request_id")
                 fingerprint = json.dumps(request, sort_keys=True, ensure_ascii=False, allow_nan=False)
@@ -247,11 +252,14 @@ class LearningCanvasService:
                     self._view_session(action, client_id)
                     envelope["message"] = "Đã cập nhật phiên Learning."
                     return envelope
-                if action == "open" and client_id is not None:
-                    self._view_session(action, client_id)
-                    self._activate_selected_graph()
+                if action == "open":
+                    if "node_id" in request:
+                        self.pack.node(request["node_id"])
+                    if client_id is not None:
+                        self._view_session(action, client_id)
+                        self._activate_selected_graph()
                 # P3: graph actions có revision riêng để không đụng focus/điểm học Java.
-                graph_actions = {"graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "lesson_request", "lesson_narrate"}
+                graph_actions = {"graph_create", "graph_select", "graph_expand", "graph_delete", "delete_group", "mark_viewed", "study_heartbeat", "lesson_request", "lesson_narrate"}
                 if action not in graph_actions and request.get("group_id", self.pack.group_id) != self.pack.group_id:
                     raise ValueError("unknown_canvas_group")
                 prefetch_target = None
@@ -296,6 +304,13 @@ class LearningCanvasService:
                         "node_id": children[0]["id"]}
                     self.record_graph_visit(request.get("group_id"), children[0]["id"], action="selected")
                     prefetch_target = (request.get("group_id"), children[0]["id"])
+                elif action in {"graph_delete", "delete_group"}:
+                    target_id = request.get("group_id", "")
+                    target_title = request.get("title", "")
+                    success = self.graphs.delete(group_id=target_id, title=target_title,
+                        base_revision=request.get("base_graph_revision"))
+                    envelope["graph_update"] = {"deleted": bool(success), "group_id": target_id, "title": target_title}
+                    envelope["message"] = "Đã xoá môn học thành công." if success else "Không tìm thấy môn học để xoá."
                 elif action == "lesson_request":
                     # Web chỉ xin bài của đúng nhánh đang được nhìn; không có endpoint
                     # để worker tạo hàng loạt bài học trong khi panel đóng.

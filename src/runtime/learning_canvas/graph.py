@@ -101,11 +101,14 @@ class GraphWorkspace:
                 graph["prepared_counts"] = {key: len(value) for key, value in
                                             next(g for g in state["groups"] if g["group_id"] == selected).get("prepared", {}).items()
                                             if value}
+            groups = []
+            if not state.get("legacy_hidden", False):
+                groups.append({"group_id": self.legacy_group_id, "title": "Java · Dependency Injection", "kind": "lesson"})
+            groups.extend([{"group_id": item["group_id"], "title": item["title"],
+                            "kind": "exploration", "node_count": len(item["nodes"])} for item in state["groups"]])
             return {"schema": "eris.learning.graph.p3", "revision": state["revision"],
                     "selected_group_id": selected,
-                    "groups": [{"group_id": self.legacy_group_id, "title": "Java · Dependency Injection", "kind": "lesson"}]
-                    + [{"group_id": item["group_id"], "title": item["title"],
-                        "kind": "exploration", "node_count": len(item["nodes"])} for item in state["groups"]],
+                    "groups": groups,
                     "graph": graph}
 
     def inspect(self, group_id: str, node_id: str) -> dict:
@@ -149,12 +152,13 @@ class GraphWorkspace:
         if not self.store.compare_and_set_meta_revision(META_KEY, base_revision, state):
             raise ValueError("stale_graph_revision")
 
-    def create(self, title: str, *, base_revision: int, origin="user", follow=True) -> dict:
+    def create(self, title: str, *, base_revision: int | None = None, origin="user", follow=True) -> dict:
         title = _title(title)
         if origin not in {"user", "eris_proposed"}:
             raise ValueError("invalid_graph_origin")
         with self._lock:
             state = self._load()
+            revision = state["revision"] if base_revision is None else base_revision
             if len(state["groups"]) >= MAX_GROUPS:
                 raise ValueError("graph_group_limit")
             group_id = _new_group_id(title)
@@ -164,8 +168,47 @@ class GraphWorkspace:
             state["groups"].append(group)
             if follow:
                 state["selected_group_id"] = group_id
-            self._write(state, base_revision)
+            self._write(state, revision)
             return copy.deepcopy(group)
+
+    def delete(self, *, group_id: str = "", title: str = "", base_revision: int | None = None) -> bool:
+        """Xoá một môn học/nhóm khám phá khỏi Learning Canvas theo group_id hoặc title."""
+        with self._lock:
+            state = self._load()
+            revision = state["revision"] if base_revision is None else base_revision
+            target_group = None
+            norm_title = _key(title) if title else ""
+
+            # Kiểm tra xem có trỏ tới legacy java-di không
+            if (group_id and group_id == self.legacy_group_id) or (
+                norm_title and any(k in norm_title for k in ("java-di", "java · dependency injection", "java dependency", "java depency"))
+            ):
+                state["legacy_hidden"] = True
+                if state.get("selected_group_id") == self.legacy_group_id:
+                    state["selected_group_id"] = state["groups"][0]["group_id"] if state["groups"] else ""
+                self._write(state, revision)
+                return True
+
+            for g in state["groups"]:
+                if (group_id and g["group_id"] == group_id) or (
+                    norm_title and (_key(g["title"]) == norm_title or norm_title in _key(g["title"]))
+                ):
+                    target_group = g
+                    break
+
+            if target_group is None:
+                return False
+
+            state["groups"] = [g for g in state["groups"] if g["group_id"] != target_group["group_id"]]
+            if state.get("selected_group_id") == target_group["group_id"]:
+                state["selected_group_id"] = (
+                    state["groups"][0]["group_id"]
+                    if state["groups"]
+                    else (self.legacy_group_id if not state.get("legacy_hidden") else "")
+                )
+
+            self._write(state, revision)
+            return True
 
     def _promote(self, group: dict, node_id: str) -> list[dict]:
         """Mở cache khi user chọn nhánh; không tự hiện cả cây."""
@@ -186,10 +229,11 @@ class GraphWorkspace:
         group["nodes"].extend(additions)
         return additions
 
-    def select(self, group_id: str, *, base_revision: int, node_id: str = "") -> list[dict]:
+    def select(self, group_id: str, *, base_revision: int | None = None, node_id: str = "") -> list[dict]:
         group_id = _id(group_id)
         with self._lock:
             state = self._load()
+            revision = state["revision"] if base_revision is None else base_revision
             additions = []
             if group_id != self.legacy_group_id:
                 group = next((item for item in state["groups"] if item["group_id"] == group_id), None)
@@ -205,10 +249,10 @@ class GraphWorkspace:
             elif node_id:
                 raise ValueError("unknown_graph_node")
             state["selected_group_id"] = group_id
-            self._write(state, base_revision)
+            self._write(state, revision)
             return additions
 
-    def expand(self, group_id: str, parent_id: str, nodes: list[dict], *, base_revision: int,
+    def expand(self, group_id: str, parent_id: str, nodes: list[dict], *, base_revision: int | None = None,
                origin: str = "user", follow=True) -> list[dict]:
         group_id, parent_id = _id(group_id), _id(parent_id)
         if origin not in {"user", "eris_proposed"}:
@@ -216,6 +260,7 @@ class GraphWorkspace:
         clean = _validated_nodes(nodes, limit=8)
         with self._lock:
             state = self._load()
+            revision = state["revision"] if base_revision is None else base_revision
             group = next((item for item in state["groups"] if item["group_id"] == group_id), None)
             if group is None:
                 raise ValueError("unknown_graph_group")
@@ -238,7 +283,7 @@ class GraphWorkspace:
             if follow:
                 group["selected_node_id"] = additions[0]["id"]
                 state["selected_group_id"] = group_id
-            self._write(state, base_revision)
+            self._write(state, revision)
             return copy.deepcopy(additions)
 
     def apply_gemini(self, group_id: str, node_id: str, payload: dict) -> bool:
