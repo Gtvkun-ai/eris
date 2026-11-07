@@ -429,12 +429,20 @@ def test_ds2api_surface_thinking_reenabled_when_flag_off(monkeypatch) -> None:
 
 
 def test_ds2api_executive_carveout_unchanged(monkeypatch) -> None:
-    # Carve-out executive đọc getattr(self, "worker_role") — là dead-code trên
-    # ContextVar path (production dùng active_worker_role), và change này KHÔNG
-    # chạm nó. Không có surface context + không set surface attribute => behavior
+    # Không có executive/surface context + không set worker_role attribute => behavior
     # byte-for-byte như trước: localhost vẫn force thinking enabled.
     monkeypatch.setenv("ERIS_EXECUTIVE_THINKING_DISABLED", "1")
     monkeypatch.delenv("ERIS_SURFACE_THINKING_DISABLED", raising=False)
     payload = _capture_localhost_request(monkeypatch, role_context=None)
 
     assert payload["thinking"] == {"type": "enabled"}
+
+
+def test_ds2api_executive_contextvar_disables_thinking_when_flag_on(monkeypatch) -> None:
+    # ContextVar executive path tôn trọng ERIS_EXECUTIVE_THINKING_DISABLED=1 trên live router/worker.
+    monkeypatch.setenv("ERIS_EXECUTIVE_THINKING_DISABLED", "1")
+    monkeypatch.delenv("ERIS_SURFACE_THINKING_DISABLED", raising=False)
+    payload = _capture_localhost_request(monkeypatch, role_context="executive")
+
+    assert payload["thinking"] == {"type": "disabled"}
+
