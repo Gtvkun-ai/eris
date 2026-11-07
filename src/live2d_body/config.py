@@ -29,6 +29,49 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"", "0", "false", "off", "no", "none"}
 
 
+def read_persisted_scale() -> float | None:
+    """Đọc scale Live2D đã lưu từ phiên chạy trước nếu có."""
+    targets: list[Path] = []
+    state_dir = os.getenv("ERIS_STATE_DIR")
+    if state_dir:
+        targets.append(Path(state_dir) / "live2d_scale.txt")
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        targets.append(Path(appdata) / "Godot" / "app_userdata" / "Eris" / "live2d_scale.txt")
+    project_root = os.getenv("ERIS_PROJECT_ROOT")
+    if project_root:
+        targets.append(Path(project_root) / ".eris_state" / "live2d_scale.txt")
+    for path in targets:
+        try:
+            if path.is_file():
+                val = float(path.read_text(encoding="utf-8").strip())
+                if 0.2 <= val <= 3.0:
+                    return val
+        except Exception:
+            pass
+    return None
+
+
+def save_persisted_scale(scale: float) -> None:
+    """Lưu scale Live2D để giữ nguyên khi khởi động lại Eris."""
+    targets: list[Path] = []
+    state_dir = os.getenv("ERIS_STATE_DIR")
+    if state_dir:
+        targets.append(Path(state_dir) / "live2d_scale.txt")
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        targets.append(Path(appdata) / "Godot" / "app_userdata" / "Eris" / "live2d_scale.txt")
+    project_root = os.getenv("ERIS_PROJECT_ROOT")
+    if project_root:
+        targets.append(Path(project_root) / ".eris_state" / "live2d_scale.txt")
+    for path in targets:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{scale:.3f}", encoding="utf-8")
+        except Exception:
+            pass
+
+
 @dataclass(frozen=True, slots=True)
 class Live2DBodyConfig:
     model_path: Path
@@ -65,6 +108,8 @@ class Live2DBodyConfig:
         project_root = root or Path(__file__).resolve().parents[1]
         default_model = project_root / "assets" / "live2d" / "infj" / "infj.model3.json"
         model_path = Path(os.getenv("ERIS_LIVE2D_MODEL", str(default_model))).expanduser()
+        persisted_scale = read_persisted_scale()
+        default_scale = persisted_scale if persisted_scale is not None else 1.0
         return cls(
             model_path=model_path,
             listen_host=os.getenv("ERIS_LIVE2D_HOST", "127.0.0.1").strip() or "127.0.0.1",
@@ -75,7 +120,7 @@ class Live2DBodyConfig:
             body_port=max(1, min(65535, _int_env("ERIS_LIVE2D_BODY_PORT", 4242))),
             width=max(320, _int_env("ERIS_LIVE2D_WIDTH", 520)),
             height=max(480, _int_env("ERIS_LIVE2D_HEIGHT", 900)),
-            scale=max(0.2, min(3.0, _float_env("ERIS_LIVE2D_SCALE", 1.0))),
+            scale=max(0.2, min(3.0, _float_env("ERIS_LIVE2D_SCALE", default_scale))),
             offset_x=max(-2.0, min(2.0, _float_env("ERIS_LIVE2D_OFFSET_X", 0.0))),
             offset_y=max(-2.0, min(2.0, _float_env("ERIS_LIVE2D_OFFSET_Y", -0.02))),
             transparent=_bool_env("ERIS_LIVE2D_TRANSPARENT", True),

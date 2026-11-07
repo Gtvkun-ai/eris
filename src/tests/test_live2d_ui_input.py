@@ -57,3 +57,46 @@ def test_stale_press_on_ui_replays_even_when_model_is_opaque():
     glfw = SimpleNamespace(MOUSE_BUTTON_LEFT=0, MOUSE_BUTTON_RIGHT=1, MOUSE_BUTTON_MIDDLE=2)
     assert renderer._forward_stale_mouse_press(glfw, None, None, 0)
     assert replayed == ["left"]
+
+
+def test_live2d_apply_scale_delta_and_clamps(tmp_path, monkeypatch):
+    monkeypatch.setenv("ERIS_STATE_DIR", str(tmp_path))
+    renderer = object.__new__(Live2DRenderer)
+    renderer._runtime_scale = 1.0
+    scale_calls = []
+    model = SimpleNamespace(SetScale=lambda s: scale_calls.append(s))
+
+    # Zoom in
+    renderer._apply_scale_delta(model, 0.05)
+    assert renderer._runtime_scale == 1.05
+    assert scale_calls[-1] == 1.05
+
+    # Zoom beyond max (3.0)
+    renderer._apply_scale_delta(model, 5.0)
+    assert renderer._runtime_scale == 3.0
+    assert scale_calls[-1] == 3.0
+
+    # Zoom beyond min (0.2)
+    renderer._apply_scale_delta(model, -5.0)
+    assert renderer._runtime_scale == 0.2
+    assert scale_calls[-1] == 0.2
+
+    # Check persistence file
+    saved_file = tmp_path / "live2d_scale.txt"
+    assert saved_file.exists()
+    assert float(saved_file.read_text().strip()) == 0.2
+
+
+def test_udp_receiver_handles_scale_commands():
+    receiver = Live2DStageReceiver(Live2DStageState(), port=0)
+    # adjust_scale
+    packet_adjust = {"protocol": "eris.live2d.control", "type": "adjust_scale", "delta": 0.05}
+    assert receiver._handle_renderer_control(packet_adjust)
+    assert receiver.consume_scale_delta() == 0.05
+    assert receiver.consume_scale_delta() == 0.0
+
+    # set_scale
+    packet_set = {"protocol": "eris.live2d.control", "type": "set_scale", "scale": 1.5}
+    assert receiver._handle_renderer_control(packet_set)
+    assert receiver.consume_scale() == 1.5
+    assert receiver.consume_scale() is None

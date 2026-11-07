@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .config import Live2DBodyConfig
+from .config import Live2DBodyConfig, save_persisted_scale
 from .asset_playback import NativeAssetPlayback
 from .gaze import GazeController, GazeSample
 from .layer_visibility import Live2DLayerVisibility
@@ -215,6 +215,13 @@ class Live2DRenderer:
                             )
                         glfw.set_window_pos(window, target_geometry.x, target_geometry.y)
                         self._report_geometry(glfw, window, force=True)
+
+                scale_delta = self.receiver.consume_scale_delta()
+                if scale_delta != 0.0:
+                    self._apply_scale_delta(model, scale_delta)
+                target_scale = self.receiver.consume_scale()
+                if target_scale is not None:
+                    self._apply_scale_delta(model, target_scale - self._runtime_scale)
 
                 now = time.monotonic()
                 dt = min(0.10, max(0.0, now - last))
@@ -812,6 +819,18 @@ class Live2DRenderer:
         self._mouse_replay_guard_until = now + 0.08
         return self._bridge.replay_mouse_button_down(button_name)
 
+    def _apply_scale_delta(self, model: Any, delta: float) -> None:
+        target = max(0.2, min(3.0, round(self._runtime_scale + delta, 3)))
+        if abs(target - self._runtime_scale) < 1e-4:
+            return
+        self._runtime_scale = target
+        if model is not None:
+            try:
+                model.SetScale(self._runtime_scale)
+            except Exception as exc:
+                print(f"[Live2D][WARN] Không đặt được scale model: {exc}", flush=True)
+        save_persisted_scale(self._runtime_scale)
+
     def _install_callbacks(self, glfw: Any, window: Any, model: Any) -> None:
         def on_framebuffer_size(_window: Any, width: int, height: int) -> None:
             if width > 0 and height > 0:
@@ -827,11 +846,15 @@ class Live2DRenderer:
                 model.ResetPose()
                 model.ResetParameters()
             elif key in (glfw.KEY_EQUAL, glfw.KEY_KP_ADD):
-                self._runtime_scale = min(3.0, self._runtime_scale + 0.1)
-                model.SetScale(self._runtime_scale)
+                self._apply_scale_delta(model, 0.1)
             elif key in (glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT):
-                self._runtime_scale = max(0.2, self._runtime_scale - 0.1)
-                model.SetScale(self._runtime_scale)
+                self._apply_scale_delta(model, -0.1)
+
+        def on_scroll(_window: Any, _xoffset: float, yoffset: float) -> None:
+            if yoffset == 0 or self._dragging_window:
+                return
+            delta = max(-0.15, min(0.15, yoffset * 0.05))
+            self._apply_scale_delta(model, delta)
 
         def on_mouse_button(_window: Any, button: int, action: int, _mods: int) -> None:
             if action == glfw.PRESS and self._forward_stale_mouse_press(glfw, window, model, button):
@@ -866,6 +889,7 @@ class Live2DRenderer:
         glfw.set_framebuffer_size_callback(window, on_framebuffer_size)
         glfw.set_key_callback(window, on_key)
         glfw.set_mouse_button_callback(window, on_mouse_button)
+        glfw.set_scroll_callback(window, on_scroll)
 
     @staticmethod
     def _compute_idle_sway(t: float, speaking: bool) -> dict[str, float]:

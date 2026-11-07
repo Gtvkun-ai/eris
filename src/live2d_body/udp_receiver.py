@@ -40,6 +40,8 @@ class Live2DStageReceiver:
         self._desired_visible = True
         self._shutdown_requested = False
         self._requested_window_geometry: Any | None = None
+        self._requested_scale_delta: float = 0.0
+        self._requested_scale: float | None = None
         self._input_exclusion_rects: tuple[tuple[int, int, int, int], ...] = ()
 
     def start(self) -> None:
@@ -116,6 +118,18 @@ class Live2DStageReceiver:
                     "height": max(1, int(payload.get("height", 0) or 0)),
                 }
                 return True
+            if command == "adjust_scale":
+                try:
+                    self._requested_scale_delta += float(payload.get("delta", 0.0))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                return True
+            if command == "set_scale":
+                try:
+                    self._requested_scale = float(payload.get("scale", 1.0))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                return True
             if command == "shutdown":
                 self._shutdown_requested = True
                 return True
@@ -147,6 +161,18 @@ class Live2DStageReceiver:
             geometry = dict(self._requested_window_geometry)
             self._requested_window_geometry = None
             return geometry
+
+    def consume_scale_delta(self) -> float:
+        with self._control_lock:
+            delta = self._requested_scale_delta
+            self._requested_scale_delta = 0.0
+            return delta
+
+    def consume_scale(self) -> float | None:
+        with self._control_lock:
+            scale = self._requested_scale
+            self._requested_scale = None
+            return scale
 
     def send_context_menu_request(self, *, screen_x: int, screen_y: int) -> None:
         payload = {
