@@ -97,6 +97,7 @@ def playback_event(event: Any, *, stage_frame: Any = None) -> StageProtocolEvent
         "audio_asset": str(getattr(frame, "audio_asset", "") or ""),
         "body_timeline": continuation_timeline,
         "audio_envelope": list(tuple(getattr(event, "audio_envelope", ()) or ())),
+        "audio_mouth_shape": list(tuple(getattr(event, "audio_mouth_shape", ()) or ())),
         "audio_frame_ms": int(getattr(event, "audio_frame_ms", 0) or 0),
         "audio_duration_ms": int(getattr(event, "audio_duration_ms", 0) or 0),
         "continuation_state": (

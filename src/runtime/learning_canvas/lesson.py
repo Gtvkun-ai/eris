@@ -50,7 +50,7 @@ def validate_lesson(raw: dict, *, group_id: str, node_id: str, title: str) -> di
         if not isinstance(item, dict) or item.get("kind") not in KINDS:
             raise ValueError("invalid_lesson_block")
         kind = item["kind"]
-        block = {"kind": kind, "title": _string(item.get("title", ""), 100)}
+        block = {"id": _string(item.get("id", f"b-{len(out)}"), 40), "kind": kind, "title": _string(item.get("title", ""), 100)}
         if kind == "text":
             block["text"] = _string(item.get("text"), 1600)
         elif kind == "steps":
@@ -85,6 +85,39 @@ def validate_lesson(raw: dict, *, group_id: str, node_id: str, title: str) -> di
     if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > MAX_LESSON_BYTES:
         raise ValueError("lesson_payload_limit")
     return result
+
+
+def build_lesson_narration_script(lesson: dict) -> list[dict]:
+    """Tạo kịch bản thuyết minh ngắn gọn theo từng block để Eris giảng bài."""
+    if not isinstance(lesson, dict) or not isinstance(lesson.get("blocks"), list):
+        return []
+    script = []
+    for index, block in enumerate(lesson["blocks"]):
+        block_id = block.get("id") or f"b-{index}"
+        kind = block.get("kind")
+        title = block.get("title", "")
+        if kind == "text":
+            say = f"Về {title}: {block.get('text', '')}"
+        elif kind == "steps":
+            steps_text = ". ".join(block.get("items", []))
+            say = f"Các bước thực hiện {title}: {steps_text}"
+        elif kind == "formula":
+            exp = block.get("explanation", "")
+            say = f"Công thức {title}. {exp}" if exp else f"Công thức {title}."
+        elif kind == "code":
+            say = f"Ví dụ mã nguồn {block.get('language', '')} cho {title}."
+        elif kind == "check":
+            say = f"Hãy cùng thử thách nhanh: {block.get('question', '')}"
+        else:
+            say = f"Phần {title}."
+        script.append({
+            "segment_id": index,
+            "block_id": block_id,
+            "kind": kind,
+            "title": title,
+            "say": " ".join(say.split())[:360],
+        })
+    return script
 
 
 class LearningLessonStore:

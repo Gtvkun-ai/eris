@@ -164,16 +164,16 @@ def test_legacy_audio_start_carries_actual_wav_energy_and_duration(monkeypatch, 
     worker._run()
     start = next(event for event in events if event.type == "audio_start")
 
-    assert getattr(start, "audio_frame_ms", None) == 40
+    assert getattr(start, "audio_frame_ms", None) == 20
     assert getattr(start, "audio_duration_ms", None) == 120
     envelope = getattr(start, "audio_envelope", ())
     assert isinstance(envelope, tuple)
-    assert len(envelope) == 3
-    assert envelope[0] == 0.0
+    assert len(envelope) == 6
+    assert envelope[:2] == envelope[-2:] == (0.0, 0.0)
     if volume:
-        assert envelope[1] > 0.5
+        assert min(envelope[2:4]) > 0.5
     else:
-        assert envelope == (0.0, 0.0, 0.0)
+        assert envelope == (0.0,) * 6
     assert [event.type for event in events] == ["audio_start", "audio_done"]
 
 
@@ -297,7 +297,7 @@ def test_legacy_volume_snapshot_is_shared_by_envelope_and_submitted_pcm(monkeypa
     worker._run()
 
     start = next(event for event in events if event.type == "audio_start")
-    assert start.audio_envelope[1] > 0.5
+    assert start.audio_envelope[2] > 0.5
     assert submitted[40:80] == [0.5] * 40
     assert volume_reads == ["read"]
 

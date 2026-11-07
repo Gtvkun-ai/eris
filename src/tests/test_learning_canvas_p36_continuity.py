@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import time
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
@@ -59,7 +60,7 @@ def wait_done(canvas):
 
 
 def request(canvas, action, **fields):
-    return canvas.handle({"request_id": "p36-"+str(time.monotonic_ns()), "action": action, **fields})
+    return canvas.handle({"request_id": "p36-" + uuid.uuid4().hex, "action": action, **fields})
 
 
 def test_ui_can_switch_subject_resume_and_store_history_after_restart(system):

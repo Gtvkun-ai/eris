@@ -455,7 +455,8 @@ class TtsTaskManager:
                             "audio_start", stage_frame=current_task.frame, text=current_task.text,
                             turn_segments=turn_segments, audio_envelope=envelope.values,
                             audio_frame_ms=envelope.frame_ms,
-                            audio_duration_ms=envelope.duration_ms, callback=on_event,
+                            audio_duration_ms=envelope.duration_ms, audio_mouth_shape=envelope.shape,
+                            callback=on_event,
                         )
 
                 with self._lock:

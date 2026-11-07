@@ -22,7 +22,7 @@ from .narration import CanvasPlayback
 
 
 class LearningCanvasService:
-    def __init__(self, learning, *, store, pack=None, java_workspace=None):
+    def __init__(self, learning, *, store, pack=None, java_workspace=None, python_workspace=None):
         self.learning = learning
         self.pack = pack or load_pack()
         register_pack(learning, self.pack)
@@ -48,6 +48,7 @@ class LearningCanvasService:
         self._closed = False
         self.playback = CanvasPlayback(self.pack)
         self.exercises = CanvasExercises(learning, store, self.pack, workspace=java_workspace,
+                                        python_workspace=python_workspace,
                                         on_completed=self._exercise_completed)
 
     def close(self):
@@ -250,7 +251,7 @@ class LearningCanvasService:
                     self._view_session(action, client_id)
                     self._activate_selected_graph()
                 # P3: graph actions có revision riêng để không đụng focus/điểm học Java.
-                graph_actions = {"graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "lesson_request"}
+                graph_actions = {"graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "lesson_request", "lesson_narrate"}
                 if action not in graph_actions and request.get("group_id", self.pack.group_id) != self.pack.group_id:
                     raise ValueError("unknown_canvas_group")
                 prefetch_target = None
@@ -305,6 +306,27 @@ class LearningCanvasService:
                             current["graph"]["selected_node_id"] != node_id):
                         raise ValueError("canvas_focus_changed")
                     envelope["lesson_queued"] = self.lesson_worker.request(group_id, node_id, retry=True)
+                elif action == "lesson_narrate":
+                    current = self.graphs.snapshot()
+                    group_id, node_id = request.get("group_id"), request.get("node_id")
+                    if (not self.is_active() or not current.get("graph") or
+                            current["selected_group_id"] != group_id or
+                            current["graph"]["selected_node_id"] != node_id):
+                        raise ValueError("canvas_focus_changed")
+                    lesson = self.lessons.get(group_id, node_id)
+                    if not lesson:
+                        raise ValueError("lesson_not_ready")
+                    from .lesson import build_lesson_narration_script
+                    script = build_lesson_narration_script(lesson)
+                    envelope["narration_script"] = script
+                    if callable(self.on_event):
+                        self.on_event({
+                            "action": "lesson_narrate",
+                            "group_id": group_id,
+                            "node_id": node_id,
+                            "title": lesson.get("title", ""),
+                            "script": script,
+                        })
                 elif action == "mark_viewed":
                     group_id = request.get("group_id")
                     node_id = request.get("node_id")

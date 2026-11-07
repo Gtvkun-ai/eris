@@ -329,20 +329,25 @@ class Live2DRenderer:
             save()
         model.Update()
         # Native motions temporarily override cursor gaze/head. Do not reapply them.
-        # Only the audio-driven speech channel and eyelid factors own the final layer.
+        # Audio owns the final mouth channels; native expressions retain mouth form.
+        opening = INFJ_PARAMETER_PROFILE.clamp_mouth_open(
+            snapshot.parameters.get("ParamMouthOpenY", 0.0) if snapshot.speaking else 0.0
+        )
         if "ParamMouthOpenY" in self.available_parameters:
-            mouth = snapshot.parameters.get("ParamMouthOpenY", 0.0) if snapshot.speaking else 0.0
-            model.SetParameterValue("ParamMouthOpenY", INFJ_PARAMETER_PROFILE.sanitize("ParamMouthOpenY", mouth))
-        # The tongue-out keyform is an independent overlay, not part of the
-        # two-axis speech mouth. Retract it as speech opens the mouth so it
-        # cannot float across the lips; never reduce the audio-owned opening.
-        if snapshot.speaking and "ParamErisTongue" in self.available_parameters:
+            model.SetParameterValue("ParamMouthOpenY", opening)
+        if self._asset_playback.jaw_linked_tongue:
+            if "ParamErisMouthCornerL" in self.available_parameters:
+                # This ID is now the mouth shape axis, rather than an expression's
+                # left corner. Fade it in with the jaw so a closed lip stays stable.
+                shape = snapshot.mouth_shape * min(1.0, opening / .20)
+                model.SetParameterValue("ParamErisMouthCornerL", max(0.0, min(1.0, shape)))
+            if "ParamErisTongue" in self.available_parameters:
+                model.SetParameterValue("ParamErisTongue", INFJ_PARAMETER_PROFILE.tongue_from_jaw(opening))
+        elif snapshot.speaking and "ParamErisTongue" in self.available_parameters:
+            # Legacy rigs use an external tongue overlay. Retract it during speech.
             index = self._parameter_indices.get("ParamErisTongue")
             if index is not None:
                 tongue = float(model.GetParameterValue(index))
-                opening = INFJ_PARAMETER_PROFILE.clamp_mouth_open(
-                    snapshot.parameters.get("ParamMouthOpenY", 0.0)
-                )
                 progress = max(0.0, min(1.0, (opening - 0.12) / 0.24))
                 retract = progress * progress * (3.0 - 2.0 * progress)
                 model.SetParameterValue("ParamErisTongue", tongue * (1.0 - retract))

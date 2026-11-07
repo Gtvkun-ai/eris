@@ -38,6 +38,7 @@ class StageAudioEvent:
     audio_envelope: tuple[float, ...] = ()
     audio_frame_ms: int = 0
     audio_duration_ms: int = 0
+    audio_mouth_shape: tuple[float, ...] = ()
 
 
 class StageAudioBus:
@@ -74,6 +75,7 @@ class StageAudioBus:
         audio_envelope: tuple[float, ...] = (),
         audio_frame_ms: int = 0,
         audio_duration_ms: int = 0,
+        audio_mouth_shape: tuple[float, ...] = (),
         callback: Callable[[Any, Any], None] | None = None,
     ) -> StageAudioEvent:
         event = StageAudioEvent(
@@ -90,6 +92,7 @@ class StageAudioBus:
             audio_envelope=tuple(float(value) for value in (audio_envelope or ())),
             audio_frame_ms=max(0, int(audio_frame_ms or 0)),
             audio_duration_ms=max(0, int(audio_duration_ms or 0)),
+            audio_mouth_shape=audio_mouth_shape,
         )
         self.emit(event, stage_frame=stage_frame, callback=callback)
         return event

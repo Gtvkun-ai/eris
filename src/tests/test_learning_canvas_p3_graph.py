@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import time
+import uuid
 
 import pytest
 
@@ -22,7 +23,7 @@ def service(tmp_path):
 
 
 def action(service, name, **kwargs):
-    return service.handle({"request_id": f"p3-{time.monotonic_ns()}",
+    return service.handle({"request_id": f"p3-{uuid.uuid4().hex}",
                            "action": name, **kwargs})
 
 

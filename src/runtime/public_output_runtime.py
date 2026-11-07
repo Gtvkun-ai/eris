@@ -642,6 +642,9 @@ class PublicOutputRuntimeMixin:
                 envelope = tuple(getattr(event, "audio_envelope", ()) or ())
                 if envelope:
                     data["audio_envelope"] = list(envelope)
+                shape = getattr(event, "audio_mouth_shape", ()) or ()
+                if shape:
+                    data["audio_mouth_shape"] = list(shape)
                 frame_ms = int(getattr(event, "audio_frame_ms", 0) or 0)
                 duration_ms = int(getattr(event, "audio_duration_ms", 0) or 0)
                 if frame_ms > 0:

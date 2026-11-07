@@ -82,11 +82,12 @@ def enqueue_canvas_event(host, payload: dict) -> None:
     kernel = getattr(host, "conversation_kernel", None)
     if kernel is not None and hasattr(kernel, "snapshot"):
         try:
-            from runtime.conversation.contracts import RunPhase
-            busy_phases = {RunPhase.THINKING, RunPhase.WORKING, RunPhase.WRITING, RunPhase.DELIVERING}
+            busy_phases = {"thinking", "working", "writing", "delivering"}
             current_state = kernel.snapshot(session_id(host))
-            if current_state and current_state.phase in busy_phases:
-                return
+            if current_state:
+                phase_val = getattr(getattr(current_state, "phase", None), "value", str(getattr(current_state, "phase", ""))).lower()
+                if phase_val in busy_phases:
+                    return
         except Exception:
             pass
 

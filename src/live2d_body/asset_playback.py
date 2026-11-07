@@ -65,9 +65,12 @@ SEMANTIC_EVENTS = frozenset({
 class NativeAssetPlayback:
     def __init__(self, model_path: Path) -> None:
         try:
-            refs = json.loads(model_path.read_text(encoding="utf-8-sig")).get("FileReferences", {})
+            descriptor = json.loads(model_path.read_text(encoding="utf-8-sig"))
+            refs = descriptor.get("FileReferences", {})
+            self.jaw_linked_tongue = descriptor.get("ErisMouthRig") == "V13.2"
         except (OSError, ValueError, AttributeError):
             refs = {}
+            self.jaw_linked_tongue = False
         self.expressions = {item["Name"] for item in refs.get("Expressions", [])}
         self.motions = {
             Path(item["File"]).name.removesuffix(".motion3.json"): (group, index)

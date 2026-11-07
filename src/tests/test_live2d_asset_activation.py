@@ -134,7 +134,7 @@ def test_native_expression_survives_frame_composition_without_accumulating(nativ
     assert values["ParamMouthForm"] == pytest.approx(.1, abs=.025)
     values = frames(native_model, pose, 180)
     assert values["ParamMouthForm"] == pytest.approx(.1, abs=.025)
-    assert values["ParamErisMouthCornerL"] == pytest.approx(.14, abs=.025)
+    assert values["ParamErisMouthCornerL"] == 0
     assert values["ParamMouthOpenY"] == 0
 
 
@@ -154,7 +154,7 @@ def test_native_motion_takes_temporary_gaze_ownership_and_finishes_once(native_m
 def test_terminal_cancels_asset_expression_and_custom_mouth_but_not_audio_ownership(native_model):
     pose = snapshot(emotion="teasing", motion="tilt_head", speaking=True, last_event_type="audio_start", parameters={"ParamMouthOpenY": .57})
     values = frames(native_model, pose, 90)
-    assert values["ParamErisTongue"] == pytest.approx(0)
+    assert values["ParamErisTongue"] == pytest.approx(.876, abs=.001)
     assert values["ParamMouthOpenY"] == pytest.approx(.57)
     terminal = snapshot(emotion="teasing", motion="tilt_head", last_event_type="audio_done", parameters={"ParamMouthOpenY": .7, "ParamErisTongue": 1, "ParamErisLipPress": .8})
     values = frames(native_model, terminal, 1)
@@ -182,7 +182,7 @@ def test_ignored_terminal_mirror_does_not_cancel_owned_audio_expression(native_m
     frames(native_model, pose, 60)
     ignored = replace(pose, last_event_type="audio_done", last_event_at=2)
     values = frames(native_model, ignored, 1)
-    assert values["ParamErisTongue"] == pytest.approx(0)
+    assert values["ParamErisTongue"] == pytest.approx(.876, abs=.001)
     assert values["ParamEyeLOpen"] < .74  # The expression was not cancelled.
     assert values["ParamMouthOpenY"] == pytest.approx(.57)
 
@@ -234,15 +234,12 @@ def test_expression_lids_keep_their_opening_and_native_blink(native_model, emoti
         assert min(samples) < .1
 
 
-@pytest.mark.parametrize("opening", [0.0, .2, .36, .8, 1.0])
-def test_speech_retracts_tongue_without_changing_audio_mouth(native_model, opening):
+@pytest.mark.parametrize("opening,tongue", [(0, 0), (.11, 0), (.405, .5), (.7, 1), (.84, 1)])
+def test_v13_speech_owns_shape_and_tongue_while_retaining_expression(native_model, opening, tongue):
     pose = snapshot(emotion="teasing", motion="still", speaking=True,
-                    parameters={"ParamMouthOpenY": opening})
+                    parameters={"ParamMouthOpenY": opening}, mouth_shape=.65)
     values = frames(native_model, pose, 90)
     assert values["ParamMouthOpenY"] == pytest.approx(opening)
-    if opening == 0:
-        assert values["ParamErisTongue"] > .99
-    elif opening >= .36:
-        assert values["ParamErisTongue"] == pytest.approx(0, abs=1e-6)
-    else:
-        assert 0 < values["ParamErisTongue"] < 1
+    assert values["ParamErisTongue"] == pytest.approx(tongue)
+    assert values["ParamErisMouthCornerL"] == pytest.approx(.65 * min(1, opening / .20))
+    assert values["ParamMouthForm"] > 0

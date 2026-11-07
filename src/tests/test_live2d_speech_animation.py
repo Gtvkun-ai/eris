@@ -169,6 +169,7 @@ def test_playback_protocol_carries_compact_audio_envelope() -> None:
         audio_envelope=(0.0, 0.62, 0.21),
         audio_frame_ms=40,
         audio_duration_ms=120,
+        audio_mouth_shape=(0.0, .65, .1),
     )
     frame = SimpleNamespace(
         turn_id="turn-envelope",
@@ -189,6 +190,30 @@ def test_playback_protocol_carries_compact_audio_envelope() -> None:
     assert payload["data"]["audio_envelope"] == [0.0, 0.62, 0.21]
     assert payload["data"]["audio_frame_ms"] == 40
     assert payload["data"]["audio_duration_ms"] == 120
+    assert payload["data"]["audio_mouth_shape"] == [0.0, .65, .1]
+
+
+def test_equal_level_pcm_can_drive_different_shapes_and_close_at_a_short_gap():
+    rate = 8000
+    samples = [
+        int(10000 * math.sin(math.tau * frequency * index / rate)) if frequency else 0
+        for frequency in (1000, 0, 2400)
+        for index in range(480 if frequency else 160)
+    ]
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as stream:
+        stream.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+        stream.writeframes(b"".join(value.to_bytes(2, "little", signed=True) for value in samples))
+    lip = build_lip_sync_envelope(wav.getvalue())
+    assert lip.frame_ms == 20
+    context = SpeechContext.from_payload({"data": lip.to_payload()})
+    animator = SpeechAnimator()
+    animator.start(now=0, context=context)
+    low, gap, high = (animator.sample(now=t) for t in (.02, .06, .10))
+    assert abs(low.mouth_open_ratio - high.mouth_open_ratio) < .001
+    assert low.mouth_shape > .5 and high.mouth_shape < .05
+    assert gap.mouth_open_ratio == gap.mouth_shape == 0
+    assert animator.sample(now=.14).mouth_shape == 0
 
 
 def test_speech_animator_prefers_real_audio_envelope() -> None:

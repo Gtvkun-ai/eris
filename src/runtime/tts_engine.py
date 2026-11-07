@@ -65,6 +65,7 @@ class TtsPlaybackEvent:
     audio_envelope: tuple[float, ...] = ()
     audio_frame_ms: int = 40
     audio_duration_ms: int = 0
+    audio_mouth_shape: tuple[float, ...] = ()
 
 # ── Feature flag (runtime language reload) ───────────────────────────────────
 
@@ -1940,6 +1941,7 @@ class _TtsWorker:
     def _emit(
         self, req: Optional[_SpeakRequest], event_type: str, *, reason: str = "", error: str = "",
         audio_envelope: tuple[float, ...] = (), audio_frame_ms: int = 40, audio_duration_ms: int = 0,
+        audio_mouth_shape: tuple[float, ...] = (),
     ) -> None:
         if req is None:
             return
@@ -1953,6 +1955,7 @@ class _TtsWorker:
             audio_envelope=audio_envelope,
             audio_frame_ms=audio_frame_ms,
             audio_duration_ms=audio_duration_ms,
+            audio_mouth_shape=audio_mouth_shape,
         )
         callback = getattr(req, "on_event", None)
         if callback is not None:
@@ -2347,6 +2350,7 @@ class _TtsWorker:
                             self._emit(
                                 req, "audio_start", audio_envelope=lip_sync.values,
                                 audio_frame_ms=lip_sync.frame_ms, audio_duration_ms=lip_sync.duration_ms,
+                                audio_mouth_shape=lip_sync.shape,
                             )
                             if req.on_start_play is not None:
                                 try:

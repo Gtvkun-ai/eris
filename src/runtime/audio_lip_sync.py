@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Rút envelope độ mở miệng gọn từ WAV PCM để gửi sang Live2D.
-
-Envelope không chứa audio và không cố nhận dạng phoneme. Nó chỉ lấy RMS theo
-khung thời gian, noise-gate, nén động học rồi làm mượt attack/release. Payload
-vài KB đủ đi qua UDP, trong khi renderer nhận đúng nhịp im lặng và âm lượng của
-clip thật thay vì đoán bằng đồng hồ riêng.
-"""
+"""Extract jaw timing and an optional spectral shape hint from playback PCM."""
 
 from __future__ import annotations
 
@@ -16,12 +10,15 @@ import wave
 from array import array
 from dataclasses import dataclass
 
+import numpy as np
+
 
 @dataclass(frozen=True, slots=True)
 class LipSyncEnvelope:
     values: tuple[float, ...] = ()
-    frame_ms: int = 40
+    frame_ms: int = 20
     duration_ms: int = 0
+    shape: tuple[float, ...] = ()
 
     def to_payload(self) -> dict[str, object]:
         if not self.values:
@@ -30,6 +27,7 @@ class LipSyncEnvelope:
             "audio_envelope": list(self.values),
             "audio_frame_ms": int(self.frame_ms),
             "audio_duration_ms": int(self.duration_ms),
+            **({"audio_mouth_shape": list(self.shape)} if self.shape else {}),
         }
 
 
@@ -74,7 +72,7 @@ def _pcm_samples(raw: bytes, *, sample_width: int) -> tuple[list[int], float]:
 def build_lip_sync_envelope(
     wav_bytes: bytes,
     *,
-    frame_ms: int = 40,
+    frame_ms: int = 20,
     max_frames: int = 1800,
 ) -> LipSyncEnvelope:
     """Trả envelope 0..0.86 từ WAV; dữ liệu lạ thì fail mềm về envelope rỗng."""
@@ -94,13 +92,29 @@ def build_lip_sync_envelope(
     except (wave.Error, EOFError, OSError, ValueError):
         return LipSyncEnvelope(frame_ms=max(20, int(frame_ms)))
 
+    pcm_frame_bytes = sample_width * channels
+    raw = raw[:len(raw) - len(raw) % pcm_frame_bytes]
     samples, full_scale = _pcm_samples(raw, sample_width=sample_width)
     if not samples or full_scale <= 0.0:
         return LipSyncEnvelope(frame_ms=max(20, int(frame_ms)))
 
     frame_ms = max(20, min(80, int(frame_ms)))
-    samples_per_window = max(channels, int(round(sample_rate * frame_ms / 1000.0)) * channels)
+    max_frames = max(1, min(1800, int(max_frames)))
+    samples_per_window = max(1, int(round(sample_rate * frame_ms / 1000.0))) * channels
+    stride = max(1, math.ceil(len(samples) / (samples_per_window * max_frames)))
+    samples_per_window *= stride
+    frame_ms *= stride
     rms_values: list[float] = []
+    shape_values: list[float] = []
+    # A spectral hint for narrower vowel shapes, not phoneme recognition.
+    # Ignore the fundamental region and compare the lower/upper resonances.
+    window_frames = samples_per_window // channels
+    use_shape = sample_rate >= 8000 and frame_ms <= 80
+    if use_shape:
+        taper = np.hanning(window_frames)
+        frequencies = np.fft.rfftfreq(window_frames, 1.0 / sample_rate)
+        resonance = (frequencies >= 650) & (frequencies <= 3200)
+        lower = resonance & (frequencies < 1450)
     for start in range(0, len(samples), samples_per_window):
         block = samples[start : start + samples_per_window]
         if not block:
@@ -109,26 +123,27 @@ def build_lip_sync_envelope(
         # không cần tranh luận bên tai nào có quyền biểu quyết lớn hơn.
         square_sum = sum(float(value) * float(value) for value in block)
         rms_values.append(math.sqrt(square_sum / len(block)) / full_scale)
+        if use_shape:
+            mono = np.asarray(block, dtype=float).reshape(-1, channels).mean(axis=1)
+            emphasized = mono - .94 * np.r_[mono[0], mono[:-1]]
+            power = np.abs(np.fft.rfft(emphasized * taper[:len(mono)], n=window_frames)) ** 2
+            total = float(power[resonance].sum())
+            low_share = float(power[lower].sum()) / total if total > 0 else 0.0
+            enough_resonance = total > .025 * float(power.sum())
+            shape_values.append(max(0.0, min(1.0, (low_share - .50) / .30)) if enough_resonance else 0.0)
 
     if not rms_values:
         return LipSyncEnvelope(frame_ms=frame_ms)
 
-    if len(rms_values) > max_frames:
-        stride = int(math.ceil(len(rms_values) / max_frames))
-        collapsed: list[float] = []
-        for start in range(0, len(rms_values), stride):
-            block = rms_values[start : start + stride]
-            collapsed.append(max(block))
-        rms_values = collapsed
-        frame_ms *= stride
-
-    floor = _percentile(rms_values, 0.16)
-    peak = max(_percentile(rms_values, 0.94), floor + 0.004)
-    span = max(0.004, peak - floor)
+    peak = max(_percentile(rms_values, 0.94), max(rms_values) * .30, .004)
+    # A short clip may be voiced throughout. Its quietest syllable is not
+    # necessarily background noise and must not flatten a sustained vowel.
+    gate = max(.001, min(_percentile(rms_values, .16) * 1.18, peak * .26))
+    span = max(.003, peak - gate)
 
     normalized: list[float] = []
     for value in rms_values:
-        gated = max(0.0, (value - floor * 1.18) / span)
+        gated = max(0.0, (value - gate) / span)
         # Căn bậc làm lời nói nhỏ vẫn thấy được; cap giữ rig không há quá tay.
         mouth = min(0.86, (min(1.35, gated) ** 0.58) * 0.78)
         normalized.append(mouth if mouth >= 0.035 else 0.0)
@@ -138,12 +153,19 @@ def build_lip_sync_envelope(
     smoothed: list[float] = []
     current = 0.0
     for target in normalized:
-        coefficient = 0.72 if target > current else 0.54
-        current += (target - current) * coefficient
+        if target == 0.0:
+            current = 0.0
+        else:
+            coefficient = 0.80 if target > current else 0.62
+            current += (target - current) * coefficient
         smoothed.append(round(max(0.0, min(0.86, current)), 3))
 
-    duration_ms = int(round(frame_count / sample_rate * 1000.0))
-    return LipSyncEnvelope(values=tuple(smoothed), frame_ms=frame_ms, duration_ms=duration_ms)
+    duration_ms = int(round(len(samples) / channels / sample_rate * 1000.0))
+    shape = tuple(
+        round(value * .75, 2) if opening > 0 else 0.0
+        for value, opening in zip(shape_values, smoothed, strict=False)
+    )
+    return LipSyncEnvelope(tuple(smoothed), frame_ms, duration_ms, shape if any(shape) else ())
 
 
 __all__ = ["LipSyncEnvelope", "build_lip_sync_envelope"]

@@ -46,6 +46,7 @@ class Live2DSnapshot:
     last_event_at: float = 0.0
     mouth_open_ratio: float = 0.0
     speech_cue: str = "silent"
+    mouth_shape: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -770,7 +771,7 @@ class Live2DStageState:
             if self._speaking and speech_pose is not None:
                 # Ghép hai trục miệng thành một pose duy nhất mỗi frame:
                 # MouthForm giữ mood (-1 bực, 0 thường, +1 vui), MouthOpenY bám
-                # voice (-1 đóng, 0 nửa mở, +1 mở hết). Mood chỉ bias độ há rất
+                # voice (0 đóng, .5 nửa mở, 1 mở hết). Mood chỉ bias độ há rất
                 # nhẹ để mặt vui/bực không mất nét khi đang nói.
                 mouth_form, mouth_open = INFJ_PARAMETER_PROFILE.compose_speaking_mouth(
                     mood_form=target.get("ParamMouthForm", 0.0),
@@ -791,7 +792,7 @@ class Live2DStageState:
                 response = _PARAMETER_RESPONSE.get(key, 7.0)
                 if key == "ParamMouthOpenY" and desired < current:
                     # Đóng nhanh hơn mở để giữa hai âm tiết thật sự có khe khép,
-                    # nhưng không giật từ vùng dương về -1 chỉ trong một frame.
+                    # nhưng không giật về 0 chỉ trong một frame.
                     response = 64.0
                 blend = 1.0 - math.exp(-response * dt) if dt > 0.0 else 1.0
                 self._current[key] = current + (desired - current) * blend
@@ -834,6 +835,7 @@ class Live2DStageState:
                 last_event_type=self._last_event_type,
                 last_event_at=self._last_event_at,
                 mouth_open_ratio=(speech_pose.mouth_open_ratio if speech_pose is not None else 0.0),
+                mouth_shape=(speech_pose.mouth_shape if speech_pose is not None else 0.0),
                 speech_cue=(speech_pose.cue if speech_pose is not None else "silent"),
             )
 

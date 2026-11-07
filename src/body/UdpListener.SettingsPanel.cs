@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -469,9 +470,25 @@ public partial class UdpListener : Node2D
 		_settingsMainBrainLiveLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		parent.AddChild(_settingsMainBrainLiveLabel);
 
-		var manage = CreateSettingsButton("Quản lý key não chính & key phụ", () => SwitchSettingsMode(SettingsModePage.Data), primary: false);
-		manage.Position = new Vector2(18f, 350f);
-		manage.Size = new Vector2(parent.Size.X - 36f, 34f);
+		var manage = CreateSettingsButton(
+			_settingsModePage == SettingsModePage.Data
+				? "🛠 Chuyển sang Runtime Manager & Tools"
+				: "Quản lý key não chính & key phụ",
+			() =>
+			{
+				if (_settingsModePage == SettingsModePage.Data)
+				{
+					_settingsDataSubPage = SettingsDataSubPage.RuntimeManager;
+					BuildSettingsPanelUi();
+				}
+				else
+				{
+					SwitchSettingsMode(SettingsModePage.Data);
+				}
+			},
+			primary: false);
+		manage.Position = new Vector2(18f, 346f);
+		manage.Size = new Vector2(parent.Size.X - 36f, 32f);
 		manage.AddThemeFontSizeOverride("font_size", 10);
 		parent.AddChild(manage);
 	}
@@ -654,18 +671,346 @@ public partial class UdpListener : Node2D
 		AddSettingsPageFooter(root, "Giọng nói áp dụng live; Đóng chỉ đóng panel, không giả danh là nút Hủy.", showBackupActions: false);
 	}
 
+	private enum SettingsDataSubPage
+	{
+		Credentials,
+		RuntimeManager,
+	}
+
+	private SettingsDataSubPage _settingsDataSubPage = SettingsDataSubPage.Credentials;
+
 	private void BuildDataSettingsPage(Control root)
 	{
-		var brainCard = AddSettingsCard(root, new Rect2(32f, 178f, 430f, 414f), "Não chính & kết nối");
-		BuildSettingsMainBrainColumn(brainCard);
+		AddDataSubTabs(root);
 
-		var poolCard = AddSettingsCard(root, new Rect2(480f, 178f, 668f, 414f), "Credential pools");
-		BuildSettingsKeyPoolColumn(poolCard);
+		if (_settingsDataSubPage == SettingsDataSubPage.RuntimeManager)
+		{
+			BuildRuntimeManagerDataPage(root);
+		}
+		else
+		{
+			BuildCredentialsDataPage(root);
+		}
 
 		AddSettingsPageFooter(
 			root,
-			"Quản lý credentials cho Main Brain và ElevenLabs TTS. Lưu an toàn vào secrets.json.",
+			_settingsDataSubPage == SettingsDataSubPage.RuntimeManager
+				? "Quản lý hệ sinh thái Pool, chẩn đoán Eris Doctor và các lối tắt vận hành."
+				: "Quản lý credentials cho Main Brain và ElevenLabs TTS. Lưu an toàn vào secrets.json.",
 			showBackupActions: true);
+	}
+
+	private void AddDataSubTabs(Control root)
+	{
+		bool isRuntime = _settingsDataSubPage == SettingsDataSubPage.RuntimeManager;
+
+		var subTabCreds = CreateSettingsButton("✦  Credentials & Key Pools", () =>
+		{
+			if (_settingsDataSubPage != SettingsDataSubPage.Credentials)
+			{
+				_settingsDataSubPage = SettingsDataSubPage.Credentials;
+				BuildSettingsPanelUi();
+			}
+		}, primary: !isRuntime);
+		subTabCreds.Position = new Vector2(32f, 166f);
+		subTabCreds.Size = new Vector2(250f, 32f);
+		subTabCreds.TooltipText = "Quản lý model chính, API key pool và nhập/xuất secrets";
+		root.AddChild(subTabCreds);
+
+		var subTabRuntime = CreateSettingsButton("🛠  Runtime Manager & Công cụ", () =>
+		{
+			if (_settingsDataSubPage != SettingsDataSubPage.RuntimeManager)
+			{
+				_settingsDataSubPage = SettingsDataSubPage.RuntimeManager;
+				BuildSettingsPanelUi();
+			}
+		}, primary: isRuntime);
+		subTabRuntime.Position = new Vector2(292f, 166f);
+		subTabRuntime.Size = new Vector2(270f, 32f);
+		subTabRuntime.TooltipText = "Checklist sức khỏe runtime, DeepSeek/ElevenLabs pool UI, Doctor và lối tắt thư mục";
+		root.AddChild(subTabRuntime);
+
+		var quickHelp = CreateUiLabel(
+			isRuntime
+				? "Bảng điều khiển kỹ thuật & lối tắt vận hành Eris"
+				: "✦ Mẹo: Nhấn 'Runtime Manager & Công cụ' để mở DeepSeek Pool UI, ElevenLabs Pool UI và chạy Doctor.",
+			9,
+			SettingsInkSoft);
+		quickHelp.Position = new Vector2(580f, 172f);
+		quickHelp.Size = new Vector2(568f, 20f);
+		StyleSettingsSingleLineLabel(quickHelp, HorizontalAlignment.Right);
+		root.AddChild(quickHelp);
+	}
+
+	private void BuildCredentialsDataPage(Control root)
+	{
+		var brainCard = AddSettingsCard(root, new Rect2(32f, 206f, 430f, 390f), "Não chính & kết nối");
+		BuildSettingsMainBrainColumn(brainCard);
+
+		var poolCard = AddSettingsCard(root, new Rect2(480f, 206f, 668f, 390f), "Credential pools");
+		BuildSettingsKeyPoolColumn(poolCard);
+	}
+
+	private void BuildRuntimeManagerDataPage(Control root)
+	{
+		var diagCard = AddSettingsCard(root, new Rect2(32f, 206f, 490f, 390f), "Kiểm tra Sức khỏe Môi trường");
+		BuildDiagnosticHealthColumn(diagCard);
+
+		var toolsCard = AddSettingsCard(root, new Rect2(534f, 206f, 614f, 390f), "Hệ sinh thái Pool & Công cụ");
+		BuildRuntimeToolsColumn(toolsCard);
+	}
+
+	private void BuildDiagnosticHealthColumn(Control parent)
+	{
+		var refreshBtn = CreateSettingsButton("↻ Quét lại", BuildSettingsPanelUi, primary: false);
+		refreshBtn.Position = new Vector2(parent.Size.X - 98f, 10f);
+		refreshBtn.Size = new Vector2(80f, 26f);
+		refreshBtn.TooltipText = "Quét lại toàn bộ file secrets, database và python environment";
+		parent.AddChild(refreshBtn);
+
+		var sub = CreateUiLabel("Trạng thái đối chiếu file cấu hình, runtime DB và role keys.", 9, SettingsInkSoft);
+		sub.Position = new Vector2(18f, 40f);
+		sub.Size = new Vector2(parent.Size.X - 36f, 18f);
+		StyleSettingsSingleLineLabel(sub);
+		parent.AddChild(sub);
+
+		// 1. Secrets file
+		string secretsPath = GetSecretsPath();
+		bool secretsOk = File.Exists(secretsPath);
+		long secretsLen = secretsOk ? new FileInfo(secretsPath).Length : 0;
+		AddSettingsDiagnosticTile(
+			parent,
+			62f,
+			"config/secrets.json",
+			secretsOk ? $"{secretsLen / 1024.0:F1} KB · Lưu trữ API keys & credentials" : "Chưa tìm thấy file secrets.json",
+			secretsOk ? "SẴN SÀNG" : "THIẾU FILE",
+			secretsOk ? SettingsPink : DangerRed);
+
+		// 2. ElevenLabs DB
+		string elevenPath = Path.Combine(GetRuntimeBaseDirForSettings(), "config", "elevenlabs_pool.db");
+		bool elevenOk = File.Exists(elevenPath);
+		long elevenLen = elevenOk ? new FileInfo(elevenPath).Length : 0;
+		AddSettingsDiagnosticTile(
+			parent,
+			112f,
+			"config/elevenlabs_pool.db",
+			elevenOk ? $"{elevenLen / 1024.0:F1} KB · SQLite account & token pool" : "Chưa tạo DB (chạy ElevenLabs Pool UI để khởi tạo)",
+			elevenOk ? "HOẠT ĐỘNG" : "CHƯA CÓ",
+			elevenOk ? SettingsPink : new Color(0.82f, 0.52f, 0.16f));
+
+		// 3. DeepSeek Pool DB
+		string whaleDbPath = ResolveWhaleDbPath();
+		bool whaleOk = !string.IsNullOrWhiteSpace(whaleDbPath) && File.Exists(whaleDbPath);
+		AddSettingsDiagnosticTile(
+			parent,
+			162f,
+			"tools/whale2api/whale2api.db",
+			whaleOk ? "Whale2API Gateway Pool DB khả dụng" : "Chưa có database gateway Whale2API",
+			whaleOk ? "SẴN SÀNG" : "CHƯA TẠO",
+			whaleOk ? SettingsPink : new Color(0.82f, 0.52f, 0.16f));
+
+		// 4. Python runtime
+		string pyExe = ResolvePythonExecutableForSettings();
+		string pyDesc = pyExe.Contains(".venv") ? "Virtualenv (.venv/Scripts/python.exe)"
+			: pyExe.Contains("python\\python.exe") ? "Portable Python (python/python.exe)"
+			: "System Python (PATH)";
+		AddSettingsDiagnosticTile(
+			parent,
+			212f,
+			"Python Interpreter",
+			pyDesc,
+			"SẴN SÀNG",
+			SettingsPink);
+
+		// 5. Live2D Body
+		string reqLive2d = Path.Combine(GetRuntimeBaseDirForSettings(), "requirements-live2d.txt");
+		bool reqOk = File.Exists(reqLive2d);
+		bool live2dRunning = _live2DManager?.IsRunning ?? false;
+		string live2dStatus = live2dRunning ? "Đang chạy" : (_isLive2DMode ? "Bật (chờ)" : "Tắt");
+		AddSettingsDiagnosticTile(
+			parent,
+			262f,
+			"Live2D Body Renderer",
+			reqOk ? $"requirements-live2d.txt OK · {live2dStatus}" : "Thiếu file requirements-live2d.txt",
+			live2dRunning ? "ĐANG CHẠY" : "SẴN SÀNG",
+			SettingsPink);
+
+		// 6. Role Keys
+		var (configuredRoles, totalRoles) = CountConfiguredDeepSeekRoleKeys();
+		AddSettingsDiagnosticTile(
+			parent,
+			312f,
+			"DeepSeek Role API Keys",
+			$"{configuredRoles}/{totalRoles} role đã được gán key (surface, seed, curator...)",
+			configuredRoles > 0 ? $"{configuredRoles}/{totalRoles} GÁN" : "CHƯA GÁN",
+			configuredRoles > 0 ? SettingsPink : new Color(0.82f, 0.52f, 0.16f));
+
+		var hint = CreateUiLabel("✦ Dữ liệu đối chiếu trực tiếp từ runtime thực tế của Eris.", 8, SettingsInkSoft);
+		hint.Position = new Vector2(18f, 362f);
+		hint.Size = new Vector2(parent.Size.X - 36f, 16f);
+		StyleSettingsSingleLineLabel(hint);
+		parent.AddChild(hint);
+	}
+
+	private void BuildRuntimeToolsColumn(Control parent)
+	{
+		float innerWidth = parent.Size.X - 36f;
+
+		// GROUP 1: WEB DASHBOARDS
+		var webHeader = CreateUiLabel("✦ LỐI TẮT WEB DASHBOARD (1-CLICK KHỞI CHẠY)", 9, SettingsPink);
+		webHeader.Position = new Vector2(18f, 38f);
+		webHeader.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(webHeader);
+		parent.AddChild(webHeader);
+
+		float colGap = 10f;
+		float colWidth = (innerWidth - 2 * colGap) / 3f;
+
+		var btnDs = CreateSettingsButton("🌐 DeepSeek (:5010)", OpenOrLaunchDeepSeekPoolUi, primary: false);
+		btnDs.Position = new Vector2(18f, 58f);
+		btnDs.Size = new Vector2(colWidth, 34f);
+		btnDs.TooltipText = "Mở Whale2API DeepSeek Pool Dashboard cổng 5010";
+		parent.AddChild(btnDs);
+
+		var btnEleven = CreateSettingsButton("♫ ElevenLabs (:18888)", OpenOrLaunchElevenLabsPoolUi, primary: false);
+		btnEleven.Position = new Vector2(18f + colWidth + colGap, 58f);
+		btnEleven.Size = new Vector2(colWidth, 34f);
+		btnEleven.TooltipText = "Mở ElevenLabs Token Pool Manager cổng 18888";
+		parent.AddChild(btnEleven);
+
+		var btnHub = CreateSettingsButton("⚡ Account Hub (:9000)", OpenOrLaunchAccountHub, primary: false);
+		btnHub.Position = new Vector2(18f + (colWidth + colGap) * 2f, 58f);
+		btnHub.Size = new Vector2(colWidth, 34f);
+		btnHub.TooltipText = "Mở FastAPI Account Hub cổng 9000";
+		parent.AddChild(btnHub);
+
+		var webSub = CreateUiLabel("Nhấp để mở trình duyệt; tự động gọi service nền nếu cổng tương ứng chưa khởi chạy.", 8, SettingsInkSoft);
+		webSub.Position = new Vector2(18f, 96f);
+		webSub.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(webSub);
+		parent.AddChild(webSub);
+
+		// DIVIDER 1
+		var div1 = new ColorRect
+		{
+			Color = new Color(0.92f, 0.86f, 0.94f, 0.7f),
+			Position = new Vector2(18f, 118f),
+			Size = new Vector2(innerWidth, 1.2f),
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		parent.AddChild(div1);
+
+		// GROUP 2: AUTOMATION & MAINTENANCE
+		var maintHeader = CreateUiLabel("⚙ BẢO TRÌ & TỰ ĐỘNG HÓA", 9, SettingsPink);
+		maintHeader.Position = new Vector2(18f, 126f);
+		maintHeader.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(maintHeader);
+		parent.AddChild(maintHeader);
+
+		var btnSync = CreateSettingsButton("⟳ Đồng bộ DeepSeek", RunApplyDeepSeekPool, primary: false);
+		btnSync.Position = new Vector2(18f, 146f);
+		btnSync.Size = new Vector2(colWidth, 34f);
+		btnSync.TooltipText = "Chạy apply_deepseek_pool_to_secrets.bat để cập nhật role keys vào secrets.json";
+		parent.AddChild(btnSync);
+
+		var btnDoctor = CreateSettingsButton("🩺 Chạy Doctor", RunErisDoctor, primary: false);
+		btnDoctor.Position = new Vector2(18f + colWidth + colGap, 146f);
+		btnDoctor.Size = new Vector2(colWidth, 34f);
+		btnDoctor.TooltipText = "Chạy run_doctor.bat để kiểm tra chẩn đoán toàn diện môi trường";
+		parent.AddChild(btnDoctor);
+
+		var btnManager = CreateSettingsButton("🖥 Eris Manager GUI", LaunchErisManagerGui, primary: true);
+		btnManager.Position = new Vector2(18f + (colWidth + colGap) * 2f, 146f);
+		btnManager.Size = new Vector2(colWidth, 34f);
+		btnManager.TooltipText = "Mở giao diện Tkinter Eris Manager đầy đủ trong cửa sổ riêng";
+		parent.AddChild(btnManager);
+
+		var maintSub = CreateUiLabel("Doctor và đồng bộ chạy độc lập trong console riêng, an toàn không ảnh hưởng tới phiên chat.", 8, SettingsInkSoft);
+		maintSub.Position = new Vector2(18f, 184f);
+		maintSub.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(maintSub);
+		parent.AddChild(maintSub);
+
+		// DIVIDER 2
+		var div2 = new ColorRect
+		{
+			Color = new Color(0.92f, 0.86f, 0.94f, 0.7f),
+			Position = new Vector2(18f, 206f),
+			Size = new Vector2(innerWidth, 1.2f),
+			MouseFilter = Control.MouseFilterEnum.Ignore
+		};
+		parent.AddChild(div2);
+
+		// GROUP 3: QUICK FOLDERS
+		var folderHeader = CreateUiLabel("📁 TRUY CẬP NHANH THƯ MỤC HỆ THỐNG", 9, SettingsPink);
+		folderHeader.Position = new Vector2(18f, 214f);
+		folderHeader.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(folderHeader);
+		parent.AddChild(folderHeader);
+
+		float f2Width = (innerWidth - colGap) / 2f;
+
+		var btnRoot = CreateSettingsButton("📁 Thư mục App Root", () =>
+		{
+			try { OS.ShellOpen(GetRuntimeBaseDirForSettings()); SetSettingsStatus("Đã mở App Root."); } catch (Exception ex) { SetSettingsStatus(ex.Message); }
+		}, primary: false);
+		btnRoot.Position = new Vector2(18f, 234f);
+		btnRoot.Size = new Vector2(f2Width, 30f);
+		parent.AddChild(btnRoot);
+
+		var btnConfig = CreateSettingsButton("📁 Thư mục Config", OpenSettingsConfigDir, primary: false);
+		btnConfig.Position = new Vector2(18f + f2Width + colGap, 234f);
+		btnConfig.Size = new Vector2(f2Width, 30f);
+		parent.AddChild(btnConfig);
+
+		var btnLogs = CreateSettingsButton("📁 Thư mục Logs", OpenSettingsLogs, primary: false);
+		btnLogs.Position = new Vector2(18f, 270f);
+		btnLogs.Size = new Vector2(f2Width, 30f);
+		parent.AddChild(btnLogs);
+
+		var btnBuild = CreateSettingsButton("📁 Thư mục Build Output", OpenSettingsBuildOutputDir, primary: false);
+		btnBuild.Position = new Vector2(18f + f2Width + colGap, 270f);
+		btnBuild.Size = new Vector2(f2Width, 30f);
+		parent.AddChild(btnBuild);
+
+		var folderSub = CreateUiLabel("Mở thư mục trong Windows Explorer để xem file nhật ký, sao lưu và dữ liệu gốc.", 8, SettingsInkSoft);
+		folderSub.Position = new Vector2(18f, 306f);
+		folderSub.Size = new Vector2(innerWidth, 16f);
+		StyleSettingsSingleLineLabel(folderSub);
+		parent.AddChild(folderSub);
+	}
+
+	private void AddSettingsDiagnosticTile(Control parent, float y, string title, string detail, string badgeText, Color badgeColor)
+	{
+		var row = new Panel
+		{
+			Position = new Vector2(18f, y),
+			Size = new Vector2(parent.Size.X - 36f, 44f),
+			MouseFilter = Control.MouseFilterEnum.Ignore,
+		};
+		row.AddThemeStyleboxOverride("panel", SettingsCardStyle(
+			new Color(1f, 0.985f, 0.995f, 0.72f),
+			SettingsBorder,
+			10));
+		parent.AddChild(row);
+
+		var titleLabel = CreateUiLabel(title, 10, SettingsInk);
+		titleLabel.Position = new Vector2(12f, 4f);
+		titleLabel.Size = new Vector2(parent.Size.X - 160f, 18f);
+		StyleSettingsSingleLineLabel(titleLabel);
+		row.AddChild(titleLabel);
+
+		var detailLabel = CreateUiLabel(detail, 8, SettingsInkSoft);
+		detailLabel.Position = new Vector2(12f, 22f);
+		detailLabel.Size = new Vector2(parent.Size.X - 160f, 18f);
+		StyleSettingsSingleLineLabel(detailLabel);
+		row.AddChild(detailLabel);
+
+		var badge = CreateUiLabel(badgeText, 9, badgeColor);
+		badge.Position = new Vector2(row.Size.X - 130f, 12f);
+		badge.Size = new Vector2(118f, 20f);
+		StyleSettingsSingleLineLabel(badge, HorizontalAlignment.Right);
+		row.AddChild(badge);
 	}
 
 	private void AddSettingsPageFooter(Control root, string noteText, bool showBackupActions)
@@ -1095,7 +1440,7 @@ public partial class UdpListener : Node2D
 		var list = new Panel
 		{
 			Position = new Vector2(18f, 118f),
-			Size = new Vector2(innerWidth, 190f),
+			Size = new Vector2(innerWidth, 168f),
 			MouseFilter = Control.MouseFilterEnum.Stop,
 		};
 		list.AddThemeStyleboxOverride("panel", SettingsCardStyle(new Color(1f, 0.98f, 0.99f, 0.72f), SettingsBorder, 14));
@@ -1107,7 +1452,7 @@ public partial class UdpListener : Node2D
 		var scroller = new ScrollContainer
 		{
 			Position = new Vector2(6f, 6f),
-			Size = new Vector2(innerWidth - 12f, 178f),
+			Size = new Vector2(innerWidth - 12f, 156f),
 			HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
 			VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
 			MouseFilter = Control.MouseFilterEnum.Stop,
@@ -1131,7 +1476,7 @@ public partial class UdpListener : Node2D
 		if (keys.Count == 0)
 			AddSettingsEditableKeyRow("", DefaultSettingsKeyName(_settingsKeyPoolKind, 1));
 
-		float buttonY = 318f;
+		float buttonY = 296f;
 		var add = CreateSettingsButton("＋ Thêm key", () =>
 		{
 			int next = _settingsKeyInputs.Count + 1;
@@ -1181,16 +1526,31 @@ public partial class UdpListener : Node2D
 
 		var hint = CreateUiLabel(
 			_settingsKeyPoolKind == "main"
-				? "Pool Main Brain gắn trực tiếp với provider/model ở card bên trái."
-				: _settingsKeyPoolKind == "elevenlabs"
-					? "ElevenLabs sở hữu credential TTS riêng; chỉ key ưu tiên 1 được runtime sử dụng."
-					: "Pool phụ không thay model chính; chúng chỉ phục vụ lane chuyên biệt.",
+				? "Pool Main Brain gắn với provider/model chính. Mở DeepSeek UI để quản lý account."
+				: "ElevenLabs TTS sở hữu credential riêng; chỉ key ưu tiên 1 được runtime sử dụng.",
 			9,
 			SettingsInkSoft);
-		hint.Position = new Vector2(20f, 356f);
-		hint.Size = new Vector2(innerWidth - 4f, 36f);
+		hint.Position = new Vector2(20f, 338f);
+		hint.Size = new Vector2(innerWidth - 224f, 36f);
 		hint.AutowrapMode = TextServer.AutowrapMode.WordSmart;
 		parent.AddChild(hint);
+
+		if (_settingsKeyPoolKind == "main")
+		{
+			var poolBtn = CreateSettingsButton("🌐 Mở DeepSeek Pool (:5010)", OpenOrLaunchDeepSeekPoolUi, primary: false);
+			poolBtn.Position = new Vector2(parent.Size.X - 226f, 338f);
+			poolBtn.Size = new Vector2(208f, 32f);
+			poolBtn.TooltipText = "Mở Whale2API DeepSeek Pool Dashboard cổng 5010";
+			parent.AddChild(poolBtn);
+		}
+		else if (_settingsKeyPoolKind == "elevenlabs")
+		{
+			var poolBtn = CreateSettingsButton("♫ Mở ElevenLabs Pool (:18888)", OpenOrLaunchElevenLabsPoolUi, primary: false);
+			poolBtn.Position = new Vector2(parent.Size.X - 226f, 338f);
+			poolBtn.Size = new Vector2(208f, 32f);
+			poolBtn.TooltipText = "Mở ElevenLabs Token Pool Manager cổng 18888";
+			parent.AddChild(poolBtn);
+		}
 
 		RefreshSettingsKeyRowHealthIndicators();
 	}
@@ -3432,5 +3792,262 @@ public partial class UdpListener : Node2D
 	private static string GetSettingsBackupDir()
 	{
 		return Path.Combine(GetRuntimeBaseDirForSettings(), "backups", "settings");
+	}
+
+	private static readonly string[] DeepSeekRoleKeyNames = new[]
+	{
+		"ERIS_DS_COMPANION_API_KEY",
+		"ERIS_DS_SURFACE_API_KEY",
+		"ERIS_DS_SEED_API_KEY",
+		"ERIS_DS_EXECUTIVE_API_KEY",
+		"ERIS_DS_CURATOR_API_KEY",
+		"ERIS_DS_OBSERVER_API_KEY",
+		"ERIS_DS_CRITIC_API_KEY",
+		"ERIS_DS_INNER_API_KEY",
+	};
+
+	private static (int configured, int total) CountConfiguredDeepSeekRoleKeys()
+	{
+		try
+		{
+			JsonObject root = LoadSecretsRoot();
+			if (root["api_keys"] is JsonObject apiKeys)
+			{
+				int count = 0;
+				foreach (string roleKey in DeepSeekRoleKeyNames)
+				{
+					if (apiKeys[roleKey] is JsonValue val && !string.IsNullOrWhiteSpace(val.ToString()))
+						count++;
+				}
+				return (count, DeepSeekRoleKeyNames.Length);
+			}
+		}
+		catch { }
+		return (0, DeepSeekRoleKeyNames.Length);
+	}
+
+	private static string ResolveWhaleDbPath()
+	{
+		string baseDir = GetRuntimeBaseDirForSettings();
+		string path1 = Path.Combine(baseDir, "tools", "whale2api", "docker-data", "whale2api", "whale2api.db");
+		if (File.Exists(path1)) return path1;
+		string path2 = Path.Combine(baseDir, "tools", "whale2api", "whale2api.db");
+		if (File.Exists(path2)) return path2;
+		return "";
+	}
+
+	private static string ResolvePythonExecutableForSettings()
+	{
+		string baseDir = GetRuntimeBaseDirForSettings();
+		string venvPy = Path.Combine(baseDir, ".venv", "Scripts", "python.exe");
+		if (File.Exists(venvPy)) return venvPy;
+		string portablePy = Path.Combine(baseDir, "python", "python.exe");
+		if (File.Exists(portablePy)) return portablePy;
+		return "python";
+	}
+
+	private void OpenOrLaunchDeepSeekPoolUi()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string bat = Path.Combine(baseDir, "run_deepseek_pool_ui.bat");
+			if (File.Exists(bat))
+			{
+				RunExternalBat(bat);
+				SetSettingsStatus("Đang khởi chạy DeepSeek Pool UI (Port 5010)...");
+			}
+			else
+			{
+				OS.ShellOpen("http://127.0.0.1:5010");
+				SetSettingsStatus("Đã mở http://127.0.0.1:5010 trong trình duyệt.");
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được DeepSeek Pool UI: {ex.Message}");
+		}
+	}
+
+	private void OpenOrLaunchElevenLabsPoolUi()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string bat = Path.Combine(baseDir, "run_elevenlabs_pool_ui.bat");
+			if (File.Exists(bat))
+			{
+				RunExternalBat(bat);
+				SetSettingsStatus("Đang khởi chạy ElevenLabs Pool UI (Port 18888)...");
+			}
+			else
+			{
+				OS.ShellOpen("http://127.0.0.1:18888");
+				SetSettingsStatus("Đã mở http://127.0.0.1:18888 trong trình duyệt.");
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được ElevenLabs Pool UI: {ex.Message}");
+		}
+	}
+
+	private void OpenOrLaunchAccountHub()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string bat = Path.Combine(baseDir, "run_manager.bat");
+			if (File.Exists(bat))
+			{
+				RunExternalBat(bat);
+				SetSettingsStatus("Đang khởi chạy Account Hub (Port 9000)...");
+			}
+			else
+			{
+				OS.ShellOpen("http://127.0.0.1:9000");
+				SetSettingsStatus("Đã mở http://127.0.0.1:9000 trong trình duyệt.");
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được Account Hub: {ex.Message}");
+		}
+	}
+
+	private void RunApplyDeepSeekPool()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string bat = Path.Combine(baseDir, "apply_deepseek_pool_to_secrets.bat");
+			if (File.Exists(bat))
+			{
+				RunExternalBat(bat);
+				SetSettingsStatus("Đang chạy đồng bộ DeepSeek Pool sang secrets.json...");
+			}
+			else
+			{
+				string pyScript = Path.Combine(baseDir, "tools", "apply_deepseek_pool_to_secrets.py");
+				if (File.Exists(pyScript))
+				{
+					RunExternalPython(pyScript);
+					SetSettingsStatus("Đang chạy tools/apply_deepseek_pool_to_secrets.py...");
+				}
+				else
+				{
+					SetSettingsStatus("Không tìm thấy apply_deepseek_pool_to_secrets.");
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Lỗi chạy đồng bộ DeepSeek: {ex.Message}");
+		}
+	}
+
+	private void RunErisDoctor()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string bat = Path.Combine(baseDir, "run_doctor.bat");
+			if (File.Exists(bat))
+			{
+				RunExternalBat(bat);
+				SetSettingsStatus("Đang khởi chạy Eris Doctor kiểm tra...");
+			}
+			else
+			{
+				SetSettingsStatus("Không tìm thấy run_doctor.bat.");
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Lỗi chạy Eris Doctor: {ex.Message}");
+		}
+	}
+
+	private void LaunchErisManagerGui()
+	{
+		try
+		{
+			string baseDir = GetRuntimeBaseDirForSettings();
+			string pyScript = Path.Combine(baseDir, "src", "manager_gui.py");
+			if (File.Exists(pyScript))
+			{
+				RunExternalPython(pyScript);
+				SetSettingsStatus("Đã khởi chạy Eris Manager GUI (Tkinter).");
+			}
+			else
+			{
+				SetSettingsStatus("Không tìm thấy src/manager_gui.py.");
+			}
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Lỗi mở Manager GUI: {ex.Message}");
+		}
+	}
+
+	private void OpenSettingsConfigDir()
+	{
+		try
+		{
+			string configDir = Path.Combine(GetRuntimeBaseDirForSettings(), "config");
+			Directory.CreateDirectory(configDir);
+			OS.ShellOpen(configDir);
+			SetSettingsStatus($"Đã mở config: {configDir}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được config: {ex.Message}");
+		}
+	}
+
+	private void OpenSettingsBuildOutputDir()
+	{
+		try
+		{
+			string userDocs = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+			if (string.IsNullOrWhiteSpace(userDocs))
+				userDocs = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+			string buildDir = Path.Combine(userDocs, "Documents", "eris");
+			if (!Directory.Exists(buildDir))
+				buildDir = Path.Combine(GetRuntimeBaseDirForSettings(), "dist");
+			Directory.CreateDirectory(buildDir);
+			OS.ShellOpen(buildDir);
+			SetSettingsStatus($"Đã mở thư mục build: {buildDir}");
+		}
+		catch (Exception ex)
+		{
+			SetSettingsStatus($"Không mở được build output: {ex.Message}");
+		}
+	}
+
+	private void RunExternalBat(string batPath)
+	{
+		var psi = new ProcessStartInfo
+		{
+			FileName = "cmd.exe",
+			Arguments = $"/c start \"\" \"{batPath}\"",
+			WorkingDirectory = Path.GetDirectoryName(batPath) ?? GetRuntimeBaseDirForSettings(),
+			UseShellExecute = true,
+			CreateNoWindow = true
+		};
+		Process.Start(psi);
+	}
+
+	private void RunExternalPython(string scriptPath)
+	{
+		string pythonExe = ResolvePythonExecutableForSettings();
+		var psi = new ProcessStartInfo
+		{
+			FileName = "cmd.exe",
+			Arguments = $"/k call \"{pythonExe}\" \"{scriptPath}\"",
+			WorkingDirectory = GetRuntimeBaseDirForSettings(),
+			UseShellExecute = true
+		};
+		Process.Start(psi);
 	}
 }

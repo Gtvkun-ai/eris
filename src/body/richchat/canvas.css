@@ -62,3 +62,13 @@
 .lesson-caption{font-size:11px;line-height:1.6;color:#777085;margin:6px 0 0}
 .lesson-loading{font-size:12px;margin:8px 0 13px}
 @media(max-width:710px){.dynamic-lesson{padding:11px}.lesson-block{padding:12px}}
+
+/* FSRS Spaced Repetition queue & Speaking block styles */
+.fsrs-review-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:#fdf2f7;border:1px solid #f3d4e4;border-radius:10px;font-size:12px;color:#8f3066}
+.fsrs-review-strip[hidden]{display:none}
+.review-tag{font-weight:800;font-size:11px;letter-spacing:0.5px;text-transform:uppercase;color:#a83875}
+.review-pill{background:#fff;border:1px solid #eecad9;border-radius:14px;padding:4px 10px;font-size:11px;color:#6f244c;cursor:pointer;font-weight:600}
+.review-pill:hover{background:#fde9f2;border-color:#d984ab}
+.node.due-node{border:2px solid #e0689b;box-shadow:0 0 0 3px #fce5ef}
+.speaking-block{border-left:4px solid var(--pink)!important;background:#fff8fc!important;box-shadow:0 4px 16px rgba(207,76,144,0.12)!important}
+

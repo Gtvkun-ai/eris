@@ -21,11 +21,11 @@ def test_mouth_linear_pose_matches_audited_native_domain(ratio, want):
     assert mouth["min"] <= want <= mouth["max"]
 
 
-def test_voiced_curve_uses_native_point22_to_point88_and_preserves_silence():
+def test_voiced_curve_opens_continuously_from_silence_to_the_wide_vowel_pose():
     assert profile.mouth_open_from_speech_ratio(.025) == 0
     values = [profile.mouth_open_from_speech_ratio(.025 + .975 * index / 1000) for index in range(1, 1001)]
-    assert .22 < values[0] < .24
-    assert values[-1] == pytest.approx(.88)
+    assert 0 < values[0] < .01
+    assert values[-1] == pytest.approx(.84)
     assert all(a <= b for a, b in zip(values, values[1:]))
     assert profile.compose_speaking_mouth(mood_form=1, speech_ratio=0)[1] == 0
 
@@ -108,7 +108,7 @@ def test_stage_mouth_response_uses48_opening64_closing(monkeypatch):
         "audio_envelope": [1, 1, 0, 0], "audio_frame_ms": 100, "audio_duration_ms": 400,
     }})
     opening = state.advance(.01, now=10)
-    desired = .833
+    desired = .84
     assert opening.parameters["ParamMouthOpenY"] == pytest.approx(desired * (1 - math.exp(-.48)))
     closing = state.advance(.01, now=10.2)
     assert closing.parameters["ParamMouthOpenY"] == pytest.approx(opening.parameters["ParamMouthOpenY"] * math.exp(-.64))

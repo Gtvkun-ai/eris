@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,7 @@ class FakeLessonGemini:
 
 
 def request(canvas, action, **fields):
-    return canvas.handle({"action": action, "request_id": "p4-" + str(time.monotonic_ns()), **fields})
+    return canvas.handle({"action": action, "request_id": "p4-" + uuid.uuid4().hex, **fields})
 
 
 def finished(worker):

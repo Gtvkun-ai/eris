@@ -71,14 +71,14 @@ class InfjParameterProfile:
         return self.mouth_closed + (self.mouth_open - self.mouth_closed) * normalized
 
     def mouth_open_from_speech_ratio(self, ratio: float) -> float:
-        """Map voiced energy smoothly into .22..88; silence stays closed."""
-        raw = _clamp(ratio, 0.0, 1.0)
-        if raw <= 0.025:
-            return self.mouth_closed
+        """Open continuously from silence to the rig's .84 wide vowel pose."""
+        voiced = _clamp((ratio - 0.025) / (0.86 - 0.025), 0.0, 1.0)
+        return self.mouth_open_from_ratio(0.84 * voiced ** 0.77)
 
-        voiced = _clamp((raw - 0.025) / 0.975, 0.0, 1.0)
-        promoted_ratio = 0.22 + 0.66 * (voiced ** 0.68)
-        return self.mouth_open_from_ratio(promoted_ratio)
+    def tongue_from_jaw(self, opening: float) -> float:
+        """V13.2 interior tongue keyforms follow the final native jaw opening."""
+        progress = _clamp((opening - .11) / (.70 - .11), 0.0, 1.0)
+        return progress * progress * (3.0 - 2.0 * progress)
 
     def compose_speaking_mouth(
         self,

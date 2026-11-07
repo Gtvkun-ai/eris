@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
@@ -40,7 +41,7 @@ def canvas(tmp_path):
 
 
 def request(service, action="open", **extra):
-    return service.handle({"type": "learning_canvas_request", "request_id": f"test-{time.monotonic_ns()}",
+    return service.handle({"type": "learning_canvas_request", "request_id": f"test-{uuid.uuid4().hex}",
                            "action": action, **extra})
 
 

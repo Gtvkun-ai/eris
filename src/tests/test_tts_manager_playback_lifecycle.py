@@ -115,8 +115,8 @@ def test_successful_playback_reports_start_envelope_then_done():
         assert _lifecycle(events) == ["audio_start", "audio_done"]
         started = next(event for event in events if event.type == "audio_start")
         assert started.audio_duration_ms == 100
-        assert started.audio_frame_ms == 40
-        assert len(started.audio_envelope) == 3
+        assert started.audio_frame_ms == 20
+        assert len(started.audio_envelope) == 5
     finally:
         device.release.set()
         manager.shutdown()

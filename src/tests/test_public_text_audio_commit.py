@@ -199,13 +199,17 @@ def test_user_preemption_during_synthesis_cannot_commit_old_text(speech_output):
 def test_later_segment_playback_keeps_lifecycle_after_discarding_text(speech_output):
     output = speech_output()
     output.event("audio_failed")
-    output.event("audio_start", segment_id=1)
+    output.event("audio_start", segment_id=1, audio_envelope=(.6,) * 25,
+                 audio_frame_ms=20, audio_duration_ms=500, audio_mouth_shape=(.65,) * 25)
     assert not _speech_packets(output)
     assert output.owner.interaction_clock.audio_active
-    assert output.live2d.advance(0).speaking
+    snapshot = output.live2d.advance(0)
+    assert snapshot.speaking
+    assert snapshot.mouth_shape == pytest.approx(.65)
     output.event("audio_done", segment_id=1)
     assert not output.owner.interaction_clock.audio_active
-    assert not output.live2d.advance(0).speaking
+    snapshot = output.live2d.advance(0)
+    assert not snapshot.speaking and snapshot.mouth_shape == 0
 
 
 def test_legacy_opt_out_still_shows_text_immediately(speech_output, monkeypatch):
