@@ -12,7 +12,6 @@ import os
 import re
 from typing import Any, Mapping, Sequence
 
-from llm.client import GeminiClient, OpenAICompatibleClient
 from eris_secrets import get_secret
 
 from .contracts import BehaviorScore, ScenarioStep
@@ -64,11 +63,19 @@ def _provider_label(client: Any) -> tuple[str, str]:
 
 def _is_real_client(client: Any) -> bool:
     """Chứng minh client có transport provider thật, không dựa vào tên fake do test đặt."""
-    return isinstance(client, (OpenAICompatibleClient, GeminiClient)) or (
+    if (
         callable(getattr(client, "create_chat_completion", None))
         and bool(str(getattr(client, "base_url", "") or "").strip())
         and not bool(getattr(client, "is_simulation_stub", False))
-    )
+    ):
+        return True
+    try:
+        from llm.client import GeminiClient, OpenAICompatibleClient
+    except ModuleNotFoundError as exc:
+        if exc.name != "llm.client":
+            raise
+        return False
+    return isinstance(client, (OpenAICompatibleClient, GeminiClient))
 
 
 def _extract_content(response: Mapping[str, Any]) -> str:
@@ -127,6 +134,8 @@ def build_explicit_judge_client() -> Any | None:
     api_key = get_secret("ERIS_SIM_JUDGE_API_KEY")
     if not (provider or base_url or model or api_key):
         return None
+    from llm.client import GeminiClient, OpenAICompatibleClient
+
     if provider == "gemini" or "generativelanguage.googleapis.com" in base_url:
         return GeminiClient(
             base_url=base_url or "https://generativelanguage.googleapis.com/v1beta",

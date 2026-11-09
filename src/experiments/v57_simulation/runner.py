@@ -6,17 +6,20 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from .contracts import RunValidity, Scenario, ScenarioEvaluation, SimulationReport, TurnEvaluation
 from .judge import BehavioralJudge, build_explicit_judge_client
-from .live_runtime import LiveRuntimeHarness
 from .quality import (
     build_memory_evidence, deterministic_failures, repetition_context, runtime_invariant_failures,
 )
 
 
-HarnessFactory = Callable[..., LiveRuntimeHarness]
+if TYPE_CHECKING:
+    from .live_runtime import LiveRuntimeHarness
+
+
+HarnessFactory = Callable[..., "LiveRuntimeHarness"]
 
 
 class LiveSimulationRunner:
@@ -25,7 +28,7 @@ class LiveSimulationRunner:
         *,
         run_root: Path,
         logger: logging.Logger | None = None,
-        harness_factory: HarnessFactory = LiveRuntimeHarness,
+        harness_factory: HarnessFactory | None = None,
         judge_factory: Callable[[object], BehavioralJudge] = BehavioralJudge,
     ) -> None:
         self.run_root = Path(run_root).resolve()
@@ -46,7 +49,14 @@ class LiveSimulationRunner:
         provider = model = judge_provider = judge_model = ""
 
         try:
-            harness = self.harness_factory(run_root=root, logger=self.logger)
+            harness_factory = self.harness_factory
+            if harness_factory is None:
+                try:
+                    from .live_runtime import LiveRuntimeHarness
+                except ImportError as exc:
+                    raise RuntimeError(f"V57 live runs require the full Eris runtime: {exc}") from exc
+                harness_factory = LiveRuntimeHarness
+            harness = harness_factory(run_root=root, logger=self.logger)
             provider, model = harness.provider, harness.model
             explicit_judge = build_explicit_judge_client()
             judge_client = explicit_judge or harness.judge_candidate_client()
@@ -74,7 +84,7 @@ class LiveSimulationRunner:
                         harness.close()
                         # Dựng runtime mới trên CÙNG run root. Đây là restart persistence thật,
                         # không phải copy state Python từ object cũ sang object mới.
-                        harness = self.harness_factory(run_root=root, logger=self.logger)
+                        harness = harness_factory(run_root=root, logger=self.logger)
                         if not harness.provider_real:
                             validity = RunValidity.INVALID_REALISM_RUN
                     artifact = harness.send_user(

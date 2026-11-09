@@ -39,7 +39,7 @@ public partial class UdpListener : Node2D
 
 	private PacketPeerUdp _udp = new PacketPeerUdp();
 	private int _port = 4242;
-	private AnimatedSprite2D _monika;
+	private AnimatedSprite2D _avatar;
 	private CharacterBody2D _body;
 	private RichTextLabel _label;
 	private TextureRect _bubbleFrame;
@@ -52,7 +52,6 @@ public partial class UdpListener : Node2D
 	private Label _live2DSpeechStatus;
 	private MotionController _motion;
 	private LocalBodyAutonomy _bodyAutonomy;
-	private BodyAudioController _audio;
 	private string _ttsBodyAudioTurnId = "";
 	private int _ttsBodyAudioSegmentCount = 1;
 	// UI chỉ hiển thị text đã commit; con trỏ đọc thuộc quyền người dùng.
@@ -80,9 +79,9 @@ public partial class UdpListener : Node2D
 	[Export] public bool AutoRestartVisionOnCrash = true;
 	[Export] public bool EnableRemoteCognitionApi = true;
 	[Export(PropertyHint.Password)] public string DefaultRemoteApiKey = "";
-	[Export] public string RemoteApiProvider = "deepseek_web";
-	[Export] public string RemoteApiBaseUrl = "http://127.0.0.1:5103/v1";
-	[Export] public string RemoteApiModelName = "deepseek-flash";
+	[Export] public string RemoteApiProvider = "deepseek";
+	[Export] public string RemoteApiBaseUrl = "https://api.deepseek.com";
+	[Export] public string RemoteApiModelName = "deepseek-v4-flash";
 	[Export] public bool TutorEnabled = true;
 	[Export] public bool TutorQuickSearchEnabled = true;
 	[Export] public bool TutorResearchEnabled = true;
@@ -98,9 +97,9 @@ public partial class UdpListener : Node2D
 	[Export] public bool EnableMousePassthrough = true;
 	[Export] public bool LockCharacterPosition = false;
 
-	private float _moveSpeed = 60f;   
-	private float _moveDir = 1f;      
-	private int _facingDir = -1;      
+	private float _moveSpeed = 60f;
+	private float _moveDir = 1f;
+	private int _facingDir = -1;
 	private bool _isWalking = false;
 	private string _currentAction = "stand";
 	private float _velocityY = 0f;
@@ -281,31 +280,6 @@ public partial class UdpListener : Node2D
 		"air", "shime", "idle",
 	};
 
-	// Animation -> danh sách sound (tên ngẫu nhiên, sẽ rename sau)
-	private static readonly Dictionary<string, string[]> _soundMap = new()
-	{
-		{ "affection",   new[] { "res://asset/Monika/sound/Cuddling.wav", "res://asset/Monika/sound/Giggle.wav", "res://asset/Monika/sound/Happy_Squeals.wav", "res://asset/Monika/sound/Squeal_Happy.wav" } },
-		{ "air",         new[] { "res://asset/Monika/sound/Cartoon_Aah.wav", "res://asset/Monika/sound/Cartoon_Jump2.wav" } },
-		{ "stand_walk",  new[] { "res://asset/Monika/sound/Cute_Run.wav", "res://asset/Monika/sound/Cartoon_Hop.wav" } },
-		{ "sad",         new[] { "res://asset/Monika/sound/Hurt_Aah.wav", "res://asset/Monika/sound/Hurt_Unh.wav", "res://asset/Monika/sound/Sigh_Sleepy.wav" } },
-		{ "read",        new[] { "res://asset/Monika/sound/Nyaa_Soft.wav" } },
-		{ "piano",       new[] { "res://asset/Monika/sound/Giggle_Short.wav", "res://asset/Monika/sound/Giggle.wav" } },
-		{ "food",        new[] { "res://asset/Monika/sound/Cartoon_Plop.wav", "res://asset/Monika/sound/Cartoon_Pop.wav" } },
-		{ "clone",       new[] { "res://asset/Monika/sound/Cartoon_Pop.wav", "res://asset/Monika/sound/Happy_Squeals.wav" } },
-		{ "divine",      new[] { "res://asset/Monika/sound/Cartoon_Pop.wav", "res://asset/Monika/sound/Happy_Squeals.wav" } },
-		{ "stand",       new[] { "res://asset/Monika/sound/Nyaa_Quick.wav", "res://asset/Monika/sound/Nyaa_Soft.wav" } },
-		{ "sit_down",    new[] { "res://asset/Monika/sound/Cartoon_Plop.wav" } },
-		{ "sit_up",      new[] { "res://asset/Monika/sound/Cartoon_Plop.wav", "res://asset/Monika/sound/Nyaa_Quick.wav" } },
-		{ "sit",         new[] { "res://asset/Monika/sound/Cartoon_Plop.wav", "res://asset/Monika/sound/Nyaa_Soft.wav" } },
-		{ "climb",       new[] { "res://asset/Monika/sound/Cute_Run.wav" } },
-		{ "climb_top",   new[] { "res://asset/Monika/sound/Cute_Run.wav", "res://asset/Monika/sound/Cartoon_Impact_F.wav" } },
-		{ "hop",         new[] { "res://asset/Monika/sound/Cartoon_Hop.wav", "res://asset/Monika/sound/Cartoon_Jump2.wav" } },
-		{ "jump",        new[] { "res://asset/Monika/sound/Cartoon_Jump2.wav", "res://asset/Monika/sound/Cartoon_Aah.wav" } },
-		{ "sleep",       new[] { "res://asset/Monika/sound/Sigh_Sleepy.wav", "res://asset/Monika/sound/Cuddling.wav" } },
-		{ "air_swing_l", new[] { "res://asset/Monika/sound/Cartoon_Aah.wav", "res://asset/Monika/sound/Squeal_Happy.wav" } },
-		{ "air_swing_r", new[] { "res://asset/Monika/sound/Cartoon_Aah.wav", "res://asset/Monika/sound/Squeal_Happy.wav" } },
-	};
-
 	// Đổi font cho TOÀN BỘ UI context-menu (chat, mô hình ngài, private mind, emotion,
 	// menu chuột phải, chiều sâu …) bằng cách gắn Theme lên node Control gốc — mọi
 	// panel con kế thừa. CHỈ đổi typeface (DefaultFont), KHÔNG đặt DefaultFontSize để
@@ -345,143 +319,159 @@ public partial class UdpListener : Node2D
 
 	public override void _Ready()
 	{
-		RunLogger.Initialize();
-		LoadSettingsState();
-		ApplyGlobalUiFontTheme();
-		ConfigureDesktopOverlayWindow();
-		_udp.Bind(_port);
-		_body   = GetNode<CharacterBody2D>("Monika2");
-		_monika = GetNode<AnimatedSprite2D>("Monika2/Monika");
-		_label  = GetNode<RichTextLabel>("Monika2/Monika/BubbleContainer/TextureRect/MessageLabel");
-		_bubble   = GetNode<Control>("Monika2/Monika/BubbleContainer");
-		_bubbleFrame = GetNodeOrNull<TextureRect>("Monika2/Monika/BubbleContainer/TextureRect");
-	_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
-	_chatSendButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton");
-	_chatCloseButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton");
-	_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
-	_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
-		_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
-		_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
-		_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
-		_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
-		_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
-		_characterContextMenu.Size = CharacterContextMenuMinSize;
-		_characterContextMenu.ZIndex = 100;
-		BuildCharacterContextMenuUi();
-		InitializeMemoryPanel();
-		InitializeCapabilityPanel();
-		InitializeWebLearningCanvas();
-		_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
-		_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
-		_emotionPanel.Size = EmotionPanelMinSize;
-		_emotionPanel.ZIndex = 99;
-		_emotionText = GetNodeOrNull<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
-		_privateMindPanel = new Panel
+		try
 		{
-			Name = "PrivateMindPanel",
-			Visible = false,
-			CustomMinimumSize = PrivateMindPanelMinSize,
-			Size = PrivateMindPanelMinSize,
-			ZIndex = 98,
-		};
-		GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
-		BuildPrivateMindPanelUi();
-		// Identity Runtime vẫn chạy ở backend, nhưng panel UI đã retire.
-		// Không tạo DepthPanel để tránh một màn hình ít giá trị nhưng tốn diện tích/bảo trì.
-		_depthPanel = null;
-		_settingsPanel = new Panel
+			RunLogger.Initialize();
+			LoadSettingsState();
+			ApplyGlobalUiFontTheme();
+			ConfigureDesktopOverlayWindow();
+			_udp.Bind(_port);
+			_body   = GetNodeOrNull<CharacterBody2D>("AvatarBody") ?? GetNode<CharacterBody2D>("Monika2");
+			_avatar = GetNodeOrNull<AnimatedSprite2D>("AvatarBody/Avatar")
+				?? GetNodeOrNull<AnimatedSprite2D>("Monika2/Monika")
+				?? GetNodeOrNull<AnimatedSprite2D>("Monika2/Avatar")
+				?? _body.GetNode<AnimatedSprite2D>("Monika");
+			_bubble = GetNodeOrNull<Control>("AvatarBody/Avatar/BubbleContainer")
+				?? GetNodeOrNull<Control>("Monika2/Monika/BubbleContainer")
+				?? _avatar.GetNode<Control>("BubbleContainer");
+			_bubbleFrame = GetNodeOrNull<TextureRect>("AvatarBody/Avatar/BubbleContainer/TextureRect")
+				?? GetNodeOrNull<TextureRect>("Monika2/Monika/BubbleContainer/TextureRect");
+			_label  = GetNodeOrNull<RichTextLabel>("AvatarBody/Avatar/BubbleContainer/TextureRect/MessageLabel")
+				?? GetNodeOrNull<RichTextLabel>("Monika2/Monika/BubbleContainer/TextureRect/MessageLabel")
+				?? _bubble.GetNode<RichTextLabel>("TextureRect/MessageLabel");
+			_chatPanel = GetNode<Panel>("CanvasLayer/Control/ChatPanel");
+			_chatSendButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/SendButton");
+			_chatCloseButton = GetNode<Button>("CanvasLayer/Control/ChatPanel/HBoxContainer/CloseButton");
+			_characterContextMenu = GetNode<Panel>("CanvasLayer/Control/CharacterContextMenu");
+			_contextChatButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ChatButton");
+			_contextTouchButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/TouchButton");
+			_contextForceSpeakButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/ForceSpeakButton");
+			_contextEmotionButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/EmotionButton");
+			_contextCloseButton = GetNode<Button>("CanvasLayer/Control/CharacterContextMenu/VBoxContainer/CloseButton");
+			_characterContextMenu.CustomMinimumSize = CharacterContextMenuMinSize;
+			_characterContextMenu.Size = CharacterContextMenuMinSize;
+			_characterContextMenu.ZIndex = 100;
+			BuildCharacterContextMenuUi();
+			InitializeMemoryPanel();
+			InitializeCapabilityPanel();
+			InitializeWebLearningCanvas();
+			_emotionPanel = GetNode<Panel>("CanvasLayer/Control/EmotionPanel");
+			_emotionPanel.CustomMinimumSize = EmotionPanelMinSize;
+			_emotionPanel.Size = EmotionPanelMinSize;
+			_emotionPanel.ZIndex = 99;
+			_emotionText = GetNodeOrNull<RichTextLabel>("CanvasLayer/Control/EmotionPanel/VBoxContainer/ScrollContainer/EmotionText");
+			_privateMindPanel = new Panel
+			{
+				Name = "PrivateMindPanel",
+				Visible = false,
+				CustomMinimumSize = PrivateMindPanelMinSize,
+				Size = PrivateMindPanelMinSize,
+				ZIndex = 98,
+			};
+			GetNode<Control>("CanvasLayer/Control").AddChild(_privateMindPanel);
+			BuildPrivateMindPanelUi();
+			// Identity Runtime vẫn chạy ở backend, nhưng panel UI đã retire.
+			// Không tạo DepthPanel để tránh một màn hình ít giá trị nhưng tốn diện tích/bảo trì.
+			_depthPanel = null;
+			_settingsPanel = new Panel
+			{
+				Name = "SettingsPanel",
+				Visible = false,
+				CustomMinimumSize = SettingsPanelMinSize,
+				Size = SettingsPanelMinSize,
+				ZIndex = 98,
+			};
+			GetNode<Control>("CanvasLayer/Control").AddChild(_settingsPanel);
+			BuildSettingsPanelUi();
+			_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
+			BuildChatPanelUi();
+			BuildConversationUi();
+			_chatSendButton.Pressed += OnSendPressed;
+			_chatCloseButton.Pressed += CloseChatPanel;
+			_contextChatButton.Pressed += OnContextChatPressed;
+			_contextTouchButton.Pressed += OnContextTouchPressed;
+			_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
+			_contextEmotionButton.Pressed += OnContextEmotionPressed;
+			if (_contextConversationHistoryButton != null)
+				_contextConversationHistoryButton.Pressed += OnContextConversationHistoryPressed;
+			if (_contextPrivateMindButton != null)
+				_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
+			if (_contextSettingsButton != null)
+				_contextSettingsButton.Pressed += OnContextSettingsPressed;
+			if (_contextExitButton != null)
+				_contextExitButton.Pressed += OnContextExitPressed;
+			_contextCloseButton.Pressed += CloseCharacterContextMenu;
+			_chatInput.TextSubmitted += _ => OnSendPressed();
+			_chatInput.TextChanged += _ => MarkChatActivity();
+			_chatSend.ConnectToHost("127.0.0.1", 4243);
+			BuildEmotionPanelUi();
+			BuildTutorPanelUi();
+
+			// Cho phép kéo-di-chuyển các panel nổi (kéo từ vùng nền, không đụng nút con).
+			MakePanelDraggable(_emotionPanel);
+			MakePanelDraggable(_privateMindPanel);
+			MakePanelDraggable(_chatPanel);
+			MakePanelDraggable(_conversationHistoryPanel);
+			MakePanelDraggable(_tutorPanel);
+			MakePanelDraggable(_settingsPanel);
+			MakePanelDraggable(_memoryPanel);
+
+			var cs  = GetNodeOrNull<CollisionShape2D>("AvatarBody/CollisionShape2D")
+				?? GetNodeOrNull<CollisionShape2D>("Monika2/CollisionShape2D")
+				?? _body.GetNode<CollisionShape2D>("CollisionShape2D");
+
+			// Hoist offset của children vào body, rồi reset children về gốc
+			Vector2 startPos   = _avatar.GlobalPosition; // (646, 360) theo tscn
+			_avatar.Position   = Vector2.Zero;
+			cs.Position        = Vector2.Zero;
+			_body.GlobalPosition = startPos;
+
+			_spriteHalfSize = ((RectangleShape2D)cs.Shape).Size / 2;
+			InitializeCharacterScale();
+
+			// Đặt nhân vật sát đáy màn hình ngay từ đầu, không cần rơi
+			Vector2 screenSize = GetViewportRect().Size;
+			Vector2 groundedPos = _body.GlobalPosition;
+			_bubbleBasePos = _bubble.Position;
+			PromoteLegacySpeechBubbleToUiOverlay();
+			BuildLive2DSpeechBubble();
+			ConfigureLegacySpeechBubbleVisual();
+			ConfigureLive2DSpeechBubbleVisual();
+			SyncSpeechBubbleMode();
+			_motion = new MotionController(null);
+			_motion.Configure(_spriteHalfSize, _bubbleBasePos);
+			_bodyAutonomy = new LocalBodyAutonomy
+			{
+				TickMinSeconds = AutonomousIdleMoveMinSeconds,
+				TickMaxSeconds = AutonomousIdleMoveMaxSeconds,
+				EnableDebugLog = EnableBodyAutonomyDebugLog,
+			};
+			_motion.PlaceOnFloor(ref groundedPos, screenSize);
+			_body.GlobalPosition = groundedPos;
+			ResetAutonomousIdleMovementCooldown();
+			_velocityY = 0f;
+			_isFalling = false;
+
+			// Khởi tạo AudioStreamPlayer
+			_processes = new ErisProcessManager(OnVisionProcessStatusChanged, OnVisionProcessUnexpectedExit);
+			InitializeLive2DMode();
+
+			// Trạng thái mặc định khi khởi động
+			_avatar.Play("stand");
+			_label.Text = "Chờ lệnh từ AI...";
+			// Khởi động ẩn bong bóng; chỉ hiện khi Eris thực sự nói (xem ApplyTypewriterEffect).
+			_bubble.Visible = false;
+
+			_avatar.AnimationFinished += OnBounceAnimationFinished;
+			GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
+			if (AutoStartVision)
+				StartVisionProcess();
+		}
+		catch (Exception ex)
 		{
-			Name = "SettingsPanel",
-			Visible = false,
-			CustomMinimumSize = SettingsPanelMinSize,
-			Size = SettingsPanelMinSize,
-			ZIndex = 98,
-		};
-		GetNode<Control>("CanvasLayer/Control").AddChild(_settingsPanel);
-		BuildSettingsPanelUi();
-		_chatInput = GetNode<LineEdit>("CanvasLayer/Control/ChatPanel/HBoxContainer/LineEdit");
-		BuildChatPanelUi();
-		BuildConversationUi();
-	_chatSendButton.Pressed += OnSendPressed;
-	_chatCloseButton.Pressed += CloseChatPanel;
-	_contextChatButton.Pressed += OnContextChatPressed;
-	_contextTouchButton.Pressed += OnContextTouchPressed;
-	_contextForceSpeakButton.Pressed += OnContextForceSpeakPressed;
-	_contextEmotionButton.Pressed += OnContextEmotionPressed;
-	if (_contextConversationHistoryButton != null)
-		_contextConversationHistoryButton.Pressed += OnContextConversationHistoryPressed;
-	if (_contextPrivateMindButton != null)
-		_contextPrivateMindButton.Pressed += OnContextPrivateMindPressed;
-	if (_contextSettingsButton != null)
-		_contextSettingsButton.Pressed += OnContextSettingsPressed;
-	if (_contextExitButton != null)
-		_contextExitButton.Pressed += OnContextExitPressed;
-	_contextCloseButton.Pressed += CloseCharacterContextMenu;
-		_chatInput.TextSubmitted += _ => OnSendPressed();
-		_chatInput.TextChanged += _ => MarkChatActivity();
-		_chatSend.ConnectToHost("127.0.0.1", 4243);
-		BuildEmotionPanelUi();
-		BuildTutorPanelUi();
-
-		// Cho phép kéo-di-chuyển các panel nổi (kéo từ vùng nền, không đụng nút con).
-		MakePanelDraggable(_emotionPanel);
-		MakePanelDraggable(_privateMindPanel);
-		MakePanelDraggable(_chatPanel);
-		MakePanelDraggable(_conversationHistoryPanel);
-		MakePanelDraggable(_tutorPanel);
-		MakePanelDraggable(_settingsPanel);
-		MakePanelDraggable(_memoryPanel);
-
-		var cs  = GetNode<CollisionShape2D>("Monika2/CollisionShape2D");
-
-		// Hoist offset của children vào body, rồi reset children về gốc
-		Vector2 startPos   = _monika.GlobalPosition; // (646, 360) theo tscn
-		_monika.Position   = Vector2.Zero;
-		cs.Position        = Vector2.Zero;
-		_body.GlobalPosition = startPos;
-
-		_spriteHalfSize = ((RectangleShape2D)cs.Shape).Size / 2;
-		InitializeCharacterScale();
-
-		// Đặt nhân vật sát đáy màn hình ngay từ đầu, không cần rơi
-		Vector2 screenSize = GetViewportRect().Size;
-		Vector2 groundedPos = _body.GlobalPosition;
-		_bubbleBasePos = _bubble.Position;
-		PromoteLegacySpeechBubbleToUiOverlay();
-		BuildLive2DSpeechBubble();
-		ConfigureLegacySpeechBubbleVisual();
-		ConfigureLive2DSpeechBubbleVisual();
-		SyncSpeechBubbleMode();
-		_audio = new BodyAudioController();
-		_audio.Attach(this, () => _motion?.CurrentAction ?? "stand");
-		_motion = new MotionController(PlaySoundForAnimation);
-		_motion.Configure(_spriteHalfSize, _bubbleBasePos);
-		_bodyAutonomy = new LocalBodyAutonomy
-		{
-			TickMinSeconds = AutonomousIdleMoveMinSeconds,
-			TickMaxSeconds = AutonomousIdleMoveMaxSeconds,
-			EnableDebugLog = EnableBodyAutonomyDebugLog,
-		};
-		_motion.PlaceOnFloor(ref groundedPos, screenSize);
-		_body.GlobalPosition = groundedPos;
-		ResetAutonomousIdleMovementCooldown();
-		_velocityY = 0f;
-		_isFalling = false;
-
-		// Khởi tạo AudioStreamPlayer
-		_processes = new ErisProcessManager(OnVisionProcessStatusChanged, OnVisionProcessUnexpectedExit);
-		InitializeLive2DMode();
-
-		// Trạng thái mặc định khi khởi động
-		_monika.Play("stand");
-		_label.Text = "Chờ lệnh từ AI...";
-		// Khởi động ẩn bong bóng; chỉ hiện khi Eris thực sự nói (xem ApplyTypewriterEffect).
-		_bubble.Visible = false;
-
-		_monika.AnimationFinished += OnBounceAnimationFinished;
-		GD.Print($"[Ready] Đang lắng nghe UDP cổng 4242. HalfSize={_spriteHalfSize}");
-		if (AutoStartVision)
-			StartVisionProcess();
+			GD.PrintErr($"[FATAL CRASH in _Ready] {ex}");
+			throw;
+		}
 	}
 
 	private void ConfigureDesktopOverlayWindow()
@@ -663,14 +653,25 @@ public partial class UdpListener : Node2D
 			_shutdownReason = reason;
 	}
 
+	private void TerminateApplication(string reason)
+	{
+		MarkShutdownReason(reason);
+		CloseCharacterContextMenu();
+		ShutdownLive2DMode();
+		StopRichChatPortal();
+		StopVisionProcess();
+		try { _udp?.Close(); } catch { }
+		try { _chatSend?.Close(); } catch { }
+		try { RunLogger.Shutdown(); } catch { }
+		GetTree()?.Quit();
+		System.Environment.Exit(0);
+	}
+
 	public override void _Notification(int what)
 	{
 		if (what == NotificationWMCloseRequest)
 		{
-			MarkShutdownReason("window close request");
-			CloseCharacterContextMenu();
-			StopVisionProcess();
-			GetTree().Quit();
+			TerminateApplication("window close request");
 		}
 	}
 
@@ -943,63 +944,71 @@ public partial class UdpListener : Node2D
 
 	public override void _Process(double delta)
 	{
-		float d = (float)delta;
-		Vector2 pos = _body.Position;
-		Vector2 screenSize = GetViewportRect().Size;
-		if (_isLive2DMode)
+		try
 		{
-			SyncLive2DBodyAnchor();
-			pos = _body.Position;
-		}
-		else if (_isDraggingCharacter)
-		{
-			pos = ClampDraggedPosition(pos, screenSize);
-			_body.Position = pos;
-		}
-		else
-		{
-			UpdateBodyTimeline();
-			_motion.Step(ref pos, screenSize, d);
-			_body.Position = pos;
-			UpdateLocalBodyAutonomy(d);
-		}
-		_motion.ApplyVisualState(_monika, _bubble, _body.Position, screenSize);
-		ApplyLive2DBubbleVisualState();
-		SyncLegacySpeechBubbleOverlayTransform();
-		ClampBubbleToScreen();
-		UpdateMousePassthrough();
-		if (_privateMindPanel != null && _privateMindPanel.Visible)
-		{
-			UpdatePrivateMindDecorLayout();
-			UpdatePrivateMindScrollDecor();
-		}
+			float d = (float)delta;
+			Vector2 pos = _body.Position;
+			Vector2 screenSize = GetViewportRect().Size;
+			if (_isLive2DMode)
+			{
+				SyncLive2DBodyAnchor();
+				pos = _body.Position;
+			}
+			else if (_isDraggingCharacter)
+			{
+				pos = ClampDraggedPosition(pos, screenSize);
+				_body.Position = pos;
+			}
+			else
+			{
+				UpdateBodyTimeline();
+				_motion.Step(ref pos, screenSize, d);
+				_body.Position = pos;
+				UpdateLocalBodyAutonomy(d);
+			}
+			_motion.ApplyVisualState(_avatar, _bubble, _body.Position, screenSize);
+			ApplyLive2DBubbleVisualState();
+			SyncLegacySpeechBubbleOverlayTransform();
+			ClampBubbleToScreen();
+			UpdateMousePassthrough();
+			if (_privateMindPanel != null && _privateMindPanel.Visible)
+			{
+				UpdatePrivateMindDecorLayout();
+				UpdatePrivateMindScrollDecor();
+			}
 
-		UpdateChatPanelAutoHide();
-		UpdateBubbleAutoHide();
-		UpdateTutorPanelAutoHide();
-		TickSettingsPanelRuntimeStatus();
-		TickMemoryPanelStatus();
-		TickCapabilityPanelStatus();
-		TickWebLearningCanvas();
-		TickRuntimePresencePanel();
-		TickConversationUi();
-		TickRichChatPortal();
-		TickLiveWorkspaceUi();
+			UpdateChatPanelAutoHide();
+			UpdateBubbleAutoHide();
+			UpdateTutorPanelAutoHide();
+			TickSettingsPanelRuntimeStatus();
+			TickMemoryPanelStatus();
+			TickCapabilityPanelStatus();
+			TickWebLearningCanvas();
+			TickRuntimePresencePanel();
+			TickConversationUi();
+			TickRichChatPortal();
+			TickLiveWorkspaceUi();
 
-		// Một số tick phía trên có thể auto-hide/show panel. Đồng bộ hit-test lần
-		// nữa ngay trong cùng frame để không giữ một rectangle click cũ.
-		UpdateMousePassthrough();
+			// Một số tick phía trên có thể auto-hide/show panel. Đồng bộ hit-test lần
+			// nữa ngay trong cùng frame để không giữ một rectangle click cũ.
+			UpdateMousePassthrough();
 
-		while (_udp.GetAvailablePacketCount() > 0)
+			while (_udp.GetAvailablePacketCount() > 0)
+			{
+				string raw = Encoding.UTF8.GetString(_udp.GetPacket());
+				if (HandleLive2DControlPacket(raw))
+					continue;
+				// V5: nội dung panel không đi vào bộ phân tích thoại/Live2D.
+				if (TryHandleWorkspaceLivePacket(raw) || TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))
+					continue;
+				ForwardPacketToLive2D(raw);
+				ParseAndApply(raw);
+			}
+		}
+		catch (Exception ex)
 		{
-			string raw = Encoding.UTF8.GetString(_udp.GetPacket());
-			if (HandleLive2DControlPacket(raw))
-				continue;
-			// V5: nội dung panel không đi vào bộ phân tích thoại/Live2D.
-			if (TryHandleWorkspaceLivePacket(raw) || TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))
-				continue;
-			ForwardPacketToLive2D(raw);
-			ParseAndApply(raw);
+			GD.PrintErr($"[CRASH in _Process] {ex}");
+			throw;
 		}
 	}
 
@@ -1063,17 +1072,6 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		if (mouseEvent.Pressed && (mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown))
-		{
-			if (!TryGetInteractivePanelCaptureRect(mouseEvent.Position, out _) && IsMouseOverCharacter(mouseEvent.Position))
-			{
-				float delta = mouseEvent.ButtonIndex == MouseButton.WheelUp ? 0.05f : -0.05f;
-				AdjustCharacterScale(delta);
-				GetViewport().SetInputAsHandled();
-				return;
-			}
-		}
-
 		if (_grabModeArmed && mouseEvent.ButtonIndex == MouseButton.Left)
 		{
 			if (mouseEvent.Pressed && IsMouseOverCharacter(mouseEvent.Position))
@@ -1093,6 +1091,17 @@ public partial class UdpListener : Node2D
 
 		if (!mouseEvent.Pressed)
 			return;
+
+		if (mouseEvent.Pressed && (mouseEvent.ButtonIndex == MouseButton.WheelUp || mouseEvent.ButtonIndex == MouseButton.WheelDown))
+		{
+			if (!TryGetInteractivePanelCaptureRect(mouseEvent.Position, out _) && IsMouseOverCharacter(mouseEvent.Position))
+			{
+				float delta = mouseEvent.ButtonIndex == MouseButton.WheelUp ? 0.05f : -0.05f;
+				AdjustCharacterScale(delta);
+				GetViewport().SetInputAsHandled();
+				return;
+			}
+		}
 
 		if (mouseEvent.ButtonIndex == MouseButton.Right)
 		{
@@ -1485,10 +1494,10 @@ public partial class UdpListener : Node2D
 
 	private void SyncLegacySpeechBubbleOverlayTransform()
 	{
-		if (!_speechBubblePromotedToOverlay || _bubble == null || _body == null || _monika == null || _isLive2DMode)
+		if (!_speechBubblePromotedToOverlay || _bubble == null || _body == null || _avatar == null || _isLive2DMode)
 			return;
 
-		float inheritedScaleX = Mathf.IsZeroApprox(_monika.Scale.X) ? 1f : _monika.Scale.X;
+		float inheritedScaleX = Mathf.IsZeroApprox(_avatar.Scale.X) ? 1f : _avatar.Scale.X;
 		Vector2 motionLocalPosition = _bubble.Position;
 		_bubble.Scale = Vector2.One;
 		_bubble.GlobalPosition = new Vector2(
@@ -1585,12 +1594,8 @@ public partial class UdpListener : Node2D
 
 	private void OnContextExitPressed()
 	{
-		MarkShutdownReason("context menu exit");
-		// Thoát hẳn ERIS: đóng menu, dừng tiến trình con (vision...) rồi tắt app.
-		CloseCharacterContextMenu();
 		GD.Print("[Exit] Người dùng yêu cầu thoát ERIS qua context menu.");
-		StopVisionProcess();
-		GetTree().Quit();
+		TerminateApplication("context menu exit");
 	}
 
 	private void ToggleEmotionPanel()
@@ -4028,7 +4033,7 @@ public partial class UdpListener : Node2D
 	private void InitializeCharacterScale()
 	{
 		_characterScale = ReadSavedCharacterScale();
-		if (_monika != null)
+		if (_avatar != null)
 			ApplyCharacterScale(_characterScale);
 	}
 
@@ -4048,11 +4053,11 @@ public partial class UdpListener : Node2D
 	private void ApplyCharacterScale(float scale)
 	{
 		_characterScale = Mathf.Clamp(scale, 0.2f, 3.0f);
-		if (_monika != null)
+		if (_avatar != null)
 		{
-			float flipX = Mathf.Sign(_monika.Scale.X);
+			float flipX = Mathf.Sign(_avatar.Scale.X);
 			if (Mathf.IsZeroApprox(flipX)) flipX = 1f;
-			_monika.Scale = new Vector2(flipX * _characterScale, _characterScale);
+			_avatar.Scale = new Vector2(flipX * _characterScale, _characterScale);
 		}
 	}
 
@@ -4312,7 +4317,7 @@ public partial class UdpListener : Node2D
 		else
 			SyncLegacySpeechBubbleOverlayTransform();
 		ScheduleTransientOverlayRefresh();
-	
+
 		// Legacy 2D keeps the complete, scrollable text. The Live2D companion
 		// shows a compact preview while the full utterance stays in history.
 		// Sentence tracking follows TTS without dimming the companion's text.
@@ -4569,26 +4574,26 @@ public partial class UdpListener : Node2D
 		// Climb phases
 		if (_climbPhase == ClimbPhase.GoingToWall)
 		{
-			if (_monika.Animation != "stand_walk") _monika.Play("stand_walk");
+			if (_avatar.Animation != "stand_walk") _avatar.Play("stand_walk");
 			float scaleX = _climbUpWallX > _body.Position.X ? -1f : 1f;
-			_monika.Scale = new Vector2(scaleX * _characterScale, _characterScale);
+			_avatar.Scale = new Vector2(scaleX * _characterScale, _characterScale);
 			_bubble.Scale = new Vector2(scaleX, 1f);
 			_bubble.Position = new Vector2(_bubbleBasePos.X * scaleX * _characterScale, _bubbleBasePos.Y * _characterScale);
 			return;
 		}
 		if (_climbPhase == ClimbPhase.Up || _climbPhase == ClimbPhase.Down)
 		{
-			if (_monika.Animation != "climb") _monika.Play("climb");
+			if (_avatar.Animation != "climb") _avatar.Play("climb");
 			float wallX = _climbPhase == ClimbPhase.Up ? _climbUpWallX : _climbDownWallX;
 			float scaleX = wallX < GetViewportRect().Size.X / 2f ? 1f : -1f;
-			_monika.Scale = new Vector2(scaleX * _characterScale, _characterScale);
+			_avatar.Scale = new Vector2(scaleX * _characterScale, _characterScale);
 			_bubble.Scale = new Vector2(scaleX, 1f);
 			_bubble.Position = new Vector2(_bubbleBasePos.X * scaleX * _characterScale, _bubbleBasePos.Y * _characterScale);
 			return;
 		}
 		if (_climbPhase == ClimbPhase.Top || _climbPhase == ClimbPhase.TopHold)
 		{
-			if (_monika.Animation != "climb_top") _monika.Play("climb_top");
+			if (_avatar.Animation != "climb_top") _avatar.Play("climb_top");
 			ApplyFacingForTopClimb();
 			return;
 		}
@@ -4596,16 +4601,16 @@ public partial class UdpListener : Node2D
 		// Normal
 		if (_isFalling)
 		{
-			if (_monika.Animation != "air")
+			if (_avatar.Animation != "air")
 			{
-				_monika.Play("air");
+				_avatar.Play("air");
 				GD.Print("[Anim] Chuyển sang animation: air (rơi tự do)");
 			}
 		}
 		else
 		{
-			if (_monika.Animation != _currentAction)
-				_monika.Play(_currentAction);
+			if (_avatar.Animation != _currentAction)
+				_avatar.Play(_currentAction);
 			if (_isWalking)
 			{
 				ApplyHorizontalFacing(_moveDir >= 0f ? 1 : -1);
@@ -4621,7 +4626,7 @@ public partial class UdpListener : Node2D
 	{
 		_facingDir = facingDir >= 0 ? 1 : -1;
 		float flipX = _facingDir == 1 ? -1f : 1f;
-		_monika.Scale = new Vector2(flipX * _characterScale, _characterScale);
+		_avatar.Scale = new Vector2(flipX * _characterScale, _characterScale);
 		_bubble.Scale = new Vector2(flipX, 1f);
 		_bubble.Position = new Vector2(_bubbleBasePos.X * flipX * _characterScale, _bubbleBasePos.Y * _characterScale);
 	}
@@ -5018,7 +5023,6 @@ public partial class UdpListener : Node2D
 				_ttsAudioIsPlaying = true;
 				_ttsBodyAudioTurnId = turnId;
 				_ttsBodyAudioSegmentCount = Math.Max(segmentCount, segmentId + 1);
-				_audio?.SetTtsExclusiveMute(true);
 
 				float durationMs = 0f;
 				if (root.TryGetProperty("audio_duration_ms", out JsonElement durNode) && durNode.TryGetSingle(out float parsedDur))
@@ -5077,7 +5081,6 @@ public partial class UdpListener : Node2D
 	{
 		_ttsBodyAudioTurnId = "";
 		_ttsBodyAudioSegmentCount = 1;
-		_audio?.SetTtsExclusiveMute(false);
 	}
 
 	private static int ReadTtsSegmentCount(JsonElement root, int segmentId)
@@ -6831,7 +6834,7 @@ public partial class UdpListener : Node2D
 		{
 			_climbPhase = ClimbPhase.None;
 			_climbTopTargetX = float.NaN;
-			_monika.Scale = new Vector2(_characterScale, _characterScale);
+			_avatar.Scale = Vector2.One;
 			_bubble.Scale = Vector2.One;
 			_velocityY = 0f;
 			_isFalling = false;
@@ -6851,7 +6854,6 @@ public partial class UdpListener : Node2D
 			return;
 		}
 
-		PlaySoundForAnimation(animation);
 	}
 
 	private void StartClimb()
@@ -6878,7 +6880,6 @@ public partial class UdpListener : Node2D
 			: float.NaN;
 
 		_climbPhase = ClimbPhase.GoingToWall;
-		PlaySoundForAnimation("climb");
 	}
 
 	private void UpdateClimbMovement(ref Vector2 pos, Vector2 screenSize, float d)
@@ -6950,7 +6951,7 @@ public partial class UdpListener : Node2D
 					_currentAction = "stand";
 					_isWalking     = false;
 					_climbTopTargetX = float.NaN;
-					_monika.Scale  = new Vector2(_characterScale, _characterScale);
+					_avatar.Scale  = new Vector2(_characterScale, _characterScale);
 					_bubble.Scale  = Vector2.One;
 				}
 				break;
@@ -6966,25 +6967,20 @@ public partial class UdpListener : Node2D
 	{
 	}
 
-	private void PlaySoundForAnimation(string animation)
-	{
-		_audio?.PlayForAnimation(animation);
-	}
-
 	private void ApplyAnimation(string animation)
 	{
 		GD.Print($"[Anim] Áp dụng animation: \"{animation}\"");
 		if (animation == "stand_walk")
 		{
 			_isWalking = true;
-			_monika.Play("stand_walk");
+			_avatar.Play("stand_walk");
 			GD.Print("[Anim] Chế độ đi bộ BẬT.");
 		}
 		else
 		{
 			_isWalking = false;
-			_monika.Scale = new Vector2(_characterScale, _characterScale);
-			_monika.Play(animation);
+			_avatar.Scale = new Vector2(_characterScale, _characterScale);
+			_avatar.Play(animation);
 			GD.Print($"[Anim] Chế độ đi bộ TẮT. Đang phát: {animation}");
 		}
 	}

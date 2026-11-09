@@ -302,9 +302,9 @@ class InitiativeEngine:
                 if key:
                     existential_desires[key] = payload
 
-        def existential_value(kind: str, field: str = "pressure") -> float:
+        def existential_value(kind: str, field_name: str = "pressure") -> float:
             payload = existential_desires.get(kind, {})
-            return _clamp01(payload.get(field, 0.0)) if isinstance(payload, Mapping) else 0.0
+            return _clamp01(payload.get(field_name, 0.0)) if isinstance(payload, Mapping) else 0.0
 
         def existential_refs(kind: str) -> tuple[str, ...]:
             payload = existential_desires.get(kind, {})

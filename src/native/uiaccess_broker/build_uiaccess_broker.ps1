@@ -7,12 +7,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$sourceRoot = Join-Path $PSScriptRoot "../.."
 python -m pip install pyinstaller
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed." }
 pyinstaller --noconfirm --clean --onefile `
   --name eris-uiaccess-broker `
-  --manifest ".\native\uiaccess_broker\eris-uiaccess-broker.manifest" `
-  ".\native\uiaccess_broker\server.py" `
+  --paths $sourceRoot `
+  --manifest (Join-Path $PSScriptRoot "eris-uiaccess-broker.manifest") `
+  (Join-Path $PSScriptRoot "server.py") `
   --distpath $OutputDir
+if ($LASTEXITCODE -ne 0) { throw "UIAccess broker build failed." }
 
 $exe = Join-Path $OutputDir "eris-uiaccess-broker.exe"
 $cert = Get-ChildItem "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction SilentlyContinue

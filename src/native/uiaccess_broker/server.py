@@ -11,6 +11,7 @@ không tự nhiên có quyền UIAccess, vì Windows không dễ bị thuyết p
 import json
 import os
 import sys
+from multiprocessing import AuthenticationError
 from pathlib import Path
 from multiprocessing.connection import Listener
 from typing import Any
@@ -78,9 +79,12 @@ class UIAccessBrokerServer:
         listener = Listener(self.pipe, family="AF_PIPE", authkey=self.authkey)
         try:
             while True:
-                conn = listener.accept()
                 try:
-                    raw = conn.recv_bytes()
+                    conn = listener.accept()
+                except AuthenticationError:
+                    continue
+                try:
+                    raw = conn.recv_bytes(maxlength=65536)
                     request = BrokerRequest.from_mapping(json.loads(raw.decode("utf-8")))
                     response = self.handle(request)
                     conn.send_bytes(json.dumps(response.to_dict(), ensure_ascii=False).encode("utf-8"))

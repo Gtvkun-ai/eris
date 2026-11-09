@@ -68,7 +68,8 @@ def validate_lesson(raw: dict, *, group_id: str, node_id: str, title: str) -> di
         elif kind == "code":
             language = _string(item.get("language", "text"), 24).lower()
             block["language"] = language if language in LANGUAGES else "text"
-            block["text"] = _string(item.get("text"), 2400)
+            _string(item.get("text"), 2400)
+            block["text"] = item["text"]
         elif kind == "check":
             block["question"] = _string(item.get("question"), 700)
             block["answer"] = _string(item.get("answer"), 900)

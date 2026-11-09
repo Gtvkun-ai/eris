@@ -171,7 +171,7 @@ def build_soak_scenario(*, turns: int = 70, restart_every: int = 10) -> Scenario
     arc_templates = (
         (
             "Tôi đang theo dõi checkpoint {arc}: mục tiêu là giữ continuity cho module Atlas-{arc}.",
-            ("nắm checkpoint và module",), (), (f"module=Atlas-{{arc}}",),
+            ("nắm checkpoint và module",), (), ("module=Atlas-{arc}",),
         ),
         (
             "Đổi nhịp một chút: tôi vừa làm đổ cà phê cạnh bàn phím, chỉ than thôi chứ chưa cần giải pháp.",

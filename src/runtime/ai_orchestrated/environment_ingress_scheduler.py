@@ -34,11 +34,6 @@ from .environment_event_bus import NormalizedEnvironmentEvent
 
 _CHROMIUM_PROCESSES = {"chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"}
 _NATIVE_SOURCES = {"winevent", "foreground_reconcile"}
-_round=70
-56
-s_v5_round=49
-_round=42
-nd=35
 
 
 class EnvironmentPriority(IntEnum):

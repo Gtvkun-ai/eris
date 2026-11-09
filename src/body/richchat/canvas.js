@@ -3,6 +3,16 @@
 // decisions belong to runtime.learning_canvas in the Python backend.
 (() => {
   const byId = id => document.getElementById(id);
+  const systemTheme = matchMedia('(prefers-color-scheme: dark)');
+  function syncTheme() {
+    let theme = 'auto';
+    try {theme = localStorage.getItem('eris.studio.theme') || 'auto';} catch (_) {}
+    document.body.classList.toggle('dark', theme === 'dark' || (theme === 'auto' && systemTheme.matches));
+  }
+  syncTheme();
+  systemTheme.addEventListener('change', syncTheme);
+  window.addEventListener('storage', syncTheme);
+  byId('library').open = matchMedia('(min-width: 861px)').matches;
   const state = {
     snapshot: null, selected: '', mode: 'map', pending: null, desiredNode: '',
     details: new Map(), activities: new Map(), drafts: new Map(), answers: new Map(),
@@ -34,9 +44,9 @@
   }
   function workspace() {return state.snapshot?.graph_workspace;}
   function graph() {return workspace()?.graph || null;}
-  function graphMode() {return !!graph() && workspace()?.selected_group_id !== state.snapshot?.group_id;}
+  function graphMode() {return !!graph();}
   function activeNodes() {
-    if (!graphMode()) return state.snapshot?.nodes || [];
+    if (!graph()) return [];
     // P3.5: chỉ vẽ đường đã đi và tối đa 4 lựa chọn ngay trước mắt.
     // Các tầng khác tồn tại trên backend, nhưng không phủ kín màn hình.
     const nodes = graph().nodes || [];
@@ -144,10 +154,10 @@
           state.playback = null;
         }
         observePlayback(snapshot.playback);
-        if (graphMode()) {
+        if (graph()) {
           state.selected = graph()?.selected_node_id || state.selected;
-        } else if (!state.pending || state.pending.action !== 'navigate') {
-          state.selected = snapshot.focus.node_id || state.selected;
+        } else {
+          state.selected = '';
         }
         if (previous?.focus.node_id !== snapshot.focus.node_id && !state.pending)
           state.mode = 'detail';
@@ -242,14 +252,11 @@
     if (navDebounce) clearTimeout(navDebounce);
     navDebounce = setTimeout(() => {
       navDebounce = null;
-      if (graphMode()) {
+      if (graph()) {
         if (id !== graph()?.selected_node_id)
           send('graph_select',{group_id:graph().group_id,node_id:id});
         return;
       }
-      const focus = state.snapshot?.focus?.node_id;
-      if (id !== focus) send('navigate', {node_id:id});
-      else if (!state.details.has(id)) send('open', {node_id:id});
     }, 120);
   }
   function renderMap() {
@@ -257,7 +264,7 @@
     map.replaceChildren();
     const nodes = activeNodes();
     byId('nodeCount').textContent = nodes.length ? `${nodes.length} kiến thức` : '—';
-    if (!nodes.length) {map.append(el('div','placeholder','Chưa có bản đồ. Nhấn Làm mới để tải lại.')); return;}
+    if (!nodes.length) {map.append(el('div','placeholder','Chưa có bản đồ. Nhấn "+ Tạo bản đồ" ở góc trái để bắt đầu chủ đề mới.')); return;}
     const levels = [...new Set(nodes.map(n => n.level || 0))].sort((a,b) => a-b);
     for (const level of levels) {
       const group = el('section','map-layer');
@@ -301,8 +308,9 @@
     // Overlay is positioned in the same scroll content coordinates as the rows.
     const view = viewport.getBoundingClientRect();
     const rects = new Map([...map.querySelectorAll('[data-node]')].map(button => [button.dataset.node,button.getBoundingClientRect()]));
-    const width = Math.max(map.scrollWidth + 40, viewport.clientWidth);
-    const height = Math.max(map.scrollHeight + 50,viewport.clientHeight);
+    if (!viewport.clientWidth) return;
+    const width = Math.max(map.offsetWidth + 2 * map.offsetLeft, viewport.clientWidth);
+    const height = Math.max(map.offsetHeight + 2 * map.offsetTop, viewport.clientHeight);
     svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
     svg.style.width = width + 'px'; svg.style.height = height + 'px';
     const position = (rect, bottom) => ({x:rect.left - view.left + viewport.scrollLeft + rect.width/2,
@@ -316,7 +324,6 @@
         const line = document.createElementNS(ns,'path');
         const mid = (a.y + b.y) / 2;
         line.setAttribute('d',`M ${a.x} ${a.y} C ${a.x} ${mid} ${b.x} ${mid} ${b.x} ${b.y}`);
-        line.setAttribute('fill','none');line.setAttribute('stroke','#d8afca');line.setAttribute('stroke-width','1.7');
         svg.append(line);
       }
     }
@@ -551,8 +558,8 @@
     if (oldEditor && currentActivity()) state.drafts.set(currentActivity().activity_id,oldEditor.value);
     container.replaceChildren();
     const node = nodeById(state.selected);
-    byId('focusState').textContent = node ? (graphMode() ? 'Nhánh khám phá' : labels[node.state] || 'Có thể học') : '—';
-    if (!node) {addText(container,'div','placeholder','Chọn một nút trên bản đồ để đọc nội dung và luyện tập.');return;}
+    byId('focusState').textContent = node ? 'Nhánh khám phá' : '—';
+    if (!node) {addText(container,'div','placeholder','Chưa có nội dung. Chọn một mục trên bản đồ hoặc tạo chủ đề mới để bắt đầu.');return;}
     const head = el('div','detail-head');container.append(head);
     addText(head,'span','eyebrow','KIẾN THỨC / '+(node.level + 1));
     addText(head,'h3','',node.title);
@@ -670,7 +677,7 @@
       if (due.length > 0) {
         fsrs.hidden = false;
         fsrs.replaceChildren();
-        fsrs.append(el('span','review-tag',`⏰ Ôn tập (${mode}): ${due.length} đến hạn`));
+        fsrs.append(el('span','review-tag',`Ôn tập (${mode}) · ${due.length} đến hạn`));
         for (const item of due.slice(0, 6)) {
           const title = nodeById(item.kp_id)?.title || item.kp_id.split(':').pop() || item.kp_id;
           const pill = el('button','review-pill',title);
@@ -707,25 +714,30 @@
   }
   function render() {
     const snap=state.snapshot;
-    byId('pathTitle').textContent = graphMode() ? graph().title : (snap?.title || 'Dependency Injection · Java');
-    byId('workspaceType').textContent = graphMode() ? 'ERIS / TRI THỨC MỞ' : 'ERIS TUTOR / JAVA';
-    byId('learningLegend').classList.toggle('hidden-by-mode',graphMode());
+    const currentGraph = graph();
+    byId('pathTitle').textContent = currentGraph ? currentGraph.title : 'Chưa chọn chủ đề';
+    byId('workspaceType').textContent = currentGraph ? 'Bản đồ chủ đề' : 'Không gian học';
+    byId('learningLegend').classList.toggle('hidden-by-mode', !!currentGraph);
     const groupSelect = byId('topicSelect');
-    const items = workspace()?.groups || [{group_id:'java-di',title:'Java · Dependency Injection'}];
+    const items = workspace()?.groups || [];
     const signature = items.map(item => item.group_id+'|'+item.title).join(';');
     if (groupSelect.dataset.signature !== signature) {
-      groupSelect.replaceChildren(...items.map(item=>{const opt=el('option','',item.title);opt.value=item.group_id;return opt;}));
+      if (!items.length) {
+        groupSelect.replaceChildren(el('option','','Chưa có chủ đề'));
+      } else {
+        groupSelect.replaceChildren(...items.map(item=>{const opt=el('option','',item.title);opt.value=item.group_id;return opt;}));
+      }
       groupSelect.dataset.signature=signature;
     }
-    groupSelect.value=workspace()?.selected_group_id || snap?.group_id || 'java-di';
-    byId('pin').textContent = graphMode() ? 'Chế độ khám phá' : (snap?.focus?.pinned ? 'Đã ghim' : 'Theo Eris');
-    byId('assessment').textContent = graphMode() ? 'Mở từng nhánh · chưa chấm mastery' : 'Theo dõi từ bài làm thực tế';
+    groupSelect.value = workspace()?.selected_group_id || (items.length ? items[0].group_id : '');
+    byId('pin').textContent = currentGraph ? 'Chế độ khám phá' : 'Theo Eris';
+    byId('assessment').textContent = currentGraph ? 'Khám phá từng nhánh theo thứ tự bạn chọn' : 'Chọn hoặc tạo chủ đề để bắt đầu';
     const mobile=state.mode==='detail';
     byId('workspace').classList.toggle('detail-mode', mobile);
     byId('mapTab').classList.toggle('active',!mobile);
     byId('detailTab').classList.toggle('active',mobile);
-    byId('mapTab').setAttribute('aria-selected',String(!mobile));
-    byId('detailTab').setAttribute('aria-selected',String(mobile));
+    byId('mapTab').setAttribute('aria-pressed',String(!mobile));
+    byId('detailTab').setAttribute('aria-pressed',String(mobile));
     renderMap();renderDetail();renderSpeaking();renderContinuity();renderButtons();
   }
   byId('refresh').addEventListener('click',()=>send('open'));
@@ -752,7 +764,7 @@
     if (document.hidden || state.pending || !state.snapshot || state.offline ||
         now-state.lastActivityAt>90000 || now-state.lastHeartbeatAt<30000) return;
     const group_id=workspace()?.selected_group_id;
-    const node_id=graphMode()?graph()?.selected_node_id:state.snapshot?.focus?.node_id;
+    const node_id=graph()?graph()?.selected_node_id:'';
     if (!group_id || !node_id) return;
     state.lastHeartbeatAt=now;
     send('study_heartbeat',{group_id,node_id});

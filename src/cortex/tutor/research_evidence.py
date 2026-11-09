@@ -272,7 +272,7 @@ def _extract_sources(text: str, retrieved_at: float) -> list[EvidenceSource]:
             continue
         seen.add(item)
         parsed = urlparse(item if item.startswith("http") else "")
-        domain = parsed.netloc.lower().lstrip("www.") if parsed.netloc else ""
+        domain = parsed.netloc.lower().removeprefix("www.") if parsed.netloc else ""
         source_type = _classify_source(domain, item)
         trust = _trust_tier(source_type, domain)
         out.append(EvidenceSource(

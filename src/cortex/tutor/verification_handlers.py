@@ -126,10 +126,10 @@ def verify_source_allowlist(sources: Iterable[Any], *, mode: str = "research") -
     domains: list[str] = []
     for source in source_list:
         source_type = str(_get(source, "source_type", "unknown") or "unknown")
-        domain = str(_get(source, "domain", "") or "").lower().lstrip("www.")
+        domain = str(_get(source, "domain", "") or "").lower().removeprefix("www.")
         if not domain:
             url = str(_get(source, "url", "") or "")
-            domain = urlparse(url).netloc.lower().lstrip("www.") if url else ""
+            domain = urlparse(url).netloc.lower().removeprefix("www.") if url else ""
         if domain:
             domains.append(domain)
         if source_type in _GOOD_SOURCE_TYPES:

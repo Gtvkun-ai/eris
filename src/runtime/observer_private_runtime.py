@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import Future
 
 from cortex.daydream_consolidation import DaydreamPacket
 from cortex.observer_contracts import ObserverFrame, SignalSnapshot, stable_hash

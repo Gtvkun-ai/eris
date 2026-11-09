@@ -1033,12 +1033,12 @@ class MaintenanceService:
                 clear()
                 return
             except Exception as exc:
-                self._log("debug", "maintenance container clear failed for %s: %s", name, exc)
+                _LOG.debug("maintenance container clear failed for %s: %s", name, exc)
         if value is not None:
             try:
                 setattr(owner, name, type(value)())
             except Exception as exc:
-                self._log("debug", "maintenance container replacement failed for %s: %s", name, exc)
+                _LOG.debug("maintenance container replacement failed for %s: %s", name, exc)
 
     @staticmethod
     def _atomic_json(path: Path, payload: Any) -> None:

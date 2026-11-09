@@ -1,11 +1,13 @@
 import json
 import re
-from llm.json_sanitizer import strip_reasoning_envelope
 import unicodedata
 
 from actions.contracts import VALID_SYSTEM_ACTIONS
+from actions.capability_registry import encode_capability_arguments, validate_capability_arguments
 from failure_meta import normalize_failure_meta
 from llm.contracts import VALID_ANIMATIONS
+from llm.json_sanitizer import strip_reasoning_envelope
+from llm.no_fallback_policy import no_fallback_mode_enabled
 
 # Model thường mô tả biểu cảm bằng từ ngữ semantic (soft_smile, subtle_apology)
 # trong field ``animation`` dù Godot chỉ hiểu pose vật lý như stand/read. Thay vì
@@ -20,7 +22,6 @@ _SEMANTIC_ANIMATION_STAGE_ALIASES: dict[str, dict[str, str]] = {
     "gentle_pause": {"nonverbal_cue": "soft_breath", "delivery_hint": "low_quiet"},
     "curious": {"nonverbal_cue": "tilt_head", "stage_motion": "tilt_head", "delivery_hint": "curious_soft"},
 }
-from runtime.no_fallback_policy import no_fallback_mode_enabled
 
 # ParserGroundingMixin chỉ chuẩn hóa cấu trúc Decision và metadata sân khấu.
 # Public text thuộc quyền của model chính; parser không còn được phép viết lại
@@ -427,6 +428,7 @@ class ParserGroundingMixin:
             "parse_mode": final_parse_mode,
             "system_action": data.get("system_action", ""),
             "action_input": data.get("action_input", ""),
+            "capability_arguments": data.get("capability_arguments"),
             "motion_intent": data.get("motion_intent", ""),
             "motion_target_x": data.get("motion_target_x", target_x),
             "motion_facing": data.get("motion_facing", direction),
@@ -1369,9 +1371,22 @@ class ParserGroundingMixin:
             bounce_action = ""
         system_action = self._sanitize_system_action(decision.get("system_action", ""))
         raw_action_input = str(decision.get("action_input", "")).strip()
+        capability_arguments = decision.get("capability_arguments")
         # Project patch/task cần giữ newline và JSON dài. Các action desktop vẫn
         # giữ cap nhỏ để model không nhét một cuốn tiểu thuyết vào ô URL.
-        if system_action in {"project_apply_patch", "project_execute_task"}:
+        if system_action in {"click_mouse", "type_text"}:
+            if capability_arguments is None and len(raw_action_input) <= 16000:
+                try:
+                    capability_arguments = json.loads(raw_action_input)
+                except ValueError:
+                    pass
+            valid, _ = validate_capability_arguments(system_action, capability_arguments)
+            if valid:
+                action_input = encode_capability_arguments(system_action, capability_arguments)
+            else:
+                system_action = ""
+                action_input = ""
+        elif system_action in {"project_apply_patch", "project_execute_task"}:
             action_input = raw_action_input[:120000]
         elif system_action in {
             "project_run_command", "project_run_tests", "project_package_patch",
@@ -1382,6 +1397,10 @@ class ParserGroundingMixin:
             action_input = self._normalize_salvaged_text(raw_action_input)[:280]
         if not system_action:
             action_input = ""
+        if not isinstance(capability_arguments, dict) or not (
+            system_action and validate_capability_arguments(system_action, capability_arguments)[0]
+        ):
+            capability_arguments = None
 
         target_x = self._sanitize_target_x(decision.get("target_x", -1.0))
 
@@ -1478,6 +1497,7 @@ class ParserGroundingMixin:
             "parse_mode": parse_mode,
             "system_action": system_action,
             "action_input": action_input,
+            "capability_arguments": capability_arguments,
             "motion_intent": motion_intent,
             "motion_target_x": motion_target_x,
             "motion_facing": motion_facing,

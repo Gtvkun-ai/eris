@@ -1,6 +1,6 @@
 import json
 
-from runtime.eris_voice_contract import AUTONOMOUS_VOICE_CORE_V39
+from .voice_contract import AUTONOMOUS_VOICE_CORE_V39
 
 from actions.contracts import VALID_SYSTEM_ACTION_LIST
 

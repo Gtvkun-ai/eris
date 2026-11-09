@@ -7,6 +7,7 @@ effect đã xảy ra. Những việc ấy thuộc Mind, Actuator và WorldOutcom
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -282,6 +283,16 @@ class CapabilityPolicy:
                 return PolicyDecision(False, "action_name_required")
             if action_name != command.requested_capability:
                 return PolicyDecision(False, "system_action_capability_mismatch")
+            if action_name in {"click_mouse", "type_text"}:
+                try:
+                    desktop_input = json.loads(str(args.get("action_input") or ""))
+                except ValueError:
+                    return PolicyDecision(False, "desktop_input_invalid")
+                hwnd = desktop_input.get("hwnd") if isinstance(desktop_input, dict) else None
+                if type(hwnd) is not int or hwnd <= 0:
+                    return PolicyDecision(False, "desktop_input_invalid")
+                if str(hwnd) not in self._scope_values(token.scope, "desktop_window_handles"):
+                    return PolicyDecision(False, "desktop_window_outside_token_scope")
             return PolicyDecision(True)
 
         if kind in (SandboxCommandKind.BODY_FRAME, SandboxCommandKind.TTS, SandboxCommandKind.SIMULATE):

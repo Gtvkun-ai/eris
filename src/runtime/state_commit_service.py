@@ -610,7 +610,7 @@ class StateCommitServiceMixin:
         if not overrides:
             return state
 
-        from dataclasses import replace, is_dataclass
+        from dataclasses import is_dataclass
         affect_overrides = {}
         rel_overrides = {}
         for key, val in overrides.items():

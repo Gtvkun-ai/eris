@@ -218,7 +218,6 @@ class IdentityGoalDriver:
         # phải chỉ do worker viết chữ `complete`.
         # Nếu đã tới ngân sách work, để Subject quyết định tạm dừng;
         # không được tự khởi chạy thêm vô hạn khi worker lặp `complete`.
-        import os
         maximum = max(1, min(50, int(os.getenv("ERIS_GOAL_MAX_JOBS", "6"))))
         link = getattr(self.sessions, "_goal_bridge", None)
         used = link.job_count(goal_id) if link is not None else 1

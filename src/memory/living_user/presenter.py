@@ -225,7 +225,7 @@ def _build_evidence(
     out: list[dict[str, Any]] = []
     for row in list(records)[:36]:
         path = str(row.get("path") or "").strip()
-        value = str(row.get("display_value") or row.get("value") or "").strip()
+        value = str(row.get("display_value") or "").strip()
         if not path or not value:
             continue
         scope_key = str(row.get("scope_key") or "").strip()

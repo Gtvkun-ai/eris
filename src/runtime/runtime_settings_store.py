@@ -123,10 +123,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
         "max_repair_attempts": 2,
     },
     "prompt": {
-        # PDF pages 4 and 15-16: 5100 = 85% of the primary Groq 6000 TPM
-        # budget.  Zero remains available as an explicit unlimited override, but
-        # it is no longer the shipped default that silently disables protection.
-        "hard_cap_tokens": 5100,
+        "hard_cap_tokens": 64000,
         "dds_enabled": True,
         "strict_grounding": True,
     },
@@ -206,9 +203,9 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "initiative": {
         "enabled": True,
         # Global cap chỉ là phanh cuối. Cooldown thật nằm theo motive class.
-        "hourly_budget": 2,  # legacy UI value; Initiative v3 không dùng làm global cap
-        "global_hourly_budget": 40,
-        "minimum_interval_seconds": 60,
+        "hourly_budget": 20,  # legacy UI value; Initiative v3 không dùng làm global cap
+        "global_hourly_budget": 120,
+        "minimum_interval_seconds": 25,
         "importance_margin": 0.08,
         "semantic_duplicate_threshold": 0.66,
         "activity_update_cooldown_seconds": 120,

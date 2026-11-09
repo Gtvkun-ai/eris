@@ -796,31 +796,28 @@ class OpenAICompatibleClient:
         }
         if deepseek_request:
             is_ds2api = "api.deepseek.com" not in str(self.base_url or "").lower() and ("6011" in str(self.base_url or "") or "localhost" in str(self.base_url or "") or "127.0.0.1" in str(self.base_url or ""))
-            if is_ds2api:
-                mode = "enabled"
-            else:
-                mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
-            
             worker_role = str(getattr(self, "worker_role", "") or "").strip().lower()
             effective_role = (worker_role or str(active_worker_role() or "")).strip().lower()
-            # Executive / Root có thể tắt thinking độc lập với các worker khác.
-            # Check NÀY phải sau DS2API mode (line trên) để override được cả
-            # trường hợp endpoint là localhost/DS2API (vốn force mode="enabled").
-            # Hỗ trợ cả direct client (worker_role attribute) và production ContextVar (effective_role).
-            if (worker_role == "executive" or effective_role in {"executive", "root"}) and os.environ.get("ERIS_EXECUTIVE_THINKING_DISABLED", "0") in {"1", "true", "yes"}:
-                mode = "disabled"
+
+            if is_ds2api:
+                # Whale2API / local DS2API proxy has an upstream parser bug when thinking is enabled
+                # (empty visible text triggers 429 upstream_empty_output). Default to fast non-thinking mode (2.5s).
+                env_thinking = os.environ.get("ERIS_DS2API_THINKING", "0").strip().lower()
+                mode = "enabled" if env_thinking in {"1", "true", "enabled"} else "disabled"
+            else:
+                mode = deepseek_thinking_mode(self.configured_model_name, requested=thinking_mode)
+                if (worker_role == "executive" or effective_role in {"executive", "root"}):
+                    if os.environ.get("ERIS_EXECUTIVE_THINKING_DISABLED", "0") in {"1", "true", "yes"}:
+                        mode = "disabled"
+                    else:
+                        mode = "enabled"
+
             # Surface (public writer) có thể tắt thinking để trả lời nhanh hơn.
-            # Production truyền role qua ContextVar (active_worker_role), KHÔNG qua
-            # attribute self.worker_role, nên phải đọc ContextVar để check mới fire
-            # được trên live path. Ưu tiên attribute worker_role (direct client),
-            # fallback về active_worker_role() (production). Default BẬT (thinking
-            # tắt cho surface) — env=0 để opt lại thinking. Check này sau DS2API
-            # mode để override được localhost-force (mode="enabled").
             if effective_role == "surface" and os.environ.get("ERIS_SURFACE_THINKING_DISABLED", "1") in {"1", "true", "yes"}:
                 mode = "disabled"
             payload["thinking"] = {"type": mode}
 
-            payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 2048)
+            payload["max_tokens"] = max_tokens if mode == "disabled" else max(max_tokens, 8192)
             if mode == "enabled":
                 payload["reasoning_effort"] = deepseek_reasoning_effort(reasoning_effort)
             else:
@@ -993,7 +990,14 @@ class OpenAICompatibleClient:
                         message = first_choice.get("message") if isinstance(first_choice, dict) else {}
                         content = str(message.get("content", "") or "").strip()
                         if not content:
-                            last_error = RuntimeError("Empty output content received from provider")
+                            reasoning = message.get("reasoning_content")
+                            if reasoning:
+                                last_error = RuntimeError(
+                                    f"DeepSeek reasoning consumed all tokens ({payload.get('max_tokens')}), "
+                                    f"content was empty (finish_reason={first_choice.get('finish_reason')})"
+                                )
+                            else:
+                                last_error = RuntimeError("Empty output content received from provider")
                             raise last_error
 
                     # Chỉ lời trả thành công mới là bằng chứng server đã thêm
@@ -1017,10 +1021,10 @@ class OpenAICompatibleClient:
                         GLOBAL_WEB_SESSION_GUARD.abort(session_lease)
                     last_error = _http_error_with_body(exc.response) if exc.response is not None else exc
                     status_code = exc.response.status_code if exc.response is not None else None
-                    if status_code == 429:
+                    if status_code in (402, 429):
                         rate_limited = True
                         _record_pressure_429(pressure_provider, exc.response, model_name=self.model_name)
-                        break  # thoát vòng variant để xoay key
+                        break  # thoát vòng variant để xoay key / chuyển sang tier kế
                     if status_code in (401, 403):
                         auth_failed = True
                         break

@@ -288,6 +288,11 @@ class RuntimeCoordinator(
             )
             self.learning_service = tutor_bundle.learning_service
             self.tutor_executive = tutor_bundle.tutor_executive
+            from runtime.capabilities.tutor import TutorCapability
+            self.tutor_capability = TutorCapability(self.tutor_executive)
+            from runtime.learner_portrait import LearnerPortraitService
+            self.learner_portrait_service = LearnerPortraitService()
+            self._ensure_incoming_dispatcher()
         except Exception as exc:
             debug = getattr(logger, "debug", None)
             if callable(debug):

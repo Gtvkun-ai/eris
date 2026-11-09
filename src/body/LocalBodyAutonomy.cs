@@ -5,14 +5,14 @@ using System.Text.Json;
 
 public sealed class BodyBias
 {
-    public float ContinuityAnxiety { get; private set; } = 0.35f; //ContinuityAnxiety: sợ mất tính liên tục, càng cao càng muốn quay về vùng quen thuộc/gần chat. 
-    public float Curiosity { get; private set; } = 0.34f; //Curiosity: tò mò, càng cao càng dễ quan sát code hoặc leo trèo 
-    public float Overload { get; private set; } = 0.10f;//Overload: quá tải, càng cao càng muốn rút lui/đọc yên 
-    public float Solitude { get; private set; } = 0.35f;//Solitude: nhu cầu giữ khoảng cách. 
-    public string FocusKind { get; private set; } = "unknown"; //FocusKind: ngữ cảnh hiện tại, ví dụ "code". 
+    public float ContinuityAnxiety { get; private set; } = 0.35f; //ContinuityAnxiety: sợ mất tính liên tục, càng cao càng muốn quay về vùng quen thuộc/gần chat.
+    public float Curiosity { get; private set; } = 0.34f; //Curiosity: tò mò, càng cao càng dễ quan sát code hoặc leo trèo
+    public float Overload { get; private set; } = 0.10f;//Overload: quá tải, càng cao càng muốn rút lui/đọc yên
+    public float Solitude { get; private set; } = 0.35f;//Solitude: nhu cầu giữ khoảng cách.
+    public string FocusKind { get; private set; } = "unknown"; //FocusKind: ngữ cảnh hiện tại, ví dụ "code".
     public string PreferredAnchor { get; private set; } = "chat_near"; //trí ưa thích, như "chat_near", "bottom_right", "code_side".
 
-    //Blend() dùng để trộn bias cũ với bias mới: 
+    //Blend() dùng để trộn bias cũ với bias mới:
     public static BodyBias Default => new();
 
     //cognition mới không đập thẳng vào cơ thể, mà ảnh hưởng từ từ.
@@ -273,7 +273,7 @@ public sealed class LocalBodyAutonomy
     //Đây là nơi body “trôi cảm xúc” theo thời gian.
     private void EvolveNeeds(float delta, BodyAutonomyContext context)
     {
-    	//Tức là sau khoảng 15 phút, idle/cognition gap đạt gần max.
+        //Tức là sau khoảng 15 phút, idle/cognition gap đạt gần max.
         float idlePull = Mathf.Clamp(_localIdleSeconds / 900f, 0f, 1f);
         float codeFocus = _bias.FocusKind == "code" ? 1f : 0f;
         float chatPull = context.ChatVisible ? 0.16f : 0f;
@@ -288,11 +288,11 @@ public sealed class LocalBodyAutonomy
 
     private Tension BuildTension()
     {
-    	//Sau 5 phút idle bắt đầu có tension. Sau 15 phút thì tension mạnh.
+        //Sau 5 phút idle bắt đầu có tension. Sau 15 phút thì tension mạnh.
         float idleMid = Mathf.Clamp((_localIdleSeconds - 300f) / 600f, 0f, 1f);
         return new Tension
         {
-        	//Nó muốn giữ tính liên tục và gắn bó yên
+            //Nó muốn giữ tính liên tục và gắn bó yên
             Dissolution = Mathf.Clamp(_needs.Continuity * 0.72f + _needs.QuietAttachment * 0.26f + idleMid * 0.20f, 0f, 1f),
             NoiseIdentity = Mathf.Clamp(_needs.Overload * 0.70f + RepetitionPressure() * 0.24f, 0f, 1f),
             //Nếu im lâu quá, nó có xu hướng hành động để không “biến mất”.

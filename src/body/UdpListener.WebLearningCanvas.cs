@@ -48,7 +48,7 @@ public partial class UdpListener
         string action = ReadJsonString(request, "action");
         string requestId = ReadJsonString(request, "request_id");
         if (requestId.Length < 8 || requestId.Length > 120 ||
-            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus", "graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "lesson_request", "lesson_narrate", "session_ping", "session_close" }.Contains(action))
+            !new[] { "open", "navigate", "exercise", "submit", "hint", "reveal", "exercise_status", "ack_eris_focus", "graph_create", "graph_select", "graph_expand", "mark_viewed", "study_heartbeat", "session_ping", "session_close" }.Contains(action))
             return false;
         bool sessionOnly = action is "session_ping" or "session_close";
         var packet = new Dictionary<string, object>
@@ -68,7 +68,7 @@ public partial class UdpListener
             else if (sessionOnly) return false;
         }
         string groupId = ReadJsonString(request, "group_id");
-        if (action.StartsWith("graph_", StringComparison.Ordinal) || (action is "mark_viewed" or "study_heartbeat" or "lesson_request" or "lesson_narrate"))
+        if (action.StartsWith("graph_", StringComparison.Ordinal) || (action is "mark_viewed" or "study_heartbeat" or "lesson_request"))
         {
             // P3.6: mark_viewed là thao tác đánh dấu xem nhánh, không đổi revision graph.
             if (action != "graph_create" && (groupId.Length < 1 || groupId.Length > 120)) return false;
@@ -107,7 +107,7 @@ public partial class UdpListener
             (!packet.ContainsKey("activity_id") || !packet.ContainsKey("nonce"))) return false;
         if (action == "submit" && !packet.ContainsKey("code") && !packet.ContainsKey("answer")) return false;
         if (action == "ack_eris_focus" && !packet.ContainsKey("cause_id")) return false;
-        if ((action is "mark_viewed" or "study_heartbeat" or "lesson_request" or "lesson_narrate") && !packet.ContainsKey("node_id")) return false;
+        if ((action is "mark_viewed" or "study_heartbeat" or "lesson_request") && !packet.ContainsKey("node_id")) return false;
         _webCanvasOutbox.Enqueue(JsonSerializer.Serialize(packet));
         return true;
     }

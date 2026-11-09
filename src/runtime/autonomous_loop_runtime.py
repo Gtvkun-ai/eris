@@ -21,65 +21,9 @@ import unicodedata
 from collections.abc import Mapping
 from types import SimpleNamespace
 
-from actions.confirmation import public_action_text
-from cortex.background_observer import BackgroundObserver, BackgroundObserverConfig
-from cortex.daydream_consolidation import DaydreamConsolidator, DaydreamPacket
-from cortex.endogenous_drive import EndogenousDriveEngine, RollingInternalState
-from cortex.epistemic import EpistemicAgentMindProjection, EpistemicKernel, EpistemicKernelConfig, EpistemicStore, set_default_kernel
-from cortex.internal_agenda import InternalAgendaStack
-from cortex.observer_contracts import ObserverFrame, SemanticSceneNote, SignalSnapshot, stable_hash
-from cortex.appetite_system import AppetiteSystem, build_evidence_buffet
-from cortex.connection_drive import ConnectionDrive, ConnectionDriveState
-from cortex.contracts import CognitiveDisturbance, PerceptEvent, SocialPresenceEvent, SubconsciousReport, ThoughtSurface, ThoughtStreamReport, TiPolicyReport
-from cortex.internal_state import InternalStateEngine, PersistentInternalState
-from cortex.micro_policy import MicroLinePolicy, RelationalContext, SemanticRepeatGuard
-from cortex.subconscious import build_phase1234567_workers
-from cortex.self_observation import SelfObservationEngine
-from cortex.self_model import SelfModelEngine
-from cortex.thought_stream import ThoughtStream
-from cortex.user_context_stream import RollingUserContext, UserContextStream
-from cortex.vision_semantic_compressor import RemoteCaptionClient, RemoteStructureClient, VisionCompressorConfig, VisionSemanticCompressor
 from domain import Decision
-from eris_secrets import get_config
-from failure_meta import is_technical_failure_meta
-from memory.memory_kernel import MemoryKernel
-from runtime.ai_orchestrated.cortex import CortexAttentionSignal, CortexRuntime
-from runtime.body_bias import BodyBiasProjector
-from runtime.chat_cycle import ChatCycleMixin
-from runtime.failure_taxonomy import FailureContext
-from runtime.inner_diary_persistence import InnerDiaryPersister
-from runtime.interrupt_ledger import InterruptLedger
-from runtime.loop_guard import RuntimeLoopGuard
-from runtime.model_budget_policy import ModelBudgetPolicy
-from runtime.outcome_observer import OutcomeObserver
-from runtime.policy_settings import RuntimePolicySettings
-from runtime.private_life_daemon import PrivateLifeDaemon
-from runtime.private_mind_daemon import PrivateMindDaemon
-from runtime.public_payload_policy import sanitize_body_payload
-from runtime.public_turn_ledger import PublicTurnLedger
-from runtime.public_turn_runtime import PublicTurnRuntime
 from runtime.runtime_status import emit_runtime_status
-from runtime.repair_state import RepairStateController
-from runtime.signal_buffer import SignalBuffer, SignalBufferConfig
-from runtime.source_grounding import SourceGroundingEngine
-from runtime.stage_contracts import StageFrameBuilder
-from runtime.stage_dispatcher import StageDispatcher
-from runtime.stage_event_bus import StageEventBus
-from runtime.stage_output import StageOutputPipeline
-from runtime.stage_protocol_adapter import playback_event, show_plan_event, stage_segment_event, stage_state_event
-from runtime.subconscious_loop import SubconsciousLoop as RuntimeSubconsciousLoop
-from runtime.subsystem_health import FailureKind, SubsystemHealthRegistry
-from runtime.subsystem_supervisor import SubsystemSupervisor
-from runtime.thought_model_adapter import RuntimeThoughtModelAdapter
-from runtime.transport_boundary import RuntimeTransportBoundary
-from runtime.tts_sync_policy import sync_text_with_tts_enabled, text_sync_timeout_seconds, tts_event_releases_deferred_text
-from runtime.vision_grounding import VisionGroundingPolicy, VisionGroundingReport
-from runtime.voice_manager import VoiceManager
-from runtime.vtuber_stage_version import VTUBER_STAGE_PHASES, VTUBER_STAGE_STATUS, VTUBER_STAGE_VERSION
-from screen import build_screen_text_runtime
-
-
-
+from runtime.subsystem_health import FailureKind
 
 
 class AutonomousLoopRuntimeMixin:
@@ -204,7 +148,7 @@ class AutonomousLoopRuntimeMixin:
             if _goal_driver is not None:
                 _goal_driver.pump()
         except Exception as _exc:
-            self.logger.warning("[identity-goal-runtime] degraded: %s", _exc)
+            self.logger.debug("[identity-goal-runtime] degraded: %s", _exc)
         from runtime.autonomy.authority_trace import emit as autonomy_trace, span as autonomy_span
         with autonomy_span("autonomous_loop"):
             autonomy_trace("autonomous.iteration.start", source="autonomous_loop")
@@ -215,6 +159,7 @@ class AutonomousLoopRuntimeMixin:
     def run_loop(self):
         """Chạy runtime production duy nhất: Architecture C + semantic_frame.v1."""
         self.logger.info("--- Architecture C runtime; chat vision theo yêu cầu màn hình ---")
+
         orchestrator = getattr(self, "ai_autonomous_orchestrator", None)
         if not bool(getattr(self, "ai_runtime_enabled", False)) or orchestrator is None:
             self.logger.error("[architecture C] bootstrap failed; legacy runtime has been removed")

@@ -5246,7 +5246,7 @@ public partial class UdpListener : Node2D
 		var copy = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
 		copy.AddChild(NewLabel($"{PrettyAuditKey(ReadString(item, "dimension"))} › {PrettyAuditKey(ReadString(item, "key"))}", 11, IdentityInk, true));
 		string numbers = state == "committed"
-			? $"đề xuất {SignedAudit(ReadFloat(item, "delta"), "0.00")} · áp dụng {SignedAudit(ReadFloat(item, "applied_delta"), "0.000")}" 
+			? $"đề xuất {SignedAudit(ReadFloat(item, "delta"), "0.00")} · áp dụng {SignedAudit(ReadFloat(item, "applied_delta"), "0.000")}"
 			: $"đề xuất {SignedAudit(ReadFloat(item, "delta"), "0.00")} · confidence {ReadFloat(item, "confidence"):0.00}";
 		copy.AddChild(NewLabel(numbers, 9, IdentityMuted, false));
 		row.AddChild(copy);

@@ -37,9 +37,6 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-
-
-
 class AttentionOverseer:
     def __init__(self, model_path: str = "", n_ctx: int = 8192, n_gpu_layers: int = -1):
         self.logger = get_logger("Vision")
@@ -79,7 +76,6 @@ class AttentionOverseer:
             RuntimeSettingsStore().load(materialize_env=True)
         except Exception as exc:
             self.logger.debug("Runtime settings bootstrap trước provider bị bỏ qua: %s", exc)
-
         self.process_manager = RemoteModelProcessManager(
             logger=self.process_logger,
             project_root=project_root,
@@ -256,6 +252,8 @@ class AttentionOverseer:
             self.coordinator.tts_engine = self.tts_engine
 
     def _is_body_running(self) -> bool:
+        if os.environ.get("ERIS_STANDALONE", "0").strip().lower() in {"1", "true", "yes"}:
+            return True
         try:
             result = subprocess.run(
                 ["tasklist", "/NH"],

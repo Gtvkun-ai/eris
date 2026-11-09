@@ -215,7 +215,7 @@ class IA2AccessibilityBackend:
     def _children(self, obj: Any) -> list[Any]:  # pragma: no cover - Windows E2E
         """Lấy child object. Child-ID đơn lẻ được bỏ qua để tránh dereference mù."""
         try:
-            count_raw = getattr(obj, "accChildCount")
+            count_raw = obj.accChildCount
             count = int(count_raw() if callable(count_raw) else count_raw)
         except Exception:
             return []

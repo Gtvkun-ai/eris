@@ -14,7 +14,8 @@
     "expected": {
       "relevant": true,
       "mode": "explain",
-      "primary_role": "mentor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -26,7 +27,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "mentor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -35,7 +37,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -44,7 +47,8 @@
     "expected": {
       "relevant": true,
       "mode": "discuss",
-      "primary_role": "companion"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -59,7 +63,8 @@
     "expected": {
       "relevant": true,
       "mode": "warn",
-      "primary_role": "mentor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -71,7 +76,8 @@
     "expected": {
       "relevant": true,
       "mode": "challenge",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -83,7 +89,8 @@
     "expected": {
       "relevant": true,
       "mode": "challenge",
-      "primary_role": "companion"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -95,7 +102,8 @@
     "expected": {
       "relevant": true,
       "mode": "hint",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -107,7 +115,8 @@
     "expected": {
       "relevant": true,
       "mode": "hint",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -119,7 +128,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -129,7 +139,8 @@
     "expected": {
       "relevant": true,
       "mode": "discuss",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -138,7 +149,8 @@
     "expected": {
       "relevant": true,
       "mode": "discuss",
-      "primary_role": "companion"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -147,7 +159,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "mentor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -168,7 +181,8 @@
     "expected": {
       "relevant": true,
       "mode": "warn",
-      "primary_role": "mentor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -177,7 +191,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -186,7 +201,8 @@
     "expected": {
       "relevant": true,
       "mode": "discuss",
-      "primary_role": "companion"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -199,7 +215,8 @@
     "expected": {
       "relevant": true,
       "mode": "discuss",
-      "primary_role": "companion"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   },
   {
@@ -211,7 +228,8 @@
     "expected": {
       "relevant": true,
       "mode": "guide",
-      "primary_role": "supervisor"
+      "primary_role": "none",
+      "delivery_owner": "adaptive_companion"
     }
   }
 ]

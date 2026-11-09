@@ -398,13 +398,20 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
             phase = _compact(seed_context.get("phase", ""), 120)
             detail = _compact(change.get("detail", ""), 320)
             parts = []
-            if app: parts.append(f"app={app}")
-            if focus: parts.append(f"focus={focus}")
-            if activity and activity.casefold() not in {"unknown", "none"}: parts.append(f"activity={activity}")
-            if task and task.casefold() not in {"unknown", "none"}: parts.append(f"task={task}")
-            if phase and phase.casefold() not in {"unknown", "none"}: parts.append(f"phase={phase}")
-            if change.get("kind"): parts.append(f"recent_change={_compact(change.get('kind'), 72)}")
-            if detail: parts.append(f"change_detail={detail}")
+            if app:
+                parts.append(f"app={app}")
+            if focus:
+                parts.append(f"focus={focus}")
+            if activity and activity.casefold() not in {"unknown", "none"}:
+                parts.append(f"activity={activity}")
+            if task and task.casefold() not in {"unknown", "none"}:
+                parts.append(f"task={task}")
+            if phase and phase.casefold() not in {"unknown", "none"}:
+                parts.append(f"phase={phase}")
+            if change.get("kind"):
+                parts.append(f"recent_change={_compact(change.get('kind'), 72)}")
+            if detail:
+                parts.append(f"change_detail={detail}")
             if parts:
                 world_revision = max(0, int(seed_context.get("world_revision", 0) or 0))
                 env_revision = max(0, int(seed_context.get("environment_revision", 0) or 0))
@@ -473,16 +480,26 @@ def derive_causal_motives(context: Mapping[str, Any], *, now: float | None = Non
             event_kind = _compact(latest_event.get("kind", ""), 72)
             event_detail = _compact(latest_event.get("detail", ""), 280)
             parts = []
-            if app: parts.append(f"app={app}")
-            if process and process.casefold() != app.casefold(): parts.append(f"process={process}")
-            if focused_object: parts.append(f"focus={focused_object}")
-            if activity and activity.casefold() not in {"unknown", "none"}: parts.append(f"activity={activity}")
-            if task_hint and task_hint.casefold() not in {"unknown", "none"}: parts.append(f"task={task_hint}")
-            if phase and phase.casefold() not in {"unknown", "none"}: parts.append(f"phase={phase}")
-            if action and action.casefold() not in {"unknown", "none"}: parts.append(f"last_action={action}")
-            if outcome and outcome.casefold() not in {"unknown", "none"}: parts.append(f"last_outcome={outcome}")
-            if event_kind: parts.append(f"recent_change={event_kind}")
-            if event_detail: parts.append(f"change_detail={event_detail}")
+            if app:
+                parts.append(f"app={app}")
+            if process and process.casefold() != app.casefold():
+                parts.append(f"process={process}")
+            if focused_object:
+                parts.append(f"focus={focused_object}")
+            if activity and activity.casefold() not in {"unknown", "none"}:
+                parts.append(f"activity={activity}")
+            if task_hint and task_hint.casefold() not in {"unknown", "none"}:
+                parts.append(f"task={task_hint}")
+            if phase and phase.casefold() not in {"unknown", "none"}:
+                parts.append(f"phase={phase}")
+            if action and action.casefold() not in {"unknown", "none"}:
+                parts.append(f"last_action={action}")
+            if outcome and outcome.casefold() not in {"unknown", "none"}:
+                parts.append(f"last_outcome={outcome}")
+            if event_kind:
+                parts.append(f"recent_change={event_kind}")
+            if event_detail:
+                parts.append(f"change_detail={event_detail}")
             if parts:
                 revision = max(0, int(environment.get("revision", 0) or 0))
                 event_key = _compact(latest_event.get("event_key", ""), 120)

@@ -307,10 +307,9 @@ class RemoteModelProcessManager:
                     getattr(ds2api_client, "base_url", executive_spec.base_url),
                 )
 
-        # Official DeepSeek fallback. Không dùng một ERIS_REMOTE_BASE_URL local làm
-        # "official fallback" vì như thế fallback chỉ quay lại đúng daemon vừa chết.
+        # Official DeepSeek fallback. Chỉ bật khi ERIS_OFFICIAL_DEEPSEEK_ENABLED=1.
         official_client = None
-        if provider in {"deepseek", "deepseek_web"}:
+        if provider in {"deepseek", "deepseek_web"} and self._env_flag("ERIS_OFFICIAL_DEEPSEEK_ENABLED", "0"):
             model_name = os.environ.get("ERIS_EXECUTIVE_MODEL", DEEPSEEK_STRONG_MODEL).strip()
             api_key = get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
             executive_base = str(os.environ.get("ERIS_EXECUTIVE_BASE_URL", "") or "").strip()
@@ -347,6 +346,16 @@ class RemoteModelProcessManager:
                     )
                 except ValueError as exc:
                     self.logger.warning("Khong dung duoc DeepSeek official cho Executive Cortex: %s", exc)
+
+        prefer_official = self._env_flag("ERIS_EXECUTIVE_PREFER_OFFICIAL", "1")
+        if prefer_official and official_client is not None:
+            self.logger.info(
+                "Executive Cortex route: Official DeepSeek primary (thinking-capable) -> DS2API fallback model=%s",
+                getattr(official_client, "model_name", ""),
+            )
+            if ds2api_client is not None:
+                return ChainedFallbackClient([official_client, ds2api_client], logger=self.logger)
+            return official_client
 
         if ds2api_client is not None and official_client is not None:
             self.logger.info(
@@ -429,15 +438,42 @@ class RemoteModelProcessManager:
     def build_surface_client(self):
         """Dựng worker ``surface`` chỉ để viết public wording đã được duyệt."""
 
-        client = self.build_deepseek_worker_client("surface")
-        if client is None:
-            self.logger.warning(
-                "Surface worker chua cau hinh; autonomous wording se body-only. "
-                "Kiem tra DS2API key/base/model."
-            )
-        else:
-            self.logger.info("Surface worker owner: public wording only")
-        return client
+        ds2api_client = self.build_deepseek_worker_client("surface")
+        official_client = None
+        if self._env_flag("ERIS_OFFICIAL_DEEPSEEK_ENABLED", "0"):
+            api_key = get_secret("DEEPSEEK_API_KEY", "ERIS_REMOTE_API_KEY")
+            if api_key:
+                try:
+                    raw_official = OpenAICompatibleClient(
+                        base_url=DEEPSEEK_BASE_URL,
+                        api_key=api_key,
+                        model_name=os.environ.get("ERIS_SURFACE_MODEL", DEEPSEEK_DEFAULT_MODEL).strip(),
+                        key_pool=None,
+                        timeout=max(5, int(float(os.environ.get("ERIS_SURFACE_TIMEOUT_S", "12") or 12))),
+                    )
+                    official_client = JsonlWorkerClient(
+                        raw_official,
+                        role="surface",
+                        jsonl_enabled=False,
+                        repair_attempts=1,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Khong dung duoc Official DeepSeek cho Surface worker: %s", exc)
+
+        if ds2api_client is not None and official_client is not None:
+            self.logger.info("Surface worker route: DS2API primary -> Official DeepSeek fallback")
+            return ChainedFallbackClient([ds2api_client, official_client], logger=self.logger)
+        if ds2api_client is not None:
+            self.logger.info("Surface worker owner: DS2API public wording only")
+            return ds2api_client
+        if official_client is not None:
+            self.logger.info("Surface worker owner: Official DeepSeek public wording only")
+            return official_client
+        self.logger.warning(
+            "Surface worker chua cau hinh; autonomous wording se body-only. "
+            "Kiem tra DS2API key/base/model."
+        )
+        return None
 
     def build_curator_client(self):
         """Memory curator dùng service Gemini Web; không mượn DeepSeek account."""

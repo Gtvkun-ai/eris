@@ -12,9 +12,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from runtime.engineering_mentor import EngineeringMentorService
-
-
 def _flow(findings: list[str], *, now: float, age_seconds: float = 1.0) -> dict[str, Any]:
     ended = now - max(0.0, float(age_seconds))
     return {
@@ -37,6 +34,8 @@ def _flow(findings: list[str], *, now: float, age_seconds: float = 1.0) -> dict[
 
 
 def evaluate_scenario(scenario: dict[str, Any], *, index: int = 0) -> dict[str, Any]:
+    from runtime.engineering_mentor import EngineeringMentorService
+
     now = 10_000.0 + index * 100.0
     with tempfile.TemporaryDirectory(prefix="eris-v85-eval-") as root:
         base = Path(root)
@@ -56,11 +55,14 @@ def evaluate_scenario(scenario: dict[str, Any], *, index: int = 0) -> dict[str, 
         snap = mentor.snapshot()
         decision = snap["last_decision"]
         role = snap["last_role_directive"]
+        evidence_prefix, _, evidence_json = prompt.partition("\n")
+        evidence = json.loads(evidence_json) if evidence_prefix == "ENGINEERING_EVIDENCE:" else {}
         actual = {
             "relevant": bool(decision.get("relevant", False)),
             "mode": str(decision.get("mode") or "none"),
             "primary_role": str(role.get("primary_role") or "none") if bool(role.get("active", False)) else "none",
             "prompt_present": bool(prompt),
+            "delivery_owner": str(evidence.get("delivery_owner") or "none"),
         }
         expected = dict(scenario.get("expected") or {})
         passed = all(actual.get(key) == value for key, value in expected.items())

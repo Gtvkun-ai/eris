@@ -73,6 +73,8 @@ class ClipboardMonitor:
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
         user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASS)]
         user32.RegisterClassW.restype = wintypes.ATOM
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user32.UnregisterClassW.restype = wintypes.BOOL
         user32.CreateWindowExW.argtypes = [
             wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -96,20 +98,24 @@ class ClipboardMonitor:
         user32.PostQuitMessage.argtypes = [ctypes.c_int]
         user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
         user32.EnumClipboardFormats.restype = wintypes.UINT
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
 
         def proc(hwnd, msg, wparam, lparam):
-            del wparam, lparam
             if msg == WM_CLIPBOARDUPDATE:
                 formats: list[int] = []
-                try:
-                    fmt = 0
-                    while len(formats) < 16:
-                        fmt = int(user32.EnumClipboardFormats(fmt) or 0)
-                        if not fmt:
-                            break
-                        formats.append(fmt)
-                except Exception:
-                    pass
+                if user32.OpenClipboard(hwnd):
+                    try:
+                        fmt = 0
+                        while len(formats) < 16:
+                            fmt = int(user32.EnumClipboardFormats(fmt) or 0)
+                            if not fmt:
+                                break
+                            formats.append(fmt)
+                    finally:
+                        user32.CloseClipboard()
                 try:
                     self.emit_metadata(formats=tuple(formats))
                 except Exception:
@@ -118,10 +124,10 @@ class ClipboardMonitor:
             if msg == WM_DESTROY:
                 user32.PostQuitMessage(0)
                 return 0
-            return user32.DefWindowProcW(hwnd, msg, 0, 0)
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         proc_ref = WNDPROC(proc)
-        class_name = "ErisClipboardMetadataWindow"
+        class_name = f"ErisClipboardMetadataWindow-{id(self):x}"
         wc = WNDCLASS()
         wc.lpfnWndProc = proc_ref
         wc.hInstance = kernel32.GetModuleHandleW(None)
@@ -130,26 +136,25 @@ class ClipboardMonitor:
         if not atom:
             return
         HWND_MESSAGE = -3
-        hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, HWND_MESSAGE, 0, wc.hInstance, 0)
-        if not hwnd:
-            return
-        if not user32.AddClipboardFormatListener(hwnd):
-            user32.DestroyWindow(hwnd)
-            return
-        msg = wintypes.MSG()
+        hwnd = None
+        registered = False
         try:
-            while not self._stop.is_set() and user32.PeekMessageW(ctypes.byref(msg), hwnd, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg)); user32.DispatchMessageW(ctypes.byref(msg))
-                time.sleep(0.05)
+            hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, HWND_MESSAGE, 0, wc.hInstance, 0)
+            if not hwnd or not user32.AddClipboardFormatListener(hwnd):
+                return
+            registered = True
+            msg = wintypes.MSG()
             while not self._stop.is_set():
                 while user32.PeekMessageW(ctypes.byref(msg), hwnd, 0, 0, 1):
-                    user32.TranslateMessage(ctypes.byref(msg)); user32.DispatchMessageW(ctypes.byref(msg))
-                time.sleep(0.08)
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                self._stop.wait(0.08)
         finally:
-            try: user32.RemoveClipboardFormatListener(hwnd)
-            except Exception: pass
-            try: user32.DestroyWindow(hwnd)
-            except Exception: pass
+            if registered:
+                user32.RemoveClipboardFormatListener(hwnd)
+            if hwnd:
+                user32.DestroyWindow(hwnd)
+            user32.UnregisterClassW(class_name, wc.hInstance)
 
 
 __all__ = ["ClipboardMonitor", "WM_CLIPBOARDUPDATE"]

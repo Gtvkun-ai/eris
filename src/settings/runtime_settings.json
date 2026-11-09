@@ -35,7 +35,7 @@
     "director_second_pass": "off",
     "low_quality_fail_open": true,
     "auto_fallback": false,
-    "completion_chat_tokens": 1280,
+    "completion_chat_tokens": 4096,
     "chat_timeout_seconds": 24,
     "max_concurrency": 4
   },
@@ -63,7 +63,6 @@
   },
   "project_ops": {
     "enabled": true,
-    "eris_home": "c:\\Users\\ADMIN\\OneDrive\\Desktop\\eris\\.eris_home",
     "workspace_root": "",
     "allow_implicit_source_repo": false,
     "fallback_to_runtime_source": false,
@@ -78,7 +77,7 @@
     "max_repair_attempts": 2
   },
   "prompt": {
-    "hard_cap_tokens": 5100,
+    "hard_cap_tokens": 64000,
     "dds_enabled": false,
     "strict_grounding": true
   },
@@ -149,10 +148,10 @@
   },
   "initiative": {
     "enabled": true,
-    "hourly_budget": 2,
-    "global_hourly_budget": 40,
-    "minimum_interval_seconds": 60,
-    "minimum_user_silence_seconds": 12,
+    "hourly_budget": 20,
+    "global_hourly_budget": 120,
+    "minimum_interval_seconds": 25,
+    "minimum_user_silence_seconds": 10,
     "importance_margin": 0.08,
     "semantic_duplicate_threshold": 0.66,
     "activity_update_cooldown_seconds": 120
@@ -160,10 +159,10 @@
   "commentary": {
     "enabled": true,
     "user_requested_autonomous_surface": true,
-    "desired_interval_seconds": 35,
-    "maximum_quiet_seconds": 70,
+    "desired_interval_seconds": 25,
+    "maximum_quiet_seconds": 50,
     "startup_delay_seconds": 8,
-    "minimum_user_silence_seconds": 10
+    "minimum_user_silence_seconds": 8
   },
   "tutor": {
     "enabled": false,

@@ -16,6 +16,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from runtime.elevenlabs_pool_db import GLOBAL_ELEVEN_POOL, ElevenPoolDB
@@ -766,7 +767,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
         port_arg = int(sys.argv[1])
 
-    print(f"=== ERIS ElevenLabs Pool Web UI Server ===")
+    print("=== ERIS ElevenLabs Pool Web UI Server ===")
     print(f"Khởi chạy giao diện tại: http://127.0.0.1:{port_arg}")
     srv = start_elevenlabs_pool_server(port=port_arg)
     try:
