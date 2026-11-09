@@ -1,5 +1,82 @@
 # Tri thức Eris: bài học từ điều tra runtime và gói rescue
 
+**Cập nhật 08/11: độ trễ ElevenLabs trong hai phiên portable tối 07/11**
+
+Ghép `tts_dispatch` và `audio_start`/`audio_failed` trong `ErisLive` với
+`broker_admitted_total`, `broker_queue_wait_ms` và `broker_request_duration_ms`
+trong `Documents/eris/logs/eris_observability.jsonl`. Các mốc dưới đây là giờ
+Việt Nam ngày 07/11.
+
+| Lượt | Từ dispatch tới broker nhận | Trong lời gọi provider | Kết quả |
+|---|---:|---:|---|
+| 19:48:49, `delivery:05130f9e…` | 1,83 s | 120,25 s | `deadline_exceeded` lúc 19:50:51, không phát audio |
+| 21:01:09, `delivery:4b31818f…` | 3,68 s | 29,37 s | Audio bắt đầu sau 34,21 s |
+| 21:05:14, `delivery:35bf95ab…` | 1,56 s | 5,66 s | `RemoteDisconnected`, không phát audio |
+
+Trong 14 lời gọi ElevenLabs hoàn tất ở hai phiên, provider mất 5,92–29,37 s
+(trung vị 12,17 s); hàng đợi broker chỉ 1–9 ms. Ở lượt timeout, phần chờ
+trước broker là 1,83 s. **Kết quả 18/10 về Firebase/IPv6 chỉ áp dụng cho các
+lượt được đo hôm đó.** Source pool hiện có adapter ép IPv4 mặc định, và các
+module pool, engine, task manager trong portable trùng hash checkout khi kiểm
+08/11.
+
+`_synthesize_elevenlabs_wav` gọi endpoint stream nhưng gom hết các chunk
+trước khi trả WAV để playback. Vì vậy thời gian nhận hết audio nằm trước
+`audio_start`, và bubble đợi mốc đó theo yêu cầu sản phẩm. Deadline mặc định
+là 120 s. TTS dùng broker đồng bộ, kiểm deadline trước POST, khi vòng đọc
+nhận một chunk, và khi lời gọi trả về. Không có timer chủ động cắt socket
+đúng lúc deadline. `requests` áp read timeout theo khoảng không nhận dữ liệu.
+Trong lượt 120,25 s, lỗi đến khi lời gọi đã chạy, phù hợp với việc đã nhận
+headers rồi chạm deadline ở một chunk hoặc khi stream kết thúc. Không có
+timestamp headers/chunk của lượt gốc để chia thời gian hoặc chứng minh đã có
+audio trước deadline. Lượt `RemoteDisconnected` khác ở chỗ kết nối đóng trước
+khi client đọc được HTTP status line.
+
+**Kiểm sâu ngày 08/11:** chạy chính hàm synth với HTTP loopback, budget 0,30 s.
+Đóng kết nối trước headers cho `ConnectionError`; quá read timeout khi chờ
+headers cho `ReadTimeout`; body im quá read timeout cho `ConnectionError`.
+HTTP 200 có chunk đầu muộn, chunk sau muộn hoặc EOF muộn (các khoảng đọc vẫn
+dưới read timeout) đều tái hiện `deadline_exceeded` ở 0,39–0,45 s. Điều này
+thu hẹp nhận định ban đầu rằng hai phút có thể chỉ là chờ headers và giải
+thích vì sao không có audio khi đã nhận một phần stream.
+
+Source trước `3034a9df` đưa bearer vào `api.us.elevenlabs.io` qua
+`text-to-dialogue/stream`. File portable chứa nhánh mới có mốc 20:54:36,
+nằm giữa hai phiên. Nhánh mới mặc định dùng `text-to-speech/{voice}/stream`
+qua `api.elevenlabs.io`. Mốc file và diff cho thấy khả năng cao hai lượt lỗi
+đi hai route khác nhau; log lịch sử không lưu host để xác nhận riêng từng lượt.
+Broker portable trùng hash checkout và có mốc file 29/10.
+
+Probe từ máy này bằng Python portable, một bearer làm mới trong bộ nhớ, giọng
+Nhật đang cấu hình, `eleven_v3`, text kiểm tra tổng cộng 174 ký tự:
+
+| Route | Ký tự | HTTP | Headers | Chunk đầu | Hết stream |
+|---|---:|---:|---:|---:|---:|
+| TTS global | 14 | 200 | 2,61 s | 2,62 s | 3,15 s |
+| Dialogue US | 14 | 200 | 1,75 s | 1,75 s | 2,13 s |
+| TTS global | 146 | 200 | 1,22 s | 1,22 s | 7,36 s |
+
+Refresh Firebase HTTP 200 mất 1,09 s. GET công khai qua IPv4 vào hai host
+ElevenLabs nhận 404 ở root trong 1,23–1,24 s; Firebase root trả 404 qua cả
+IPv4 lẫn IPv6 trong 0,50–0,53 s. [Lịch sử status ElevenLabs](https://status.elevenlabs.io/history)
+không liệt kê incident TTS ngày 07/11. Các probe chỉ xác nhận thời điểm thử;
+chưa xác định nguyên nhân phía mạng hoặc serving của request gốc.
+
+**Lý do fallback thất bại đã tái hiện trên portable:** gọi trực tiếp fallback
+Nhật trả `RuntimeError` bọc `No module named 'edge_tts'`. Package không có
+trong Python portable hay `requirements.txt` portable. Log lịch sử chỉ lưu
+`edge:RuntimeError`, nên xác nhận được lỗi cài đặt hiện tại và cơ chế log giấu
+chi tiết, chưa khôi phục exception gốc của hai lượt. SAPI ghi `disabled` trong
+log. Kiểm danh sách voice System.Speech hiện chỉ có `en-GB` và `en-US`, nên
+SAPI hiện cũng không có giọng Nhật. Khi mọi provider thất bại trước
+`audio_start`, text đang chờ bị bỏ theo hợp đồng đồng bộ.
+
+Nguồn phiên portable: `eris_run_20261107_194243.txt`,
+`eris_run_20261107_205504.txt`, và `ErisLive/logs/autonomous_trace.jsonl`
+(dòng 18915–19015). Phiên checkout lúc 09:55 ngày 08/11 thoát lúc khởi động
+trước khi có lượt TTS. Probe không phát audio, không ghi token vào pool, và
+chỉ cập nhật ghi chú điều tra.
+
 Cập nhật Live2D ngày 07/11: [rig miệng V13.2 và lip-sync TTS](2026-11-07-live2d-v13-2-tts.md).
 Bản repo và portable đã dùng rig mới cùng hai atlas từ gói full. Quy tắc thu
 lưỡi theo rig cũ bên dưới không áp dụng cho V13.2: lưỡi trong miệng đi theo
