@@ -1,8 +1,0 @@
-{
-	"coding": {"bias": 0.28, "scale": 1.0},
-	"documentation": {"bias": 0.28, "scale": 1.0},
-	"entertainment": {"bias": -0.10, "scale": 1.0},
-	"communication": {"bias": 0.12, "scale": 1.0},
-	"general": {"bias": 0.04, "scale": 1.0},
-	"system": {"bias": -0.03, "scale": 1.0}
-}
