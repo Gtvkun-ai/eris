@@ -54,7 +54,11 @@ def _env_float(name: str, default: float, *, low: float, high: float) -> float:
 
 def _is_generic_window(title: str) -> bool:
     normalized = _norm(title)
-    return normalized in {"", "desktop", "program manager", "khong xac dinh", "unknown"}
+    if normalized in {"", "desktop", "program manager", "khong xac dinh", "unknown"}:
+        return True
+    if any(k in normalized for k in ("radmin", "rvrvpngui")):
+        return True
+    return False
 
 
 def _looks_like_telemetry_surface(text: str) -> bool:

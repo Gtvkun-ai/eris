@@ -341,9 +341,9 @@ class RootConversationSession:
     @staticmethod
     def _window_pairs() -> int:
         try:
-            return max(2, int(os.environ.get("ERIS_ROOT_SESSION_WINDOW_PAIRS", "12")))
+            return max(2, int(os.environ.get("ERIS_ROOT_SESSION_WINDOW_PAIRS", "5")))
         except (TypeError, ValueError):
-            return 12
+            return 5
 
     def ask(
         self, *, router: Any, client: Any, system: str, schema: Mapping[str, Any],

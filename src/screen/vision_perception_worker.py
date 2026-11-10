@@ -28,7 +28,11 @@ from .active_window_provider import ActiveWindowProvider
 from .change_detector import ScreenChangeDetector
 from .evidence_models import ActiveWindowInfo
 
-_LOG = logging.getLogger("Eris.VisionPerception")
+try:
+    from app_logging import get_logger
+    _LOG = get_logger("VisionPerception")
+except Exception:
+    _LOG = logging.getLogger("Eris.VisionPerception")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,22 +67,24 @@ class VisionPerceptionSnapshot:
         lines = [
             f"[THỊ GIÁC MÀN HÌNH ({time_hint})]",
             f"- Cửa sổ: {self.window_title or '<không xác định>'}",
-            f"- Bối cảnh: {self.summary}",
+            f"- Trạng thái: {self.summary}",
         ]
-        if self.inferred_story:
-            lines.append(f"- Phỏng đoán câu chuyện: {self.inferred_story}")
-        if self.mood_and_intent:
-            lines.append(f"- Không khí & Ý đồ: {self.mood_and_intent}")
+        if self.inferred_story and self.inferred_story != self.summary:
+            lines.append(f"- Diễn biến: {self.inferred_story}")
+        if self.detected_text:
+            clean_text = [str(t).strip() for t in self.detected_text[:6] if str(t).strip()]
+            if clean_text:
+                lines.append(f"- Chữ/Nút trên màn hình: {', '.join(clean_text)}")
         if self.key_elements:
             elem_strs = [
                 f"{e.get('name')}: {e.get('significance')}"
-                for e in self.key_elements[:4]
+                for e in self.key_elements[:3]
                 if isinstance(e, Mapping) and e.get("name")
             ]
             if elem_strs:
-                lines.append(f"- Điểm nhấn: {' | '.join(elem_strs)}")
-        if self.detected_text:
-            lines.append(f"- Chữ trên màn hình: {', '.join(str(t) for t in self.detected_text[:5])}")
+                lines.append(f"- Chi tiết: {' | '.join(elem_strs)}")
+        if age_sec >= 25:
+            lines.append(f"(Lưu ý: Ảnh chụp {age_sec}s trước, diễn biến game có thể đã bước sang pha mới, tránh khẳng định người dùng vẫn đứng yên tại chỗ).")
 
         return "\n".join(lines)
 
@@ -139,14 +145,14 @@ class VisionPerceptionWorker:
         service: VisionPerceptionService | None = None,
         *,
         api_url: str | None = None,
-        poll_interval: float = 6.0,
-        cooldown: float = 12.0,
-        diff_threshold: float = 0.05,
+        poll_interval: float = 2.5,
+        cooldown: float = 4.0,
+        diff_threshold: float = 0.03,
     ) -> None:
         self.service = service or ensure_vision_perception_service()
         self.api_url = api_url or os.getenv("ERIS_VISION_API_URL", "http://127.0.0.1:8000/api/vision/decompose")
-        self.poll_interval = max(2.0, float(os.getenv("ERIS_VISION_POLL_SEC", str(poll_interval))))
-        self.cooldown = max(5.0, float(os.getenv("ERIS_VISION_COOLDOWN_SEC", str(cooldown))))
+        self.poll_interval = max(1.0, float(os.getenv("ERIS_VISION_POLL_SEC", str(poll_interval))))
+        self.cooldown = max(2.0, float(os.getenv("ERIS_VISION_COOLDOWN_SEC", str(cooldown))))
         self.diff_threshold = max(0.01, float(os.getenv("ERIS_VISION_DIFF_THRESHOLD", str(diff_threshold))))
 
         self._window_provider = ActiveWindowProvider()
@@ -185,12 +191,15 @@ class VisionPerceptionWorker:
             self._thread = None
 
     def _capture_screen(self, window: ActiveWindowInfo) -> Image.Image | None:
-        if not window.bounds or min(window.bounds[2:]) <= 50:
-            return None
         privacy = EnvironmentPolicy().scope_for(process_name=window.process_name, window_title=window.title)
         if privacy.scope < PrivacyScope.SEMANTIC:
             return None
+        use_fullscreen = os.getenv("ERIS_VISION_FULLSCREEN", "1").strip().lower() in ("1", "true", "yes", "on")
         try:
+            if use_fullscreen:
+                return capture_screen(None)
+            if not window.bounds or min(window.bounds[2:]) <= 50:
+                return capture_screen(None)
             return capture_screen(window.bounds)
         except Exception as exc:
             _LOG.debug("Vision capture failed: %s", exc)
@@ -256,11 +265,38 @@ class VisionPerceptionWorker:
             return None
 
     def _send_to_gemini_docker(self, image_bytes: bytes, window_info: ActiveWindowInfo) -> None:
+        import re
         import requests
 
         try:
             files = {"file": ("screenshot.jpg", image_bytes, "image/jpeg")}
-            data = {"model": "gemini-flash", "thinking": "fast"}
+            prompt = os.getenv("ERIS_VISION_PROMPT", "").strip() or (
+                "Bạn là trợ lý thị giác thời gian thực (Real-time Live Companion Vision) của Eris.\n"
+                "Nhiệm vụ: Nhìn ảnh chụp màn hình máy tính của người dùng để Eris hiểu ngay tình huống thực tế và phản ứng tự nhiên.\n\n"
+                "Yêu cầu:\n"
+                "1. Trạng thái thực tế: Người dùng đang chơi game gì, đang ở màn hình nào (Menu chính, Cài đặt, Đang chơi trong màn, Tạm dừng...)? Nếu không chơi game thì đang làm gì?\n"
+                "2. Diễn biến cốt lõi: Hành động hoặc sự kiện quan trọng nhất trên màn hình là gì (ví dụ: đang nấu ăn, lật chảo, hết giờ, bị cháy, chọn màn, click nút nào)?\n"
+                "3. Chi tiết quan trọng: Các nút bấm, số điểm, nhiệm vụ hoặc chữ nổi bật nhất.\n\n"
+                "Trả về kết quả dưới dạng JSON:\n"
+                "{\n"
+                '  "summary": "1-2 câu tóm tắt cực kỳ trực diện, súc tích về những gì đang diễn ra trên màn hình.",\n'
+                '  "inference": {\n'
+                '    "topic": "gaming / working / browsing...",\n'
+                '    "inferred_story": "Mô tả ngắn gọn người dùng đang làm gì hoặc vừa làm gì trong game/ứng dụng",\n'
+                '    "mood_and_intent": "Không khí/tình huống (gay cấn, vui vẻ, lúng túng, rảnh rỗi...)"\n'
+                "  },\n"
+                '  "key_elements": [\n'
+                '    {"name": "tên chi tiết/vật thể/nút", "significance": "ý nghĩa ngắn gọn"}\n'
+                "  ],\n"
+                '  "ocr_and_text": {\n'
+                '    "detected_text": ["các chữ/nút/chỉ số chính"],\n'
+                '    "text_context": "ngắn gọn"\n'
+                "  },\n"
+                '  "tags": ["gaming", "tên_game_hoặc_app"]\n'
+                "}\n\n"
+                "LƯU Ý QUAN TRỌNG: Viết bằng tiếng Việt tự nhiên, trực diện và súc tích. Tuyệt đối KHÔNG viết văn miêu tả học thuật dài dòng và KHÔNG dùng các chú thích như [cite: 1]."
+            )
+            data = {"model": "gemini-flash", "thinking": "fast", "prompt": prompt}
             res = requests.post(self.api_url, files=files, data=data, timeout=25.0)
 
             if res.status_code == 200:
@@ -271,10 +307,15 @@ class VisionPerceptionWorker:
                     ocr_data = raw_data.get("ocr_and_text", {}) or {}
                     elements = raw_data.get("key_elements", []) or []
 
+                    raw_sum = str(raw_data.get("summary", "") or "").strip()
+                    raw_story = str(inference.get("inferred_story", "") or "").strip()
+                    clean_sum = re.sub(r'\[cite:\s*[^\]]+\]', '', raw_sum).strip()
+                    clean_story = re.sub(r'\[cite:\s*[^\]]+\]', '', raw_story).strip()
+
                     snapshot = VisionPerceptionSnapshot(
-                        summary=str(raw_data.get("summary", "") or "").strip(),
+                        summary=clean_sum,
                         topic=str(inference.get("topic", "") or "").strip(),
-                        inferred_story=str(inference.get("inferred_story", "") or "").strip(),
+                        inferred_story=clean_story,
                         mood_and_intent=str(inference.get("mood_and_intent", "") or "").strip(),
                         key_elements=tuple(elements if isinstance(elements, list) else ()),
                         detected_text=tuple(ocr_data.get("detected_text", []) or ()),

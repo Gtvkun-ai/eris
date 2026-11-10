@@ -47,6 +47,31 @@ def _is_self_window(title: str) -> bool:
     return False
 
 
+def _ignored_window_patterns() -> set[str]:
+    """Các ứng dụng tiện ích nền, VPN cần loại khỏi telemetry ngữ cảnh."""
+    raw = os.environ.get("ERIS_IGNORED_WINDOW_TITLES", "").strip()
+    titles = {
+        "radmin",
+        "radmin vpn",
+        "rvrvpngui",
+        "rvrvpngui.exe",
+    }
+    for part in raw.split(","):
+        cleaned = part.strip().lower()
+        if cleaned:
+            titles.add(cleaned)
+    return titles
+
+
+def _is_ignored_window(title: str, process_name: str = "") -> bool:
+    c_title = title.strip().lower()
+    c_proc = process_name.strip().lower()
+    for pat in _ignored_window_patterns():
+        if pat in c_title or (c_proc and pat in c_proc):
+            return True
+    return False
+
+
 def _ensure_com_initialized() -> None:
     if getattr(_com_state, "initialized", False):
         return
@@ -80,7 +105,13 @@ class TelemetryMixin:
                 user32.GetWindowTextW(candidate, buff, len(buff))
                 return buff.value.strip()
             title = title_for(hwnd) if hwnd else ""
-            if not title or _is_self_window(title):
+            proc_name = ""
+            if hwnd:
+                try:
+                    proc_name = self._get_process_resolver().resolve(hwnd, title=title).process_name
+                except Exception:
+                    pass
+            if not title or _is_self_window(title) or _is_ignored_window(title, proc_name):
                 chosen: list[tuple[int, str]] = []
                 PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
                 def cb(candidate, _):
@@ -88,7 +119,12 @@ class TelemetryMixin:
                     if not candidate or not user32.IsWindowVisible(candidate):
                         return True
                     candidate_title = title_for(candidate)
-                    if candidate_title and not _is_self_window(candidate_title):
+                    c_proc = ""
+                    try:
+                        c_proc = self._get_process_resolver().resolve(candidate, title=candidate_title).process_name
+                    except Exception:
+                        pass
+                    if candidate_title and not _is_self_window(candidate_title) and not _is_ignored_window(candidate_title, c_proc):
                         chosen.append((candidate, candidate_title))
                         return False
                     return True
@@ -202,7 +238,8 @@ class TelemetryMixin:
         return list(dict.fromkeys(titles))
 
     def _get_all_windows(self) -> list:
-        return self._enum_visible_titled_windows()
+        raw_windows = self._enum_visible_titled_windows()
+        return [w for w in raw_windows if not _is_self_window(w) and not _is_ignored_window(w)]
 
     def _resolve_active_window(self) -> str:
         return str(self._resolve_foreground_identity().get("title", "Desktop") or "Desktop")

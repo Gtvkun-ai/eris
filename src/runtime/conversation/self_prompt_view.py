@@ -186,7 +186,30 @@ def compact_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
         return result
     for field in _EPISODE_AUDIT_FIELDS:
         result.pop(field, None)
+    if "summary" in result:
+        result["summary"] = str(result["summary"])[:180]
+    if "outcome" in result:
+        result["outcome"] = str(result["outcome"])[:120]
     result["projection_schema"] = "eris.root_episode.v1"
+    return result
+
+
+_PROCEDURAL_AUDIT_FIELDS = (
+    "first_seen_at", "updated_at", "evidence_ids",
+    "observations", "success_count", "failure_count", "decay_policy",
+)
+
+
+def compact_procedural_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Transport projection for procedural memory: drop audit/timestamps, keep rule."""
+    if not isinstance(item, Mapping):
+        return item  # type: ignore[return-value]
+    result = deepcopy(dict(item))
+    if result.get("projection_schema") == "eris.procedural_item.v1":
+        return result
+    for field in _PROCEDURAL_AUDIT_FIELDS:
+        result.pop(field, None)
+    result["projection_schema"] = "eris.procedural_item.v1"
     return result
 
 
@@ -305,6 +328,13 @@ def compact_active_state(active_state: Mapping[str, Any]) -> dict[str, Any]:
     # session_arc defaults to the literal 'unknown'; treat it as an empty default.
     if result.get("session_arc") == "unknown":
         result.pop("session_arc", None)
+    # metadata.internal_state duplicates top-level memory_state.internal_state and
+    # causes a 3.2k phantom delta between turns if kept.
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.pop("internal_state", None)
+        if not metadata:
+            result.pop("metadata", None)
     pruned = _prune_empty(result)
     pruned["projection_schema"] = "eris.active_state.v1"
     return pruned
@@ -552,11 +582,11 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(episodes, list):
             living["recent_episodes"] = [
                 compact_episode(episode) if isinstance(episode, Mapping) else episode
-                for episode in episodes
+                for episode in episodes[:2]
             ]
     active = memory.get("active_state")
     metadata = active.get("metadata") if isinstance(active, dict) else None
-    if isinstance(metadata, dict) and "internal_state" in memory and _same_json(metadata.get("internal_state"), memory["internal_state"]):
+    if isinstance(metadata, dict):
         metadata.pop("internal_state", None)
     if isinstance(memory.get("internal_state"), Mapping):
         memory["internal_state"] = compact_internal_state(memory["internal_state"])
@@ -573,6 +603,11 @@ def project_self_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         memory["semantic_memory"] = [
             compact_semantic_item(entry) if isinstance(entry, Mapping) else entry
             for entry in memory["semantic_memory"]
+        ]
+    if isinstance(memory.get("procedural_memory"), list):
+        memory["procedural_memory"] = [
+            compact_procedural_item(entry) if isinstance(entry, Mapping) else entry
+            for entry in memory["procedural_memory"]
         ]
     # mind_state is the top-level Self prefix branch (set by _read_self, NOT in
     # memory_state). Cut its telemetry/history/identifiers here, before the

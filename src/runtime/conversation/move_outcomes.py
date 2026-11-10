@@ -8,6 +8,7 @@ cũ; không ghi speech audio, raw Writer reply hoặc chain-of-thought.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any
@@ -127,12 +128,17 @@ class MoveOutcomeLedger:
     def feedback(self, session_id: str) -> list[dict[str, Any]]:
         """Tín hiệu cho Root kể cả khi public history rỗng / session reset."""
         reports = []
-        for row in self.list(session_id)[-10:]:
+        try:
+            limit = max(1, min(10, int(os.environ.get("ERIS_MOVE_RECEIPTS_LIMIT", "2"))))
+        except (TypeError, ValueError):
+            limit = 2
+        for row in self.list(session_id)[-limit:]:
             entry = {k: row[k] for k in (
-                'run_id', 'move_id', 'generation', 'event_id', 'delivery_id',
-                'status', 'intent', 'say_hint', 'reason', 'updated_at',
+                'move_id', 'status', 'intent', 'reason', 'updated_at',
             ) if k in row}
-            name = str(row.get('intent') or row.get('move_id') or 'unknown')[:240]
+            if 'say_hint' in row:
+                entry['say_hint'] = str(row['say_hint'])[:120]
+            name = str(row.get('intent') or row.get('move_id') or 'unknown')[:120]
             status = row.get('status')
             reason = str(row.get('reason', ''))
             if status == 'failed_before_delivery':

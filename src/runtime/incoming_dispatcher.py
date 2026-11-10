@@ -207,6 +207,9 @@ class IncomingMessageDispatcher:
 
             cancel_audio = bool(dynamics_decision.cancel_audio)
             cancel_generation = bool(dynamics_decision.cancel_generation)
+            from runtime.runtime_settings_store import runtime_bool
+            if not runtime_bool("stage", "interrupt_enabled", default=True):
+                cancel_audio = False
 
             # Bổ sung MicroActRouter phát trực tiếp các act không mang nội dung mới
             # (RECEIPT, PROMPT_CONTINUE, STOP_ACK) và ghi log bằng InteractionActReceipt.
