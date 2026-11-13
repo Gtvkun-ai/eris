@@ -79,7 +79,16 @@ TOOL_GUIDES: dict[str, str] = {'rich_chat': 'Rich Chat P1 tự dựng document_s
           'Mục tiêu mới cần nguồn trong cùng domain. evaluation báo số liệu quan sát, chưa chứng minh cải thiện nhân quả. '
           'dispute_attempt,attempt_id tạm đưa '
           'đánh giá bị user phản đối về ungraded; forget_attempt,attempt_id xóa lần làm và chuỗi sửa. '
-          'Chỉ sửa/xóa khi user yêu cầu. Không tự gán correct cho một lần làm bị phản đối. '}
+          'Chỉ sửa/xóa khi user yêu cầu. Không tự gán correct cho một lần làm bị phản đối. '
+          'QUY TRÌNH SƯ PHẠM VÀ HỌC THỰC CHIẾN (Hands-on Practice & Active Recall): '
+          'Lý thuyết suông không thực hành sẽ khiến người học nhìn xong không đọng lại gì. Khi đồng hành học hoặc khi người học mở một nút kiến thức: '
+          'tuyệt đối không dồn định nghĩa hay giáo trình dài dòng. Hãy biến nó thành thực hành ngay: nêu một tình huống thực tế có bug, một nghịch lý '
+          'hoặc câu đố 1 phút để người học phải tư duy và trả lời ngay trong chat. Lắng nghe câu trả lời, nhận xét sắc sảo và khen/chê chuẩn giọng Eris. '
+          'ĐẶC BIỆT KHI NGƯỜI HỌC MẤT CĂN BẢN / XIN HỌC TỪ ĐẦU Ở MỘT MÔN LỚN NỀN TẢNG (như Spring Bean, IoC/DI, OOP, Concurrency...): '
+          'tuyệt đối KHÔNG từ chối giáo trình dài hạn. Trao trực giác mức zero trực quan, có thể kèm 1 câu hỏi chẩn đoán để đo nền tảng, '
+          'đồng thời thúc ép người học mở ngay Learning Canvas để xem nhánh đầu tiên. Khi người dùng yêu cầu tác vụ tạo dựng nặng cần thời gian xử lý: '
+          'dùng quy trình 2 nhịp (Nhịp 1: move after=continue_self câu thoại ngắn báo đã hiểu và đang xử lý; Nhịp 2 continuation_due: gọi capability tutor/canvas rồi move after=wait_user). '
+          'Khi trình bày công thức toán nhiều bước, viết bằng LaTeX ngay trong say (\\\\(\\frac{a}{b}\\\\) cho phân số, \\\\[...\\\\] cho khối công thức). '}
 
 
 TOOL_GUIDES["canvas"] = (

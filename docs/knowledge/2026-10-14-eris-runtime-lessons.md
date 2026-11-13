@@ -1,5 +1,11 @@
 # Tri thức Eris: bài học từ điều tra runtime và gói rescue
 
+**Cập nhật 13/11: Phòng chống cấm ngôn (ban/mute) tài khoản DeepSeek Web qua Whale2API**
+Sự cố ngày 04/11 với 44 lượt gọi benchmark payload 194 KB đã kích hoạt hệ thống chống gian lận
+Shumei của DeepSeek, dẫn tới án phạt cấm ngôn 365 ngày (`user is muted`) và khóa tài khoản
+(`USER_IS_BANNED`). Đọc kỹ quy tắc an toàn trước khi chạy probe/test:
+[bài học phòng chống cấm ngôn DeepSeek Web](2026-11-13-deepseek-web-abuse-prevention.md).
+
 **Cập nhật 08/11: độ trễ ElevenLabs trong hai phiên portable tối 07/11**
 
 Ghép `tts_dispatch` và `audio_start`/`audio_failed` trong `ErisLive` với

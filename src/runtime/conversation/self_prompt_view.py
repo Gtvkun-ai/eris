@@ -97,7 +97,7 @@ def _synthesize_narrative_summary(records: Sequence[Mapping[str, Any]]) -> str:
     return " ".join(parts)
 
 
-def compact_profile(profile: Mapping[str, Any], max_records: int = 16) -> dict[str, Any]:
+def compact_profile(profile: Mapping[str, Any], max_records: int = 8) -> dict[str, Any]:
     """Transport projection for Root: drop audit/provenance, keep the telling.
 
     Keeps path/value and the telling qualifiers (explicitness, status,

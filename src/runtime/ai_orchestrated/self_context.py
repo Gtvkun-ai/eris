@@ -56,7 +56,7 @@ def _surface_preview(item: Any) -> dict[str, Any]:
     elif not isinstance(raw_evidence, (list, tuple)):
         raw_evidence = ()
     evidence_refs = tuple(
-        item for item in (_compact(value, 120) for value in raw_evidence[:6]) if item
+        item for item in (_compact(value, 120) for value in raw_evidence[:2]) if item
     )
     return {
         "id": _compact(data.get("id", ""), 80),
@@ -92,7 +92,7 @@ def _thread_preview(item: Any) -> Mapping[str, Any]:
     if not isinstance(raw_refs, (list, tuple)):
         raw_refs = ()
     evidence_refs = [
-        clean for clean in (_compact(value, 120) for value in raw_refs[:8]) if clean
+        clean for clean in (_compact(value, 120) for value in raw_refs[:2]) if clean
     ]
     if not evidence_refs:
         return {}
@@ -306,12 +306,15 @@ def build_autonomous_self_context(host: Any) -> AutonomousSelfContext:
     return AutonomousSelfContext(
         internal_state=internal_state,
         attention=attention,
-        agenda=tuple(agenda_items[:12]),
-        private_mind_surface=private_mind,
-        private_life_surface=private_life,
-        private_life_workspace=private_life_workspace,
-        active_threads=active_threads,
-        active_concerns=active_concerns,
+        agenda=tuple(agenda_items[:3]),
+        private_mind_surface=tuple(private_mind[:2]),
+        private_life_surface=tuple(private_life[:2]),
+        private_life_workspace=tuple(
+            {k: (_compact(v, 180) if isinstance(v, str) else v) for k, v in item.items()}
+            for item in private_life_workspace[:2]
+        ),
+        active_threads=tuple(active_threads[:2]),
+        active_concerns=tuple(active_concerns[:3]),
         has_public_seed=has_public_seed,
         strongest_seed_score=strongest,
     )

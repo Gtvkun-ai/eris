@@ -50,6 +50,28 @@ def _json_text(value: Any, *, limit: int) -> str:
         return str(value)[:limit]
 
 
+def compact_engagement_context(engagement: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(engagement, Mapping) or not engagement:
+        return {}
+    wanted_keys = (
+        "conversation_topic_closed",
+        "existential_anchor",
+        "existential_actionability",
+        "environment_awareness",
+        "environment_meaning_kind",
+        "environment_target_text",
+        "contribution_signal",
+        "active_goal_text",
+        "seconds_since_startup_greeting",
+        "seconds_since_last_autonomous_speech",
+        "seconds_since_last_user_turn",
+        "autonomous_expression_streak",
+        "explicit_quiet_request",
+        "continuous_self_orientation",
+    )
+    return {k: engagement[k] for k in wanted_keys if k in engagement}
+
+
 class ConversationContextAssembler:
     """Thu context public-safe cho một event V12 mà không tạo semantic decision."""
 
@@ -112,8 +134,9 @@ class ConversationContextAssembler:
         except Exception as exc:
             self._debug("context.engagement", exc)
 
+        compact_engagement = compact_engagement_context(engagement)
         conversation_status = self._conversation_status(state, channel=channel)
-        engagement_text = _json_text(engagement, limit=8000)
+        engagement_text = _json_text(compact_engagement, limit=2000)
         discourse = self._discourse_context()
         # P2: dùng chung proposal inbox, nhưng chỉ projection nhỏ *không phải*
         # bằng chứng về thế giới/user. Root có thể bỏ qua hoàn toàn các ý này.
@@ -210,7 +233,7 @@ class ConversationContextAssembler:
             "memory_context": compiled.memory,
             "grounding_context": compiled.grounding,
             "interrupt_context": compiled.interrupt,
-            "engagement_context": engagement,
+            "engagement_context": compact_engagement,
             "discourse_context": compiled.discourse,
             "affective_voice_state": affect_payload,
             "affective_voice_context": affect_prompt[:8000],
