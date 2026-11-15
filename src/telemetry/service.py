@@ -42,11 +42,26 @@ class TelemetryService(TelemetryMixin):
         return self.format_snapshot(snapshot)
 
     def capture_screen_frame_data_uri(self, *, max_side: int = 960, quality: int = 82) -> str:
-        with mss.mss() as sct:
-            monitor = sct.monitors[0]
-            raw = sct.grab(monitor)
+        image = None
+        try:
+            with mss.mss() as sct:
+                try:
+                    monitor = sct.monitors[0]
+                    raw = sct.grab(monitor)
+                except Exception:
+                    monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                    raw = sct.grab(monitor)
+            image = Image.frombytes("RGB", raw.size, raw.rgb)
+        except Exception:
+            try:
+                from PIL import ImageGrab
+                image = ImageGrab.grab()
+            except Exception:
+                image = None
 
-        image = Image.frombytes("RGB", raw.size, raw.rgb)
+        if image is None:
+            return ""
+
         width, height = image.size
         longest = max(width, height)
         if longest > max_side:

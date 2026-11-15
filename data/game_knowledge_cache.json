@@ -1,0 +1,83 @@
+{
+  "balatro": {
+    "game_id": "researched_balatro",
+    "title": "Balatro",
+    "genre": "Roguelike Deckbuilder / Poker",
+    "mechanics": "Balatro kết hợp luật chơi poker truyền thống với phong cách roguelike, yêu cầu người chơi tạo các tay bài để đạt điểm số mục tiêu qua từng Blind. Tài nguyên chính là tiền dùng để mua các lá Joker mang hiệu ứng đột phá, bài Tarot và thẻ hành tinh nhằm nâng cấp sức mạnh. Mục tiêu là vượt qua các Ante ngày càng khắc nghiệt để giành chiến thắng cuối cùng.",
+    "co_stream_focus": "Co-host nên tập trung phân tích sự kết hợp độc đáo giữa các lá Joker, những màn bùng nổ điểm số chip khổng lồ, và sự căng thẳng nghẹt thở khi streamer đối mặt với rủi ro cao ở vòng cuối. Hãy tạo điểm nhấn bằng cách bình luận về những quyết định mạo hiểm hoặc canh bạc rút bài định mệnh của người chơi.",
+    "keywords": [
+      "balatro",
+      "balatro"
+    ],
+    "source": "gemini_web_search"
+  },
+  "little chef": {
+    "game_id": "researched_little_chef",
+    "title": "Little Chef",
+    "genre": "2D Physics Sandbox / Meme Cooking Puzzle (itch.io indie)",
+    "mechanics": "Bản demo itch.io của Julien, hello erika, Danny-vD: Game giải đố vật lý 2D nhảm nhí và hài hước trong bếp. Người chơi dùng chuột (Point & Click) để kéo thả, ném nguyên liệu, mở vòi nước, tương tác với đồ vật theo hệ thống vật lý hỗn loạn. Tự do thử nghiệm công thức meme bựa (bọt biển rửa bát nấu thành SpongeBob, ngâm bánh mì ướt nhẹp dưới vòi nước, làm ngập nước bếp). Không có áp lực thời gian; nếu đồ đạc bay tứ tung hoặc kẹt bug vật lý thì bấm phím 'R' để reset bàn, bấm 'DEL' để xóa hết.",
+    "co_stream_focus": "Bình luận hài hước, cười cợt các pha vật lý 'si đa' trên màn hình (đồ vật văng lung tung, nồi trượt, bọt biển bơi trong súp, ngập nước cả phòng). Xúi người chơi thử các trò nghịch ngợm (bật vòi nước, đốt cháy đồ, ném đồ lung tung) và nhắc bấm phím 'R' khi kẹt bug.",
+    "keywords": [
+      "little chef",
+      "little chef: demo",
+      "julien",
+      "danny-vd",
+      "hello erika"
+    ],
+    "source": "gemini_web_search"
+  },
+  "little chef demo by julien hello erika danny vd": {
+    "game_id": "researched_little_chef",
+    "title": "Little Chef",
+    "genre": "2D Physics Sandbox / Meme Cooking Puzzle (itch.io indie)",
+    "mechanics": "Bản demo itch.io của Julien, hello erika, Danny-vD: Game giải đố vật lý 2D nhảm nhí và hài hước trong bếp. Người chơi dùng chuột (Point & Click) để kéo thả, ném nguyên liệu, mở vòi nước, tương tác với đồ vật theo hệ thống vật lý hỗn loạn. Tự do thử nghiệm công thức meme bựa (bọt biển rửa bát nấu thành SpongeBob, ngâm bánh mì ướt nhẹp dưới vòi nước, làm ngập nước bếp). Không có áp lực thời gian; nếu đồ đạc bay tứ tung hoặc kẹt bug vật lý thì bấm phím 'R' để reset bàn, bấm 'DEL' để xóa hết.",
+    "co_stream_focus": "Bình luận hài hước, cười cợt các pha vật lý 'si đa' trên màn hình (đồ vật văng lung tung, nồi trượt, bọt biển bơi trong súp, ngập nước cả phòng). Xúi người chơi thử các trò nghịch ngợm (bật vòi nước, đốt cháy đồ, ném đồ lung tung) và nhắc bấm phím 'R' khi kẹt bug.",
+    "keywords": [
+      "little chef",
+      "little chef: demo",
+      "julien",
+      "danny-vd",
+      "hello erika"
+    ],
+    "source": "gemini_web_search"
+  },
+  "celeste": {
+    "game_id": "researched_celeste_maddy_makes_games_maddy_",
+    "title": "Celeste - Maddy Makes Games (Maddy Thorson & Noel Berry)",
+    "genre": "2D Precision Platformer",
+    "mechanics": "Người chơi điều khiển Madeline vượt qua các màn chơi leo núi hiểm trở bằng các động tác cơ bản gồm nhảy, bám tường (giới hạn thể lực) và lướt giữa không trung (dash) theo 8 hướng. Game nổi tiếng với cơ chế hồi sinh tức thì, độ khó cao ngất ngưởng nhưng cực kỳ công bằng cùng các vật phẩm dâu tây ẩn thử thách kỹ năng.",
+    "co_stream_focus": "Streamer cần tập trung quan sát nhịp độ màn chơi và số lần chết (death count) để tạo tiếng cười khi fail liên tục ở một chỗ. Hãy bình luận hài hước về sự bất lực, những pha lướt hụt liều lĩnh và đồng cảm với tâm lý 'cay cú' nhưng đầy kiên trì của nhân vật.",
+    "keywords": [
+      "celeste - maddy makes games (maddy thorson & noel berry)",
+      "celeste",
+      "celeste maddy makes games maddy thorson noel berry"
+    ],
+    "source": "gemini_web_search"
+  },
+  "celeste maddy makes games maddy thorson noel berry": {
+    "game_id": "researched_celeste_maddy_makes_games_maddy_",
+    "title": "Celeste - Maddy Makes Games (Maddy Thorson & Noel Berry)",
+    "genre": "2D Precision Platformer",
+    "mechanics": "Người chơi điều khiển Madeline vượt qua các màn chơi leo núi hiểm trở bằng các động tác cơ bản gồm nhảy, bám tường (giới hạn thể lực) và lướt giữa không trung (dash) theo 8 hướng. Game nổi tiếng với cơ chế hồi sinh tức thì, độ khó cao ngất ngưởng nhưng cực kỳ công bằng cùng các vật phẩm dâu tây ẩn thử thách kỹ năng.",
+    "co_stream_focus": "Streamer cần tập trung quan sát nhịp độ màn chơi và số lần chết (death count) để tạo tiếng cười khi fail liên tục ở một chỗ. Hãy bình luận hài hước về sự bất lực, những pha lướt hụt liều lĩnh và đồng cảm với tâm lý 'cay cú' nhưng đầy kiên trì của nhân vật.",
+    "keywords": [
+      "celeste - maddy makes games (maddy thorson & noel berry)",
+      "celeste",
+      "celeste maddy makes games maddy thorson noel berry"
+    ],
+    "source": "gemini_web_search"
+  },
+  "celeste steam": {
+    "game_id": "researched_celeste_maddy_makes_games_maddy_",
+    "title": "Celeste - Maddy Makes Games (Maddy Thorson & Noel Berry)",
+    "genre": "2D Precision Platformer",
+    "mechanics": "Người chơi điều khiển Madeline vượt qua các màn chơi leo núi hiểm trở bằng các động tác cơ bản gồm nhảy, bám tường (giới hạn thể lực) và lướt giữa không trung (dash) theo 8 hướng. Game nổi tiếng với cơ chế hồi sinh tức thì, độ khó cao ngất ngưởng nhưng cực kỳ công bằng cùng các vật phẩm dâu tây ẩn thử thách kỹ năng.",
+    "co_stream_focus": "Streamer cần tập trung quan sát nhịp độ màn chơi và số lần chết (death count) để tạo tiếng cười khi fail liên tục ở một chỗ. Hãy bình luận hài hước về sự bất lực, những pha lướt hụt liều lĩnh và đồng cảm với tâm lý 'cay cú' nhưng đầy kiên trì của nhân vật.",
+    "keywords": [
+      "celeste - maddy makes games (maddy thorson & noel berry)",
+      "celeste",
+      "celeste maddy makes games maddy thorson noel berry"
+    ],
+    "source": "gemini_web_search"
+  }
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Mapping, Sequence
@@ -22,6 +23,37 @@ _SAFE_V03_ERROR = re.compile(r"^(?:v03_[a-z0-9_]+|public_writer_[a-z0-9_]+|[A-Z]
 # Không bịa thông tin, không lộ secret, không tự nhận đã làm gì — và KHÔNG để turn
 # rơi vào trạng thái câm/no_public_commit.
 _V03_SPEECH_JA_FILLER = "えっと…"
+
+_META_INSTRUCTION_PREFIXES = (
+    "đáp lại", "dap lai",
+    "trả lời", "tra loi",
+    "giải thích", "giai thich",
+    "bảo người dùng", "bao nguoi dung", "bảo bạn", "bao ban",
+    "nhắc nhở", "nhac nho", "nhắc", "nhac",
+    "yêu cầu", "yeu cau",
+    "hỏi xem", "hoi xem", "hỏi thăm", "hoi tham",
+    "chào người dùng", "chao nguoi dung",
+    "chúc mừng", "chuc mung",
+    "khuyên", "khuyen",
+    "đề xuất", "de xuat",
+    "xác nhận", "xac nhan",
+    "từ chối", "tu choi",
+)
+
+
+def _is_direct_spoken_dialogue(say: str) -> bool:
+    """True nếu say là câu thoại nói thẳng, không phải chỉ thị/tóm tắt hành động."""
+    text = str(say or "").strip()
+    if len(text) < 4 or len(text) > 600:
+        return False
+    if text.startswith(("{", "[", "```", "http://", "https://")):
+        return False
+    low = text.lower()
+    for prefix in _META_INSTRUCTION_PREFIXES:
+        if low.startswith(prefix):
+            return False
+    return True
+
 
 
 def _v03_error_code(exc: Exception) -> str:
@@ -407,13 +439,21 @@ class RuntimeConversationWriter:
         router = getattr(self.host, "ai_model_router", None)
         canvas = getattr(self.host, "learning_canvas_service", None)
         generate = getattr(router, "generate_public_reply", None)
-        if turn.move.literal_dialogue:
-            # Prose recovered from Root is already dialogue, not a writing brief.
+        fast_pass_env = os.environ.get("ERIS_PUBLIC_WRITER_FAST_PASS", "1").strip().lower() in {"1", "true", "yes", "on"}
+        is_literal = turn.move.literal_dialogue or (
+            fast_pass_env
+            and not turn.move.presentation_blocks
+            and not turn.move.canvas_segments
+            and _is_direct_spoken_dialogue(turn.move.say)
+        )
+        if is_literal:
+            # Prose recovered from Root or direct dialogue is already spoken dialogue, not a writing brief.
             # Keep it verbatim and reuse localization/prepare/TTS downstream.
             def generate(**kwargs):
                 return {"should_speak": True, "text": turn.move.say, "speech_text": "",
                         "display_language": str(kwargs.get("language_hint", "vi")),
-                        "llm_malformed_json_repair": True}
+                        "llm_malformed_json_repair": True,
+                        "_fast_passed": True}
         if not callable(generate):
             raise RuntimeError("public_writer_unavailable")
 

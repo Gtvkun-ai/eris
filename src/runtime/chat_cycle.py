@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from typing import Any
 
 from runtime.input_revision_buffer import InputRevisionBuffer
 from runtime.interrupt_reaction_policy import InterruptReactionPolicy
@@ -199,6 +200,8 @@ class ChatCycleMixin:
             user_text = self._merge_rapid_chat_burst(user_text, first_timestamp=cycle_start)
             if not user_text:
                 return
+            if self._is_session_reset_request(user_text):
+                self._perform_session_reset()
             sid = str(
                 getattr(self, "conversation_id", "")
                 or getattr(self, "thread_id", "")
@@ -578,10 +581,10 @@ class ChatCycleMixin:
             from runtime.intent_model import normalize_intent
             intent = normalize_intent(user_text)
             self.current_world_intent = intent
-            if intent.environment_sufficient:
-                return False
             if intent.domain == "screen":
                 return True
+            if intent.environment_sufficient:
+                return False
         except Exception:
             intent = None
         coordinator = self._ensure_chat_perception_coordinator()
@@ -942,6 +945,168 @@ class ChatCycleMixin:
         fn = getattr(coordinator, "refresh_screen_text", None)
         return bool(fn()) if callable(fn) else False
 
+    @staticmethod
+    def _is_session_reset_request(text: str) -> bool:
+        import unicodedata
+        decomposed = unicodedata.normalize("NFD", str(text or "").lower())
+        plain = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+        norm = " ".join(re.sub(r"[^a-z0-9+#]+", " ", plain).split())
+        patterns = (
+            "xoa sach moi ky uc",
+            "xoa sach ky uc",
+            "xoa het ky uc",
+            "xoa ky uc cu",
+            "xoa ky uc",
+            "xoa het di",
+            "xoa bo nho",
+            "lam lai tu dau",
+            "lam lai ne",
+            "lam lai di",
+            "bat dau lai tu dau",
+            "bat dau lai ne",
+            "bat dau lai di",
+            "reset lai di",
+            "reset lai",
+            "reset di",
+            "reset session",
+            "clear memory",
+            "start over",
+        )
+        return any(p in norm for p in patterns)
+
+    def _perform_session_reset(self) -> None:
+        self.logger.info("[session reset] User requested clean slate reset. Wiping conversation history & working memory.")
+        if hasattr(self, "chat_history") and isinstance(self.chat_history, list):
+            self.chat_history.clear()
+        if hasattr(self, "_chat_history") and isinstance(self._chat_history, list):
+            self._chat_history.clear()
+        root_session = getattr(self, "root_session", None)
+        if root_session is not None and callable(getattr(root_session, "_clear", None)):
+            try:
+                root_session._clear()
+            except Exception:
+                pass
+        self.last_agent_turn = None
+        self._last_assistant_text = ""
+        self.last_text = ""
+        self.vision_facts = ()
+        self.last_semantic_scene_note = None
+        self.last_vision_grounding_report = None
+        sid = str(
+            getattr(self, "conversation_id", "")
+            or getattr(self, "thread_id", "")
+            or "foreground:primary"
+        ).strip()[:180]
+        try:
+            from runtime.conversation.open_loop_store import ensure_open_loop_store
+            ensure_open_loop_store(self).clear(sid)
+        except Exception:
+            pass
+        try:
+            ledger_factory = getattr(self, "_ensure_session_turn_ledger", None)
+            if callable(ledger_factory):
+                ledger = ledger_factory()
+                if hasattr(ledger, "clear") and callable(ledger.clear):
+                    ledger.clear()
+        except Exception:
+            pass
+
+    def _is_gaming_active(self) -> bool:
+        telemetry = getattr(self, "telemetry_service", None)
+        title = ""
+        process = ""
+        if telemetry is not None:
+            get_fg = getattr(telemetry, "_get_foreground_window", None) or getattr(telemetry, "_resolve_foreground_identity", None)
+            if callable(get_fg):
+                try:
+                    fg = get_fg() or {}
+                    title = str(fg.get("title", "") or "")
+                    process = str(fg.get("process", "") or fg.get("process_name", "") or "")
+                except Exception:
+                    pass
+            if not title and not process:
+                snap = getattr(telemetry, "last_snapshot", None)
+                if snap is not None:
+                    title = str(getattr(snap, "active_window_title", "") or getattr(snap, "active_window", "") or "")
+                    process = str(getattr(snap, "active_app", "") or "")
+        if not title and not process:
+            try:
+                from screen.active_window_provider import ActiveWindowProvider
+                aw = ActiveWindowProvider().get()
+                title = str(aw.title or "")
+                process = str(aw.process_name or "")
+            except Exception:
+                pass
+        if not title and not process:
+            snap = getattr(self, "_chat_snapshot_for_vision", None)
+            if snap is not None:
+                title = str(getattr(snap, "active_window_title", "") or getattr(snap, "active_window", "") or "")
+                process = str(getattr(snap, "active_app", "") or "")
+
+        now = time.time()
+        from screen.game_knowledge import is_gaming_window
+        if is_gaming_window(title, process):
+            self._last_game_active_at = now
+            self._last_game_title = title
+            self._last_game_process = process
+            return True
+
+        # Session memory: nếu vừa thấy game trong vòng 180s và cửa sổ hiện tại
+        # là Eris overlay, Desktop, hoặc trình duyệt, vẫn duy trì gaming mode.
+        last_active = float(getattr(self, "_last_game_active_at", 0.0) or 0.0)
+        if (now - last_active) < 180.0:
+            low_title = title.lower()
+            low_proc = process.lower()
+            if not title or any(k in low_title or k in low_proc for k in ("eris", "desktop", "chrome", "firefox", "msedge", "không xác định")):
+                return True
+
+        return False
+
+
+    def _apply_vision_perception_snapshot_as_grounding(self, v_snap: Any, user_text: str = "") -> None:
+        """Chuyển đổi VisionPerceptionSnapshot thành grounding report và vision_facts tiếng Việt chuẩn xác."""
+        facts: list[str] = []
+        if getattr(v_snap, "summary", ""):
+            facts.append(str(v_snap.summary))
+        if getattr(v_snap, "motion", ""):
+            facts.append(f"Biến chuyển vừa qua: {v_snap.motion}")
+        items = getattr(v_snap, "ingredients_and_tools", ())
+        if items:
+            facts.append(f"Nguyên liệu & Dụng cụ có sẵn: {', '.join(items)}")
+        if getattr(v_snap, "recipe_or_menu", ""):
+            facts.append(f"Thực đơn/Công thức: {v_snap.recipe_or_menu}")
+
+        self.vision_facts = tuple(facts)
+        self.vision_facts_are_stale = False
+        self.vision_last_trace = f"vision_perception;items={len(items)}"
+        self.vision_facts_novelty_hint = "new_screen_fact" if facts else "abstained_screen_fact"
+
+        from runtime.vision_grounding import GroundedClaim, VisionGroundingPolicy, VisionGroundingReport
+        policy = getattr(self, "vision_grounding_policy", None)
+        if not isinstance(policy, VisionGroundingPolicy):
+            policy = VisionGroundingPolicy()
+            self.vision_grounding_policy = policy
+
+        claims = tuple(
+            GroundedClaim(
+                claim_id=f"vp_{i}",
+                text=fact,
+                kind="scene",
+                confidence=0.92,
+                grounded=True,
+                source="vision_perception_service",
+            )
+            for i, fact in enumerate(facts)
+        )
+        self.last_vision_grounding_report = VisionGroundingReport(
+            claims=claims,
+            evidence_strength=0.92 if facts else 0.0,
+            recommendation="speak" if facts else "silence",
+            reason="vision_perception_service",
+            requested=True,
+            stale=False,
+            source="vision_perception_service",
+        )
 
     def _capture_screen_frame_for_chat(self, user_text: str, *, previous_public_turn=None) -> str:
         started = time.perf_counter()
@@ -976,22 +1141,64 @@ class ChatCycleMixin:
         capture_fn = getattr(getattr(self, "telemetry_service", None), "capture_screen_frame_data_uri", None)
         snapshot = getattr(self, "_chat_snapshot_for_vision", None)
 
-        def _interpret(data_uri: str):
+        def _interpret(data_uri: str, route_override=None):
             if snapshot is None:
                 return getattr(self, "last_vision_grounding_report", None)
+            if route_override is not None:
+                self._chat_screen_route_decision = route_override
+
+            # 1. Đọc snapshot từ VisionPerceptionService trong RAM (0ms latency)
+            try:
+                from screen.vision_perception_worker import ensure_vision_perception_service
+                service = ensure_vision_perception_service()
+                v_snap = service.get_latest_snapshot()
+                if v_snap is not None and not v_snap.is_stale(max_age_seconds=20.0):
+                    self._apply_vision_perception_snapshot_as_grounding(v_snap, user_text=user_text)
+                    return getattr(self, "last_vision_grounding_report", None)
+            except Exception as exc:
+                self.logger.debug("[chat vision] snapshot check error: %s", exc)
+
+            # 2. Nếu snapshot trong RAM đã cũ hoặc chưa có, phân tích trực tiếp qua Gemini Docker
+            # TUYỆT ĐỐI không gọi compressor.compress (cũ, chậm 15s và trả tiếng Anh rác).
+            try:
+                worker = getattr(self, "vision_perception_worker", None)
+                if worker is not None and callable(getattr(worker, "decompose_data_uri", None)):
+                    fresh_snap = worker.decompose_data_uri(data_uri)
+                    if fresh_snap is not None:
+                        self._apply_vision_perception_snapshot_as_grounding(fresh_snap, user_text=user_text)
+                        return getattr(self, "last_vision_grounding_report", None)
+            except Exception as exc:
+                self.logger.warning("[chat vision] decompose_data_uri failed: %s", exc)
+
+            # 3. Fallback an toàn nếu Gemini Docker chưa sẵn sàng
             self._refresh_screen_facts_from_data_uri(
                 data_uri=data_uri, snapshot=snapshot, channel="chat",
-                user_text=user_text, force_refresh=True,
+                user_text=user_text, force_refresh=False,
             )
             return getattr(self, "last_vision_grounding_report", None)
 
-        # ERIS_CHAT_MAIN_VISION=1 là override chủ động: khi bật, chat chính phải
-        # được phép lấy frame tươi ngay cả khi câu user không nhắc trực tiếp tới
-        # màn hình. Evidence ladder vẫn có quyền ưu tiên structured evidence tươi
-        # (ví dụ chess state) để tránh gọi vision thừa.
-        force_chat_vision = str(os.getenv("ERIS_CHAT_MAIN_VISION", "0") or "0").strip().lower() in {
+        # Khi đang chơi game:
+        # Background VisionPerceptionWorker liên tục chụp và gửi 2-frame combo lên Gemini Docker
+        # (nhịp ~8-10s hoặc theo chuyển biến màn hình). evidence_assembler đọc snapshot tươi
+        # đó tức thì từ RAM trong 0ms. Luồng chat TUYỆT ĐỐI không block đồng bộ 15-20s.
+        # Chỉ ép force_chat_vision đồng bộ khi cờ ERIS_CHAT_MAIN_VISION=1 được bật rõ ràng.
+        is_gaming = bool(callable(getattr(self, "_is_gaming_active", None)) and self._is_gaming_active())
+        explicit_chat_vision_env = str(os.getenv("ERIS_CHAT_MAIN_VISION", "0") or "0").strip().lower() in {
             "1", "true", "yes", "on",
         }
+        force_chat_vision = explicit_chat_vision_env
+
+        # Nếu đang chơi game mà background worker chưa có snapshot tươi, đánh thức worker ngay
+        if is_gaming and not force_chat_vision:
+            try:
+                from screen.vision_perception_worker import ensure_vision_perception_service
+                v_snap = ensure_vision_perception_service().get_latest_snapshot()
+                if v_snap is None or v_snap.is_stale(max_age_seconds=60.0):
+                    worker = getattr(self, "vision_perception_worker", None)
+                    if worker is not None and callable(getattr(worker, "trigger_now", None)):
+                        worker.trigger_now(force=True)
+            except Exception:
+                pass
         try:
             result = coordinator.prepare_turn(
                 user_text,
@@ -1038,6 +1245,14 @@ class ChatCycleMixin:
         grounded = tuple(getattr(report, "grounded_claims", ()) or ()) if report is not None else ()
         if grounded:
             return ""
+
+        try:
+            from screen.vision_perception_worker import ensure_vision_perception_service
+            v_snap = ensure_vision_perception_service().get_latest_snapshot()
+            if v_snap is not None and not v_snap.is_stale(max_age_seconds=60.0):
+                return ""
+        except Exception:
+            pass
 
         text_evidence_count = len(tuple(getattr(self, "_chat_screen_text_evidence", ()) or ()))
         return (

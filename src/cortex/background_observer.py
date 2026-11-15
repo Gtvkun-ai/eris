@@ -136,6 +136,22 @@ _GAME_PATTERNS = [
     r"\bgenshin\b",
     r"\bwuthering waves\b",
     r"\btoram\b",
+    r"\bovercooked\b",
+    r"\bplateup\b",
+    r"\blittle chef\b",
+    r"\bcozy cooking\b",
+    r"\bcooking\b",
+    r"\bslay the spire\b",
+    r"\bhearthstone\b",
+    r"\bleague of legends\b",
+    r"\bvalorant\b",
+    r"\bdota\b",
+    r"\bminecraft\b",
+    r"\broblox\b",
+    r"\bgame\b",
+    r"\bgaming\b",
+    r"\bunity\b",
+    r"\bunreal\b",
 ]
 
 _FRAGMENTED_EVENT_PATTERNS = [
@@ -556,7 +572,10 @@ class BackgroundObserver:
         if focus_kind == "code":
             salience += 0.10
         elif focus_kind in {"media", "game"}:
-            salience -= 0.08
+            if focus_kind == "game" and diff.diff_score >= 0.15:
+                salience += 0.22
+            else:
+                salience -= 0.08
 
         if activity_intent == "debugging":
             salience += 0.08

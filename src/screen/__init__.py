@@ -33,7 +33,7 @@ def build_screen_text_runtime(*, logger=None):
     return store, worker, router
 
 
-def build_vision_perception_runtime(*, logger=None):
+def build_vision_perception_runtime(*, store=None, logger=None):
     """Factory khởi tạo Vision Perception runtime (chạy song song không block)."""
     try:
         from .vision_perception_worker import (
@@ -41,16 +41,17 @@ def build_vision_perception_runtime(*, logger=None):
             ensure_vision_perception_service,
         )
         service = ensure_vision_perception_service()
-        worker = VisionPerceptionWorker(service)
+        worker = VisionPerceptionWorker(service, store=store, logger=logger)
         return service, worker
     except Exception as exc:
         class _DisabledVisionWorker:
             enabled = False
             def start(self): return None
             def stop(self): return None
+            def trigger_now(self, force=False): return None
         if logger is not None:
             try:
-                logger.debug("[vision perception] worker unavailable: %s", exc)
+                logger.warning("[vision perception] worker unavailable: %s", exc)
             except Exception:
                 pass
         from .vision_perception_worker import ensure_vision_perception_service

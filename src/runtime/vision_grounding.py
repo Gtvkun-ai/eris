@@ -209,7 +209,8 @@ class VisionGroundingReport:
         """Chỉ surface claim quan sát trực tiếp; bỏ relation/inference mềm."""
 
         selected: list[str] = []
-        for claim in self.grounded_claims:
+        pool = self.grounded_claims if self.grounded_claims else (self.claims if self.recommendation == "soften" else ())
+        for claim in pool:
             if claim.inference_only or claim.kind == "relation":
                 continue
             text = _compact(claim.text, 220)
@@ -317,7 +318,7 @@ class VisionGroundingPolicy:
             unknowns.append("scene_is_stale")
         if not has_direct_evidence:
             unknowns.append("missing_direct_sensor_evidence")
-        if note_confidence < self.min_claim_confidence:
+        if note_confidence < self.min_claim_confidence and not requested:
             unknowns.append("scene_confidence_below_grounded_threshold")
 
         candidates: list[GroundedClaim] = []
@@ -341,7 +342,11 @@ class VisionGroundingPolicy:
             local_contradictions = list(global_contradictions)
             local_contradictions.extend(extra_contradictions)
             local_contradictions.extend(self._text_contradictions(cleaned, kind=kind))
-            threshold = self.min_text_confidence if kind == "visible_text" else self.min_claim_confidence
+            threshold = (
+                self.min_text_confidence
+                if kind == "visible_text"
+                else (self.min_soften_confidence if requested else self.min_claim_confidence)
+            )
             grounded = bool(
                 not stale
                 and has_direct_evidence
@@ -472,7 +477,7 @@ class VisionGroundingPolicy:
         if "ocr_only" in folded_source:
             confidence = min(confidence, 0.58)
         elif "caption_only" in folded_source:
-            confidence = min(confidence, 0.66)
+            confidence = min(confidence, 0.88)
         elif source in {"unknown", ""}:
             confidence = min(confidence, 0.52)
         return confidence

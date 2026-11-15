@@ -606,13 +606,13 @@ class ScreenVisionRuntimeMixin:
     ) -> tuple[str, ...]:
         route = getattr(self, "_chat_screen_route_decision", None)
         route_refs_screen = bool(getattr(route, "references_screen", False))
+        is_gaming = bool(callable(getattr(self, "_is_gaming_active", None)) and self._is_gaming_active())
         looks_like_request = bool(
             callable(getattr(self, "_looks_like_screen_vision_request", None))
             and self._looks_like_screen_vision_request(user_text)
         )
-        # PATCH: requested phải tin cả router/anaphora. Nếu chỉ tin regex tại đây,
-        # follow-up “còn mù vision hả” rơi thành requested=0 dù route đã cứu được.
-        requested = bool(channel == "chat" and (route_refs_screen or looks_like_request))
+        # PATCH: requested phải tin router, anaphora, gaming mode và force_refresh trong chat.
+        requested = bool(channel == "chat" and (route_refs_screen or looks_like_request or is_gaming or force_refresh))
         policy = getattr(self, "vision_grounding_policy", None)
         if not isinstance(policy, VisionGroundingPolicy):
             policy = VisionGroundingPolicy()

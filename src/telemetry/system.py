@@ -143,6 +143,20 @@ class TelemetryMixin:
         except Exception:
             return {"hwnd": 0, "pid": 0, "title": "Không xác định", "process_name": "", "window_class": ""}
 
+    def _get_foreground_window(self) -> dict:
+        """Helper tương thích cho các consumer cần cấu trúc {title, process, process_name}."""
+        info = self._resolve_foreground_identity()
+        proc = str(info.get("process_name", "") or "")
+        return {
+            "title": str(info.get("title", "") or ""),
+            "process": proc,
+            "process_name": proc,
+            "hwnd": int(info.get("hwnd", 0) or 0),
+            "pid": int(info.get("pid", 0) or 0),
+            "window_class": str(info.get("window_class", "") or ""),
+            "executable_path": str(info.get("executable_path", "") or ""),
+        }
+
     def _get_content_metadata_collector(self):
         # Collector được lazy-init vì TelemetryMixin không chắc có __init__ riêng.
         # Nếu import/OS không hỗ trợ thì trả None, runtime vẫn sống. Đáng tiếc là

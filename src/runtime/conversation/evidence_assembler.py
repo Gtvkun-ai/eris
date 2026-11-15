@@ -80,8 +80,46 @@ class ConversationEvidenceAssembler:
             except Exception as exc:
                 self._debug("vision_status", exc)
 
+        game_context = ""
+        try:
+            from screen.game_knowledge import detect_game_from_window, format_game_prompt_context
+            window_title = ""
+            process_name = ""
+            if snapshot is not None:
+                window_title = str(getattr(snapshot, "active_window_title", "") or getattr(snapshot, "active_window", "") or "")
+                process_name = str(getattr(snapshot, "active_app", "") or "")
+            if not window_title and not process_name:
+                telemetry = getattr(host, "telemetry_service", None)
+                if telemetry is not None:
+                    get_fg = getattr(telemetry, "_get_foreground_window", None) or getattr(telemetry, "_resolve_foreground_identity", None)
+                    if callable(get_fg):
+                        fg = get_fg() or {}
+                        window_title = str(fg.get("title", "") or "")
+                        process_name = str(fg.get("process", "") or fg.get("process_name", "") or "")
+            if not window_title and not process_name:
+                window_title = str(getattr(host, "_last_game_title", "") or "")
+                process_name = str(getattr(host, "_last_game_process", "") or "")
+            game_profile = detect_game_from_window(window_title, process_name)
+            if game_profile is not None:
+                game_context = format_game_prompt_context(game_profile)
+        except Exception as exc:
+            self._debug("game_knowledge", exc)
+
+        vision_perception_context = ""
+        try:
+            from screen.vision_perception_worker import ensure_vision_perception_service
+            v_snap = ensure_vision_perception_service().get_latest_snapshot()
+            if v_snap is not None and not v_snap.is_stale(max_age_seconds=180.0):
+                vision_perception_context = v_snap.prompt_context()
+        except Exception as exc:
+            self._debug("vision_perception", exc)
+
         prompt_context = str(getattr(report, "prompt_context", "") or "") if report is not None else ""
-        prompt_context = "\n\n".join(part for part in (prompt_context, vision_status) if part.strip())[:14000]
+        if vision_perception_context and "[VISION_STATUS]" in vision_status:
+            vision_status = ""
+        prompt_context = "\n\n".join(
+            part for part in (prompt_context, vision_status, vision_perception_context, game_context) if part.strip()
+        )[:14000]
         logger_fn = getattr(host, "_log_chat_source_grounding", None)
         if callable(logger_fn) and report is not None:
             try:
@@ -101,7 +139,7 @@ class ConversationEvidenceAssembler:
         }
 
     def assemble_autonomous(self) -> dict[str, Any]:
-        """Grounding report nhẹ cho self-turn; không tự chụp screenshot."""
+        """Grounding report nhẹ cho self-turn; lấy ambient telemetry và background vision."""
         host = self.host
         snapshot = self._telemetry_snapshot()
         engine = getattr(host, "source_grounding_engine", None)
@@ -126,8 +164,51 @@ class ConversationEvidenceAssembler:
         except Exception as exc:
             self._debug("autonomous_grounding", exc)
             report = None
+
+        game_context = ""
+        try:
+            from screen.game_knowledge import detect_game_from_window, format_game_prompt_context
+            window_title = ""
+            process_name = ""
+            if snapshot is not None:
+                window_title = str(getattr(snapshot, "active_window_title", "") or getattr(snapshot, "active_window", "") or "")
+                process_name = str(getattr(snapshot, "active_app", "") or "")
+            if not window_title and not process_name:
+                telemetry = getattr(host, "telemetry_service", None)
+                if telemetry is not None:
+                    get_fg = getattr(telemetry, "_get_foreground_window", None) or getattr(telemetry, "_resolve_foreground_identity", None)
+                    if callable(get_fg):
+                        fg = get_fg() or {}
+                        window_title = str(fg.get("title", "") or "")
+                        process_name = str(fg.get("process", "") or fg.get("process_name", "") or "")
+            if not window_title and not process_name:
+                window_title = str(getattr(host, "_last_game_title", "") or "")
+                process_name = str(getattr(host, "_last_game_process", "") or "")
+            game_profile = detect_game_from_window(window_title, process_name)
+            if game_profile is not None:
+                game_context = format_game_prompt_context(game_profile)
+        except Exception as exc:
+            self._debug("autonomous_game_knowledge", exc)
+
+        vision_perception_context = ""
+        try:
+            from screen.vision_perception_worker import ensure_vision_perception_service
+            v_snap = ensure_vision_perception_service().get_latest_snapshot()
+            if v_snap is not None and not v_snap.is_stale(max_age_seconds=180.0):
+                vision_perception_context = v_snap.prompt_context()
+        except Exception as exc:
+            self._debug("autonomous_vision_perception", exc)
+
+        prompt_context = "\n\n".join(
+            part for part in (
+                str(getattr(report, "prompt_context", "") or ""),
+                vision_perception_context,
+                game_context,
+            ) if part.strip()
+        )[:14000]
+
         return {
-            "source_grounding_context": str(getattr(report, "prompt_context", "") or "")[:10000] if report is not None else "",
+            "source_grounding_context": prompt_context,
             "__source_grounding_report": report,
             "__source_grounding_engine": engine,
         }

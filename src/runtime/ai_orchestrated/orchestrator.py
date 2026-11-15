@@ -773,17 +773,27 @@ class AIChatOrchestrator:
         # P0: foreground trước đây dùng trực tiếp raw chat_history; metadata
         # delivery_status không được dịch ra context nên Root có thể tưởng
         # audio bị huỷ đã nói xong. Dùng cùng projection với Autonomous.
-        history_reader = getattr(host, "_chat_history_for_llm", None)
-        if callable(history_reader):
-            history = tuple(history_reader(limit=32))
+        is_reset = False
+        reset_fn = getattr(host, "_is_session_reset_request", None)
+        if callable(reset_fn):
+            is_reset = bool(reset_fn(user_text))
+
+        if is_reset:
+            history = ()
+            if hasattr(host, "chat_history") and isinstance(host.chat_history, list):
+                host.chat_history.clear()
         else:
-            history = tuple(
-                item for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
-                if isinstance(item, Mapping)
-            )
-        if not new_user_batch and history and history[-1].get("role") == "user":
-            # This same batch is event.text; do not replay it as older history.
-            history = history[:-1]
+            history_reader = getattr(host, "_chat_history_for_llm", None)
+            if callable(history_reader):
+                history = tuple(history_reader(limit=32))
+            else:
+                history = tuple(
+                    item for item in tuple(getattr(host, "chat_history", ()) or ())[-32:]
+                    if isinstance(item, Mapping)
+                )
+            if not new_user_batch and history and history[-1].get("role") == "user":
+                # This same batch is event.text; do not replay it as older history.
+                history = history[:-1]
         append_history = getattr(host, "_append_chat_history", None)
         if callable(append_history) and new_user_batch:
             append_history("user", str(user_text or ""))

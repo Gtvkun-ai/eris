@@ -19,6 +19,7 @@ import time
 import traceback
 import unicodedata
 from collections.abc import Mapping
+from typing import Any
 from types import SimpleNamespace
 
 from actions.confirmation import public_action_text
@@ -954,12 +955,63 @@ class CoordinatorBootstrapMixin:
             (
                 self.vision_perception_service,
                 self.vision_perception_worker,
-            ) = build_vision_perception_runtime(logger=self.logger)
+            ) = build_vision_perception_runtime(
+                store=self.screen_evidence_store,
+                logger=self.logger,
+            )
             self.vision_perception_worker.start()
+            self.logger.info("[Vision] Worker initialized and started")
+
+            # Gắn listener đánh thức nhịp tự chủ khi phát hiện biến cố/thao tác game mới:
+            self._last_game_vision_wake_at = 0.0
+
+            def _on_game_vision_snapshot(snap: Any) -> None:
+                try:
+                    # Nếu user đang gõ chat, nhường trọn tài nguyên
+                    if bool(getattr(self, "chat_mode", False)):
+                        return
+                    # Chỉ kích hoạt khi đang trong phiên game
+                    is_gaming = getattr(self, "_is_gaming_active", None)
+                    if not callable(is_gaming) or not is_gaming():
+                        return
+                    now = time.time()
+                    # Cooldown 15s giữa các lần tự chủ thức tỉnh vì thị giác game để tránh burst spam LLM
+                    if (now - getattr(self, "_last_game_vision_wake_at", 0.0)) < 15.0:
+                        return
+                    motion = str(getattr(snap, "motion", "") or "").strip().lower()
+                    recipe = str(getattr(snap, "recipe_or_menu", "") or "").strip()
+
+                    # Đánh giá tổng quát xem khung hình có biến động thực tế hay hoàn toàn tĩnh.
+                    # Áp dụng phổ quát cho mọi tựa game mà không dựa vào danh sách từ khóa cố định.
+                    static_markers = (
+                        "giữ nguyên, không",
+                        "giữ nguyên không",
+                        "không có sự thay đổi",
+                        "không có thay đổi",
+                        "tĩnh lặng",
+                        "gần như tĩnh",
+                        "màn hình tĩnh",
+                        "bố cục tĩnh",
+                        "hai khung hình giống nhau",
+                    )
+                    is_static = any(marker in motion for marker in static_markers) and not any(
+                        action_hint in motion for action_hint in ("nhưng", "tuy nhiên", "vừa", "xuất hiện", "chuyển", "mới")
+                    )
+                    has_game_action = bool(recipe) or (bool(motion) and not is_static)
+                    if has_game_action:
+                        self._last_game_vision_wake_at = now
+                        wake_fn = getattr(self, "_wake_autonomous_loop", None)
+                        if callable(wake_fn):
+                            wake_fn("game_vision_event")
+                except Exception as exc:
+                    self.logger.debug("[VisionListener] handle snapshot note: %s", exc)
+
+            if hasattr(self.vision_perception_service, "register_listener"):
+                self.vision_perception_service.register_listener(_on_game_vision_snapshot)
         except Exception as exc:
             self.vision_perception_service = None
             self.vision_perception_worker = None
-            self.logger.debug("[vision perception] worker bootstrap note: %s", exc)
+            self.logger.warning("[Vision] Worker bootstrap note: %s", exc)
 
         self._chat_screen_route_decision = None
         self._chat_screen_text_evidence = ()

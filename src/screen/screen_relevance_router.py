@@ -65,10 +65,14 @@ class ScreenRelevanceRouter:
     # mà không biết trước nội dung là gì.
     DIRECT_VISION_MARKERS = (
         "tu xem", "tu nhin", "xem thu", "nhin thu", "xem giup", "nhin giup",
+        "coi thu", "coi ne", "coi giup", "xem game", "nhin game", "coi game",
         "ban co the xem", "ban co the nhin", "em xem di", "em nhin di",
         "em nhin man hinh", "em xem man hinh",
         "nhin man hinh tui", "nhin man hinh toi",
         "tu phan tich", "phan tich man hinh", "xem man hinh giup",
+        "thay chua", "nhin thay chua", "thay gi chua", "thay gi khong", "co thay khong",
+        "co thay chua", "xem duoc chua", "nhin duoc chua", "thay game chua",
+        "thay roi", "thay roi chua",
         "look at", "take a look", "check the screen", "see for yourself",
     )
     VISUAL_MARKERS = ("mau", "bo cuc", "layout", "icon", "anh nay", "hinh anh", "giao dien", "ui", "dep", "xau", "vi tri", "can le", "kich thuoc", "bieu do", "chart")
@@ -85,7 +89,8 @@ class ScreenRelevanceRouter:
         previous_assistant_text: str = "",
     ) -> ScreenRouteDecision:
         normalized = _norm(user_text)
-        references = any(_has_marker(normalized, marker) for marker in self.SCREEN_MARKERS)
+        is_direct_vision = any(_has_marker(normalized, marker) for marker in self.DIRECT_VISION_MARKERS)
+        references = is_direct_vision or any(_has_marker(normalized, marker) for marker in self.SCREEN_MARKERS)
         # Câu hỏi capability kiểu "em đọc được tab telemetry tôi chưa" không nhất
         # thiết chứa chữ "màn hình". Ghép verb đọc/nhìn với resource UI để router
         # hiểu đây vừa là capability inquiry vừa là current-screen reference.
@@ -112,9 +117,6 @@ class ScreenRelevanceRouter:
         # yêu cầu bố cục/ảnh mạnh hơn.
         #
         # DIRECT_VISION: user bảo "tự xem đi" → yêu cầu xem màn hình tổng quát.
-        # Không force needs_visual — OCR đọc được (lyrics, tiêu đề...) thì dùng OCR;
-        # chỉ escalate vision khi OCR thực sự không có evidence nào.
-        is_direct_vision = any(_has_marker(normalized, marker) for marker in self.DIRECT_VISION_MARKERS)
         needs_visual = any(_has_marker(normalized, marker) for marker in self.VISUAL_MARKERS)
         requires_strong = any(_has_marker(normalized, marker) for marker in self.STRONG_MARKERS)
         text_task = any(_has_marker(normalized, marker) for marker in self.TEXT_MARKERS)
@@ -129,7 +131,7 @@ class ScreenRelevanceRouter:
             if not any(prefix in str(getattr(block, "text", "") or "").lower() for prefix in ("[chu nhan]:", "[user]:", "chu nhan:"))
         )
         confidence = max((block.confidence for block in useful_evidence), default=0.0)
-        stale = bool(evidence and time.time() - max(block.captured_at for block in evidence) > 8.0)
+        stale = bool(evidence and time.time() - max((block.captured_at for block in evidence), default=0.0) > 8.0)
 
         debug = {
             "anaphora_inherited": resolution.inherited,
@@ -137,11 +139,35 @@ class ScreenRelevanceRouter:
             "query_used_previous_turn": bool(resolution.inherited and previous_assistant_text),
         }
 
-        if needs_visual:
+        if needs_visual or is_direct_vision:
+            reason = "direct_vision_requested" if is_direct_vision else "visual_layout_or_image_requested"
             return ScreenRouteDecision(
                 "vision", True, True, requires_strong,
-                "visual_layout_or_image_requested", evidence, confidence, stale, debug,
+                reason, evidence, confidence, stale, debug,
             )
+
+        # Kiểm tra xem evidence có phải chỉ là metadata/title UIA thưa thớt không
+        is_sparse_accessibility = (
+            len(useful_evidence) <= 1
+            or all(
+                getattr(block, "backend", "") == "uia_only"
+                or getattr(block, "source", "") == "accessibility"
+                for block in useful_evidence
+            )
+            or sum(len(str(getattr(b, "text", "") or "").strip()) for b in useful_evidence) < 50
+        )
+
+        # Khi OCR tắt hoặc evidence chỉ là window title/accessibility thưa thớt:
+        # một block tiêu đề cửa sổ không thể chứng minh toàn bộ nội dung/gameplay trên màn hình.
+        # Nếu user có tham chiếu màn hình, lập tức kích hoạt vision thay vì kẹt ở text_evidence.
+        if (not screen_ocr_enabled()) or is_sparse_accessibility:
+            if references:
+                reason = "ocr_disabled_vision_primary" if not screen_ocr_enabled() else "sparse_text_evidence_escalate_vision"
+                return ScreenRouteDecision(
+                    "vision", True, True, requires_strong,
+                    reason, evidence, confidence, stale, debug,
+                )
+
         if evidence and confidence >= 0.72 and not stale:
             reason = "fresh_screen_text_available_after_anaphora" if resolution.inherited else "fresh_screen_text_available"
             return ScreenRouteDecision(
@@ -149,7 +175,7 @@ class ScreenRelevanceRouter:
             )
         # OCR tắt: vision thay OCR. Tham chiếu tường minh (hoặc "tự xem đi") chụp
         # ngay lượt này; đại từ kế thừa thuần vẫn xếp hàng vision cho lượt sau.
-        vision_now = (not screen_ocr_enabled()) and (not resolution.inherited or is_direct_vision)
+        vision_now = (not screen_ocr_enabled()) and (not resolution.inherited)
         if evidence and confidence >= 0.48:
             if requires_strong:
                 return ScreenRouteDecision(

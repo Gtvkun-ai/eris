@@ -347,7 +347,7 @@ class ChatPerceptionCoordinator:
             route = self._route(user_text, previous_assistant_text=previous_assistant_text)
 
         route_mode = str(getattr(route, "mode", "none") or "none") if route is not None else "none"
-        if route is None or (route_mode == "none" and explicit_request):
+        if route is None or (route_mode == "none" and (explicit_request or force_chat_vision)):
             if route is None and not explicit_request and not force_chat_vision and not pending_force_vision:
                 self._log("debug", "[screen route] mode=none reason=no_screen_reference")
                 return ChatPerceptionResult(
@@ -360,14 +360,16 @@ class ChatPerceptionCoordinator:
             route = self._forced_route(
                 previous=route,
                 pending_force_vision=pending_force_vision,
-                reason="pending_vision_escalation" if pending_force_vision else "explicit_request_overrode_none_route",
+                force_chat_vision=force_chat_vision,
+                reason="pending_vision_escalation" if pending_force_vision else ("gaming_or_forced_vision" if force_chat_vision else "explicit_request_overrode_none_route"),
             )
 
-        if pending_force_vision and str(getattr(route, "mode", "none") or "none") != "vision":
+        if (pending_force_vision or force_chat_vision) and str(getattr(route, "mode", "none") or "none") != "vision":
             route = self._forced_route(
                 previous=route,
-                pending_force_vision=True,
-                reason="pending_vision_escalation",
+                pending_force_vision=pending_force_vision,
+                force_chat_vision=force_chat_vision,
+                reason="pending_vision_escalation" if pending_force_vision else "forced_chat_vision_override",
             )
 
         route_blocks = tuple(getattr(route, "evidence", ()) or ())
@@ -440,7 +442,10 @@ class ChatPerceptionCoordinator:
         report = None
         if callable(interpret_fn):
             try:
-                report = interpret_fn(data_uri)
+                try:
+                    report = interpret_fn(data_uri, route_override=route)
+                except TypeError:
+                    report = interpret_fn(data_uri)
                 grounded_count = len(tuple(getattr(report, "grounded_claims", ()) or ())) if report is not None else 0
                 capture_interpreted = grounded_count > 0
                 self._log(
@@ -575,11 +580,11 @@ class ChatPerceptionCoordinator:
             return None
 
     @staticmethod
-    def _forced_route(*, previous: Any | None, pending_force_vision: bool, reason: str) -> Any:
+    def _forced_route(*, previous: Any | None, pending_force_vision: bool, reason: str, force_chat_vision: bool = False) -> Any:
         kwargs = {
             "mode": "vision",
             "references_screen": True,
-            "needs_visual": bool(pending_force_vision),
+            "needs_visual": bool(pending_force_vision or force_chat_vision),
             "requires_strong_evidence": bool(getattr(previous, "requires_strong_evidence", False)),
             "reason": reason,
             "evidence": tuple(getattr(previous, "evidence", ()) or ()) if previous is not None else (),

@@ -96,7 +96,7 @@ def build_evidence_buffet(
 
     # Heuristic tag từ tên cửa sổ khi không có content_kind thật (game/chat/code).
     if not real_kind and not is_shell:
-        if any(t in low_win for t in ("elden", "steam", "league", "valorant", "genshin", "dota", "minecraft", " game")):
+        if any(t in low_win for t in ("elden", "steam", "league", "valorant", "genshin", "dota", "minecraft", " game", "gaming", "cooking", "chef", "plateup", "overcooked", "spire", "unity", "unreal")):
             items.append(EvidenceItem(seed=active_window, tags=("game",), salience=_clamp01(novelty)))
         elif any(t in low_win for t in ("discord", "messenger", "zalo", "slack", "telegram", "chat")):
             items.append(EvidenceItem(seed=active_window, tags=("chat",), salience=0.4))

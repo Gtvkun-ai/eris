@@ -564,9 +564,16 @@ class VisionSemanticCompressor:
         caption = ""
         caption_error = ""
         try:
+            active_window_title = ""
+            if signal_snapshot is not None:
+                active_window_title = str(getattr(signal_snapshot, "active_window_title", "") or "")
             caption = caption_client.caption_image(
                 image,
-                prompt=self._caption_prompt(),
+                prompt=self._caption_prompt(
+                    active_window_title=active_window_title,
+                    extra_context=extra_context,
+                    ocr_text=ocr_text,
+                ),
                 temperature=max(self.config.temperature, 0.1),
                 keep_alive=self.config.keep_alive if self.config.unload_after_call else None,
             )
@@ -732,15 +739,39 @@ class VisionSemanticCompressor:
         return self.config.structure_model or "remote_structure"
 
     @staticmethod
-    def _caption_prompt() -> str:
-        return (
-            "Describe this screen concisely but concretely. "
-            "Say what application or window is shown and what is being looked at. "
-            "Copy any clearly readable title, label, or error message. "
-            "If a video/image/game/media is shown, describe its content and emotional tone "
-            "(for example: a melancholic video about an old cat). "
-            "Write 1-3 plain sentences. Do not guess anything you cannot actually see."
-        )
+    def _caption_prompt(
+        active_window_title: str = "",
+        extra_context: str = "",
+        ocr_text: str = "",
+    ) -> str:
+        prompt_lines = [
+            "Describe this screen concisely but concretely.",
+            "Say what application or window is shown and what is being looked at.",
+            "Copy any clearly readable title, label, or error message.",
+        ]
+        try:
+            from screen.game_knowledge import detect_game_from_window
+            game_profile = detect_game_from_window(active_window_title)
+        except Exception:
+            game_profile = None
+
+        if game_profile is not None:
+            prompt_lines.append(
+                f"The user appears to be playing or viewing a game: '{game_profile.title}' ({game_profile.genre}). "
+                "Specifically identify:\n"
+                "1. Current game screen/stage (e.g. main menu, active gameplay/cooking station, combat, recipe board).\n"
+                "2. Visible game mechanics: active orders/recipes, ingredients on table/in hand, health/mana/energy, timer, score.\n"
+                "3. What is happening right now and what action the player needs to take next."
+            )
+        else:
+            prompt_lines.append(
+                "If a video/image/game/media is shown, describe its content and emotional tone "
+                "(for example: a melancholic video about an old cat, or a cozy cooking simulation)."
+            )
+        if active_window_title:
+            prompt_lines.append(f"Window title hint: {active_window_title[:160]}")
+        prompt_lines.append("Write 2-4 plain sentences. Do not guess anything you cannot actually see.")
+        return "\n".join(prompt_lines)
 
     @staticmethod
     def _structure_system_prompt() -> str:
@@ -890,7 +921,11 @@ class VisionSemanticCompressor:
         possible_error = max(clamp01(data.get("possible_error", 0.0)), observer_error * 0.75)
         salience = max(clamp01(data.get("salience", 0.0)), observer_salience * 0.72, possible_error * 0.78)
         novelty = max(clamp01(data.get("novelty", 0.0)), clamp01(getattr(observer_frame, "novelty", 0.0) if observer_frame else 0.0) * 0.70)
-        confidence = clamp01(data.get("confidence", 0.0))
+        parsed_conf = clamp01(data.get("confidence", 0.0))
+        if caption and not self._looks_like_echo(caption):
+            confidence = max(parsed_conf, 0.85)
+        else:
+            confidence = parsed_conf
         if not important and signal_snapshot is not None:
             important = self._extract_important_lines(str(getattr(signal_snapshot, "ocr_text", "") or ""))
 
@@ -989,7 +1024,7 @@ class VisionSemanticCompressor:
         if clean_caption and not self._looks_like_echo(clean_caption):
             visible = clean_caption
             source = "vision_caption_only"
-            confidence = 0.50
+            confidence = 0.85
             salience_floor = 0.28
             novelty_floor = 0.22
         else:

@@ -18,7 +18,12 @@ import json
 import os
 import uuid
 
-from .root_prompt_contract import ROOT_SYSTEM_CORE, SOCIAL_JUDGMENT_PROMPT, ELEGANT_SOCIAL_PROMPT
+from .root_prompt_contract import (
+    ROOT_SYSTEM_CORE,
+    SOCIAL_JUDGMENT_PROMPT,
+    ELEGANT_SOCIAL_PROMPT,
+    SCREEN_COSTREAM_REVIEW_PROMPT,
+)
 from .tool_guides import TOOL_GUIDES, read_tool_guide
 from .root_session import RootConversationSession
 from .interaction_choice import INTERACTION_CHOICE_PROMPT, INTERACTION_CHOICE_SCHEMA
@@ -669,7 +674,13 @@ class RuntimeModelRootAgent:
     @staticmethod
     def _system_prompt(capabilities: RootCapabilityRegistry) -> str:
         del capabilities  # A stable menu; registry still owns execution permission.
-        return ROOT_SYSTEM_CORE + SOCIAL_JUDGMENT_PROMPT + ELEGANT_SOCIAL_PROMPT + (INTERACTION_CHOICE_PROMPT if interaction_choices_enabled() else "")
+        return (
+            ROOT_SYSTEM_CORE
+            + SOCIAL_JUDGMENT_PROMPT
+            + ELEGANT_SOCIAL_PROMPT
+            + SCREEN_COSTREAM_REVIEW_PROMPT
+            + (INTERACTION_CHOICE_PROMPT if interaction_choices_enabled() else "")
+        )
 
     @staticmethod
     def _payload(

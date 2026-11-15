@@ -90,7 +90,62 @@ class AutonomousLoopRuntimeMixin:
             return "medium"
         return "low"
 
+    def _is_gaming_active(self) -> bool:
+        telemetry = getattr(self, "telemetry_service", None)
+        title = ""
+        process = ""
+        if telemetry is not None:
+            get_fg = getattr(telemetry, "_get_foreground_window", None) or getattr(telemetry, "_resolve_foreground_identity", None)
+            if callable(get_fg):
+                try:
+                    fg = get_fg() or {}
+                    title = str(fg.get("title", "") or "")
+                    process = str(fg.get("process", "") or fg.get("process_name", "") or "")
+                except Exception:
+                    pass
+            if not title and not process:
+                snap = getattr(telemetry, "last_snapshot", None)
+                if snap is not None:
+                    title = str(getattr(snap, "active_window_title", "") or getattr(snap, "active_window", "") or "")
+                    process = str(getattr(snap, "active_app", "") or "")
+        if not title and not process:
+            try:
+                from screen.active_window_provider import ActiveWindowProvider
+                aw = ActiveWindowProvider().get()
+                title = str(aw.title or "")
+                process = str(aw.process_name or "")
+            except Exception:
+                pass
+        if not title and not process:
+            snap = getattr(self, "_chat_snapshot_for_vision", None)
+            if snap is not None:
+                title = str(getattr(snap, "active_window_title", "") or getattr(snap, "active_window", "") or "")
+                process = str(getattr(snap, "active_app", "") or "")
+
+        now = time.time()
+        from screen.game_knowledge import is_gaming_window
+        if is_gaming_window(title, process):
+            self._last_game_active_at = now
+            self._last_game_title = title
+            self._last_game_process = process
+            return True
+
+        # Session memory: nếu vừa thấy game trong vòng 180s và cửa sổ hiện tại
+        # là Eris overlay, Desktop, hoặc trình duyệt, vẫn duy trì gaming mode.
+        last_active = float(getattr(self, "_last_game_active_at", 0.0) or 0.0)
+        if (now - last_active) < 180.0:
+            low_title = title.lower()
+            low_proc = process.lower()
+            if not title or any(k in low_title or k in low_proc for k in ("eris", "desktop", "chrome", "firefox", "msedge", "không xác định")):
+                return True
+
+        return False
+
     def _choose_autonomous_sleep_duration(self, *, suppressed: bool, ti_mode: str) -> int:
+        if self._is_gaming_active():
+            # Khi đang trong game, giãn nhịp nghỉ tự chủ để tôn trọng sự tập trung của người chơi.
+            # Nhịp này sẽ lập tức bị ngắt khi có visual diff đột biến hoặc khi user chat.
+            return random.choice((45, 60, 90, 120))
         if suppressed:
             base = random.choice(self.autonomous_suppressed_sleep_seconds)
             silent_cycles = int(getattr(self, "presence_maintenance_silent_cycles", 0) or 0)
@@ -224,6 +279,12 @@ class AutonomousLoopRuntimeMixin:
                 worker.start()
             except Exception as exc:
                 self.logger.warning("[screen text] start error: %s", exc)
+        vision_worker = getattr(self, "vision_perception_worker", None)
+        if vision_worker is not None and not getattr(vision_worker, "is_alive", False):
+            try:
+                vision_worker.start()
+            except Exception as exc:
+                self.logger.warning("[vision perception] start error: %s", exc)
         # Startup now submits an opening opportunity to ConversationKernel. Retry
         # bootstrap failures once, but NoReply is a valid successful decision.
         if startup_failed and self.running:
