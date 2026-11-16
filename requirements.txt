@@ -26,9 +26,11 @@ fsrs==6.3.2
 # at runtime. Screen OCR/vision workers are lazy-imported, so leaving these out
 # does NOT break foundation import.
 
-# --- screen text / OCR workers (optional; lazy-imported by screen/) ---
-# mss              # screen capture
-# Pillow           # image processing (PIL)
+# --- screen text / OCR workers & telemetry ---
+mss
+Pillow
+psutil
+
 # pytesseract      # OCR — ALSO needs the Tesseract OCR binary installed on the OS
 # requests         # vision perception worker HTTP calls
 # uiautomation     # Windows UI Automation reader (Windows-only)
