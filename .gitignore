@@ -40,10 +40,28 @@ config/
 !/config/example.json
 !/config/low_level_speech_policy.yaml
 !/config/secrets.example.json
-# Gateway configuration package contains Go source, not local configuration.
-!/tools/whale2api/internal/config/
-/tools/whale2api/internal/config/*
-!/tools/whale2api/internal/config/*.go
+# Private internal tools, scrapers and proxies (kept locally on disk, ignored by Git)
+tools/whale2api/
+src/tools/whale2api/
+tools/ds2api/
+src/tools/ds2api/
+tools/gemini_vision_docker/
+tools/gemini_cookie_extension/
+tools/account_hub/
+tools/elevenlabs_v3_m1/
+src/tools/elevenlabs_v3_m1/
+tools/WebAI-to-API/
+tools/WebAI-to-API-2/
+tools/reference-repos/
+tools/apply_deepseek_pool_to_secrets.py
+tools/test_gemini_web_ping.py
+
+# Credentials and sensitive stores
+*gemini_credentials.json
+*.password.translation
+accounts*.csv
+accounts*.template.csv
+config/elevenlabs_pool.db
 memory_core/
 data/subject_core/capability_keyring/
 
@@ -86,16 +104,6 @@ cache/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Third-party tools
-tools/WebAI-to-API/
-tools/WebAI-to-API-2/
-tools/reference-repos/
-tools/whale2api/*.exe
-tools/whale2api/accounts.csv
-tools/whale2api/accounts.template.csv
-tools/whale2api/*.password.translation
-tools/whale2api/data/
 
 # cline-bridge build artifacts (node_modules + compiled dist)
 cline-bridge/node_modules/
