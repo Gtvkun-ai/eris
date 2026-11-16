@@ -11,6 +11,12 @@
 
 > 🌟 **Eris** là một sinh thể số đồng hành trên desktop Windows (Digital Companion) kiêm AI VTuber tự trị. Eris sở hữu thân thể **Live2D Cubism 5 Native (60 FPS)**, hệ thống **nhận thức màn hình theo thời gian thực (Real-time Screen Vision & Game Grounding)**, bộ não suy luận 2 cấp độ **DeepSeek Deliberation System 1 & 2**, vòng lặp tự trị **Autonomous Turn-Taking Loop** (phong cách Neuro-sama), lõi gia sư Socrates thích ứng (**ErisTutor**) và hệ thống ký ức 6 tầng độc lập.
 
+> [!IMPORTANT]
+> **Lưu ý về các công cụ & phân hệ mở rộng (Tools / Ecosystem):**  
+> Các công cụ tự động hóa và phân hệ cổng dịch vụ ngầm (Whale2API, Gemini Vision Docker, Account Hub, v.v.) hiện được **giữ ẩn (private / internal)** để bảo mật và tránh lạm dụng upstream.  
+> Nếu bạn muốn nhận trọn bộ công cụ hoặc cần hỗ trợ cài đặt & cấu hình trọn gói, vui lòng liên hệ trực tiếp:  
+> 👉 **Facebook:** [https://www.facebook.com/khong.co.gi.dac.biet.none/](https://www.facebook.com/khong.co.gi.dac.biet.none/)
+
 ---
 
 ## 📖 Mục Lục
@@ -252,6 +258,8 @@ pip install -r requirements-dev.txt
 
 > [!NOTE]
 > File cấu hình `.env` và `config/secrets.json` sẽ được tự động tạo từ bản mẫu (`.example`) khi bạn khởi chạy ứng dụng lần đầu. Cập nhật các API key (Gemini, DeepSeek, ElevenLabs) trong các file này.
+>
+> 🛠️ **Các công cụ tự động hóa & cổng kết nối ngầm (Whale2API, Gemini Vision Docker, Account Hub) hiện đang được ẩn.** Nếu bạn cần hỗ trợ cài đặt hoặc muốn sở hữu bộ công cụ hoàn chỉnh, vui lòng inbox: [Facebook](https://www.facebook.com/khong.co.gi.dac.biet.none/).
 
 ---
 
