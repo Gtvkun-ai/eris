@@ -385,7 +385,10 @@ class PublicOutputRuntimeMixin:
             payload.setdefault("event_trace_id", str(performance_context.get("event_trace_id") or ""))
             payload.setdefault("generation_epoch", int(performance_context.get("generation_epoch", 0) or 0))
             payload.setdefault("public_intent_owner", str(performance_context.get("public_intent_owner") or ("intent_planner" if channel_name == "chat" else "")))
-        if bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
+        if is_public_live:
+            # Không gửi ai_panel/private_mind_digest/owner state sang live surface.
+            private_digest, private_life_digest = {}, {}
+        elif bool(getattr(self, "ai_runtime_enabled", False)) and getattr(self, "ai_state_reducer", None) is not None:
             from runtime.ai_orchestrated.panel_adapter import build_ai_panel_payload
             expression = {}
             behavior_meta = getattr(decision, "behavior_observation_meta", None)
@@ -440,7 +443,7 @@ class PublicOutputRuntimeMixin:
                 self.private_life_digest = private_life_digest
             payload["emotion_debug"] = self._build_emotion_debug_payload()
             payload["depth_v2"] = self._build_depth_v2_block(private_mind_digest=full_private_digest)
-        if channel_name == "autonomous":
+        if channel_name == "autonomous" and not is_public_live:
             plan = getattr(self, "last_ai_intention_plan", None)
             if plan is not None and callable(getattr(plan, "to_dict", None)):
                 # Stage chỉ nhận IntentionPlan typed của Architecture C. Không còn
@@ -550,13 +553,14 @@ class PublicOutputRuntimeMixin:
                 record_public_behavior,
             )
 
-            record_public_behavior(
-                self,
-                decision,
-                payload=payload,
-                channel=channel_name or str(channel or ""),
-                turn_id=str(getattr(decision, "director_trace_id", "") or ""),
-            )
+            if not is_public_live:
+                record_public_behavior(
+                    self,
+                    decision,
+                    payload=payload,
+                    channel=channel_name or str(channel or ""),
+                    turn_id=str(getattr(decision, "director_trace_id", "") or ""),
+                )
             # Decision.to_payload() chạy trước observation. Cập nhật summary tại
             # đây để panel của chính lượt hiện tại cũng nhìn thấy tín hiệu mới,
             # thay vì phải đợi lượt sau như một giao diện sống chậm hơn não.
@@ -779,7 +783,8 @@ class PublicOutputRuntimeMixin:
                 )
                 # Public ledger chỉ nhìn thấy câu khi bubble thật sự được gửi.
                 # History của delivery adapter vẫn giữ receipt pending riêng.
-                self._record_public_turn(decision, payload=payload, channel=channel)
+                if not is_public_live:
+                    self._record_public_turn(decision, payload=payload, channel=channel)
             except Exception as e:
                 self.logger.warning("Failed to send deferred chat text payload: %s", e)
 
@@ -790,6 +795,8 @@ class PublicOutputRuntimeMixin:
 
         def send_panel_payload():
             nonlocal panel_payload_sent
+            if is_public_live:
+                return  # Không phát panel chứa state/diagnostics riêng của owner.
             if not v03_current():
                 return
             if panel_payload_sent:
@@ -925,6 +932,13 @@ class PublicOutputRuntimeMixin:
             }.get(event_type)
             if live2d_edge:
                 send_live2d_audio_edge(live2d_edge, event_stage_frame, event=event)
+            if event_type == "audio_start":
+                live_runtime = getattr(self, "eris_live", None)
+                if live_runtime is not None:
+                    start_hook = getattr(live_runtime, "on_audio_started", None)
+                    if callable(start_hook):
+                        # Match terminal receipt ID from speech_outcome.py.
+                        start_hook(str(payload.get("event_trace_id") or event_turn_id))
             if event_type in {"audio_prepare", "audio_queued", "audio_buffer_ready"}:
                 public_lifecycle.transition(
                     "AUDIO_BUFFERING",
@@ -1079,8 +1093,9 @@ class PublicOutputRuntimeMixin:
             # Ghi mốc assistant sau khi output public đã được dựng và gửi. Đây là
             # mốc cognition, không phải audio_done; đủ để hiểu nhịp hội thoại mà
             # không phải chờ TTS remote hoàn tất mới biết mình vừa nói.
-            self._temporal_last_assistant_turn_at = time.time()
-            if channel_name == "autonomous":
+            if not is_public_live:
+                self._temporal_last_assistant_turn_at = time.time()
+            if channel_name == "autonomous" and not is_public_live:
                 # Content hook vẫn commit sau output public thật. Performer legacy
                 # đã bị xóa; nhịp sân khấu lấy trực tiếp từ IntentionPlan typed.
                 performance_meta = payload.get("performance_context") if isinstance(payload.get("performance_context"), dict) else {}
@@ -1093,7 +1108,9 @@ class PublicOutputRuntimeMixin:
                         content_engine.commit_hook_use(hook_id)
                     except Exception as exc:
                         self.logger.debug("[content-engine] autonomous hook commit skipped: %s", exc)
-        if bool(payload.get("should_speak")) and str(payload.get("memory_text", payload.get("text", "")) or "").strip() and self.subconscious_runtime_enabled:
+        if (not is_public_live and bool(payload.get("should_speak"))
+                and str(payload.get("memory_text", payload.get("text", "")) or "").strip()
+                and self.subconscious_runtime_enabled):
             try:
                 snapshot = self.telemetry_service.capture_snapshot(
                     mood_score=self.mood_score,

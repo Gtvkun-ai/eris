@@ -133,8 +133,14 @@ class IncomingMessageDispatcher:
             "maintenance_request": owner._handle_maintenance_request,
             "maintenance_execute": owner._handle_maintenance_request,
             "debug_command": owner._handle_debug_command,
+            "live_control": self._handle_live_control,
             "chat_end": lambda _msg: owner._end_chat_cycle(),
         }
+
+    def _handle_live_control(self, msg: dict[str, Any]) -> None:
+        # Chỉ lệnh local từ Eris Web Portal; không route từ comment TikTok.
+        from runtime.live.control import dispatch_live_control
+        dispatch_live_control(self.owner, msg)
 
     def _handle_chat(self, msg: dict[str, Any]) -> None:
         owner = self.owner

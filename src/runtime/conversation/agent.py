@@ -263,8 +263,13 @@ class RuntimeModelRootAgent:
             or getattr(getattr(self.router, "llm_service", None), "client", None)
         )
         invoke = getattr(self.router, "invoke_structured_worker", None)
+        public_live = runtime_context.get("__audience_scope") == "public_live"
+        if public_live and (event.kind != "live_signal" or
+                            not str(event.session_id).startswith("public_live:")):
+            return NoReply(reason="invalid_public_live_event")
         if client is None or not callable(invoke):
-            return self._degraded(event, recent_history, note, runtime_context)
+            return (NoReply(reason="live_provider_unavailable") if public_live else
+                    self._degraded(event, recent_history, note, runtime_context))
 
         note_tools = runtime_context.get("__conversation_note_tools")
         if not isinstance(note_tools, ConversationNoteTools):
@@ -286,8 +291,16 @@ class RuntimeModelRootAgent:
         # reflection_state là object mutable để continue_thinking tăng đếm dùng
         # chung giữa single-step và batch (và xuyên nhiều batch trong một event).
         reflection_state: dict[str, int] = {"count": 0}
-        current_note = str(note or "")[:12000]
+        current_note = "" if public_live else str(note or "")[:12000]
         system = self._system_prompt(capabilities)
+        if public_live:
+            # Cùng một Root semantic, KHÔNG dùng RootConversationSession._prime
+            # vốn nạp trọn Self / memory của chủ sở hữu từ host.
+            from runtime.live.scope import PUBLIC_POLICY
+            system += "\n" + PUBLIC_POLICY + "\nLIVE SECURITY: Finalize only move or no_reply; no tools, recall, batch, notes, continuation or private facts."
+            capabilities = RootCapabilityRegistry({})
+            memory_tools = None
+            note_tools = None
         schema = root_step_schema()
         # Phát hiện 'không tiến triển': đếm số bước LIÊN TIẾP mà toàn bộ
         # tool_result sinh ra đều vô nghĩa (duplicate/empty/failed/limit_reached/
@@ -317,7 +330,8 @@ class RuntimeModelRootAgent:
                 step_index=step_index,
             )
             try:
-                raw = self._root_session.ask(
+                # Live luôn one-shot, cô lập hoàn toàn remote bootstrap/self cache.
+                raw = None if public_live else self._root_session.ask(
                     router=self.router, client=client, system=system,
                     schema=schema, payload=payload,
                     runtime_context=runtime_context,
@@ -347,18 +361,23 @@ class RuntimeModelRootAgent:
                     # quyết định của Root và không gọi lại Writer đang lỗi.
                     raise failure from exc
                 self._log("debug", "[conversation-v12] root model degraded: %s", type(exc).__name__)
-                return self._degraded(event, recent_history, current_note, runtime_context)
+                return (NoReply(reason="live_root_error") if public_live else
+                        self._degraded(event, recent_history, current_note, runtime_context))
 
             if not still_active():
                 return NoReply(reason="root_turn_preempted")
             if not isinstance(raw, Mapping):
-                return self._degraded(event, recent_history, current_note, runtime_context)
+                return (NoReply(reason="live_invalid_root_response") if public_live else
+                        self._degraded(event, recent_history, current_note, runtime_context))
 
             kind = str(raw.get("kind", "") or "").strip().lower()
             # Chỉ ghi LOẠI bước, không ghi focus/query/lời nghĩ riêng tư.
             # Truy vết được agent loop thật mà log không phình theo prompt.
             self._log("info", "[root-agent] step=%d event_kind=%s action=%s",
                       step_index + 1, event.kind[:48], kind[:48])
+            if public_live and kind not in {"no_reply", "move"}:
+                # Không có nhánh tool/guide/recall ngay cả khi model bất tuân.
+                return NoReply(reason="live_disallowed_root_action")
             if kind == "no_reply":
                 return NoReply.from_mapping(raw)
             if kind == "move" or (event.kind == "user_turn" and (raw.get("intent") or raw.get("say"))):
@@ -375,6 +394,12 @@ class RuntimeModelRootAgent:
                 if not still_active():
                     return NoReply(reason="root_turn_preempted")
                 from ..workspace.presentation_p2 import verified_tool_bundles
+                if public_live:
+                    # Public live không khởi continuation, workspace hoặc artifact.
+                    return replace(NextConversationMove.from_mapping(raw),
+                                   after=ConversationAfter.WAIT_USER,
+                                   document_source="", presentation_blocks=(),
+                                   tool_artifact_bundles=(), canvas_segments=())
                 return replace(NextConversationMove.from_mapping(raw),
                                tool_artifact_bundles=verified_tool_bundles(tool_results))
 
@@ -462,7 +487,8 @@ class RuntimeModelRootAgent:
             continue
 
         self._log("warning", "[conversation-v12] root step circuit breaker reached")
-        return self._degraded(event, recent_history, current_note, runtime_context)
+        return (NoReply(reason="live_root_step_limit") if public_live else
+                self._degraded(event, recent_history, current_note, runtime_context))
 
     def _run_single_action(
         self,

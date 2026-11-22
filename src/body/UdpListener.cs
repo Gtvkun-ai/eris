@@ -996,7 +996,9 @@ public partial class UdpListener : Node2D
 			while (_udp.GetAvailablePacketCount() > 0)
 			{
 				string raw = Encoding.UTF8.GetString(_udp.GetPacket());
-				if (HandleLive2DControlPacket(raw))
+				if (TryHandleLiveStudioPacket(raw))
+                    continue;
+                if (HandleLive2DControlPacket(raw))
 					continue;
 				// V5: nội dung panel không đi vào bộ phân tích thoại/Live2D.
 				if (TryHandleWorkspaceLivePacket(raw) || TryHandleWorkspaceDocumentPacket(raw) || TryHandleWorkspaceArtifactPacket(raw))

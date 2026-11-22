@@ -1,0 +1,3 @@
+# Optional TikTokLive adapter only. Do not install for offline tests.
+# Unofficial library; verify version compatibility with your room before production.
+TikTokLive

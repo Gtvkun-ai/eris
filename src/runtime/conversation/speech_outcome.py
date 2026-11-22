@@ -20,6 +20,9 @@ _MAX_TRACKED = 256
 
 def _apply_status(host: Any, delivery_id: str, status: str) -> None:
     """Cập nhật đúng một câu theo ID, không đụng lời của turn kế tiếp."""
+    live = getattr(host, 'eris_live', None)
+    if live is not None and callable(getattr(live, 'is_live_delivery', None)) and live.is_live_delivery(delivery_id):
+        return  # Không đọc/ghi owner history và owner ledger cho live speech.
     for item in getattr(host, "chat_history", ()) or ():
         if isinstance(item, dict) and str(item.get("delivery_id", "")) == delivery_id:
             item["delivery_status"] = status
@@ -81,6 +84,12 @@ def note_public_delivery_outcome(host: Any, *, delivery_id: str, status: str) ->
     result = str(status or "").strip().lower()
     if not did or result not in _TERMINAL:
         return False
+    # Lịch sử live nhận receipt riêng; không được trộn vào owner chat history.
+    live = getattr(host, 'eris_live', None)
+    if live is not None and did:
+        on_outcome = getattr(live, 'on_audio_outcome', None)
+        if callable(on_outcome):
+            on_outcome(did, result)
     with _LOCK:
         outcomes = getattr(host, "_v12_public_delivery_outcomes", None)
         if not isinstance(outcomes, dict):

@@ -52,6 +52,7 @@
         <h1 class="header-title">Hội thoại</h1>
         <nav class="top-nav" aria-label="Điều hướng nhanh">
           <a class="workspace-nav canvas-nav" href="canvas.html" title="Learning Canvas" aria-label="Learning Canvas"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v13m0-13C9 4 5 4 3 5v13c3-1 6-1 9 1 3-2 6-2 9-1V5c-2-1-6-1-9 1Z"/></svg><span>Learning Canvas</span></a>
+          <a class="workspace-nav" href="live.html" title="Eris Live Studio" aria-label="Eris Live Studio">◉ <span>Live Studio</span></a>
           <button class="workspace-nav" id="workspaceBtn" type="button" aria-label="Bàn làm việc" aria-pressed="false" title="Bàn làm việc"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16m-10 0v9"/></svg><span>Bàn làm việc</span></button>
         </nav>
         <button type="button" class="status-pill" id="statusDetails" aria-label="Mở trạng thái Eris" title="Trạng thái thực tế từ runtime"><span class="dot"></span><span class="status" id="status">Đang kết nối</span></button>
@@ -88,7 +89,7 @@
       <div class="inspector-header"><h2>Hoạt động</h2><button type="button" class="mini-icon" id="inspectorClose" aria-label="Đóng bảng hoạt động">×</button></div>
       <section class="presence-card"><div class="presence-orb" id="presenceOrb" aria-hidden="true">E</div><div><div class="presence-name">Eris</div><p id="presenceLabel">Đang chờ kết nối…</p></div><div class="presence-tags"><span id="stageTag">Sẵn sàng</span><span id="emotionTag" hidden></span></div></section>
       <section class="inspector-section"><h3 class="section-title">Gần đây</h3><div class="status-timeline" id="activityTimeline"><p class="activity-empty">Chưa có hoạt động.</p></div></section>
-      <section class="inspector-section"><h3 class="section-title">Lối tắt</h3><div class="context-card"><a href="canvas.html">Learning Canvas →</a></div><div class="context-card"><button type="button" id="openWorkspace">Bàn làm việc →</button><p id="artifactCount">Chưa có tài liệu trong hội thoại.</p></div></section>
+      <section class="inspector-section"><h3 class="section-title">Lối tắt</h3><div class="context-card"><a href="canvas.html">Learning Canvas →</a></div><div class="context-card"><a href="live.html">Live Studio →</a></div><div class="context-card"><button type="button" id="openWorkspace">Bàn làm việc →</button><p id="artifactCount">Chưa có tài liệu trong hội thoại.</p></div></section>
       <section class="inspector-section"><h3 class="section-title">Tùy chọn</h3><label class="setting-line"><span>Chừa chỗ cho Live2D</span><input id="avatarRoom" type="checkbox" /></label><label class="setting-line"><span>Thông báo khi Eris hoàn tất</span><input id="notifyFinished" type="checkbox" /></label></section>
     </aside>
   </div>

@@ -34,6 +34,10 @@ class RuntimeConversationDeliveryAdapter:
             self._started.add(did)
 
         status_only = bool(rendered.metadata.get("runtime_status_only"))
+        is_live = str(turn.session_id).startswith("public_live:")
+        live = getattr(self.host, "eris_live", None) if is_live else None
+        if is_live and (live is None or not live.guard_turn(turn)):
+            raise RuntimeError("live_room_stale_or_unavailable")
         prepared = rendered.metadata.get("prepared_public_output")
         if prepared is not None:
             from .public_output_artifact import (
@@ -95,6 +99,7 @@ class RuntimeConversationDeliveryAdapter:
                 "external" if event_kind in {"work_result", "research_result", "tool_result"} else "eris"
             )
             decision.performance_context.update({
+                "audience_scope": "public_live" if is_live else "private_owner",
                 "conversation_session_id": turn.session_id,
                 "conversation_generation": turn.generation,
                 "conversation_run_id": turn.run_id,
@@ -128,7 +133,7 @@ class RuntimeConversationDeliveryAdapter:
 
             stage = getattr(self.host, "ai_stage_planner", None)
             apply_stage = getattr(stage, "apply", None)
-            if callable(apply_stage):
+            if callable(apply_stage) and not is_live:
                 try:
                     state_runtime = getattr(self.host, "ai_state_reducer", None)
                     snapshot = getattr(state_runtime, "snapshot", None)
@@ -171,6 +176,15 @@ class RuntimeConversationDeliveryAdapter:
             generation=turn.generation,
         )
 
+        if is_live:
+            from runtime.live.scope import validate_public_output
+            from runtime.speech_contract import configured_speech_language
+            if configured_speech_language() != 'vi':
+                # Chưa có turn-scoped voice pin trong body. Không phát nhầm ja.
+                raise RuntimeError("live_requires_vietnamese_tts_setting")
+            validate_public_output(*spoken_surfaces)
+            if not live.guard_turn(turn):
+                raise RuntimeError("live_room_stale_before_send")
         kernel = getattr(self.host, "conversation_kernel", None) or getattr(self.host, "_conversation_kernel", None)
         store = getattr(kernel, "store", None)
         if store is not None:
@@ -183,6 +197,10 @@ class RuntimeConversationDeliveryAdapter:
         if not callable(send):
             self._log("warning", "[delivery-adapter] _send_decision_to_body not available on host, cannot deliver did=%s", did)
             raise RuntimeError("public_transport_unavailable")
+        if is_live and not live.guard_turn(turn):
+            raise RuntimeError("live_room_stale_before_dispatch")
+        if is_live:
+            live.track_delivery(did)
         if prepared is not None:
             from runtime.speech_contract import configured_speech_language, normalize_language
             language = configured_speech_language()
@@ -206,18 +224,36 @@ class RuntimeConversationDeliveryAdapter:
                     session_id=turn.session_id)
                 if packet:
                     self.host._send_runtime_json(packet, channel="learning_canvas")
-            accepted = send(decision, channel=channel, prepared=prepared)
+            if is_live:
+                with live.dispatch_guard(turn):
+                    accepted = send(decision, channel=channel, prepared=prepared)
+            else:
+                accepted = send(decision, channel=channel, prepared=prepared)
         else:
-            accepted = send(decision, channel=channel)
+            if is_live:
+                with live.dispatch_guard(turn):
+                    accepted = send(decision, channel=channel)
+            else:
+                accepted = send(decision, channel=channel)
         # Runtime production trả bool; test/adapter cũ trả None và được coi là
         # accepted để giữ compatibility. False nghĩa stage ownership đã suppress.
         if accepted is False:
+            if is_live:
+                live.cancel_delivery(did)
             raise RuntimeError("public_transport_suppressed")
         # Side-effect choreography chỉ sau khi transport đã nhận hợp lệ,
         # không khi prepare/rewrite/preempt/fail/unknown.
         apply_position = getattr(self.host, "_apply_position_update", None)
-        if callable(apply_position):
+        if callable(apply_position) and not is_live:
             apply_position(decision)
+
+        # Public Live: không append vào history/diary/owner observation hoặc
+        # global last_text. Chỉ nhận receipt của room, rồi return.
+        if is_live:
+            live.delivery_accepted(did, display_text)
+            from .speech_outcome import register_public_surface
+            register_public_surface(self.host, delivery_id=did, on_delivered=lambda: None)
+            return
 
         # Status kỹ thuật không phải ký ức, belief hoặc speech-act của Eris.
         # Chỉ đăng ký receipt để TTS settle; không ghi history/Self.
@@ -371,6 +407,7 @@ class RuntimeConversationDeliveryAdapter:
         decision.performance_context = dict(getattr(decision, "performance_context", {}) or {})
         channel = "chat" if event.kind == "user_turn" else "autonomous"
         decision.performance_context.update({
+            "audience_scope": "public_live" if str(turn.session_id).startswith("public_live:") else "private_owner",
             "conversation_session_id":turn.session_id,
             "conversation_generation":turn.generation,
             "conversation_run_id":turn.run_id,
@@ -382,7 +419,7 @@ class RuntimeConversationDeliveryAdapter:
         })
         # apply_stage chỉ được đổi Decision candidate; không gọi dispatch.
         apply_stage = getattr(getattr(self.host,"ai_stage_planner",None),"apply",None)
-        if callable(apply_stage):
+        if callable(apply_stage) and not str(turn.session_id).startswith("public_live:"):
             reducer = getattr(getattr(self.host,"ai_state_reducer",None),"snapshot",None)
             state = reducer() if callable(reducer) else None
             apply_stage(decision,turn.move.delivery or "neutral",state=state,channel=channel)

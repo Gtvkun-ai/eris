@@ -26,6 +26,13 @@ from types import SimpleNamespace
 
 class CoordinatorShutdownMixin:
     def stop(self):
+        # Ngắt public-live lease trước khi tháo các cổng audio/transport.
+        live_runtime = getattr(self, 'eris_live', None)
+        if live_runtime is not None:
+            try:
+                live_runtime.stop()
+            except Exception:
+                pass
         repair_close = getattr(getattr(self, "ai_model_router", None), "close_contract_repair", None)
         if callable(repair_close):
             repair_close()

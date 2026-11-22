@@ -1153,6 +1153,19 @@ class CoordinatorBootstrapMixin:
                 ensure_conversation_kernel(self)
             except Exception as exc:
                 safe_log(self.logger, "warning", "[root-session] preload unavailable: %s", type(exc).__name__)
+            # Live optional: chỉ tạo adapter nếu user bật. Auto-connect phải
+            # bật riêng; mặc định không mở mạng hay sử dụng token DeepSeek.
+            try:
+                import os as _live_os
+                if _live_os.environ.get('ERIS_LIVE_ENABLED', '0').lower() in {'1','on','true','yes'}:
+                    from runtime.live import ensure_live_runtime
+                    _live_rt = ensure_live_runtime(self)
+                    if _live_os.environ.get('ERIS_LIVE_AUTOSTART', '0').lower() in {'1','on','true','yes'}:
+                        _live_room = _live_os.environ.get('ERIS_LIVE_UNIQUE_ID', '').strip()
+                        if _live_room:
+                            _live_rt.start(_live_room, connect=True)
+            except Exception as exc:
+                safe_log(self.logger, 'warning', '[live] startup unavailable: %s', type(exc).__name__)
             # Architecture C sở hữu hot path. Thought/private-life vẫn là read-model
             # nền; không module nào được viết hoặc sửa câu public song song.
             self.mental_process_enabled = False

@@ -282,13 +282,18 @@ class ConversationKernel:
         agent_context = self._agent_runtime_context(sid, runtime_context)
         # Execution token được kernel cấp, không cho client/model tự chỉ định.
         agent_context["__conversation_run_id"] = run_id
+        live_guard = agent_context.get("__live_guard")
+        if live_guard is not None and not callable(live_guard):
+            self._fail_current_run(sid, state.generation, run_id)
+            return ConversationRunResult(event=normalized_event, decision=None, status="invalid_live_guard")
         # Sau khi user chen vào, Root còn đang đợi DeepSeek/tool sẽ không được
         # tiếp tục làm hành động của run cũ. Callback này không vào model payload.
         def root_run_active() -> bool:
             # Một snapshot atomic/session read cho từng lần kiểm tra.
             current_run = self.store.load(sid)
             return (current_run.generation == state.generation and current_run.active_run_id == run_id
-                    and self._scope_current(run_id))
+                    and self._scope_current(run_id)
+                    and (not callable(live_guard) or bool(live_guard())))
         agent_context["__root_run_active"] = root_run_active
         # Pin registry vào normalized generation của kernel. Input trước kernel
         # có thể mang generation=0; receipt từ Root phải dùng generation THỰC.
@@ -902,8 +907,14 @@ class ConversationKernel:
         # Không đi qua model session transcript hay public history: dù Writer
         # chưa từng commit, Root vẫn được biết outcome trước đó.
         context['conversation_move_receipts'] = self.outcomes.feedback(sid)
-        # Root biết tiến độ công việc thật ở mỗi lượt chat; không phải đợi worker
-        # xong mới được phát lời. Không đưa raw log/tool input vào Writer/TTS.
+        # Không đưa thông tin công việc cá nhân của owner vào public-live context.
+        # Root context live chỉ nhận projection được xác định ở live.scope.
+        if context.get("__audience_scope") == "public_live":
+            context.pop("work_lane_progress", None)
+            context.pop("__root_memory_recall_tools", None)
+            context.pop("__root_capabilities", None)
+            context.pop("__conversation_note_tools", None)
+            return context
         executor = getattr(getattr(self.writer, "host", None), "action_executor", None)
         work_lane = getattr(executor, "_parallel_work_service", None)
         if work_lane is not None:

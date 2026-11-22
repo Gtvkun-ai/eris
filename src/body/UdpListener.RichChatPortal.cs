@@ -101,7 +101,7 @@ public partial class UdpListener
         Assembly assembly = typeof(UdpListener).Assembly;
         var resources = assembly.GetManifestResourceNames();
         string[] files = {
-            "index.html", "workspace.css", "chat.css", "chat.js", "studio.css", "studio.js", "artifacts.js", "canvas.html", "canvas.css", "canvas.js", "vendor/mathjax.js", "vendor/prism.css",
+            "index.html", "live.html", "live.css", "live.js", "live-overlay.html", "live-overlay.css", "live-overlay.js", "workspace.css", "chat.css", "chat.js", "studio.css", "studio.js", "artifacts.js", "canvas.html", "canvas.css", "canvas.js", "vendor/mathjax.js", "vendor/prism.css",
             "vendor/prism.js", "vendor/prism-clike.js", "vendor/prism-python.js",
             "vendor/prism-javascript.js", "vendor/prism-typescript.js", "vendor/prism-csharp.js",
             "vendor/prism-c.js", "vendor/prism-cpp.js", "vendor/prism-java.js", "vendor/prism-css.js",
@@ -182,6 +182,36 @@ public partial class UdpListener
                 {
                     Reply(net, 200, "application/json; charset=utf-8",
                         Encoding.UTF8.GetBytes(Volatile.Read(ref _webCanvasStateJson)));
+                    return;
+                }
+                if (method == "GET" && relative == "api/live/state")
+                {
+                    RequestLiveStudioStatus();
+                    Reply(net, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(Volatile.Read(ref _liveStudioSnapshot)));
+                    return;
+                }
+                if (method == "POST" && relative == "api/live/control")
+                {
+                    string expectedOrigin = "Origin: http://" + expectedHost;
+                    if (!lines.Any(line => line.Equals(expectedOrigin, StringComparison.OrdinalIgnoreCase)))
+                    { Reply(net, 403, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false,\"reason\":\"origin\"}")); return; }
+                    int length = -1;
+                    foreach (string line in lines.Skip(1))
+                        if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
+                            int.TryParse(line.Substring(15).Trim(), out int size)) length = size;
+                    if (length < 2 || length > 2048)
+                    { Reply(net, 413, "application/json", Encoding.UTF8.GetBytes("{\"ok\":false}")); return; }
+                    int offset = headerEnd + 4;
+                    while (data.Length - offset < length && data.Length < 4096)
+                    {
+                        int read = net.Read(chunk, 0, Math.Min(chunk.Length, length - (int)data.Length + offset));
+                        if (read <= 0) return;
+                        data.Write(chunk, 0, read);
+                    }
+                    using JsonDocument control = JsonDocument.Parse(data.ToArray().AsMemory(offset, length));
+                    bool queued = TryQueueLiveStudioCommand(control.RootElement);
+                    Reply(net, queued ? 202 : 400, "application/json; charset=utf-8",
+                        Encoding.UTF8.GetBytes(queued ? "{\"ok\":true,\"status\":\"queued\"}" : "{\"ok\":false,\"reason\":\"invalid_or_busy\"}"));
                     return;
                 }
                 if (method == "GET" && relative == "api/state")
@@ -514,6 +544,7 @@ public partial class UdpListener
         int processed = 0;
         while (processed++ < 5 && _richChatOutbox.TryDequeue(out string message))
             SendUserChatMessage(message);
+        TickLiveStudioPortal();
         // UI requests stay on the Godot main thread; the web server never calls UDP.
         if (_learnerPortraitOutbox.TryDequeue(out var portraitTask))
             SendLearnerPortraitRequest(portraitTask.PathId, portraitTask.Page);

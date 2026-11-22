@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="referrer" content="no-referrer"/>
+  <title>Eris · Live Studio</title>
+  <link rel="stylesheet" href="live.css"/>
+  <script defer src="live.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Điều hướng">
+    <div class="brand"><div class="brand-mark">E</div><div><strong>ERIS</strong><span>Live Studio</span></div></div>
+    <nav><a href="index.html">↗ <span>Hội thoại</span></a><a href="canvas.html">◧ <span>Learning Canvas</span></a><a class="selected" href="live.html" aria-current="page">◉ <span>Live Studio</span></a></nav>
+    <div class="sidebar-foot"><div class="statusline"><span id="hostDot" class="dot"></span><span id="hostConnection">Đang kết nối Cortex…</span></div><p>Chỉ truy cập từ trình duyệt localhost của Eris. Dữ liệu công khai được tách khỏi chat riêng.</p></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div><div class="eyebrow">PUBLIC SOCIAL SURFACE · ERIS ROOT</div><h1>Live Studio</h1><p>Điều khiển phát sóng, giả lập tương tác và quan sát hành vi — không tạo thêm bộ não streamer.</p></div><div class="topright"><span id="modeChip" class="chip">Offline</span><span id="connectionChip" class="chip muted">Chưa kết nối</span></div></header>
+    <div class="layout">
+      <section class="stage card">
+        <div class="section-head"><div><h2>Sân khấu</h2><span class="subtext">Giám sát luồng đầu ra · Live2D nằm trong ứng dụng Eris/OBS</span></div><span class="small-label" id="stageUptime">00:00</span></div>
+        <div class="stage-placeholder" aria-label="Trạng thái sân khấu (không phải video Live2D)">
+          <div class="avatar-ring"><div class="avatar-core">E</div></div>
+          <div class="stage-title" id="stageLabel">Chưa bắt đầu phiên live</div>
+          <div class="stage-desc" id="stageDescription">Dùng Simulator để thử comment/quà tặng mà không kết nối TikTok.</div>
+          <div class="stage-badges"><span id="rootBadge">Root · Offline</span><span id="voiceBadge">Voice · Kiểm tra</span><span id="privacyBadge">Private Memory · Isolated</span></div>
+        </div>
+        <div class="control-row"><label for="tiktokRoom">Phòng TikTok đang phát · @username</label><div class="control-inline"><input id="tiktokRoom" autocomplete="off" maxlength="33" placeholder="@your_live_account" spellcheck="false"/><button id="startLive" type="button" class="primary">Kết nối phòng</button></div></div>
+        <div class="control-buttons"><button id="startSimulator" type="button">◈ Bật Simulator</button><button id="stopLive" type="button">Dừng phiên</button><button id="emergencyStop" type="button" class="danger">■ Dừng khẩn cấp</button></div>
+        <div class="overlay-tools"><a href="live-overlay.html" target="_blank" rel="noopener">↗ Mở phụ đề OBS</a><button type="button" id="copyOverlayUrl">Sao chép URL Browser Source</button></div><div class="notice" id="controlMessage" role="status" aria-live="polite">Chưa có lệnh nào được gửi.</div>
+      </section>
+      <section class="metrics card"><div class="section-head"><h2>Nhịp hoạt động</h2><span class="small-label">Dữ liệu runtime</span></div><div class="metric-grid">
+          <div class="metric"><span>Sự kiện nhận</span><strong id="metricAccepted">0</strong></div>
+          <div class="metric"><span>Batch xử lý</span><strong id="metricBatches">0</strong></div>
+          <div class="metric"><span>Root Attempts</span><strong id="metricRoot">0</strong></div>
+          <div class="metric"><span>Audio đã phát xong</span><strong id="metricDelivery">0</strong></div>
+          <div class="metric"><span>Chủ động im lặng</span><strong id="metricSilence">0</strong></div>
+          <div class="metric"><span>Sự kiện bị loại</span><strong id="metricDropped">0</strong></div>
+        </div><div class="divider"></div><dl class="details"><div><dt>Queue</dt><dd id="queueStatus">0</dd></div><div><dt>Connection</dt><dd id="providerStatus">disconnected</dd></div><div><dt>Khóa ngôn ngữ</dt><dd id="ttsStatus">Chưa kiểm tra</dd></div><div><dt>Privacy scope</dt><dd id="privacyStatus">public_live</dd></div><div><dt>Learning (opt-in)</dt><dd id="learningStatus">Off</dd></div></dl>
+      </section>
+      <section class="sim card"><div class="section-head"><div><h2>Live Simulator</h2><span class="subtext">Phát sinh sự kiện giả lập, đi qua ingress thật</span></div><span class="chip subtle">Không cần TikTok</span></div>
+        <div class="scenario-grid"><button class="scenario" data-scenario="conversation">◌ <span>Trò chuyện</span></button><button class="scenario" data-scenario="crowd">≋ <span>Đông người</span></button><button class="scenario" data-scenario="gifts">✧ <span>Quà tặng</span></button><button class="scenario" data-scenario="support">♡ <span>Tâm sự</span></button><button class="scenario" data-scenario="injection">⛨ <span>Prompt injection</span></button></div>
+        <form id="customForm" class="custom-form"><label for="customComment">Bình luận kiểm thử</label><div class="control-inline"><input id="customComment" maxlength="300" placeholder="Ví dụ: Eris, bạn đang nghĩ gì?"/><button type="submit">Gửi giả lập</button></div></form>
+        <div class="notice compact">Để quan sát Root thật, hãy bật TTS tiếng Việt và đảm bảo AI runtime đang chạy. Simulator không giả lập kết quả model.</div>
+      </section>
+      <section class="feed card"><div class="section-head"><h2>Live Event Feed</h2><span class="small-label" id="eventCount">0 sự kiện</span></div><div id="eventFeed" class="event-list" aria-live="polite"><p class="empty">Chưa có sự kiện từ phòng live.</p></div></section>
+      <section class="checklist card"><div class="section-head"><h2>Production Gate</h2><button id="validateLive" type="button">Chạy 5 kiểm tra offline</button></div><div class="checklist-items"><div><span class="check" id="checkKernel">○</span><span>Root / Kernel hoạt động</span></div><div><span class="check" id="checkLanguage">○</span><span>TTS tiếng Việt được cấu hình</span></div><div><span class="check" id="checkSDK">○</span><span>Đã cài SDK TikTokLive (không chính thức)</span></div><div><span class="check" id="checkSession">○</span><span>Public Session đã bật, tách memory riêng</span></div><div><span class="check neutral">◌</span><span>OBS hình ảnh/âm thanh + nhép miệng: cần xác nhận thủ công trên Windows</span></div></div><p class="muted-text" id="validationResult">Chưa chạy probe offline.</p><p class="muted-text">Trạng thái web không chứng minh TikTok đã phát sóng thật. Kiểm tra TikTok Live Studio/OBS trước khi phát công khai.</p></section>
+      <section class="learning card"><div class="section-head"><h2>Kinh nghiệm xã hội</h2><span class="chip subtle">P7 · Evidence</span></div><p id="learningDescription" class="muted-text">Eris chỉ nhận các chỉ số tổng hợp sau delivery. Không dùng tiền quà để thưởng/phạt tính cách, không lưu danh tính khán giả.</p><div id="learningSessions" class="learning-sessions"><p class="empty">Chưa bật lưu thống kê buổi live.</p></div></section>
+    </div>
+    <footer class="footer">ERIS · cùng một Identity Kernel, một Root authority · © Local Private Runtime</footer>
+  </main>
+</div>
+</body>
+</html>
